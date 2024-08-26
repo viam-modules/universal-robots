@@ -1,5 +1,0 @@
-Makefile
-CMakeFiles/*
-CMakeCache.txt
-ur5earm-x86
-.ninja*

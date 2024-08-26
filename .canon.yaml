@@ -1,11 +1,5 @@
-# This file provides project-level configuration for the canon dev environment utility. https://github.com/viamrobotics/canon
-viam-rdk:
-    default: true
-    image_amd64: ghcr.io/viamrobotics/viam-camera-realsense:amd64
-    image_arm64: ghcr.io/viamrobotics/viam-camera-realsense:arm64
-    # image_arm: ghcr.io/viamrobotics/viam-camera-realsense:arm64
-    minimum_date: 2023-10-26T20:00:00.0Z
-    update_interval: 168h0m0s
-    user: testbot
-    group: testbot  
-    persistent: true
+viam-camera-realsense:
+  image_arm64: ghcr.io/viamrobotics/viam-camera-realsense:arm64
+  image_amd64: ghcr.io/viamrobotics/viam-camera-realsense:amd64
+  minimum_date: 2023-08-15T03:54:00.0Z
+  persistent: true
