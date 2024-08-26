@@ -308,7 +308,7 @@ std::vector<unsigned char> readFile(const std::string& filename) {
 }
 
 UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra){
-    std::vector<unsigned char> urdf_bytes = readFile("ur5e.urdf");
+    std::vector<unsigned char> urdf_bytes = readFile(URDF_FILE);
     return KinematicsDataURDF(std::move(urdf_bytes));
 }
 
@@ -317,7 +317,6 @@ std::vector<GeometryConfig> UR5eArm::get_geometries(const AttributeMap& extra){
 }
 
 void UR5eArm::stop(const AttributeMap& extra){
-    URCL_LOG_WARN("IN STOP\n");
     if (!dashboard->commandStop())
         throw std::runtime_error("UNABLE TO STOP!\n");
 }
