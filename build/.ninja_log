@@ -1,6 +1,0 @@
-# ninja log v5
-3390	3591	1724691191150987148	universal-robots	27d40b9ca215104d
-1	3390	1724691190950990807	CMakeFiles/universal-robots.dir/src/UR5e-Arm.cpp.o	4ad8b62c989a6f7b
-0	3122	1724691190682995709	CMakeFiles/universal-robots.dir/main.cpp.o	980b3707e4deef88
-1	1302	1724691188863028991	CMakeFiles/universal-robots.dir/trajectories/Path.cpp.o	4a9f8c75e493c0d3
-1	790	1724691188351038349	CMakeFiles/universal-robots.dir/trajectories/Trajectory.cpp.o	1e460e68a078a83e

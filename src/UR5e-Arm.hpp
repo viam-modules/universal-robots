@@ -96,9 +96,10 @@ class UR5eArm : public Arm{
         const double TIMESTEP = 0.2; // seconds
 
         const std::string DEFAULT_ROBOT_IP = "10.1.10.84";
-        const std::string SCRIPT_FILE = "src/files/external_control.urscript";
-        const std::string OUTPUT_RECIPE = "src/files/rtde_output_recipe.txt";
-        const std::string INPUT_RECIPE = "src/files/rtde_input_recipe.txt";
+        const std::string URDF_FILE = "/host/src/ur5e.urdf";
+        const std::string SCRIPT_FILE = "/host/Universal_Robots_Client_Library/resources/external_control.urscript";
+        const std::string OUTPUT_RECIPE = "/host/Universal_Robots_Client_Library/examples/resources/rtde_output_recipe.txt";
+        const std::string INPUT_RECIPE = "/host/Universal_Robots_Client_Library/examples/resources/rtde_input_recipe.txt";
         const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
         const std::string POSITIONS_KEY = "positions";
 };
