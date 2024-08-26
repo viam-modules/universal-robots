@@ -35,18 +35,20 @@ sudo apt update
 sudo apt install libeigen3-dev
 ```
 
-Now you should be able to run 
+Now you should be able to run
 
 ```
-ninja all
+mkdir build && cd build
+cmake ..
+make
 ```
 
-which will give you an executable called `ur5earm-x86`
+which will give you an executable called `universal-robots`
 
 ## Running the arm with viam-server
 Follow instructions on app to get viam-server executable inside your docker (standard Linux instructions)
 
-Create a new machine on app. Add an Arm Component as well as the Arm module by providing the absolute path of the `ur5earm-x86` executable inside your docker. 
+Create a new machine on app. Add an Arm Component as well as the Arm module by providing the absolute path of the `universal-robots` executable inside your docker. 
 
 Grab the json for your machine and inside the docker run
 ```
