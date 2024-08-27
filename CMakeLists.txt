@@ -24,5 +24,5 @@ include_directories(${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/Universal_Ro
 link_directories(Universal_Robots_Client_Library/build)
 
 FILE(GLOB sources *.cpp)
-add_executable(universal-robots ${sources} src/UR5e-Arm.cpp src/UR5e-Arm.hpp trajectories/Path.cpp trajectories/Trajectory.cpp)
+add_executable(universal-robots ${sources} src/ur5e_arm.cpp src/ur5e_arm.hpp trajectories/Path.cpp trajectories/Trajectory.cpp)
 target_link_libraries(universal-robots PRIVATE viam-cpp-sdk::viamsdk Eigen3::Eigen urcl)

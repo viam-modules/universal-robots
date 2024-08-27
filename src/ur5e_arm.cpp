@@ -1,4 +1,4 @@
-#include "UR5e-Arm.hpp"
+#include "ur5e_arm.hpp"
 
 UR5eArm::UR5eArm(Dependencies dep, ResourceConfig cfg) : Arm(cfg.name()), calling_trajectory(false) {
     if(!initialize())
