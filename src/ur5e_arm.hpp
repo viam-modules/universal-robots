@@ -39,36 +39,26 @@ using namespace urcl;
 
 class UR5eArm : public Arm{
     public:
+        /// @brief 
+        /// @param dep 
+        /// @param cfg 
         UR5eArm(Dependencies dep, ResourceConfig cfg);
-        bool initialize();
-        void send_noops();
 
-        void SendTrajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v,
-                    const std::vector<vector6d_t>& p_a, const std::vector<double>& time, bool use_spline_interpolation_);
-    
-        // --------------- UNSUPPORTED FUNCTIONS - DEPRECATED FROM API SOON ---------------
-        pose get_end_position(const AttributeMap& extra) override{
-            throw std::runtime_error("get_end_position unimplemented");
-        }
-        void move_to_position(const pose& pose, const AttributeMap& extra) override{
-            throw std::runtime_error("move_to_position unimplemented");
-        }
-        void move_to_joint_positions(const std::vector<double>& positions,
-                                         const AttributeMap& extra) override{
-            throw std::runtime_error("move_to_joint_positions unimplemented");
-        }
-
-        // --------------- SUPPORTED FUNCTIONS ---------------
-        /// @brief Lists the joint positions in degrees of every joint on a robot arm
+        /// @brief Get the joint positions of the arm (in degrees)
         /// @param extra Any additional arguments to the method.
+        /// @return a vector of joint positions of the arm in degrees
         std::vector<double> get_joint_positions(const AttributeMap& extra) override;
+
+        /// @brief Move to the the specified joint positions (in degrees)
+        /// @param positions The joint positions in degrees to move to
+        /// @param extra Any additional arguments to the method.
+        void move_to_joint_positions(const std::vector<double>& positions, const AttributeMap& extra) override;
 
         /// @brief Reports if the arm is in motion.
         bool is_moving() override;
 
         /// @brief This is being used as a proxy to move_to_joint_positions except with support for multiple waypoints
-        /// @param command will contain a std::vector<std::vector<double>> called positions that will contain joint waypoints
-        /// @return bool depending on success of calculating and sending trajectory to UR
+        /// @param command Will contain a std::vector<std::vector<double>> called positions that will contain joint waypoints
         AttributeMap do_command(const AttributeMap& command) override;
 
         /// @brief Get the kinematics data associated with the arm.
@@ -102,4 +92,24 @@ class UR5eArm : public Arm{
         const std::string INPUT_RECIPE = "/host/Universal_Robots_Client_Library/examples/resources/rtde_input_recipe.txt";
         const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
         const std::string POSITIONS_KEY = "positions";
+
+        // --------------- UNSUPPORTED FUNCTIONS - DEPRECATED FROM API SOON ---------------
+        pose get_end_position(const AttributeMap& extra) override{
+            throw std::runtime_error("get_end_position unimplemented");
+        }
+        void move_to_position(const pose& pose, const AttributeMap& extra) override{
+            throw std::runtime_error("move_to_position unimplemented");
+        }
+
+    private:
+        bool initialize();
+        void send_noops();
+        void move(std::vector<Eigen::VectorXd> waypoints);
+        void SendTrajectory(
+            const std::vector<vector6d_t>& p_p, 
+            const std::vector<vector6d_t>& p_v,
+            const std::vector<vector6d_t>& p_a, 
+            const std::vector<double>& time, 
+            bool use_spline_interpolation_
+        );
 };

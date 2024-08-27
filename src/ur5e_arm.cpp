@@ -9,6 +9,12 @@ UR5eArm::UR5eArm(Dependencies dep, ResourceConfig cfg) : Arm(cfg.name()), callin
     t.detach();
 }
 
+void printVector(std::string msg, std::vector<double> vec) {
+    std::cout << "\033[1;32m" << msg <<  ": ";
+    for (int i=0; i<vec.size(); ++i) std::cout << vec[i] << ' ';
+    std::cout << "\033[0m" << std::endl;
+};
+
 // function to send no-ops and keep socket connection alive
 void UR5eArm::send_noops(){
     while(true){
@@ -28,6 +34,25 @@ void UR5eArm::send_noops(){
         mu.unlock();
         usleep(NOOP_DELAY);
     }
+}
+
+void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, const AttributeMap& extra) {
+    std::vector<Eigen::VectorXd> waypoints;
+
+    // get current joint position and add that as starting pose to waypoints
+    std::vector<double> curr_joint_pos = get_joint_positions(NULL);
+    printVector("Curr positions", curr_joint_pos);
+    Eigen::VectorXd curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), curr_joint_pos.size());
+    Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI/180.0);
+    waypoints.push_back(curr_waypoint_rad);
+
+    // convert desired position to radians and add that as the next waypoint
+    printVector("Next positions", positions);
+    Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), positions.size());
+    Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI/180.0);
+    waypoints.push_back(curr_waypoint_deg);
+
+    move(waypoints);
 }
 
 // We need a callback function to register. See UrDriver's parameters for details.
@@ -115,9 +140,13 @@ bool UR5eArm::initialize(){
 }
 
 // function to send trajectories to the UR driver
-void UR5eArm::SendTrajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v,
-                    const std::vector<vector6d_t>& p_a, const std::vector<double>& time, bool use_spline_interpolation_)
-{
+void UR5eArm::SendTrajectory(
+    const std::vector<vector6d_t>& p_p, 
+    const std::vector<vector6d_t>& p_v,
+    const std::vector<vector6d_t>& p_a, 
+    const std::vector<double>& time, 
+    bool use_spline_interpolation_
+){
   assert(p_p.size() == time.size());
   
   driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START, p_p.size(), RobotReceiveTimeout::off());
@@ -143,7 +172,7 @@ void UR5eArm::SendTrajectory(const std::vector<vector6d_t>& p_p, const std::vect
       }
     }
   }
-  std::cout << "Finished Sending Trajectory" << std::endl;
+  std::cout << "finshed sending trajectory" << std::endl;
 }
 
 std::vector<double> UR5eArm::get_joint_positions(const AttributeMap& extra) {
@@ -181,15 +210,8 @@ AttributeMap UR5eArm::do_command(const AttributeMap& command){
         throw std::runtime_error("command is null\n");
     }
     
-    std::vector<Eigen::VectorXd> waypoints;
-
-    // get current joint position and add that as starting pose to waypoints
-    std::vector<double> curr_joint_pos = get_joint_positions(NULL);
-    Eigen::VectorXd curr_waypoint_rad = Eigen::VectorXd::Map(curr_joint_pos.data(), curr_joint_pos.size());
-    Eigen::VectorXd curr_waypoint_deg = curr_waypoint_rad * (M_PI/180.0);
-    waypoints.push_back(curr_waypoint_deg);
-
     // parse waypoints
+    std::vector<Eigen::VectorXd> waypoints;
     if(command->count(POSITIONS_KEY) > 0){
         std::vector<std::shared_ptr<ProtoType>>* vec_protos = (*command)[POSITIONS_KEY]->get<std::vector<std::shared_ptr<ProtoType>>>();
         if (vec_protos){
@@ -209,7 +231,58 @@ AttributeMap UR5eArm::do_command(const AttributeMap& command){
             }
         }
     }
+
+    move(waypoints);
+    return NULL;
+}
+
+// Function to read a file and return raw bytes as a vector of chars
+std::vector<unsigned char> readFile(const std::string& filename) {
+    // Open the file in binary mode
+    std::ifstream file(filename, std::ios::binary);
     
+    if (!file) {
+        throw std::runtime_error("Unable to open file");
+    }
+
+    // Determine the file size
+    file.seekg(0, std::ios::end);
+    std::streamsize fileSize = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    // Create a buffer to hold the file contents
+    std::vector<unsigned char> buffer(fileSize);
+
+    // Read the file contents into the buffer
+    
+    if (!file.read(reinterpret_cast<char*>(buffer.data()), fileSize)) {
+        throw std::runtime_error("Error reading file");
+    }
+
+    return buffer;
+}
+
+UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra){
+    std::vector<unsigned char> urdf_bytes = readFile(URDF_FILE);
+    return KinematicsDataURDF(std::move(urdf_bytes));
+}
+
+std::vector<GeometryConfig> UR5eArm::get_geometries(const AttributeMap& extra){
+    return std::vector<GeometryConfig>();
+}
+
+void UR5eArm::stop(const AttributeMap& extra){
+    if (!dashboard->commandStop())
+        throw std::runtime_error("UNABLE TO STOP!\n");
+}
+
+void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
+    // get current joint position and add that as starting pose to waypoints
+    std::vector<double> curr_joint_pos = get_joint_positions(NULL);
+    Eigen::VectorXd curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), curr_joint_pos.size());
+    Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI/180.0);
+    waypoints.insert(waypoints.begin(), curr_waypoint_rad);
+
     // calculate dot products and identify any consecutive segments with dot product == -1
     std::vector<int> segments;
     segments.push_back(0);
@@ -259,7 +332,6 @@ AttributeMap UR5eArm::do_command(const AttributeMap& command){
     
     mu.lock();
     SendTrajectory(p, v, a, time, true);
-
     g_trajectory_running = true;
     while (g_trajectory_running)
     {
@@ -277,46 +349,5 @@ AttributeMap UR5eArm::do_command(const AttributeMap& command){
         }
     }
     mu.unlock();
-    std::cout << "EXECUTED TRAJECTORY" << std::endl;
-    return command;
 }
 
-// Function to read a file and return raw bytes as a vector of chars
-std::vector<unsigned char> readFile(const std::string& filename) {
-    // Open the file in binary mode
-    std::ifstream file(filename, std::ios::binary);
-    
-    if (!file) {
-        throw std::runtime_error("Unable to open file");
-    }
-
-    // Determine the file size
-    file.seekg(0, std::ios::end);
-    std::streamsize fileSize = file.tellg();
-    file.seekg(0, std::ios::beg);
-
-    // Create a buffer to hold the file contents
-    std::vector<unsigned char> buffer(fileSize);
-
-    // Read the file contents into the buffer
-    
-    if (!file.read(reinterpret_cast<char*>(buffer.data()), fileSize)) {
-        throw std::runtime_error("Error reading file");
-    }
-
-    return buffer;
-}
-
-UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra){
-    std::vector<unsigned char> urdf_bytes = readFile(URDF_FILE);
-    return KinematicsDataURDF(std::move(urdf_bytes));
-}
-
-std::vector<GeometryConfig> UR5eArm::get_geometries(const AttributeMap& extra){
-    return std::vector<GeometryConfig>();
-}
-
-void UR5eArm::stop(const AttributeMap& extra){
-    if (!dashboard->commandStop())
-        throw std::runtime_error("UNABLE TO STOP!\n");
-}
