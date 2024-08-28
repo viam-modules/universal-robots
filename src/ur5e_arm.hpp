@@ -4,8 +4,6 @@
 
 #include <boost/log/trivial.hpp>
 
-#include <iostream>
-#include <fstream>
 #include <vector>
 #include <unistd.h>
 
@@ -33,15 +31,13 @@
 
 #include <math.h>
 
+#include "utils.h"
+
 using namespace viam::sdk;
 using namespace urcl;
 
-
 class UR5eArm : public Arm{
     public:
-        /// @brief 
-        /// @param dep 
-        /// @param cfg 
         UR5eArm(Dependencies dep, ResourceConfig cfg);
 
         /// @brief Get the joint positions of the arm (in degrees)
@@ -57,30 +53,51 @@ class UR5eArm : public Arm{
         /// @brief Reports if the arm is in motion.
         bool is_moving() override;
 
-        /// @brief This is being used as a proxy to move_to_joint_positions except with support for multiple waypoints
-        /// @param command Will contain a std::vector<std::vector<double>> called positions that will contain joint waypoints
-        AttributeMap do_command(const AttributeMap& command) override;
-
         /// @brief Get the kinematics data associated with the arm.
         /// @param extra Any additional arguments to the method.
         /// @return A variant of kinematics data, with bytes field containing the raw bytes of the file
         /// and the object's type indicating the file format.
         KinematicsData get_kinematics(const AttributeMap& extra) override;
 
-        /// @brief Returns `GeometryConfig`s associated with the calling arm
-        /// @param extra Any additional arguments to the method
-        std::vector<GeometryConfig> get_geometries(const AttributeMap& extra) override;
-
         /// @brief Stops the Arm.
         /// @param extra Extra arguments to pass to the resource's `stop` method.
         void stop(const AttributeMap& extra) override;
+
+        /// @brief This is being used as a proxy to move_to_joint_positions except with support for multiple waypoints
+        /// @param command Will contain a std::vector<std::vector<double>> called positions that will contain joint waypoints
+        AttributeMap do_command(const AttributeMap& command) override;
         
+        // --------------- UNIMPLEMENTED FUNCTIONS ---------------
+        pose get_end_position(const AttributeMap& extra) override{
+            throw std::runtime_error("get_end_position unimplemented");
+        }
+        
+        void move_to_position(const pose& pose, const AttributeMap& extra) override{
+            throw std::runtime_error("move_to_position unimplemented");
+        }
+
+        std::vector<GeometryConfig> get_geometries(const AttributeMap& extra){
+            throw std::runtime_error("get_geometries unimplemented");
+        }
+
+    private:
+        bool initialize();
+        void keepAlive();
+        void move(std::vector<Eigen::VectorXd> waypoints);
+        void SendTrajectory(
+            const std::vector<vector6d_t>& p_p, 
+            const std::vector<vector6d_t>& p_v,
+            const std::vector<vector6d_t>& p_a, 
+            const std::vector<double>& time, 
+            bool use_spline_interpolation_
+        );
+
         std::unique_ptr<UrDriver> driver;
         std::unique_ptr<DashboardClient> dashboard;
         vector6d_t g_joint_positions;
         std::atomic<bool> calling_trajectory;
         std::mutex mu;
-        
+
         const double STOP_VELOCITY_THRESHOLD = 0.005; // rad/s
         const int NOOP_DELAY = 100000; // microseconds
         const double TIMESTEP = 0.2; // seconds
@@ -92,24 +109,5 @@ class UR5eArm : public Arm{
         const std::string INPUT_RECIPE = "/host/Universal_Robots_Client_Library/examples/resources/rtde_input_recipe.txt";
         const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
         const std::string POSITIONS_KEY = "positions";
-
-        // --------------- UNSUPPORTED FUNCTIONS - DEPRECATED FROM API SOON ---------------
-        pose get_end_position(const AttributeMap& extra) override{
-            throw std::runtime_error("get_end_position unimplemented");
-        }
-        void move_to_position(const pose& pose, const AttributeMap& extra) override{
-            throw std::runtime_error("move_to_position unimplemented");
-        }
-
-    private:
-        bool initialize();
-        void send_noops();
-        void move(std::vector<Eigen::VectorXd> waypoints);
-        void SendTrajectory(
-            const std::vector<vector6d_t>& p_p, 
-            const std::vector<vector6d_t>& p_v,
-            const std::vector<vector6d_t>& p_a, 
-            const std::vector<double>& time, 
-            bool use_spline_interpolation_
-        );
 };
+

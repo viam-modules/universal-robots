@@ -5,67 +5,97 @@ UR5eArm::UR5eArm(Dependencies dep, ResourceConfig cfg) : Arm(cfg.name()), callin
         throw std::runtime_error("initialization failed\n");
 
     // start background thread to continuously send no-ops and keep socket connection alive
-    std::thread t(&UR5eArm::send_noops, this);
+    std::thread t(&UR5eArm::keepAlive, this);
     t.detach();
 }
 
-void printVector(std::string msg, std::vector<double> vec) {
-    std::cout << "\033[1;32m" << msg <<  ": ";
-    for (int i=0; i<vec.size(); ++i) std::cout << vec[i] << ' ';
-    std::cout << "\033[0m" << std::endl;
-};
-
-// function to send no-ops and keep socket connection alive
-void UR5eArm::send_noops(){
-    while(true){
-        mu.lock();
-        std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
-        if (data_pkg)
-        {
-            // Read current joint positions from robot data
-            if (!data_pkg->getData("actual_q", g_joint_positions))
-            {
-                // This throwing should never happen unless misconfigured
-                std::string error_msg = "Did not find 'actual_q' in data sent from robot. This should not happen!";
-                throw std::runtime_error(error_msg);
-            }
-            driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP);
+std::vector<double> UR5eArm::get_joint_positions(const AttributeMap& extra) {
+    mu.lock();
+    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
+    if (data_pkg && data_pkg->getData("actual_q", g_joint_positions)){
+        std::vector<double> to_ret;
+        for(double joint_pos_rad: g_joint_positions){
+            double joint_pos_deg = 180.0/M_PI * joint_pos_rad;
+            to_ret.push_back(joint_pos_deg);
         }
         mu.unlock();
-        usleep(NOOP_DELAY);
+        return to_ret;
     }
+    mu.unlock();
+    return std::vector<double>();
 }
 
 void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, const AttributeMap& extra) {
     std::vector<Eigen::VectorXd> waypoints;
-
-    // get current joint position and add that as starting pose to waypoints
-    std::vector<double> curr_joint_pos = get_joint_positions(NULL);
-    printVector("Curr positions", curr_joint_pos);
-    Eigen::VectorXd curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), curr_joint_pos.size());
-    Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI/180.0);
-    waypoints.push_back(curr_waypoint_rad);
-
-    // convert desired position to radians and add that as the next waypoint
-    printVector("Next positions", positions);
     Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), positions.size());
-    Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI/180.0);
-    waypoints.push_back(curr_waypoint_deg);
-
+    Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI/180.0); // convert from radians to degrees
+    waypoints.push_back(next_waypoint_rad);
     move(waypoints);
 }
 
-// We need a callback function to register. See UrDriver's parameters for details.
-void handleRobotProgramState(bool program_running)
-{
+bool UR5eArm::is_moving() {
+    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
+    vector6d_t joint_velocities;
+    if (data_pkg && data_pkg->getData("actual_q", joint_velocities)){
+        for(double joint_vel : joint_velocities){
+            if (joint_vel > STOP_VELOCITY_THRESHOLD){
+                return false;
+            }
+        }
+        return true;
+    }
+    throw std::runtime_error("couldn't get velocities from arm");
+}
+
+UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra) {
+    std::vector<unsigned char> urdf_bytes = readFile(URDF_FILE);
+    return KinematicsDataURDF(std::move(urdf_bytes));
+}
+
+void UR5eArm::stop(const AttributeMap& extra) {
+    if (!dashboard->commandStop())
+        throw std::runtime_error("UNABLE TO STOP!\n");
+}
+
+AttributeMap UR5eArm::do_command(const AttributeMap& command) {
+    if(!command){
+        throw std::runtime_error("command is null\n");
+    }
+    
+    // parse waypoints
+    std::vector<Eigen::VectorXd> waypoints;
+    if(command->count(POSITIONS_KEY) > 0){
+        std::vector<std::shared_ptr<ProtoType>>* vec_protos = (*command)[POSITIONS_KEY]->get<std::vector<std::shared_ptr<ProtoType>>>();
+        if (vec_protos){
+            for(std::shared_ptr<ProtoType>& vec_proto: *vec_protos) {
+                std::vector<std::shared_ptr<ProtoType>>* vec_joint_pos = vec_proto->get<std::vector<std::shared_ptr<ProtoType>>>();
+                if (vec_joint_pos){
+                    vector6d_t to_add;
+                    int counter = 0;
+                    for(std::shared_ptr<ProtoType> joint_pos: *vec_joint_pos){
+                        double* joint_pos_deg = joint_pos->get<double>();
+                        to_add[counter] = *joint_pos_deg;
+                        counter += 1;
+                    }
+                    Eigen::VectorXd waypoint = Eigen::VectorXd::Map(to_add.data(), to_add.size());
+                    waypoints.push_back(waypoint);
+                }
+            }
+        }
+    }
+
+    move(waypoints);
+    return NULL;
+}
+
+bool g_trajectory_running(false);
+void handleRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
     std::cout << "\033[1;32mProgram running: " << std::boolalpha << program_running << "\033[0m\n" << std::endl;
 }
 
 // Callback function for trajectory execution.
-bool g_trajectory_running(false);
-void handleTrajectoryState(control::TrajectoryResult state)
-{
+void handleTrajectoryState(control::TrajectoryResult state) {
     // trajectory_state = state;
     g_trajectory_running = false;
     std::string report = "?";
@@ -85,7 +115,7 @@ void handleTrajectoryState(control::TrajectoryResult state)
     std::cout << "\033[1;32mTrajectory report: " << report << "\033[0m\n" << std::endl;
 }
 
-bool UR5eArm::initialize(){
+bool UR5eArm::initialize() {
     // Making the robot ready for the program by:
     // Connect to the robot Dashboard
     dashboard.reset(new DashboardClient(DEFAULT_ROBOT_IP));
@@ -139,141 +169,25 @@ bool UR5eArm::initialize(){
     return true;
 }
 
-// function to send trajectories to the UR driver
-void UR5eArm::SendTrajectory(
-    const std::vector<vector6d_t>& p_p, 
-    const std::vector<vector6d_t>& p_v,
-    const std::vector<vector6d_t>& p_a, 
-    const std::vector<double>& time, 
-    bool use_spline_interpolation_
-){
-  assert(p_p.size() == time.size());
-  
-  driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START, p_p.size(), RobotReceiveTimeout::off());
-  for (size_t i = 0; i < p_p.size() && p_p.size() == time.size() && p_p[i].size() == 6; i++)
-  {
-    // MoveJ
-    if (!use_spline_interpolation_)
-    {
-      driver->writeTrajectoryPoint(p_p[i], false, time[i], 0.0);
-    }
-    else  // Use spline interpolation
-    {
-      // QUINTIC
-      if (p_v.size() == time.size() && p_a.size() == time.size() && p_v[i].size() == 6 && p_a[i].size() == 6){
-        driver->writeTrajectorySplinePoint(p_p[i], p_v[i], p_a[i], time[i]);
-      }
-      // CUBIC
-      else if (p_v.size() == time.size() && p_v[i].size() == 6){
-        driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i]);
-      }
-      else{
-        driver->writeTrajectorySplinePoint(p_p[i], time[i]);
-      }
-    }
-  }
-  std::cout << "finshed sending trajectory" << std::endl;
-}
-
-std::vector<double> UR5eArm::get_joint_positions(const AttributeMap& extra) {
-    mu.lock();
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
-    if (data_pkg && data_pkg->getData("actual_q", g_joint_positions)){
-        std::vector<double> to_ret;
-        for(double joint_pos_rad: g_joint_positions){
-            double joint_pos_deg = 180.0/M_PI * joint_pos_rad;
-            to_ret.push_back(joint_pos_deg);
+// Send no-ops and keep socket connection alive
+void UR5eArm::keepAlive() {
+    while(true){
+        mu.lock();
+        std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
+        if (data_pkg)
+        {
+            // Read current joint positions from robot data
+            if (!data_pkg->getData("actual_q", g_joint_positions))
+            {
+                // This throwing should never happen unless misconfigured
+                std::string error_msg = "Did not find 'actual_q' in data sent from robot. This should not happen!";
+                throw std::runtime_error(error_msg);
+            }
+            driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP);
         }
         mu.unlock();
-        return to_ret;
+        usleep(NOOP_DELAY);
     }
-    mu.unlock();
-    return std::vector<double>();
-}
-
-bool UR5eArm::is_moving(){
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
-    vector6d_t joint_velocities;
-    if (data_pkg && data_pkg->getData("actual_q", joint_velocities)){
-        for(double joint_vel : joint_velocities){
-            if (joint_vel > STOP_VELOCITY_THRESHOLD){
-                return false;
-            }
-        }
-        return true;
-    }
-    throw std::runtime_error("Did not get velocities back from robot. This should not happen!");
-}
-
-AttributeMap UR5eArm::do_command(const AttributeMap& command){
-    if(!command){
-        throw std::runtime_error("command is null\n");
-    }
-    
-    // parse waypoints
-    std::vector<Eigen::VectorXd> waypoints;
-    if(command->count(POSITIONS_KEY) > 0){
-        std::vector<std::shared_ptr<ProtoType>>* vec_protos = (*command)[POSITIONS_KEY]->get<std::vector<std::shared_ptr<ProtoType>>>();
-        if (vec_protos){
-            for(std::shared_ptr<ProtoType>& vec_proto: *vec_protos){
-                std::vector<std::shared_ptr<ProtoType>>* vec_joint_pos = vec_proto->get<std::vector<std::shared_ptr<ProtoType>>>();
-                if (vec_joint_pos){
-                    vector6d_t to_add;
-                    int counter = 0;
-                    for(std::shared_ptr<ProtoType> joint_pos: *vec_joint_pos){
-                        double* joint_pos_deg = joint_pos->get<double>();
-                        to_add[counter] = *joint_pos_deg;
-                        counter += 1;
-                    }
-                    Eigen::VectorXd waypoint = Eigen::VectorXd::Map(to_add.data(), to_add.size());
-                    waypoints.push_back(waypoint);
-                }
-            }
-        }
-    }
-
-    move(waypoints);
-    return NULL;
-}
-
-// Function to read a file and return raw bytes as a vector of chars
-std::vector<unsigned char> readFile(const std::string& filename) {
-    // Open the file in binary mode
-    std::ifstream file(filename, std::ios::binary);
-    
-    if (!file) {
-        throw std::runtime_error("Unable to open file");
-    }
-
-    // Determine the file size
-    file.seekg(0, std::ios::end);
-    std::streamsize fileSize = file.tellg();
-    file.seekg(0, std::ios::beg);
-
-    // Create a buffer to hold the file contents
-    std::vector<unsigned char> buffer(fileSize);
-
-    // Read the file contents into the buffer
-    
-    if (!file.read(reinterpret_cast<char*>(buffer.data()), fileSize)) {
-        throw std::runtime_error("Error reading file");
-    }
-
-    return buffer;
-}
-
-UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra){
-    std::vector<unsigned char> urdf_bytes = readFile(URDF_FILE);
-    return KinematicsDataURDF(std::move(urdf_bytes));
-}
-
-std::vector<GeometryConfig> UR5eArm::get_geometries(const AttributeMap& extra){
-    return std::vector<GeometryConfig>();
-}
-
-void UR5eArm::stop(const AttributeMap& extra){
-    if (!dashboard->commandStop())
-        throw std::runtime_error("UNABLE TO STOP!\n");
 }
 
 void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
@@ -350,4 +264,41 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     }
     mu.unlock();
 }
+
+// function to send trajectories to the UR driver
+void UR5eArm::SendTrajectory(
+    const std::vector<vector6d_t>& p_p, 
+    const std::vector<vector6d_t>& p_v,
+    const std::vector<vector6d_t>& p_a, 
+    const std::vector<double>& time, 
+    bool use_spline_interpolation_
+){
+  assert(p_p.size() == time.size());
+  
+  driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START, p_p.size(), RobotReceiveTimeout::off());
+  for (size_t i = 0; i < p_p.size() && p_p.size() == time.size() && p_p[i].size() == 6; i++)
+  {
+    // MoveJ
+    if (!use_spline_interpolation_)
+    {
+      driver->writeTrajectoryPoint(p_p[i], false, time[i], 0.0);
+    }
+    else  // Use spline interpolation
+    {
+      // QUINTIC
+      if (p_v.size() == time.size() && p_a.size() == time.size() && p_v[i].size() == 6 && p_a[i].size() == 6){
+        driver->writeTrajectorySplinePoint(p_p[i], p_v[i], p_a[i], time[i]);
+      }
+      // CUBIC
+      else if (p_v.size() == time.size() && p_v[i].size() == 6){
+        driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i]);
+      }
+      else{
+        driver->writeTrajectorySplinePoint(p_p[i], time[i]);
+      }
+    }
+  }
+  std::cout << "finshed sending trajectory" << std::endl;
+}
+
 
