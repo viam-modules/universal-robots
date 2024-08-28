@@ -31,8 +31,6 @@
 
 #include <math.h>
 
-#include "utils.h"
-
 using namespace viam::sdk;
 using namespace urcl;
 

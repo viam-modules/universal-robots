@@ -48,7 +48,25 @@ bool UR5eArm::is_moving() {
 }
 
 UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra) {
-    std::vector<unsigned char> urdf_bytes = readFile(URDF_FILE);
+    // Open the file in binary mode
+    std::ifstream file(URDF_FILE, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("Unable to open file");
+    }
+
+    // Determine the file size
+    file.seekg(0, std::ios::end);
+    std::streamsize fileSize = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    // Create a buffer to hold the file contents
+    std::vector<unsigned char> urdf_bytes(fileSize);
+
+    // Read the file contents into the buffer
+    if (!file.read(reinterpret_cast<char*>(urdf_bytes.data()), fileSize)) {
+        throw std::runtime_error("Error reading file");
+    }
+
     return KinematicsDataURDF(std::move(urdf_bytes));
 }
 
