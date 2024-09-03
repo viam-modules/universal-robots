@@ -297,32 +297,30 @@ void UR5eArm::SendTrajectory(
     const std::vector<double>& time, 
     bool use_spline_interpolation_
 ){
-  assert(p_p.size() == time.size());
-  
-  driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START, p_p.size(), RobotReceiveTimeout::off());
-  for (size_t i = 0; i < p_p.size() && p_p.size() == time.size() && p_p[i].size() == 6; i++)
-  {
-    // MoveJ
-    if (!use_spline_interpolation_)
-    {
-      driver->writeTrajectoryPoint(p_p[i], false, time[i], 0.0);
+    assert(p_p.size() == time.size());
+    driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START, p_p.size(), RobotReceiveTimeout::off());
+    for (size_t i = 0; i < p_p.size() && p_p.size() == time.size() && p_p[i].size() == 6; i++) {
+        if (!use_spline_interpolation_) {
+            // MoveJ
+            driver->writeTrajectoryPoint(p_p[i], false, time[i], 0.0);
+        }
+        // Use spline interpolation
+        else {
+            if (p_v.size() == time.size() && p_a.size() == time.size() && p_v[i].size() == 6 && p_a[i].size() == 6){
+                // Quintic
+                driver->writeTrajectorySplinePoint(p_p[i], p_v[i], p_a[i], time[i]);
+            }
+            else if (p_v.size() == time.size() && p_v[i].size() == 6){
+                // Cubic
+                driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i]);
+            }
+            else{
+                // Linear
+                driver->writeTrajectorySplinePoint(p_p[i], time[i]);
+            }
+        }
     }
-    else  // Use spline interpolation
-    {
-      // QUINTIC
-      if (p_v.size() == time.size() && p_a.size() == time.size() && p_v[i].size() == 6 && p_a[i].size() == 6){
-        driver->writeTrajectorySplinePoint(p_p[i], p_v[i], p_a[i], time[i]);
-      }
-      // CUBIC
-      else if (p_v.size() == time.size() && p_v[i].size() == 6){
-        driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i]);
-      }
-      else{
-        driver->writeTrajectorySplinePoint(p_p[i], time[i]);
-      }
-    }
-  }
-  std::cout << "finshed sending trajectory" << std::endl;
+    std::cout << "finished sending trajectory" << std::endl;
 }
 
 
