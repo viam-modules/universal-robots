@@ -191,6 +191,7 @@ bool UR5eArm::initialize() {
 void UR5eArm::keepAlive() {
     while(true){
         mu.lock();
+        std::cout << "KEEPING ALIVE" << std::endl;
         std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
         if (data_pkg)
         {
@@ -201,7 +202,11 @@ void UR5eArm::keepAlive() {
                 std::string error_msg = "Did not find 'actual_q' in data sent from robot. This should not happen!";
                 throw std::runtime_error(error_msg);
             }
-            driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP);
+            driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
+            // driver->writeKeepalive();
+
+        } else {
+            std::cout << "OK BUT WE'RE NOT OK" << std::endl;
         }
         mu.unlock();
         usleep(NOOP_DELAY);
@@ -267,6 +272,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     g_trajectory_running = true;
     while (g_trajectory_running)
     {
+        std::cout << "IN MOVE" << std::endl;
         std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
         if (data_pkg)
         {
