@@ -79,6 +79,7 @@ class UR5eArm : public Arm{
         }
 
     private:
+        bool initialize();
         void keepAlive();
         void move(std::vector<Eigen::VectorXd> waypoints);
         void SendTrajectory(
@@ -105,6 +106,6 @@ class UR5eArm : public Arm{
         const std::string OUTPUT_RECIPE = "/host/Universal_Robots_Client_Library/examples/resources/rtde_output_recipe.txt";
         const std::string INPUT_RECIPE = "/host/Universal_Robots_Client_Library/examples/resources/rtde_input_recipe.txt";
         const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
-        const std::string WAYPOINTS_KEY = "waypoints";
+        const std::string POSITIONS_KEY = "positions";
 };
 
