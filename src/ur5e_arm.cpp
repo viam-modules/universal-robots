@@ -4,7 +4,7 @@
 bool trajectory_running(false);
 void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
-    std::cout << "\033[1;32mProgram running: " << std::boolalpha << program_running << "\033[0m\n" << std::endl;
+    std::cout << "\033[1;32mprogram running: " << std::boolalpha << program_running << "\033[0m\n" << std::endl;
 }
 
 // define callback function to be called by UR client library when trajectory state changes
@@ -23,7 +23,7 @@ void reportTrajectoryState(control::TrajectoryResult state) {
             report = "failure";
             break;
     }
-    std::cout << "\033[1;32mTrajectory report: " << report << "\033[0m\n" << std::endl;
+    std::cout << "\033[1;32mtrajectory report: " << report << "\033[0m\n" << std::endl;
 }
 
 UR5eArm::UR5eArm(Dependencies dep, ResourceConfig cfg) : Arm(cfg.name()) {
@@ -256,7 +256,7 @@ void UR5eArm::send_trajectory(
             }
         }
     }
-    std::cout << "finished sending trajectory" << std::endl;
+    std::cout << "sent trajectory" << std::endl;
 }
 
 // helper function to read a data packet and send a noop message
