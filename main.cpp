@@ -1,4 +1,4 @@
-#include "src/UR5e-Arm.hpp"
+#include "src/ur5e_arm.hpp"
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/module/module.hpp>
