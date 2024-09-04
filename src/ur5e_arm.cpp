@@ -50,20 +50,15 @@ UR5eArm::UR5eArm(Dependencies dep, ResourceConfig cfg) : Arm(cfg.name()) {
     const bool HEADLESS = true;
     driver.reset(new UrDriver(DEFAULT_ROBOT_IP, SCRIPT_FILE, OUTPUT_RECIPE, INPUT_RECIPE, &reportRobotProgramState, HEADLESS,
                                     std::move(tool_comm_setup), CALIBRATION_CHECKSUM));
-
     driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
     
     // Once RTDE communication is started, we have to make sure to read from the interface buffer, as
-    // otherwise we will get pipeline overflows. Therefore, do this directly before starting your main
-    // loop.
+    // otherwise we will get pipeline overflows. Therefore, do this directly before starting your main loop
     driver->startRTDECommunication();
-
-    // read current joint positions from robot data
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
-    if (data_pkg && !data_pkg->getData("actual_q", g_joint_positions)) throw std::runtime_error("couldn't get joint positions");
+    read_and_noop();
 
     // start background thread to continuously send no-ops and keep socket connection alive
-    std::thread t(&UR5eArm::keepAlive, this);
+    std::thread t(&UR5eArm::keep_alive, this);
     t.detach();
 }
 
@@ -163,17 +158,10 @@ AttributeMap UR5eArm::do_command(const AttributeMap& command) {
 }
 
 // Send no-ops and keep socket connection alive
-void UR5eArm::keepAlive() {
-    while(true){
+void UR5eArm::keep_alive() {
+    while(true) {
         mu.lock();
-        std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
-        if (data_pkg) {
-            // read current joint positions from robot data
-            if (!data_pkg->getData("actual_q", g_joint_positions)) throw std::runtime_error("couldn't get joint positions");
-            
-            // send a noop to keep the connection alive
-            driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
-        }
+        read_and_noop();
         mu.unlock();
         usleep(NOOP_DELAY);
     }
@@ -233,23 +221,16 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     }
     
     mu.lock();
-    SendTrajectory(p, v, a, time, true);
+    send_trajectory(p, v, a, time, true);
     trajectory_running = true;
-    while (trajectory_running) `{
-        std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
-        if (data_pkg) {
-            // read current joint positions from robot data
-            if (!data_pkg->getData("actual_q", g_joint_positions)) throw std::runtime_error("couldn't get joint positions");
-            
-            // send a noop to keep the connection alive
-            driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
-        }
+    while (trajectory_running) {
+        read_and_noop();
     }
     mu.unlock();
 }
 
-// function to send trajectories to the UR driver
-void UR5eArm::SendTrajectory(
+// helper function to send time-indexed position, velocity, acceleration setpoints to the UR driver
+void UR5eArm::send_trajectory(
     const std::vector<vector6d_t>& p_p, 
     const std::vector<vector6d_t>& p_v,
     const std::vector<vector6d_t>& p_a, 
@@ -278,4 +259,14 @@ void UR5eArm::SendTrajectory(
     std::cout << "finished sending trajectory" << std::endl;
 }
 
-
+// helper function to read a data packet and send a noop message
+void UR5eArm::read_and_noop() {
+    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
+    if (data_pkg) {
+        // read current joint positions from robot data
+        if (!data_pkg->getData("actual_q", g_joint_positions)) throw std::runtime_error("couldn't get joint positions");
+        
+        // send a noop to keep the connection alive
+        driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
+    }
+}

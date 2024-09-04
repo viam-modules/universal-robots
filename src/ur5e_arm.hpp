@@ -79,16 +79,16 @@ class UR5eArm : public Arm{
         }
 
     private:
-        bool initialize();
-        void keepAlive();
+        void keep_alive();
         void move(std::vector<Eigen::VectorXd> waypoints);
-        void SendTrajectory(
+        void send_trajectory(
             const std::vector<vector6d_t>& p_p, 
             const std::vector<vector6d_t>& p_v,
             const std::vector<vector6d_t>& p_a, 
             const std::vector<double>& time, 
             bool use_spline_interpolation_
         );
+        void read_and_noop();
 
         std::unique_ptr<UrDriver> driver;
         std::unique_ptr<DashboardClient> dashboard;
