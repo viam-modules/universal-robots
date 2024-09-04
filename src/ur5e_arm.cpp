@@ -1,8 +1,66 @@
 #include "ur5e_arm.hpp"
 
-UR5eArm::UR5eArm(Dependencies dep, ResourceConfig cfg) : Arm(cfg.name()), calling_trajectory(false) {
-    if(!initialize())
-        throw std::runtime_error("initialization failed\n");
+// define callback function to be called by UR client library when program state changes
+bool trajectory_running(false);
+void reportRobotProgramState(bool program_running) {
+    // Print the text in green so we see it better
+    std::cout << "\033[1;32mProgram running: " << std::boolalpha << program_running << "\033[0m\n" << std::endl;
+}
+
+// define callback function to be called by UR client library when trajectory state changes
+void reportTrajectoryState(control::TrajectoryResult state) {
+    trajectory_running = false;
+    std::string report = "?";
+    switch (state) {
+        case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
+            report = "success";
+            break;
+        case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED:
+            report = "canceled";
+            break;
+        case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
+        default:
+            report = "failure";
+            break;
+    }
+    std::cout << "\033[1;32mTrajectory report: " << report << "\033[0m\n" << std::endl;
+}
+
+UR5eArm::UR5eArm(Dependencies dep, ResourceConfig cfg) : Arm(cfg.name()) {
+    // connect to the robot dashboard
+    dashboard.reset(new DashboardClient(DEFAULT_ROBOT_IP));
+    if (!dashboard->connect()) throw std::runtime_error("couldn't connect to dashboard");
+    
+    // stop program, if there is one running
+    if (!dashboard->commandStop()) throw std::runtime_error("couldn't stop program running on dashboard");
+
+    // if the robot is not powered on and ready
+    std::string robotModeRunning("RUNNING");
+    while (!dashboard->commandRobotMode(robotModeRunning)) {
+        // power cycle the arm
+        if (!dashboard->commandPowerOff()) throw std::runtime_error("couldn't power off arm");
+        if (!dashboard->commandPowerOn()) throw std::runtime_error("couldn't power on arm");
+    }
+
+    // Release the brakes
+    if (!dashboard->commandBrakeRelease()) throw std::runtime_error("couldn't release the arm brakes");
+
+    // Now the robot is ready to receive a program
+    std::unique_ptr<ToolCommSetup> tool_comm_setup;
+    const bool HEADLESS = true;
+    driver.reset(new UrDriver(DEFAULT_ROBOT_IP, SCRIPT_FILE, OUTPUT_RECIPE, INPUT_RECIPE, &reportRobotProgramState, HEADLESS,
+                                    std::move(tool_comm_setup), CALIBRATION_CHECKSUM));
+
+    driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
+    
+    // Once RTDE communication is started, we have to make sure to read from the interface buffer, as
+    // otherwise we will get pipeline overflows. Therefore, do this directly before starting your main
+    // loop.
+    driver->startRTDECommunication();
+
+    // read current joint positions from robot data
+    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
+    if (data_pkg && !data_pkg->getData("actual_q", g_joint_positions)) throw std::runtime_error("couldn't get joint positions");
 
     // start background thread to continuously send no-ops and keep socket connection alive
     std::thread t(&UR5eArm::keepAlive, this);
@@ -77,10 +135,10 @@ AttributeMap UR5eArm::do_command(const AttributeMap& command) {
         throw std::runtime_error("command is null\n");
     }
     
-    // parse waypoints
-    std::vector<Eigen::VectorXd> waypoints;
-    if(command->count(POSITIONS_KEY) > 0){
-        std::vector<std::shared_ptr<ProtoType>>* vec_protos = (*command)[POSITIONS_KEY]->get<std::vector<std::shared_ptr<ProtoType>>>();
+    // move through a number of waypoints (specified as a 2D array of floats (degrees)) that were sent in a batch
+    if(command->count(WAYPOINTS_KEY) > 0){
+        std::vector<Eigen::VectorXd> waypoints;
+        std::vector<std::shared_ptr<ProtoType>>* vec_protos = (*command)[WAYPOINTS_KEY]->get<std::vector<std::shared_ptr<ProtoType>>>();
         if (vec_protos){
             for(std::shared_ptr<ProtoType>& vec_proto: *vec_protos) {
                 std::vector<std::shared_ptr<ProtoType>>* vec_joint_pos = vec_proto->get<std::vector<std::shared_ptr<ProtoType>>>();
@@ -98,110 +156,23 @@ AttributeMap UR5eArm::do_command(const AttributeMap& command) {
                 }
             }
         }
+        move(waypoints);
     }
 
-    move(waypoints);
     return NULL;
-}
-
-bool g_trajectory_running(false);
-void handleRobotProgramState(bool program_running) {
-    // Print the text in green so we see it better
-    std::cout << "\033[1;32mProgram running: " << std::boolalpha << program_running << "\033[0m\n" << std::endl;
-}
-
-// Callback function for trajectory execution.
-void handleTrajectoryState(control::TrajectoryResult state) {
-    // trajectory_state = state;
-    g_trajectory_running = false;
-    std::string report = "?";
-    switch (state)
-    {
-    case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
-        report = "success";
-        break;
-    case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED:
-        report = "canceled";
-        break;
-    case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
-    default:
-        report = "failure";
-        break;
-    }
-    std::cout << "\033[1;32mTrajectory report: " << report << "\033[0m\n" << std::endl;
-}
-
-bool UR5eArm::initialize() {
-    // Making the robot ready for the program by:
-    // Connect to the robot Dashboard
-    dashboard.reset(new DashboardClient(DEFAULT_ROBOT_IP));
-    if (!dashboard->connect())
-        return false;
-    
-    // Stop program, if there is one running
-    if (!dashboard->commandStop())
-        return false;
-
-    // if the robot is not powered on and ready
-    std::string robotModeRunning("RUNNING");
-    while (!dashboard->commandRobotMode(robotModeRunning))
-    {
-        // Power it off
-        if (!dashboard->commandPowerOff())
-            return false;
-
-        // Power it on
-        if (!dashboard->commandPowerOn())
-            return false;
-    }
-
-    // Release the brakes
-    if (!dashboard->commandBrakeRelease())
-        return false;
-
-    // Now the robot is ready to receive a program
-    std::unique_ptr<ToolCommSetup> tool_comm_setup;
-    const bool HEADLESS = true;
-    driver.reset(new UrDriver(DEFAULT_ROBOT_IP, SCRIPT_FILE, OUTPUT_RECIPE, INPUT_RECIPE, &handleRobotProgramState, HEADLESS,
-                                    std::move(tool_comm_setup), CALIBRATION_CHECKSUM));
-
-    driver->registerTrajectoryDoneCallback(&handleTrajectoryState);
-    
-    // Once RTDE communication is started, we have to make sure to read from the interface buffer, as
-    // otherwise we will get pipeline overflows. Therefore, do this directly before starting your main
-    // loop.
-    driver->startRTDECommunication();
-    std::cout << "started RTDE comms" << std::endl;
-
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
-
-    if (data_pkg)
-    {
-        // Read current joint positions from robot data
-        if (!data_pkg->getData("actual_q", g_joint_positions))
-            return false;
-    }
-
-    return true;
 }
 
 // Send no-ops and keep socket connection alive
 void UR5eArm::keepAlive() {
     while(true){
         mu.lock();
-        // std::cout << "KEEPING ALIVE" << std::endl;
         std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
-        if (data_pkg)
-        {
-            // Read current joint positions from robot data
-            if (!data_pkg->getData("actual_q", g_joint_positions))
-            {
-                // This throwing should never happen unless misconfigured
-                std::string error_msg = "Did not find 'actual_q' in data sent from robot. This should not happen!";
-                throw std::runtime_error(error_msg);
-            }
+        if (data_pkg) {
+            // read current joint positions from robot data
+            if (!data_pkg->getData("actual_q", g_joint_positions)) throw std::runtime_error("couldn't get joint positions");
+            
+            // send a noop to keep the connection alive
             driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
-            // driver->writeKeepalive();
         }
         mu.unlock();
         usleep(NOOP_DELAY);
@@ -214,13 +185,6 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     Eigen::VectorXd curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), curr_joint_pos.size());
     Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI/180.0);
     waypoints.insert(waypoints.begin(), curr_waypoint_rad);
-
-    std::ofstream myfile;
-    myfile.open ("example2.txt");
-    for (int i = 0; i < waypoints.size(); i++) {
-        myfile << waypoints[i] << std::endl;
-    }
-    myfile.close();
 
     // calculate dot products and identify any consecutive segments with dot product == -1
     std::vector<int> segments;
@@ -263,28 +227,21 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
                 v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
                 time.push_back(TIMESTEP);
             }
-        }
-        else {
+        } else {
             throw std::runtime_error("trajectory generation failed\n");
         }
     }
     
     mu.lock();
     SendTrajectory(p, v, a, time, true);
-    g_trajectory_running = true;
-    while (g_trajectory_running)
-    {
-        // std::cout << "IN MOVE" << std::endl;
+    trajectory_running = true;
+    while (trajectory_running) `{
         std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
-        if (data_pkg)
-        {
-            // Read current joint positions from robot data
-            if (!data_pkg->getData("actual_q", g_joint_positions))
-            {
-                // This throwing should never happen unless misconfigured
-                std::string error_msg = "Did not find 'actual_q' in data sent from robot. This should not happen!";
-                throw std::runtime_error(error_msg);
-            }
+        if (data_pkg) {
+            // read current joint positions from robot data
+            if (!data_pkg->getData("actual_q", g_joint_positions)) throw std::runtime_error("couldn't get joint positions");
+            
+            // send a noop to keep the connection alive
             driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
         }
     }
@@ -303,21 +260,17 @@ void UR5eArm::SendTrajectory(
     driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START, p_p.size(), RobotReceiveTimeout::off());
     for (size_t i = 0; i < p_p.size() && p_p.size() == time.size() && p_p[i].size() == 6; i++) {
         if (!use_spline_interpolation_) {
-            // MoveJ
+            // movej
             driver->writeTrajectoryPoint(p_p[i], false, time[i], 0.0);
-        }
-        // Use spline interpolation
-        else {
+        } else { // use spline interpolation
             if (p_v.size() == time.size() && p_a.size() == time.size() && p_v[i].size() == 6 && p_a[i].size() == 6){
-                // Quintic
+                // quintic
                 driver->writeTrajectorySplinePoint(p_p[i], p_v[i], p_a[i], time[i]);
-            }
-            else if (p_v.size() == time.size() && p_v[i].size() == 6){
-                // Cubic
+            } else if (p_v.size() == time.size() && p_v[i].size() == 6){
+                // cubic
                 driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i]);
-            }
-            else{
-                // Linear
+            } else{
+                // linear
                 driver->writeTrajectorySplinePoint(p_p[i], time[i]);
             }
         }
