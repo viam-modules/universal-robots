@@ -10,7 +10,7 @@ void reportRobotProgramState(bool program_running) {
 // define callback function to be called by UR client library when trajectory state changes
 void reportTrajectoryState(control::TrajectoryResult state) {
     trajectory_running = false;
-    std::string report = "?";
+    std::string report;
     switch (state) {
         case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
             report = "success";
@@ -21,7 +21,6 @@ void reportTrajectoryState(control::TrajectoryResult state) {
         case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
         default:
             report = "failure";
-            break;
     }
     std::cout << "\033[1;32mtrajectory report: " << report << "\033[0m\n" << std::endl;
 }
@@ -87,17 +86,7 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
 }
 
 bool UR5eArm::is_moving() {
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
-    vector6d_t joint_velocities;
-    if (data_pkg && data_pkg->getData("actual_q", joint_velocities)){
-        for(double joint_vel : joint_velocities){
-            if (joint_vel > STOP_VELOCITY_THRESHOLD){
-                return false;
-            }
-        }
-        return true;
-    }
-    throw std::runtime_error("couldn't get velocities from arm");
+    return trajectory_running;
 }
 
 UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra) {
@@ -123,7 +112,9 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra) {
     return KinematicsDataURDF(std::move(urdf_bytes));
 }
 
-void UR5eArm::stop(const AttributeMap& extra) {}
+void UR5eArm::stop(const AttributeMap& extra) {
+
+}
 
 AttributeMap UR5eArm::do_command(const AttributeMap& command) {
     if(!command){
