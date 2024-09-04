@@ -93,7 +93,6 @@ class UR5eArm : public Arm{
         std::unique_ptr<UrDriver> driver;
         std::unique_ptr<DashboardClient> dashboard;
         vector6d_t g_joint_positions;
-        std::atomic<bool> calling_trajectory;
         std::mutex mu;
 
         const double STOP_VELOCITY_THRESHOLD = 0.005; // rad/s
