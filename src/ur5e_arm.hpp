@@ -22,7 +22,7 @@
 #include <Path.h>
 #include <Trajectory.h>
 
-using namespace viam::sdk;
+using namespace viam::sdk; 
 using namespace urcl;
 
 class UR5eArm : public Arm{
