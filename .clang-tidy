@@ -1,0 +1,28 @@
+Checks: >
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-*,
+  concurrency-*,
+  misc-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-macro-parentheses,
+  -readability-identifier-length,
+  -readability-named-parameter,
+  -readability-implicit-bool-conversion,
+  -readability-magic-numbers,
+  -misc-include-cleaner,
+  -readability-function-cognitive-complexity,
+  -readability-else-after-return,
+WarningsAsErrors: '*'
+FormatStyle: none
+CheckOptions:
+  - key: misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic
+    value: true
+  - key: readability-function-cognitive-complexity.Threshold
+    value: 30
+  - key: performance-move-const-arg.CheckTriviallyCopyableMove
+    value: false
