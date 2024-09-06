@@ -4,7 +4,7 @@ AllowShortLoopsOnASingleLine: false
 BasedOnStyle: Google
 BinPackArguments: false
 BinPackParameters: false
-ColumnLimit: 100
+ColumnLimit: 140
 Cpp11BracedListStyle: true
 DerivePointerAlignment: false
 IncludeBlocks: Preserve

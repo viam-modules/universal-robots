@@ -36,8 +36,7 @@ class UR5eArm : public Arm {
     /// @brief Move to the the specified joint positions (in degrees)
     /// @param positions The joint positions in degrees to move to
     /// @param extra Any additional arguments to the method.
-    void move_to_joint_positions(const std::vector<double>& positions,
-                                 const AttributeMap& extra) override;
+    void move_to_joint_positions(const std::vector<double>& positions, const AttributeMap& extra) override;
 
     /// @brief Reports if the arm is in motion.
     bool is_moving() override;
@@ -92,12 +91,9 @@ class UR5eArm : public Arm {
 
     const std::string DEFAULT_ROBOT_IP = "10.1.10.84";
     const std::string URDF_FILE = "/host/src/ur5e.urdf";
-    const std::string SCRIPT_FILE =
-        "/host/Universal_Robots_Client_Library/resources/external_control.urscript";
-    const std::string OUTPUT_RECIPE =
-        "/host/Universal_Robots_Client_Library/examples/resources/rtde_output_recipe.txt";
-    const std::string INPUT_RECIPE =
-        "/host/Universal_Robots_Client_Library/examples/resources/rtde_input_recipe.txt";
+    const std::string SCRIPT_FILE = "/host/Universal_Robots_Client_Library/resources/external_control.urscript";
+    const std::string OUTPUT_RECIPE = "/host/Universal_Robots_Client_Library/examples/resources/rtde_output_recipe.txt";
+    const std::string INPUT_RECIPE = "/host/Universal_Robots_Client_Library/examples/resources/rtde_input_recipe.txt";
     const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
     const std::string WAYPOINTS_KEY = "waypoints";
 };
