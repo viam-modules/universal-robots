@@ -115,8 +115,10 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra) {
 }
 
 void UR5eArm::stop(const AttributeMap& extra) {
-    trajectory_running = false;
-    driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
+    if (trajectory_running) {
+        trajectory_running = false;
+        driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
+    }
 }
 
 AttributeMap UR5eArm::do_command(const AttributeMap& command) {
