@@ -1,12 +1,5 @@
 #pragma once
 
-#include <string>
-
-#include <boost/log/trivial.hpp>
-
-#include <vector>
-#include <unistd.h>
-
 #include <viam/api/robot/v1/robot.pb.h>
 #include <viam/api/common/v1/common.grpc.pb.h>
 #include <viam/api/component/generic/v1/generic.grpc.pb.h>
@@ -28,8 +21,6 @@
 
 #include <Path.h>
 #include <Trajectory.h>
-
-#include <math.h>
 
 using namespace viam::sdk;
 using namespace urcl;
@@ -92,7 +83,7 @@ class UR5eArm : public Arm{
 
         std::unique_ptr<UrDriver> driver;
         std::unique_ptr<DashboardClient> dashboard;
-        vector6d_t g_joint_positions;
+        vector6d_t joint_state;
         std::mutex mu;
 
         const double STOP_VELOCITY_THRESHOLD = 0.005; // rad/s

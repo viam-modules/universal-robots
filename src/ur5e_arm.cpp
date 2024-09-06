@@ -1,7 +1,9 @@
 #include "ur5e_arm.hpp"
 
+// global used to track if a trajectory is in progress
+std::atomic<bool> trajectory_running(false);
+
 // define callback function to be called by UR client library when program state changes
-bool trajectory_running(false);
 void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
     std::cout << "\033[1;32mprogram running: " << std::boolalpha << program_running << "\033[0m\n" << std::endl;
@@ -64,9 +66,9 @@ UR5eArm::UR5eArm(Dependencies dep, ResourceConfig cfg) : Arm(cfg.name()) {
 std::vector<double> UR5eArm::get_joint_positions(const AttributeMap& extra) {
     mu.lock();
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
-    if (data_pkg && data_pkg->getData("actual_q", g_joint_positions)){
+    if (data_pkg && data_pkg->getData("actual_q", joint_state)) {
         std::vector<double> to_ret;
-        for(double joint_pos_rad: g_joint_positions){
+        for(double joint_pos_rad: joint_state){
             double joint_pos_deg = 180.0/M_PI * joint_pos_rad;
             to_ret.push_back(joint_pos_deg);
         }
@@ -113,7 +115,9 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra) {
 }
 
 void UR5eArm::stop(const AttributeMap& extra) {
-
+    trajectory_running = false;
+    driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
+    std::cout << "STOPPED" << std::endl; 
 }
 
 AttributeMap UR5eArm::do_command(const AttributeMap& command) {
@@ -255,7 +259,7 @@ void UR5eArm::read_and_noop() {
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg) {
         // read current joint positions from robot data
-        if (!data_pkg->getData("actual_q", g_joint_positions)) throw std::runtime_error("couldn't get joint positions");
+        if (!data_pkg->getData("actual_q", joint_state)) throw std::runtime_error("couldn't get joint positions");
         
         // send a noop to keep the connection alive
         driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
