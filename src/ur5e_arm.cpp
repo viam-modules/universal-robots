@@ -27,29 +27,34 @@ void reportTrajectoryState(control::TrajectoryResult state) {
     std::cout << "\033[1;32mtrajectory report: " << report << "\033[0m\n" << std::endl;
 }
 
-UR5eArm::UR5eArm(Dependencies dep, ResourceConfig cfg) : Arm(cfg.name()) {
+UR5eArm::UR5eArm(Dependencies dep, const ResourceConfig& cfg) : Arm(cfg.name()) {
     // connect to the robot dashboard
     dashboard.reset(new DashboardClient(DEFAULT_ROBOT_IP));
-    if (!dashboard->connect())
+    if (!dashboard->connect()) {
         throw std::runtime_error("couldn't connect to dashboard");
+    }
 
     // stop program, if there is one running
-    if (!dashboard->commandStop())
+    if (!dashboard->commandStop()) {
         throw std::runtime_error("couldn't stop program running on dashboard");
+    }
 
     // if the robot is not powered on and ready
     std::string robotModeRunning("RUNNING");
     while (!dashboard->commandRobotMode(robotModeRunning)) {
         // power cycle the arm
-        if (!dashboard->commandPowerOff())
+        if (!dashboard->commandPowerOff()) {
             throw std::runtime_error("couldn't power off arm");
-        if (!dashboard->commandPowerOn())
+        }
+        if (!dashboard->commandPowerOn()) {
             throw std::runtime_error("couldn't power on arm");
+        }
     }
 
     // Release the brakes
-    if (!dashboard->commandBrakeRelease())
+    if (!dashboard->commandBrakeRelease()) {
         throw std::runtime_error("couldn't release the arm brakes");
+    }
 
     // Now the robot is ready to receive a program
     std::unique_ptr<ToolCommSetup> tool_comm_setup;
@@ -272,8 +277,9 @@ void UR5eArm::read_and_noop() {
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg) {
         // read current joint positions from robot data
-        if (!data_pkg->getData("actual_q", joint_state))
+        if (!data_pkg->getData("actual_q", joint_state)) {
             throw std::runtime_error("couldn't get joint positions");
+        }
 
         // send a noop to keep the connection alive
         driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());

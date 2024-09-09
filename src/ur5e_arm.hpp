@@ -1,9 +1,5 @@
 #pragma once
 
-#include <viam/api/common/v1/common.grpc.pb.h>
-#include <viam/api/component/generic/v1/generic.grpc.pb.h>
-#include <viam/api/robot/v1/robot.pb.h>
-
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/config/resource.hpp>
@@ -11,7 +7,6 @@
 #include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/resource.hpp>
-#include <viam/sdk/spatialmath/geometry.hpp>
 
 #include <ur_client_library/control/trajectory_point_interface.h>
 #include <ur_client_library/types.h>
@@ -24,9 +19,21 @@
 using namespace viam::sdk;
 using namespace urcl;
 
+const double STOP_VELOCITY_THRESHOLD = 0.005;  // rad/s
+const int NOOP_DELAY = 100000;                 // microseconds
+const double TIMESTEP = 0.2;                   // seconds
+
+const std::string DEFAULT_ROBOT_IP = "10.1.10.84";
+const std::string URDF_FILE = "/host/src/ur5e.urdf";
+const std::string SCRIPT_FILE = "/host/Universal_Robots_Client_Library/resources/external_control.urscript";
+const std::string OUTPUT_RECIPE = "/host/Universal_Robots_Client_Library/examples/resources/rtde_output_recipe.txt";
+const std::string INPUT_RECIPE = "/host/Universal_Robots_Client_Library/examples/resources/rtde_input_recipe.txt";
+const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
+const std::string WAYPOINTS_KEY = "waypoints";
+
 class UR5eArm : public Arm {
    public:
-    UR5eArm(Dependencies dep, ResourceConfig cfg);
+    UR5eArm(Dependencies dep, const ResourceConfig& cfg);
 
     /// @brief Get the joint positions of the arm (in degrees)
     /// @param extra Any additional arguments to the method.
@@ -84,16 +91,4 @@ class UR5eArm : public Arm {
     std::unique_ptr<DashboardClient> dashboard;
     vector6d_t joint_state;
     std::mutex mu;
-
-    const double STOP_VELOCITY_THRESHOLD = 0.005;  // rad/s
-    const int NOOP_DELAY = 100000;                 // microseconds
-    const double TIMESTEP = 0.2;                   // seconds
-
-    const std::string DEFAULT_ROBOT_IP = "10.1.10.84";
-    const std::string URDF_FILE = "/host/src/ur5e.urdf";
-    const std::string SCRIPT_FILE = "/host/Universal_Robots_Client_Library/resources/external_control.urscript";
-    const std::string OUTPUT_RECIPE = "/host/Universal_Robots_Client_Library/examples/resources/rtde_output_recipe.txt";
-    const std::string INPUT_RECIPE = "/host/Universal_Robots_Client_Library/examples/resources/rtde_input_recipe.txt";
-    const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
-    const std::string WAYPOINTS_KEY = "waypoints";
 };

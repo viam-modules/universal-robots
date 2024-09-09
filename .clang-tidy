@@ -1,22 +1,24 @@
 Checks: >
   -*,
   bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-macro-parentheses,
   cert-*,
   clang-analyzer-*,
   concurrency-*,
   misc-*,
+  -misc-unused-parameters,
+  -misc-include-cleaner,
   performance-*,
   portability-*,
   readability-*,
-  -bugprone-easily-swappable-parameters,
-  -bugprone-macro-parentheses,
   -readability-identifier-length,
   -readability-named-parameter,
   -readability-implicit-bool-conversion,
   -readability-magic-numbers,
-  -misc-include-cleaner,
   -readability-function-cognitive-complexity,
   -readability-else-after-return,
+  -readability-convert-member-functions-to-static
 WarningsAsErrors: '*'
 FormatStyle: none
 CheckOptions:
