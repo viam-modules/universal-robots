@@ -1,0 +1,39 @@
+name: Publish Docker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'main'
+      - 'dockerize'
+    paths:
+      - 'Dockerfile'
+
+jobs:
+  docker:
+    name: Build Docker Image
+    permissions:
+      packages: write
+    timeout-minutes: 45
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            make_target: docker-amd64-ci
+          - os: buildjet-16vcpu-ubuntu-2204-arm
+            make_target: docker-arm64-ci
+
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Build and Push
+        run: make ${{ matrix.make_target }}
