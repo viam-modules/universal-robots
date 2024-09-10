@@ -1,5 +1,12 @@
 #pragma once
 
+#include <Path.h>
+#include <Trajectory.h>
+#include <ur_client_library/control/trajectory_point_interface.h>
+#include <ur_client_library/types.h>
+#include <ur_client_library/ur/dashboard_client.h>
+#include <ur_client_library/ur/ur_driver.h>
+
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/config/resource.hpp>
@@ -7,14 +14,6 @@
 #include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/resource.hpp>
-
-#include <ur_client_library/control/trajectory_point_interface.h>
-#include <ur_client_library/types.h>
-#include <ur_client_library/ur/dashboard_client.h>
-#include <ur_client_library/ur/ur_driver.h>
-
-#include <Path.h>
-#include <Trajectory.h>
 
 using namespace viam::sdk;
 using namespace urcl;
