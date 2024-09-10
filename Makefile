@@ -3,7 +3,7 @@ format: src/*.*pp
 	ls src/*.*pp | xargs clang-format -i --style=file
 
 SANITIZE ?= OFF
-universal-robots: src/*
+universal-robots: format src/*
 	rm -rf build/ && \
 	mkdir build && \
 	cd build && \
@@ -21,7 +21,7 @@ clean-all: clean
 	git clean -fxd
 
 # Docker
-BUILD_CMD = docker buildx build --pull $(BUILD_PUSH) --force-rm --no-cache --build-arg MAIN_TAG=$(MAIN_TAG) \
+BUILD_CMD = docker buildx build --pull $(BUILD_PUSH) --force-rm --build-arg MAIN_TAG=$(MAIN_TAG) \
 	--build-arg BASE_TAG=$(BUILD_TAG) --platform linux/$(BUILD_TAG) -f $(BUILD_FILE) -t '$(MAIN_TAG):$(BUILD_TAG)' .
 BUILD_PUSH = --load
 BUILD_FILE = Dockerfile
