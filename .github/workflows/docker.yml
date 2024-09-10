@@ -13,6 +13,7 @@ jobs:
   docker:
     name: Build Docker Image
     permissions:
+      contents: read
       packages: write
     timeout-minutes: 45
     runs-on: ${{ matrix.os }}
