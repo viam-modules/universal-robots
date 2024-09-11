@@ -41,6 +41,7 @@ RUN apt-add-repository -y 'deb http://apt.llvm.org/bookworm/ llvm-toolchain-book
 RUN apt-get update
 RUN apt-get -y --no-install-recommends install -t llvm-toolchain-bookworm-15 \
     clang-15 \
+    clang-format-15 \
     clang-tidy-15
 
 RUN mkdir -p /root/opt/src
