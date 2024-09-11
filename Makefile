@@ -1,6 +1,6 @@
 # format the source code
 format: src/*.*pp
-	ls src/*.*pp | xargs clang-format -i --style=file
+	ls src/*.*pp | xargs clang-format-15 -i --style=file
 
 SANITIZE ?= OFF
 universal-robots: format src/*
