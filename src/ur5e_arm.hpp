@@ -1,7 +1,5 @@
 #pragma once
 
-#include <Path.h>
-#include <Trajectory.h>
 #include <ur_client_library/control/trajectory_point_interface.h>
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
@@ -14,6 +12,9 @@
 #include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/resource.hpp>
+
+#include "../trajectories/Path.h"
+#include "../trajectories/Trajectory.h"
 
 using namespace viam::sdk;
 using namespace urcl;

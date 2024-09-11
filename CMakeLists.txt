@@ -14,15 +14,20 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk.git
   GIT_TAG main
   CMAKE_ARGS -DVIAMCPPSDK_USE_DYNAMIC_PROTOS=ON
+  EXCLUDE_FROM_ALL
   FIND_PACKAGE_ARGS
 )
 FetchContent_MakeAvailable(viam-cpp-sdk)
 
-include_directories(/usr/local/lib/cmake/viam-cpp-sdk)
-find_package (Eigen3 3.3 REQUIRED NO_MODULE)
-include_directories(${PROJECT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/Universal_Robots_Client_Library/include ${PROJECT_SOURCE_DIR}/trajectories)
-link_directories(Universal_Robots_Client_Library/build)
+FetchContent_Declare(
+  Universal_Robots_Client_Library
+  GIT_REPOSITORY https://github.com/UniversalRobots/Universal_Robots_Client_Library
+  GIT_TAG        1.3.7
+  EXCLUDE_FROM_ALL
+)
+FetchContent_MakeAvailable(Universal_Robots_Client_Library)
 
-FILE(GLOB sources *.cpp)
-add_executable(universal-robots ${sources} src/ur5e_arm.cpp src/ur5e_arm.hpp trajectories/Path.cpp trajectories/Trajectory.cpp)
+find_package (Eigen3 3.3 REQUIRED NO_MODULE)
+
+add_executable(universal-robots main.cpp src/ur5e_arm.cpp trajectories/Path.cpp trajectories/Trajectory.cpp)
 target_link_libraries(universal-robots PRIVATE viam-cpp-sdk::viamsdk Eigen3::Eigen urcl)
