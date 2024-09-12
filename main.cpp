@@ -13,7 +13,7 @@ using namespace viam::sdk;
 
 int main(int argc, char** argv) {
     API arm_api = API::get<Arm>();
-    Model ur5e_model("viamrobotics", "arm", "ur5earm");
+    Model ur5e_model("viam", "universal-robots", "ur5e");
 
     std::shared_ptr<ModelRegistration> ur5e_mr = std::make_shared<ModelRegistration>(
         arm_api, ur5e_model, [](Dependencies dep, ResourceConfig cfg) { return std::make_unique<UR5eArm>(dep, cfg); });

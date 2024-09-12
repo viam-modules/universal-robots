@@ -59,3 +59,9 @@ This should start up your instance of `viam-server` and now you can run client s
 
 Have fun!
 
+## TODOs
+- configurable logging https://www.boost.org/doc/libs/1_84_0/libs/log/doc/html/log/tutorial/trivial_filtering.html
+- configs
+- appimages
+- workflows
+- metafile

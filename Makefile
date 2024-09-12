@@ -9,16 +9,11 @@ universal-robots: format src/*
 	cd build && \
 	cmake -G Ninja -DENABLE_SANITIZER=$(SANITIZE) .. && \
 	ninja all -j 4
+	mv universal-robots ..
 
 default: universal-robots
 
 all: default
-
-clean:
-	rm -rf universal-robots
-
-clean-all: clean
-	git clean -fxd
 
 # Docker
 BUILD_CMD = docker buildx build --pull $(BUILD_PUSH) --force-rm --build-arg MAIN_TAG=$(MAIN_TAG) \
