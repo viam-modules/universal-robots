@@ -1,0 +1,41 @@
+# appimage-builder recipe see https://appimage-builder.readthedocs.io for details
+version: 1
+script:
+ - rm -rf AppDir || true
+ - mkdir -p $TARGET_APPDIR/usr/bin $TARGET_APPDIR/usr/lib
+ - cp ../../build/universal-robots $TARGET_APPDIR/usr/bin/
+ - cp ../../build/_deps/universal_robots_client_library-build/liburcl.so $TARGET_APPDIR/usr/lib/
+ - mkdir -p $TARGET_APPDIR/usr/share/icons/viam/256x256/apps/
+ - cp ./viam-server.png $TARGET_APPDIR/usr/share/icons/viam/256x256/apps/viam-server.png
+ - go install github.com/Otterverse/aix@latest
+ - cp `go env GOPATH`/bin/aix $TARGET_APPDIR/usr/bin/
+ - chmod 755 $TARGET_APPDIR/usr/bin/*
+
+AppDir:
+  path: ./AppDir
+  app_info:
+    id: com.viam.camerarealsense
+    name: universal-robots
+    icon: viam-server
+    version: "latest"
+    exec: usr/bin/aix
+    exec_args: $@
+  apt:
+    arch:
+    - amd64
+    allow_unauthenticated: true
+    sources: []
+    include: []
+  files:
+    include:
+    - /usr/local/lib/libviamsdk* 
+    exclude:
+    - usr/share/man
+    - usr/share/doc
+  runtime:
+    env:
+        AIX_TARGET: usr/bin/universal-robots
+AppImage:
+  arch: x86_64
+  comp: gzip
+  update-information: zsync|http://packages.viam.com/apps/camera-servers/universal-robots-latest-x86_64.AppImage.zsync

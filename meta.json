@@ -1,0 +1,14 @@
+{
+  "$schema": "https://dl.viam.dev/module.schema.json",
+  "module_id": "viam:universal-robots",
+  "visibility": "private",
+  "url": "https://github.com/viam-modules/universal-robots",
+  "description": "C++ module for Universal Robots arms",
+  "models": [
+    {
+      "api": "rdk:service:arm",
+      "model": "viam:universal-robots:ur5e"
+    }
+  ],
+  "entrypoint": "universal-robots.AppImage"
+}
