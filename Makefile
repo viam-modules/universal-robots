@@ -1,16 +1,23 @@
-default: universal-robots
+default: build/universal-robots
 
 # format the source code
-format: src/*.*pp main.cpp
+format:
 	ls src/*.*pp main.cpp | xargs clang-format-15 -i --style=file
 
+build: 
+	mkdir build
+
 SANITIZE ?= OFF
-universal-robots: format src/*
-	rm -rf build/ && \
-	mkdir build && \
+build/universal-robots: format build
 	cd build && \
 	cmake -G Ninja -DENABLE_SANITIZER=$(SANITIZE) .. && \
 	ninja all -j 4
+
+clean: 
+	rm -rf build
+
+clean-all:
+	git clean -fxd
 
 # Docker
 BUILD_CMD = docker buildx build --pull $(BUILD_PUSH) --force-rm --build-arg MAIN_TAG=$(MAIN_TAG) \
@@ -56,12 +63,12 @@ endef
 # Targets for building AppImages
 appimage-arm64: export OUTPUT_NAME = universal-robots
 appimage-arm64: export ARCH = aarch64
-appimage-arm64:
+appimage-arm64: build/universal-robots
 	$(call BUILD_APPIMAGE,$(OUTPUT_NAME),$(ARCH))
-	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage ./packaging/appimages/deploy/
+	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
 
 appimage-amd64: export OUTPUT_NAME = universal-robots
 appimage-amd64: export ARCH = x86_64
-appimage-amd64:
+appimage-amd64: build/universal-robots
 	$(call BUILD_APPIMAGE,$(OUTPUT_NAME),$(ARCH))
-	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage ./packaging/appimages/deploy/
+	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/

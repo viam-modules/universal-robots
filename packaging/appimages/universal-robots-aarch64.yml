@@ -36,6 +36,6 @@ AppDir:
     env:
         AIX_TARGET: usr/bin/universal-robots
 AppImage:
-  arch: x86_64
+  arch: aarch64
   comp: gzip
   update-information: zsync|http://packages.viam.com/apps/camera-servers/universal-robots-latest-aarch64.AppImage.zsync
