@@ -1,67 +1,111 @@
-# ur5e-arm-module
+# [`universal-robots` module](https://app.viam.com/module/viam/universal-robots)
 
-## Steps to Run
-Start by cloning this repository onto your local machine
-```
-git clone https://github.com/viamrobotics/ur5e-arm-module.git
-```
+This repo is a [module](https://docs.viam.com/registry/#modular-resources) that implements the [`rdk:component:arm` API](https://docs.viam.com/components/arm/) resource to allow control over [Universal Robots](https://www.universal-robots.com/) arms
 
-Make sure to initialize the submodules (Universal Robots Client Library + trajectory generation repos) by running
-```
-git submodule update --init
-```
+## Configuration and Usage
 
-Make note of the full path of this repository, you will need it later
+Navigate to the [**CONFIGURE** tab](https://docs.viam.com/build/configure/) of your [machine](https://docs.viam.com/fleet/machines/) in [the Viam app](https://app.viam.com/).
+[Add `arm / universal-robots` to your machine](https://docs.viam.com/build/configure/#components).
 
-The module needs `viam-cpp-sdk` installed alongside all of its dependencies. Therefore, to make the development process easier, we use the `viam-camera-realsense` docker image as this has `viam-cpp-sdk`, `ninja` (the build tool we use), and most dependencies. In order to run this docker image, make sure you have docker installed and run
+On the new component panel, copy and paste the following attribute template into your camera’s attributes field, editing the attributes as applicable:
 
-```
-sudo docker run --privileged --net=host --volume <PATH_TO_UR5E_ARM_MODULE_REPO>:/host -it ghcr.io/viamrobotics/viam-camera-realsense:amd64
+```json
+{
+    "host": "10.1.10.84",
+    "speed_degs_per_sec": 60,
+}
 ```
 
-Notes:
-* This will only work on x86 machines (i.e. Framework laptops). This image is specifically meant for these architectures (hence the `amd64` tag at the end of the docker image name). If you can find a docker image with all of `viam-cpp-sdk` + dependencies preinstalled, I don't see why you couldn't build and run this executable on M-series Macs
-* Replace the <PATH_TO_UR5E_ARM_MODULE_REPO> with the absolute path to your cloned repository
-* `--privileged` allows something called `modprobe fuse` to run inside the docker which is necessary for running `viam-server`
-* `--net=host` allows the docker image to get full access to the wifi network that your host machine has. I tried experimenting with just forwarding a single port but that didn't seem to work
+> [!NOTE]  
+> For more information, see [Configure a Machine](https://docs.viam.com/manage/configuration/).
 
-Once inside the docker image, the ur5e-arm-module repo will have been mounted to `/host`. Change into this directory, and you will see all your mounted files
+### Attributes
 
-## Building the module inside Docker
-The build tool used for this c++ module is `ninja`. It should come preinstalled in the `viam-camera-realsense` docker image. However, this docker image does not have the `Eigen3` dependency preinstalled so first run:
+The following attributes are available for `viam:universal-robots` arms:
 
-```
-sudo apt update
-sudo apt install libeigen3-dev
-```
+| Name | Type | Inclusion | Description |
+| ---- | ---- | --------- | ----------- |
+| `host` | string | **Required** | The IP address of the robot arm, specified as a string. |
+| `speed_degs_per_sec` | float | Optional | The maximum speed of the arm joints specified. A default of TODO will be used if unset. |
 
-Now you should be able to run
+### Example configuration:
 
 ```
-mkdir build && cd build
-cmake ..
-make
+{
+    "components": [
+        {
+        "name": "myURArm",
+        "attributes": {
+            "host": "10.1.10.84",
+            "speed_degs_per_sec": 60,
+        },
+        "namespace": "rdk",
+        "type": "arm",
+        "model": "viam:arm:universal-robots"
+        }
+    ]
+}
 ```
 
-which will give you an executable called `universal-robots`
+### Test the module
 
-## Running the arm with viam-server
-Follow instructions on app to get viam-server executable inside your docker (standard Linux instructions)
+Before testing the module, make sure that your machine is connected to the Viam app, displaying as **Live** in the part status dropdown in the top right corner of the machine's page.
 
-Create a new machine on app. Add an Arm Component as well as the Arm module by providing the absolute path of the `universal-robots` executable inside your docker. 
+### Interacting with the Arm
+Once the module is working you can interact with your Universal Robots arm in a couple ways:
+- You can view data from and manipulate your arm live on the **CONTROL** tab of the Viam app.
+For more information, see [Control Machines](https://docs.viam.com/fleet/control/).
+- More advanced control of the arm can be achieved by using one of [Viam's client SDK libraries](https://docs.viam.com/components/arm/#control-your-arm-with-viams-client-sdk-libraries)
 
-Grab the json for your machine and inside the docker run
+### Locally install the module
+TODO
+
+<!-- If you are using a Linux machine, and do not want to use the Viam registry, you can download the module AppImage from our servers directly to your machine:
+
 ```
-sudo ./viam-server -config=<NAME_OF_JSON>
+sudo curl -o /usr/local/bin/viam-camera-realsense http://packages.viam.com/apps/camera-servers/viam-camera-realsense-latest-aarch64.AppImage
+sudo chmod a+rx /usr/local/bin/viam-camera-realsense
 ```
 
-This should start up your instance of `viam-server` and now you can run client scripts from inside the docker or even on your host machine to communicate with this server instance
+If you need the AppImage associated with a specific tag, replace `latest` in the URL with the tag version, i.e. `0.0.X`.
 
-Have fun!
+Then, follow the instructions to [add a local module](https://docs.viam.com/registry/configure/#add-a-local-module) to add the local instance of the `realsense` module to your machine.
+Provide an **Executable path** of `/usr/local/bin/viam-camera-realsense` when adding the module.
 
-## TODOs
+Or, if you aren't using the Viam app to manage your machine's configuration, modify your machine's JSON file as follows to add the `realsense` module to your machine: 
+
+```
+"modules": [
+    {
+        "type": "local",
+        "name": "intel",
+        "executable_path": "/usr/local/bin/viam-camera-realsense"
+    }
+],
+``` -->
+
+## Building the module
+TODO
+
+## Integration Tests
+TODO
+
+## Known supported hardware
+TODO
+
+## Linux distribution recommendation
+TODO
+
+## Troubleshooting
+TODO
+
+## Using with a Frame System
+TODO
+
+## Remaining TODOs
 - configurable logging https://www.boost.org/doc/libs/1_84_0/libs/log/doc/html/log/tutorial/trivial_filtering.html
 - configs
-- appimages
 - workflows
-- metafile
+- integration tests
+- address sanitizer?
+- README sections
