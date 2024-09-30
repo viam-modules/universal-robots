@@ -19,17 +19,16 @@
 using namespace viam::sdk;
 using namespace urcl;
 
-const double STOP_VELOCITY_THRESHOLD = 0.005;  // rad/s
-const int NOOP_DELAY = 100000;                 // microseconds
-const double TIMESTEP = 0.2;                   // seconds
+const int NOOP_DELAY = 100000;  // 100 milliseconds
+const double TIMESTEP = 0.2;    // seconds
 
-const std::string DEFAULT_ROBOT_IP = "10.1.10.84";
+// locations of files necessary to build module, specified as absolute paths
+// TODO: figure out how to make these relative paths
 const std::string URDF_FILE = "/host/src/ur5e.urdf";
 const std::string SCRIPT_FILE = "/host/src/control/external_control.urscript";
 const std::string OUTPUT_RECIPE = "/host/src/control/rtde_output_recipe.txt";
 const std::string INPUT_RECIPE = "/host/src/control/rtde_input_recipe.txt";
 const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
-const std::string WAYPOINTS_KEY = "waypoints";
 
 class UR5eArm : public Arm {
    public:

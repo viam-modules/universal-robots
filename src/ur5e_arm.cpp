@@ -27,9 +27,30 @@ void reportTrajectoryState(control::TrajectoryResult state) {
     std::cout << "\033[1;32mtrajectory report: " << report << "\033[0m\n" << std::endl;
 }
 
+// helper function to extract an attribute value from its key within a ResourceConfig
+template <class T>
+T find_config_attribute(const ResourceConfig& cfg, std::string attribute) {
+    std::ostringstream buffer;
+    auto motor = cfg.attributes()->find(attribute);
+    if (motor == cfg.attributes()->end()) {
+        buffer << "required attribute `" << attribute << "` not found in configuration";
+        throw std::invalid_argument(buffer.str());
+    }
+    const auto* const val = motor->second->get<T>();
+    if (!val) {
+        buffer << "required non-empty attribute `" << attribute << " could not be decoded";
+        throw std::invalid_argument(buffer.str());
+    }
+    return *val;
+}
+
 UR5eArm::UR5eArm(Dependencies dep, const ResourceConfig& cfg) : Arm(cfg.name()) {
+    // extract relevant attributes from config
+    auto host = find_config_attribute<std::string>(cfg, "host");
+    auto speed = find_config_attribute<double>(cfg, "speed_degs_per_sec");
+
     // connect to the robot dashboard
-    dashboard.reset(new DashboardClient(DEFAULT_ROBOT_IP));
+    dashboard.reset(new DashboardClient(host));
     if (!dashboard->connect()) {
         throw std::runtime_error("couldn't connect to dashboard");
     }
@@ -59,7 +80,7 @@ UR5eArm::UR5eArm(Dependencies dep, const ResourceConfig& cfg) : Arm(cfg.name()) 
     // Now the robot is ready to receive a program
     std::unique_ptr<ToolCommSetup> tool_comm_setup;
     const bool HEADLESS = true;
-    driver.reset(new UrDriver(DEFAULT_ROBOT_IP,
+    driver.reset(new UrDriver(host,
                               SCRIPT_FILE,
                               OUTPUT_RECIPE,
                               INPUT_RECIPE,
@@ -145,9 +166,9 @@ AttributeMap UR5eArm::do_command(const AttributeMap& command) {
 
     // move through a number of waypoints (specified as a 2D array of floats (degrees)) that were
     // sent in a batch
-    if (command->count(WAYPOINTS_KEY) > 0) {
+    if (command->count("waypoints") > 0) {
         std::vector<Eigen::VectorXd> waypoints;
-        std::vector<std::shared_ptr<ProtoType>>* vec_protos = (*command)[WAYPOINTS_KEY]->get<std::vector<std::shared_ptr<ProtoType>>>();
+        std::vector<std::shared_ptr<ProtoType>>* vec_protos = (*command)["waypoints"]->get<std::vector<std::shared_ptr<ProtoType>>>();
         if (vec_protos) {
             for (std::shared_ptr<ProtoType>& vec_proto : *vec_protos) {
                 std::vector<std::shared_ptr<ProtoType>>* vec_joint_pos = vec_proto->get<std::vector<std::shared_ptr<ProtoType>>>();
