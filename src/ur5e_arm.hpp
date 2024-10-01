@@ -11,6 +11,7 @@
 #include <viam/sdk/module/module.hpp>
 #include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
+#include <viam/sdk/resource/reconfigurable.hpp>
 #include <viam/sdk/resource/resource.hpp>
 
 #include "../trajectories/Path.h"
@@ -28,11 +29,15 @@ const std::string URDF_FILE = "/host/src/ur5e.urdf";
 const std::string SCRIPT_FILE = "/host/src/control/external_control.urscript";
 const std::string OUTPUT_RECIPE = "/host/src/control/rtde_output_recipe.txt";
 const std::string INPUT_RECIPE = "/host/src/control/rtde_input_recipe.txt";
+
+// TODO: using this is deprecated by the URCL, we could find some way around using it
 const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
 
-class UR5eArm : public Arm {
+class UR5eArm : public Arm, public Reconfigurable {
    public:
-    UR5eArm(Dependencies dep, const ResourceConfig& cfg);
+    UR5eArm(Dependencies deps, const ResourceConfig& cfg);
+
+    void reconfigure(const Dependencies& deps, const ResourceConfig& cfg) override;
 
     /// @brief Get the joint positions of the arm (in degrees)
     /// @param extra Any additional arguments to the method.
@@ -86,8 +91,13 @@ class UR5eArm : public Arm {
                          bool use_spline_interpolation_);
     void read_and_noop();
 
+    // private variables to maintain connection and state
     std::unique_ptr<UrDriver> driver;
     std::unique_ptr<DashboardClient> dashboard;
     vector6d_t joint_state;
     std::mutex mu;
+
+    // variables specified by ResourceConfig and set through reconfigure
+    std::string host;
+    double speed;
 };

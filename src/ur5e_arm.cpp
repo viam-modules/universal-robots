@@ -27,27 +27,8 @@ void reportTrajectoryState(control::TrajectoryResult state) {
     std::cout << "\033[1;32mtrajectory report: " << report << "\033[0m\n" << std::endl;
 }
 
-// helper function to extract an attribute value from its key within a ResourceConfig
-template <class T>
-T find_config_attribute(const ResourceConfig& cfg, std::string attribute) {
-    std::ostringstream buffer;
-    auto motor = cfg.attributes()->find(attribute);
-    if (motor == cfg.attributes()->end()) {
-        buffer << "required attribute `" << attribute << "` not found in configuration";
-        throw std::invalid_argument(buffer.str());
-    }
-    const auto* const val = motor->second->get<T>();
-    if (!val) {
-        buffer << "required non-empty attribute `" << attribute << " could not be decoded";
-        throw std::invalid_argument(buffer.str());
-    }
-    return *val;
-}
-
-UR5eArm::UR5eArm(Dependencies dep, const ResourceConfig& cfg) : Arm(cfg.name()) {
-    // extract relevant attributes from config
-    auto host = find_config_attribute<std::string>(cfg, "host");
-    auto speed = find_config_attribute<double>(cfg, "speed_degs_per_sec");
+UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
+    this->reconfigure(deps, cfg);
 
     // connect to the robot dashboard
     dashboard.reset(new DashboardClient(host));
@@ -79,13 +60,12 @@ UR5eArm::UR5eArm(Dependencies dep, const ResourceConfig& cfg) : Arm(cfg.name()) 
 
     // Now the robot is ready to receive a program
     std::unique_ptr<ToolCommSetup> tool_comm_setup;
-    const bool HEADLESS = true;
     driver.reset(new UrDriver(host,
                               SCRIPT_FILE,
                               OUTPUT_RECIPE,
                               INPUT_RECIPE,
                               &reportRobotProgramState,
-                              HEADLESS,
+                              true,  // headless mode
                               std::move(tool_comm_setup),
                               CALIBRATION_CHECKSUM));
     driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
@@ -99,6 +79,29 @@ UR5eArm::UR5eArm(Dependencies dep, const ResourceConfig& cfg) : Arm(cfg.name()) 
     // start background thread to continuously send no-ops and keep socket connection alive
     std::thread t(&UR5eArm::keep_alive, this);
     t.detach();
+}
+
+// helper function to extract an attribute value from its key within a ResourceConfig
+template <class T>
+T find_config_attribute(const ResourceConfig& cfg, std::string attribute) {
+    std::ostringstream buffer;
+    auto motor = cfg.attributes()->find(attribute);
+    if (motor == cfg.attributes()->end()) {
+        buffer << "required attribute `" << attribute << "` not found in configuration";
+        throw std::invalid_argument(buffer.str());
+    }
+    const auto* const val = motor->second->get<T>();
+    if (!val) {
+        buffer << "required non-empty attribute `" << attribute << " could not be decoded";
+        throw std::invalid_argument(buffer.str());
+    }
+    return *val;
+}
+
+void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
+    // extract relevant attributes from config
+    host = find_config_attribute<std::string>(cfg, "host");
+    speed = find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0);
 }
 
 std::vector<double> UR5eArm::get_joint_positions(const AttributeMap& extra) {
@@ -225,10 +228,11 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     segments.push_back(waypoints.size() - 1);
 
     // set velocity/acceleration constraints
-    Eigen::VectorXd maxAcceleration(6);
-    Eigen::VectorXd maxVelocity(6);
-    maxAcceleration << 1.0, 1.0, 1.0, 1.0, 1.0, 1.0;
-    maxVelocity << 3.0, 3.0, 3.0, 3.0, 3.0, 3.0;
+    std::cout << "generating trajectory with max speed: " << speed * (180.0 / M_PI) << std::endl;
+    Eigen::VectorXd max_acceleration(6);
+    Eigen::VectorXd max_velocity(6);
+    max_acceleration << 1.0, 1.0, 1.0, 1.0, 1.0, 1.0;
+    max_velocity << speed, speed, speed, speed, speed, speed;
 
     std::vector<vector6d_t> p;
     std::vector<vector6d_t> v;
@@ -239,7 +243,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
         int start = segments[i];
         int end = segments[i + 1] + 1;
         std::list<Eigen::VectorXd> positions_subset(waypoints.begin() + start, waypoints.begin() + end);
-        Trajectory trajectory(Path(positions_subset, 0.1), maxVelocity, maxAcceleration);
+        Trajectory trajectory(Path(positions_subset, 0.1), max_velocity, max_acceleration);
         trajectory.outputPhasePlaneTrajectory();
         if (trajectory.isValid()) {
             double duration = trajectory.getDuration();
@@ -290,7 +294,6 @@ void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
             }
         }
     }
-    std::cout << "sent trajectory" << std::endl;
 }
 
 // helper function to read a data packet and send a noop message
