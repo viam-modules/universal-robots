@@ -72,3 +72,5 @@ appimage-amd64: export ARCH = x86_64
 appimage-amd64: build/universal-robots
 	$(call BUILD_APPIMAGE,$(OUTPUT_NAME),$(ARCH))
 	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
+
+appimages: appimage-amd64 appimage-arm64
