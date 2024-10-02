@@ -23,7 +23,7 @@ jobs:
             - name: build
               run: |
                 make appimage-${{matrix.arch}}
-                mv packaging/appimages/universal-robots-*.AppImage universal-robots.AppImage
+                mv packaging/appimages/deploy/universal-robots-*.AppImage universal-robots.AppImage
             - uses: viamrobotics/upload-module@v1
               # if: github.event_name == 'release' # <-- once the action is working, uncomment this so you only upload on release
               with:
