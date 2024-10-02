@@ -1,5 +1,10 @@
 #include "ur5e_arm.hpp"
 
+const char* getenv_default(const char* var_name, const char* default_val) {
+    const char* value = std::getenv(var_name);
+    return value == nullptr ? default_val : value;
+}
+
 // global used to track if a trajectory is in progress
 std::atomic<bool> trajectory_running(false);
 
