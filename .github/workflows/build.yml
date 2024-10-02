@@ -6,9 +6,15 @@ on:
   
 jobs:
     publish:
-        runs-on: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
+        runs-on: ${{matrix.runner}}
+        container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
         strategy:
             matrix:
+                include:
+                - arch: amd64
+                  runner: ubuntu-latest
+                - arch: arm64
+                  runner: buildjet-4vcpu-ubuntu-2204
                 arch: [amd64, arm64]
         steps:
             - uses: actions/checkout@v3
