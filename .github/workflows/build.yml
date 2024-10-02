@@ -1,0 +1,26 @@
+# see https://github.com/viamrobotics/upload-module for help
+on:
+    push:
+    release:
+      types: [released]
+  
+jobs:
+    publish:
+        runs-on: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
+        strategy:
+            matrix:
+                arch: [amd64, arm64]
+        steps:
+            - uses: actions/checkout@v3
+            - name: build
+              run: |
+                make appimage-${{matrix.arch}}
+                mv packaging/appimages/universal-robots-*.AppImage universal-robots.AppImage
+            - uses: viamrobotics/upload-module@v1
+              # if: github.event_name == 'release' # <-- once the action is working, uncomment this so you only upload on release
+              with:
+                module-path: universal-robots.AppImage
+                platform: linux/amd64 # <-- replace with your target architecture, or your module will not deploy
+                version: ${{ github.event_name == 'release' && github.ref_name || '' }}
+                key-id: ${{ secrets.viam_key_id }}
+                key-value: ${{ secrets.viam_key_value }}
