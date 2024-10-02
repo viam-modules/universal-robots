@@ -25,10 +25,10 @@ const double TIMESTEP = 0.2;    // seconds
 
 // locations of files necessary to build module, specified as absolute paths
 // TODO: figure out how to make these relative paths
-const std::string URDF_FILE = "/host/src/ur5e.urdf";
-const std::string SCRIPT_FILE = "/host/src/control/external_control.urscript";
-const std::string OUTPUT_RECIPE = "/host/src/control/rtde_output_recipe.txt";
-const std::string INPUT_RECIPE = "/host/src/control/rtde_input_recipe.txt";
+const std::string URDF_FILE = std::string(std::getenv("APPDIR")) + "/src/control/ur5e.urdf";
+const std::string SCRIPT_FILE = std::string(std::getenv("APPDIR")) + "/src/control/external_control.urscript";
+const std::string OUTPUT_RECIPE = std::string(std::getenv("APPDIR")) + "/src/control/rtde_output_recipe.txt";
+const std::string INPUT_RECIPE = std::string(std::getenv("APPDIR")) + "/src/control/rtde_input_recipe.txt";
 
 // TODO: using this is deprecated by the URCL, we could find some way around using it
 const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
