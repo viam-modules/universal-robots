@@ -14,10 +14,12 @@ jobs:
                 - arch: amd64
                   runner: ubuntu-latest
                 - arch: arm64
-                  runner: buildjet-4vcpu-ubuntu-2204
+                  runner: buildjet-4vcpu-ubuntu-2204-arm
                 arch: [amd64, arm64]
         steps:
-            - uses: actions/checkout@v3
+            - uses: actions/checkout@v4
+              with:
+                submodules: 'true'
             - name: build
               run: |
                 make appimage-${{matrix.arch}}
