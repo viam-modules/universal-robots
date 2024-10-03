@@ -1,10 +1,5 @@
 #include "ur5e_arm.hpp"
 
-const char* getenv_default(const char* var_name, const char* default_val) {
-    const char* value = std::getenv(var_name);
-    return value == nullptr ? default_val : value;
-}
-
 // global used to track if a trajectory is in progress
 std::atomic<bool> trajectory_running(false);
 
@@ -34,6 +29,12 @@ void reportTrajectoryState(control::TrajectoryResult state) {
 
 UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
     this->reconfigure(deps, cfg);
+
+    // get the APPDIR environment variable
+    const char* path_offset = std::getenv("APPDIR");
+    if (!path_offset) {
+        throw std::runtime_error("required environment variable APPDIR unset");
+    }
 
     // connect to the robot dashboard
     dashboard.reset(new DashboardClient(host));
@@ -66,9 +67,9 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     // Now the robot is ready to receive a program
     std::unique_ptr<ToolCommSetup> tool_comm_setup;
     driver.reset(new UrDriver(host,
-                              SCRIPT_FILE,
-                              OUTPUT_RECIPE,
-                              INPUT_RECIPE,
+                              path_offset + SCRIPT_FILE,
+                              path_offset + OUTPUT_RECIPE,
+                              path_offset + INPUT_RECIPE,
                               &reportRobotProgramState,
                               true,  // headless mode
                               std::move(tool_comm_setup),
