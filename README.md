@@ -71,7 +71,7 @@ Then, follow the instructions to [add a local module](https://docs.viam.com/regi
 Provide an **executable path** pointing toward the appropriate AppImage file which will have been created within the `packaging/appimages/deploy` subdirectory.
 
 > [!NOTE]  
-> Simply running `make` instead of `make appimages` is a faster way to build but creates an executable that must be run from within the Docker container.  If you are interested in making and testing many quick changes to this module it will likely be faster to ony build this way and then run `viam-server` from within the Docker container, pointing to a config file that has a local instance of this module wih an **executable path** of `src/build/universal/robots`.  To download `viam-server` this way run 
+> Simply running `make` instead of `make appimages` is a faster way to build but creates an executable that must be run from within the Docker container.  If you are interested in making and testing many quick changes to this module it will likely be faster to ony build this way and then run `viam-server` from within the Docker container, pointing to a config file that has a local instance of this module wih an **executable path** of `src/build/universal/robots`.  To download and run `viam-server` this way run:
 > ```
 > wget https://storage.googleapis.com/packages.viam.com/apps/viam-server/viam-server-stable-x86_64
 > chmod +x ./viam-server-stable-x86_64
@@ -85,12 +85,10 @@ TODO
 TODO
 
 ## Troubleshooting
-TODO
+
 
 ## Remaining TODOs
 - configurable logging https://www.boost.org/doc/libs/1_84_0/libs/log/doc/html/log/tutorial/trivial_filtering.html
-- configs
-- workflows
 - integration tests
 - address sanitizer?
 - README sections
