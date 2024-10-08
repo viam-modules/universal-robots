@@ -57,6 +57,7 @@ For more information, see [Control Machines](https://docs.viam.com/fleet/control
 Clone this repository to your machine and from the newly created folder start a new Docker container using the following commands:
 
 ```
+git submodule update --init
 docker pull ghcr.io/viam-modules/universal-robots:amd64
 docker run --net=host --volume .:/src -e APPDIR='src' -it ghcr.io/viam-modules/universal-robots:amd64
 ```
@@ -78,17 +79,14 @@ Provide an **executable path** pointing toward the appropriate AppImage file whi
 > ./viam-server-stable-x86_64 -config {PATH_TO_VIAM_CONFIG}
 > ```
 
-## Known supported hardware
-TODO
-
-## Linux distribution recommendation
-TODO
-
 ## Troubleshooting
-
+If the module fails to start successfully look through the error logs coming from `viam-server`.  Some common issues errors are shown below along with solutions
+| Error    | Solution |
+| -------- | ------- |
+| "Command is not allowed due to safety reasons..." | Use the UR pendant to switch the robot from Local Control to Remote Control |
+| "Did not receive answer from dashboard server in time..." | It is possible that the host address provided is not correct, or that the E-stop has been pressed on the UR pendant |
 
 ## Remaining TODOs
 - configurable logging https://www.boost.org/doc/libs/1_84_0/libs/log/doc/html/log/tutorial/trivial_filtering.html
 - integration tests
-- address sanitizer?
-- README sections
+- address sanitizer support
