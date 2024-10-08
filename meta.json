@@ -1,7 +1,7 @@
 {
   "$schema": "https://dl.viam.dev/module.schema.json",
   "module_id": "viam:universal-robots",
-  "visibility": "private",
+  "visibility": "public",
   "url": "https://github.com/viam-modules/universal-robots",
   "description": "C++ module for Universal Robots arms",
   "models": [
