@@ -86,7 +86,7 @@ If the module fails to start successfully look through the error logs coming fro
 | "Command is not allowed due to safety reasons..." | Use the UR pendant to switch the robot from Local Control to Remote Control |
 | "Did not receive answer from dashboard server in time..." | It is possible that the host address provided is not correct, or that the E-stop has been pressed on the UR pendant |
 
-## Remaining TODOs
-- configurable logging https://www.boost.org/doc/libs/1_84_0/libs/log/doc/html/log/tutorial/trivial_filtering.html
+## Future Work
+- mac support
 - integration tests
 - address sanitizer support
