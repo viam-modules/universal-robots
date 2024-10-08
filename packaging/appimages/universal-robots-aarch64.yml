@@ -35,6 +35,7 @@ AppDir:
   runtime:
     env:
         AIX_TARGET: usr/bin/universal-robots
+
 AppImage:
   arch: aarch64
   comp: gzip

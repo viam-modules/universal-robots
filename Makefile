@@ -56,7 +56,7 @@ define BUILD_APPIMAGE
     export TAG_NAME=$(TAG_VERSION); \
     cd packaging/appimages && \
     mkdir -p deploy && \
-    rm -f deploy/$(1)* && \
+    rm -f deploy/*$(2)* && \
     appimage-builder --recipe $(1)-$(2).yml
 endef
 
