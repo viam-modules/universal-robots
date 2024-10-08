@@ -6,7 +6,7 @@ std::atomic<bool> trajectory_running(false);
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
-    std::cout << "\033[1;32mprogram running: " << std::boolalpha << program_running << "\033[0m\n" << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m\n" << std::endl;
 }
 
 // define callback function to be called by UR client library when trajectory state changes
@@ -24,7 +24,7 @@ void reportTrajectoryState(control::TrajectoryResult state) {
         default:
             report = "failure";
     }
-    std::cout << "\033[1;32mtrajectory report: " << report << "\033[0m\n" << std::endl;
+    BOOST_LOG_TRIVIAL(debug) << "\033[1;32mtrajectory report: " << report << "\033[0m\n" << std::endl;
 }
 
 UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
@@ -234,7 +234,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     segments.push_back(waypoints.size() - 1);
 
     // set velocity/acceleration constraints
-    std::cout << "generating trajectory with max speed: " << speed * (180.0 / M_PI) << std::endl;
+    BOOST_LOG_TRIVIAL(debug) << "generating trajectory with max speed: " << speed * (180.0 / M_PI) << std::endl;
     Eigen::VectorXd max_acceleration(6);
     Eigen::VectorXd max_velocity(6);
     max_acceleration << 1.0, 1.0, 1.0, 1.0, 1.0, 1.0;
