@@ -59,7 +59,7 @@ Clone this repository to your machine and from the newly created folder start a 
 ```
 git submodule update --init
 docker pull ghcr.io/viam-modules/universal-robots:amd64
-docker run --net=host --volume .:/src -e APPDIR='src' -it ghcr.io/viam-modules/universal-robots:amd64
+docker run --net=host --volume .:/src -e APPDIR='/src' -it ghcr.io/viam-modules/universal-robots:amd64
 ```
 
 Once inside the docker container build the binary using:
