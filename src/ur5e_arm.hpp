@@ -98,6 +98,9 @@ class UR5eArm : public Arm, public Reconfigurable {
     vector6d_t joint_state;
     std::mutex mu;
 
+    // specified through APPDIR environment variable
+    const char* path_offset;
+
     // variables specified by ResourceConfig and set through reconfigure
     std::string host;
     double speed;

@@ -31,7 +31,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     this->reconfigure(deps, cfg);
 
     // get the APPDIR environment variable
-    const char* path_offset = std::getenv("APPDIR");
+    path_offset = std::getenv("APPDIR");
     if (!path_offset) {
         throw std::runtime_error("required environment variable APPDIR unset");
     }
@@ -140,9 +140,9 @@ bool UR5eArm::is_moving() {
 
 UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra) {
     // Open the file in binary mode
-    std::ifstream file(URDF_FILE, std::ios::binary);
+    std::ifstream file(path_offset + URDF_FILE, std::ios::binary);
     if (!file) {
-        throw std::runtime_error("Unable to open file");
+        throw std::runtime_error("unable to open file");
     }
 
     // Determine the file size
