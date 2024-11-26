@@ -91,12 +91,12 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
 template <class T>
 T find_config_attribute(const ResourceConfig& cfg, std::string attribute) {
     std::ostringstream buffer;
-    auto motor = cfg.attributes()->find(attribute);
-    if (motor == cfg.attributes()->end()) {
+    auto key = cfg.attributes().find(attribute);
+    if (key == cfg.attributes().end()) {
         buffer << "required attribute `" << attribute << "` not found in configuration";
         throw std::invalid_argument(buffer.str());
     }
-    const auto* const val = motor->second->get<T>();
+    const auto* const val = key->second.get<T>();
     if (!val) {
         buffer << "required non-empty attribute `" << attribute << " could not be decoded";
         throw std::invalid_argument(buffer.str());
@@ -110,7 +110,7 @@ void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     speed = find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0);
 }
 
-std::vector<double> UR5eArm::get_joint_positions(const AttributeMap& extra) {
+std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
     mu.lock();
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg && data_pkg->getData("actual_q", joint_state)) {
@@ -126,7 +126,7 @@ std::vector<double> UR5eArm::get_joint_positions(const AttributeMap& extra) {
     return std::vector<double>();
 }
 
-void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, const AttributeMap& extra) {
+void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct& extra) {
     std::vector<Eigen::VectorXd> waypoints;
     Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), positions.size());
     Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
@@ -134,11 +134,27 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
     move(waypoints);
 }
 
+void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
+                                           const MoveOptions& options,
+                                           const viam::sdk::ProtoStruct& extra) {
+    // TODO: use options
+    if (positions.size() > 0) {
+        std::vector<Eigen::VectorXd> waypoints;
+        for (auto position : positions) {
+            Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(position.data(), position.size());
+            Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
+            waypoints.push_back(next_waypoint_rad);
+        }
+        move(waypoints);
+    }
+    return;
+}
+
 bool UR5eArm::is_moving() {
     return trajectory_running;
 }
 
-UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra) {
+UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
     // Open the file in binary mode
     std::ifstream file(path_offset + URDF_FILE, std::ios::binary);
     if (!file) {
@@ -161,44 +177,15 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const AttributeMap& extra) {
     return KinematicsDataURDF(std::move(urdf_bytes));
 }
 
-void UR5eArm::stop(const AttributeMap& extra) {
+void UR5eArm::stop(const ProtoStruct& extra) {
     if (trajectory_running) {
         trajectory_running = false;
         driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
     }
 }
 
-AttributeMap UR5eArm::do_command(const AttributeMap& command) {
-    if (!command) {
-        throw std::runtime_error("command is null\n");
-    }
-
-    // move through a number of waypoints (specified as a 2D array of floats (degrees)) that were
-    // sent in a batch
-    if (command->count("waypoints") > 0) {
-        std::vector<Eigen::VectorXd> waypoints;
-        std::vector<std::shared_ptr<ProtoType>>* vec_protos = (*command)["waypoints"]->get<std::vector<std::shared_ptr<ProtoType>>>();
-        if (vec_protos) {
-            for (std::shared_ptr<ProtoType>& vec_proto : *vec_protos) {
-                std::vector<std::shared_ptr<ProtoType>>* vec_joint_pos = vec_proto->get<std::vector<std::shared_ptr<ProtoType>>>();
-                if (vec_joint_pos) {
-                    vector6d_t to_add;
-                    int counter = 0;
-                    for (std::shared_ptr<ProtoType> joint_pos : *vec_joint_pos) {
-                        double* joint_pos_deg = joint_pos->get<double>();
-                        to_add[counter] = *joint_pos_deg;
-                        counter += 1;
-                    }
-                    Eigen::VectorXd waypoint_deg = Eigen::VectorXd::Map(to_add.data(), to_add.size());
-                    Eigen::VectorXd waypoint_rad = waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
-                    waypoints.push_back(waypoint_rad);
-                }
-            }
-        }
-        move(waypoints);
-    }
-
-    return NULL;
+ProtoStruct UR5eArm::do_command(const ProtoStruct& command) {
+    return ProtoStruct{};
 }
 
 // Send no-ops and keep socket connection alive
@@ -212,8 +199,20 @@ void UR5eArm::keep_alive() {
 }
 
 void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
+    // log to csv
+    std::stringstream buffer;
+    for (int i = 0; i < waypoints.size(); i++) {
+        for (int j = 0; j < 6; j++) {
+            buffer << waypoints[i][j] << ",";
+        }
+        buffer << std::endl;
+    }
+    std::ofstream outputFile("/src/waypoints.csv");
+    outputFile << buffer.str();
+    outputFile.close();
+
     // get current joint position and add that as starting pose to waypoints
-    std::vector<double> curr_joint_pos = get_joint_positions(NULL);
+    std::vector<double> curr_joint_pos = get_joint_positions(ProtoStruct{});
     Eigen::VectorXd curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), curr_joint_pos.size());
     Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI / 180.0);
     waypoints.insert(waypoints.begin(), curr_waypoint_rad);
@@ -227,7 +226,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
         segment_AB.normalize();
         segment_BC.normalize();
         double dot = segment_BC.dot(segment_AB);
-        if (dot == -1) {
+        if (abs(dot + 1) < 1e-3) {
             segments.push_back(i - 1);
         }
     }
@@ -283,7 +282,24 @@ void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
     assert(p_p.size() == time.size());
     driver->writeTrajectoryControlMessage(
         urcl::control::TrajectoryControlMessage::TRAJECTORY_START, p_p.size(), RobotReceiveTimeout::off());
+
+    // log desired trajectory to a file
+    std::stringstream buffer;
+    buffer << "t(s), j0, j1, j2, j3, j4, j5, v0, v1, v2, v3, v4, v5, a0, a1, a2, a3, a4, a5" << std::endl;
     for (size_t i = 0; i < p_p.size() && p_p.size() == time.size() && p_p[i].size() == 6; i++) {
+        buffer << time[i];
+        for (int j = 0; j < 6; j++) {
+            buffer << "," << p_p[i][j];
+        }
+        for (int j = 0; j < 6; j++) {
+            buffer << "," << p_v[i][j];
+        }
+        for (int j = 0; j < 6; j++) {
+            buffer << "," << p_v[i][j];
+        }
+        buffer << std::endl;
+
+        // move
         if (!use_spline_interpolation_) {
             // movej
             driver->writeTrajectoryPoint(p_p[i], false, time[i], 0.0);
@@ -300,6 +316,10 @@ void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
             }
         }
     }
+
+    std::ofstream outputFile("/src/trajectory.csv");
+    outputFile << buffer.str();
+    outputFile.close();
 }
 
 // helper function to read a data packet and send a noop message
