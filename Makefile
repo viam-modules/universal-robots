@@ -9,6 +9,7 @@ build:
 
 SANITIZE ?= OFF
 build/universal-robots: format build
+	mkdir logs && \
 	cd build && \
 	cmake -G Ninja -DENABLE_SANITIZER=$(SANITIZE) .. && \
 	ninja all -j 4

@@ -46,19 +46,6 @@ RUN apt-get -y --no-install-recommends install -t llvm-toolchain-bookworm-15 \
 
 RUN mkdir -p /root/opt/src
 
-# Install Viam C++ SDK from source frozen at a commit
-ENV PINNED_COMMIT_HASH="5461780d4a6bcab18ed4cba51be1de2feb76dddf"
-RUN cd /root/opt/src && \
-    git clone https://github.com/viamrobotics/viam-cpp-sdk && \
-    cd viam-cpp-sdk && \
-    git checkout ${PINNED_COMMIT_HASH} && \
-    mkdir build && \
-    cd build && \
-    cmake  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVIAMCPPSDK_USE_DYNAMIC_PROTOS=ON -DVIAMCPPSDK_OFFLINE_PROTO_GENERATION=ON -DCMAKE_INSTALL_PREFIX=/usr/local .. -G Ninja  && \
-    ninja all -j 4 && \
-	ninja install -j 4 && \
-    rm -rf /root/opt/src/viam-cpp-sdk
-
 # Install appimage-builder deps
 RUN apt install -y \
     binutils \
@@ -88,3 +75,15 @@ RUN apt install -y libgtest-dev
 # Install Eigen
 RUN apt install -y libeigen3-dev
 
+# Install Viam C++ SDK from source pinned to version 0.16.0
+ENV PINNED_COMMIT_HASH="7c8487c"
+RUN cd /root/opt/src && \
+    git clone https://github.com/viamrobotics/viam-cpp-sdk && \
+    cd viam-cpp-sdk && \
+    git checkout ${PINNED_COMMIT_HASH} && \
+    mkdir build && \
+    cd build && \
+    cmake  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVIAMCPPSDK_USE_DYNAMIC_PROTOS=ON -DVIAMCPPSDK_OFFLINE_PROTO_GENERATION=ON -DCMAKE_INSTALL_PREFIX=/usr/local .. -G Ninja  && \
+    ninja all -j 4 && \
+	ninja install -j 4 && \
+    rm -rf /root/opt/src/viam-cpp-sdk
