@@ -207,7 +207,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
         }
         buffer << std::endl;
     }
-    std::ofstream outputFile("/src/waypoints.csv");
+    std::ofstream outputFile(path_offset + WAYPOINTS_LOG);
     outputFile << buffer.str();
     outputFile.close();
 
@@ -317,7 +317,7 @@ void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
         }
     }
 
-    std::ofstream outputFile("/src/trajectory.csv");
+    std::ofstream outputFile(path_offset + TRAJECTORY_LOG);
     outputFile << buffer.str();
     outputFile.close();
 }
