@@ -5,17 +5,16 @@ format:
 	ls src/*.*pp main.cpp | xargs clang-format-15 -i --style=file
 
 build: 
-	mkdir build
+	mkdir build logs
 
 SANITIZE ?= OFF
 build/universal-robots: format build
-	mkdir logs && \
 	cd build && \
 	cmake -G Ninja -DENABLE_SANITIZER=$(SANITIZE) .. && \
 	ninja all -j 4
 
 clean: 
-	rm -rf build
+	rm -rf build logs
 
 clean-all:
 	git clean -fxd
