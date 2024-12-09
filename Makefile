@@ -74,3 +74,8 @@ appimage-amd64: build/universal-robots
 	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
 
 appimages: appimage-amd64 appimage-arm64
+
+.PHONY: module.tar.gz
+module.tar.gz: meta.json run.sh
+	cp ./packaging/appimages/deploy/universal-robots-latest-$(ARCH).AppImage universal-robots.AppImage
+	tar czf $@ $^ universal-robots.AppImage
