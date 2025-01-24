@@ -194,7 +194,6 @@ void UR5eArm::keep_alive() {
         mu.lock();
         read_and_noop();
         mu.unlock();
-        usleep(NOOP_DELAY);
     }
 }
 
