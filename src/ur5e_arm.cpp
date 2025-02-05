@@ -253,13 +253,22 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
         trajectory.outputPhasePlaneTrajectory();
         if (trajectory.isValid()) {
             double duration = trajectory.getDuration();
-            for (double t = 0.0; t < duration; t += TIMESTEP) {
+            double t = 0.0;
+            while (t < duration) {
                 Eigen::VectorXd position = trajectory.getPosition(t);
                 Eigen::VectorXd velocity = trajectory.getVelocity(t);
                 p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
                 v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
                 time.push_back(TIMESTEP);
+                t += TIMESTEP;
             }
+
+            Eigen::VectorXd position = trajectory.getPosition(duration);
+            Eigen::VectorXd velocity = trajectory.getVelocity(duration);
+            p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
+            v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
+            time.push_back(duration - (t - TIMESTEP));
+
         } else {
             throw std::runtime_error("trajectory generation failed\n");
         }
