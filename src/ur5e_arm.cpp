@@ -236,7 +236,6 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     BOOST_LOG_TRIVIAL(debug) << "generating trajectory with max speed: " << speed * (180.0 / M_PI) << std::endl;
     Eigen::VectorXd max_acceleration(6);
     Eigen::VectorXd max_velocity(6);
-    // max_acceleration << 1.0, 1.0, 1.0, 1.0, 1.0, 1.0;
     max_acceleration << 8.0, 8.0, 8.0, 8.0, 8.0, 8.0;
     max_velocity << speed, speed, speed, speed, speed, speed;
 
