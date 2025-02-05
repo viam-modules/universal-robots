@@ -47,65 +47,46 @@ The following attributes are available for `viam:universal-robots` arms:
 }
 ```
 
-### Test the module
-
-Before testing the module, make sure that your machine is connected to the Viam app, displaying as **Live** in the part status dropdown in the top right corner of the machine's page.
-
 ### Interacting with the Arm
-Once the module is working you can interact with your Universal Robots arm in a couple ways:
-- You can view data from and manipulate your arm live on the **CONTROL** tab of the Viam app.
+First ensure that your machine is displaying as **Live** on the Viam App. Then you can interact with your Universal Robots arm in a couple ways:
+- To simply view data from and manipulate your arm, use the **CONTROL** tab of the Viam App.
 For more information, see [Control Machines](https://docs.viam.com/fleet/control/).
 - More advanced control of the arm can be achieved by using one of [Viam's client SDK libraries](https://docs.viam.com/components/arm/#control-your-arm-with-viams-client-sdk-libraries)
 
-### Locally install the module
-TODO
-
-<!-- If you are using a Linux machine, and do not want to use the Viam registry, you can download the module AppImage from our servers directly to your machine:
+## Building and Running Locally
+Clone this repository to your machine and from the newly created folder start a new Docker container using the following commands:
 
 ```
-sudo curl -o /usr/local/bin/viam-camera-realsense http://packages.viam.com/apps/camera-servers/viam-camera-realsense-latest-aarch64.AppImage
-sudo chmod a+rx /usr/local/bin/viam-camera-realsense
+git submodule update --init
+docker pull ghcr.io/viam-modules/universal-robots:amd64
+docker run --net=host --volume .:/src -e APPDIR='/src' -it ghcr.io/viam-modules/universal-robots:amd64
 ```
 
-If you need the AppImage associated with a specific tag, replace `latest` in the URL with the tag version, i.e. `0.0.X`.
-
-Then, follow the instructions to [add a local module](https://docs.viam.com/registry/configure/#add-a-local-module) to add the local instance of the `realsense` module to your machine.
-Provide an **Executable path** of `/usr/local/bin/viam-camera-realsense` when adding the module.
-
-Or, if you aren't using the Viam app to manage your machine's configuration, modify your machine's JSON file as follows to add the `realsense` module to your machine: 
+Once inside the docker container build the binary using:
 
 ```
-"modules": [
-    {
-        "type": "local",
-        "name": "intel",
-        "executable_path": "/usr/local/bin/viam-camera-realsense"
-    }
-],
-``` -->
+cd src && make appimages
+```
 
-## Building the module
-TODO
+Then, follow the instructions to [add a local module](https://docs.viam.com/registry/configure/#add-a-local-module) to add the local instance of the `universal-robots` module to your machine.
+Provide an **executable path** pointing toward the appropriate AppImage file which will have been created within the `packaging/appimages/deploy` subdirectory.
 
-## Integration Tests
-TODO
-
-## Known supported hardware
-TODO
-
-## Linux distribution recommendation
-TODO
+> [!NOTE]  
+> Simply running `make` instead of `make appimages` is a faster way to build but creates an executable that must be run from within the Docker container.  If you are interested in making and testing many quick changes to this module it will likely be faster to ony build this way and then run `viam-server` from within the Docker container, pointing to a config file that has a local instance of this module wih an **executable path** of `src/build/universal/robots`.  To download and run `viam-server` this way run:
+> ```
+> wget https://storage.googleapis.com/packages.viam.com/apps/viam-server/viam-server-stable-x86_64
+> chmod +x ./viam-server-stable-x86_64
+> ./viam-server-stable-x86_64 -config {PATH_TO_VIAM_CONFIG}
+> ```
 
 ## Troubleshooting
-TODO
+If the module fails to start successfully look through the error logs coming from `viam-server`.  Some common issues errors are shown below along with solutions
+| Error    | Solution |
+| -------- | ------- |
+| "Command is not allowed due to safety reasons..." | Use the UR pendant to switch the robot from Local Control to Remote Control |
+| "Did not receive answer from dashboard server in time..." | It is possible that the host address provided is not correct, or that the E-stop has been pressed on the UR pendant |
 
-## Using with a Frame System
-TODO
-
-## Remaining TODOs
-- configurable logging https://www.boost.org/doc/libs/1_84_0/libs/log/doc/html/log/tutorial/trivial_filtering.html
-- configs
-- workflows
+## Future Work
+- mac support
 - integration tests
-- address sanitizer?
-- README sections
+- address sanitizer support

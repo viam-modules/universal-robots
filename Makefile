@@ -5,7 +5,7 @@ format:
 	ls src/*.*pp main.cpp | xargs clang-format-15 -i --style=file
 
 build: 
-	mkdir build
+	mkdir build logs
 
 SANITIZE ?= OFF
 build/universal-robots: format build
@@ -14,7 +14,7 @@ build/universal-robots: format build
 	ninja all -j 4
 
 clean: 
-	rm -rf build
+	rm -rf build logs
 
 clean-all:
 	git clean -fxd
@@ -56,7 +56,7 @@ define BUILD_APPIMAGE
     export TAG_NAME=$(TAG_VERSION); \
     cd packaging/appimages && \
     mkdir -p deploy && \
-    rm -f deploy/$(1)* && \
+    rm -f deploy/*$(2)* && \
     appimage-builder --recipe $(1)-$(2).yml
 endef
 
@@ -74,3 +74,8 @@ appimage-amd64: build/universal-robots
 	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
 
 appimages: appimage-amd64 appimage-arm64
+
+.PHONY: module.tar.gz
+module.tar.gz: meta.json run.sh
+	cp ./packaging/appimages/deploy/universal-robots-latest-$(ARCH).AppImage universal-robots.AppImage
+	tar czf $@ $^ universal-robots.AppImage
