@@ -108,6 +108,7 @@ void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     // extract relevant attributes from config
     host = find_config_attribute<std::string>(cfg, "host");
     speed = find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0);
+    acceleration = find_config_attribute<double>(cfg, "acceleration_degs_per_sec2") * (M_PI / 180.0);
 }
 
 std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
@@ -194,7 +195,6 @@ void UR5eArm::keep_alive() {
         mu.lock();
         read_and_noop();
         mu.unlock();
-        usleep(NOOP_DELAY);
     }
 }
 
@@ -236,7 +236,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     BOOST_LOG_TRIVIAL(debug) << "generating trajectory with max speed: " << speed * (180.0 / M_PI) << std::endl;
     Eigen::VectorXd max_acceleration(6);
     Eigen::VectorXd max_velocity(6);
-    max_acceleration << 1.0, 1.0, 1.0, 1.0, 1.0, 1.0;
+    max_acceleration << acceleration, acceleration, acceleration, acceleration, acceleration, acceleration;
     max_velocity << speed, speed, speed, speed, speed, speed;
 
     std::vector<vector6d_t> p;
