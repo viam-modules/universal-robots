@@ -26,7 +26,8 @@ The following attributes are available for `viam:universal-robots` arms:
 | Name | Type | Inclusion | Description |
 | ---- | ---- | --------- | ----------- |
 | `host` | string | **Required** | The IP address of the robot arm, specified as a string. |
-| `speed_degs_per_sec` | float | **Required** | The maximum speed of the arm joints specified. |
+| `speed_degs_per_sec` | float | **Required** | The maximum speed of the arm joints. |
+| `acceleration_degs_per_sec2` | float | **Required** | The maximum acceleration of the arm joints. |
 
 ### Example configuration:
 
@@ -34,14 +35,15 @@ The following attributes are available for `viam:universal-robots` arms:
 {
     "components": [
         {
-        "name": "myURArm",
-        "attributes": {
-            "host": "10.1.10.84",
-            "speed_degs_per_sec": 60,
-        },
-        "namespace": "rdk",
-        "type": "arm",
-        "model": "viam:arm:universal-robots"
+            "name": "myURArm",
+            "attributes": {
+                "host": "10.1.10.84",
+                "speed_degs_per_sec": 120,
+                "acceleration_degs_per_sec2": 8
+            },
+            "namespace": "rdk",
+            "type": "arm",
+            "model": "viam:arm:universal-robots"
         }
     ]
 }
