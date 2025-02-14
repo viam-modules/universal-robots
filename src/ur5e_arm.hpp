@@ -83,15 +83,16 @@ class UR5eArm : public Arm, public Reconfigurable {
 
     // --------------- UNIMPLEMENTED FUNCTIONS ---------------
     pose get_end_position(const ProtoStruct& extra) override {
-        throw std::runtime_error("get_end_position unimplemented");
+        throw std::runtime_error("unimplemented");
     }
 
     void move_to_position(const pose& pose, const ProtoStruct& extra) override {
-        throw std::runtime_error("move_to_position unimplemented");
+        throw std::runtime_error("unimplemented");
     }
 
+    // the arm server within RDK will reconstruct the geometries from the kinematics and joint positions if left unimplemented
     std::vector<GeometryConfig> get_geometries(const ProtoStruct& extra) {
-        throw std::runtime_error("get_geometries unimplemented");
+        throw std::runtime_error("unimplemented");
     }
 
    private:

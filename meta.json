@@ -10,5 +10,5 @@
       "model": "viam:universal-robots:ur5e"
     }
   ],
-  "entrypoint": "run.sh"
+  "entrypoint": "universal-robots.AppImage"
 }
