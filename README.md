@@ -13,6 +13,7 @@ On the new component panel, copy and paste the following attribute template into
 {
     "host": "10.1.10.84",
     "speed_degs_per_sec": 60,
+    "acceleration_degs_per_sec2": 8
 }
 ```
 
@@ -89,6 +90,5 @@ If the module fails to start successfully look through the error logs coming fro
 | "Did not receive answer from dashboard server in time..." | It is possible that the host address provided is not correct, or that the E-stop has been pressed on the UR pendant |
 
 ## Future Work
-- mac support
 - integration tests
 - address sanitizer support
