@@ -1,5 +1,26 @@
 #include "ur5e_arm.hpp"
 
+// this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
+extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
+extern "C" void* orientation_vector_from_quaternion(void* q);
+extern "C" double* orientation_vector_get_components(void* ov);
+extern "C" void free_orientation_vector_memory(void* ov);
+extern "C" void free_quaternion_memory(void* q);
+
+pose ur_vector_to_pose(urcl::vector6d_t vec) {
+    double norm = sqrt(vec[3] * vec[3] + vec[4] * vec[4] + vec[5] * vec[5]);
+    void* q = quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm);
+    void* ov = orientation_vector_from_quaternion(q);
+    double* components = orientation_vector_get_components(ov);  // returned as ox, oy, oz, theta
+    auto position = coordinates{1000 * vec[0], 1000 * vec[1], 1000 * vec[2]};
+    auto orientation = pose_orientation{components[0], components[1], components[2]};
+    auto theta = components[3] * 180 / M_PI;
+    free_orientation_vector_memory(ov);
+    free_quaternion_memory(q);
+    delete[] components;
+    return pose{position, orientation, theta};
+}
+
 // global used to track if a trajectory is in progress
 std::atomic<bool> trajectory_running(false);
 
@@ -149,6 +170,18 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
         move(waypoints);
     }
     return;
+}
+
+pose UR5eArm::get_end_position(const ProtoStruct& extra) {
+    mu.lock();
+    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
+    if (data_pkg && data_pkg->getData("actual_TCP_pose", tcp_state)) {
+        pose to_ret = ur_vector_to_pose(tcp_state);
+        mu.unlock();
+        return to_ret;
+    }
+    mu.unlock();
+    return pose();
 }
 
 bool UR5eArm::is_moving() {

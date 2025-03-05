@@ -62,6 +62,11 @@ class UR5eArm : public Arm, public Reconfigurable {
                                       const MoveOptions& options,
                                       const viam::sdk::ProtoStruct& extra) override;
 
+    /// @brief Get the cartesian pose of the end effector
+    /// @param extra Any additional arguments to the method.
+    /// @return Pose of the end effector with respect to the arm base.
+    pose get_end_position(const ProtoStruct& extra) override;
+
     /// @brief Reports if the arm is in motion.
     bool is_moving() override;
 
@@ -82,10 +87,6 @@ class UR5eArm : public Arm, public Reconfigurable {
     ProtoStruct do_command(const ProtoStruct& command) override;
 
     // --------------- UNIMPLEMENTED FUNCTIONS ---------------
-    pose get_end_position(const ProtoStruct& extra) override {
-        throw std::runtime_error("unimplemented");
-    }
-
     void move_to_position(const pose& pose, const ProtoStruct& extra) override {
         throw std::runtime_error("unimplemented");
     }
@@ -108,7 +109,7 @@ class UR5eArm : public Arm, public Reconfigurable {
     // private variables to maintain connection and state
     std::unique_ptr<UrDriver> driver;
     std::unique_ptr<DashboardClient> dashboard;
-    vector6d_t joint_state;
+    vector6d_t joint_state, tcp_state;
     std::mutex mu;
 
     // specified through APPDIR environment variable
