@@ -85,16 +85,14 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
         throw std::runtime_error("couldn't release the arm brakes");
     }
 
-    // Now the robot is ready to receive a program
-    std::unique_ptr<ToolCommSetup> tool_comm_setup;
-    driver.reset(new UrDriver(host,
-                              path_offset + SCRIPT_FILE,
-                              path_offset + OUTPUT_RECIPE,
-                              path_offset + INPUT_RECIPE,
-                              &reportRobotProgramState,
-                              true,  // headless mode
-                              std::move(tool_comm_setup),
-                              CALIBRATION_CHECKSUM));
+    UrDriverConfiguration driver_config;
+    driver_config.robot_ip = host;
+    driver_config.script_file = path_offset + SCRIPT_FILE;
+    driver_config.output_recipe_file = path_offset + OUTPUT_RECIPE;
+    driver_config.input_recipe_file = path_offset + INPUT_RECIPE;
+    driver_config.handle_program_state = &reportRobotProgramState;
+    driver_config.headless_mode = true;
+    driver = std::make_unique<UrDriver>(driver_config);
     driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
 
     // Once RTDE communication is started, we have to make sure to read from the interface buffer,

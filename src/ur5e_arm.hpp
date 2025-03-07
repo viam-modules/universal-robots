@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ur_client_library/control/trajectory_point_interface.h>
+#include <ur_client_library/example_robot_wrapper.h>
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
@@ -30,9 +31,6 @@ const std::string INPUT_RECIPE = "/src/control/rtde_input_recipe.txt";
 // locations of log files that will be written
 const std::string TRAJECTORY_LOG = "/logs/trajectory.csv";
 const std::string WAYPOINTS_LOG = "/logs/waypoints.csv";
-
-// TODO: using this is deprecated by the URCL, we could find some way around using it
-const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
 
 // constants for robot operation
 const int NOOP_DELAY = 100000;  // 100 milliseconds
