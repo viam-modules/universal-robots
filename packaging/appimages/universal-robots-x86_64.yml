@@ -8,6 +8,7 @@ script:
  - mkdir -p $TARGET_APPDIR/usr/share/icons/viam/256x256/apps/
  - cp ./viam-server.png $TARGET_APPDIR/usr/share/icons/viam/256x256/apps/viam-server.png
  - cp -r ../../src/control $TARGET_APPDIR/src/control
+ - cp -r ../../src/kinematics $TARGET_APPDIR/src/kinematics
  - chmod 755 $TARGET_APPDIR/usr/bin/*
 
 AppDir:

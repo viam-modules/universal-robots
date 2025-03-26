@@ -190,7 +190,7 @@ bool UR5eArm::is_moving() {
 
 UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
     // Open the file in binary mode
-    std::ifstream file(path_offset + URDF_FILE, std::ios::binary);
+    std::ifstream file(path_offset + SVA_FILE, std::ios::binary);
     if (!file) {
         throw std::runtime_error("unable to open file");
     }
@@ -208,7 +208,7 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
         throw std::runtime_error("Error reading file");
     }
 
-    return KinematicsDataURDF(std::move(urdf_bytes));
+    return KinematicsDataSVA(std::move(urdf_bytes));
 }
 
 void UR5eArm::stop(const ProtoStruct& extra) {

@@ -22,7 +22,7 @@ using namespace viam::sdk;
 using namespace urcl;
 
 // locations of files necessary to build module, specified as relative paths
-const std::string URDF_FILE = "/src/control/ur5e.urdf";
+const std::string SVA_FILE = "/src/kinematics/ur5e.json";
 const std::string SCRIPT_FILE = "/src/control/external_control.urscript";
 const std::string OUTPUT_RECIPE = "/src/control/rtde_output_recipe.txt";
 const std::string INPUT_RECIPE = "/src/control/rtde_input_recipe.txt";
