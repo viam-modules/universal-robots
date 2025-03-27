@@ -28,7 +28,7 @@
 // POSSIBILITY OF SUCH DAMAGE.
 // -- END LICENSE BLOCK ------------------------------------------------
 
-#include "robot_wrapper.h"
+#include "robot_wrapper.hpp"
 
 #include <ur_client_library/exceptions.h>
 #include <ur_client_library/log.h>
@@ -36,7 +36,6 @@
 
 #include <iostream>
 
-namespace urcl {
 RobotWrapper::RobotWrapper(const std::string& robot_ip,
                            const std::string& output_recipe_file,
                            const std::string& input_recipe_file,
@@ -46,8 +45,8 @@ RobotWrapper::RobotWrapper(const std::string& robot_ip,
     primary_client_->start();
 
     auto robot_version = primary_client_->getRobotVersion();
-    if (*robot_version < VersionInformation::fromString("10.0.0")) {
-        dashboard_client_ = std::make_shared<DashboardClient>(robot_ip);
+    if (*robot_version < urcl::VersionInformation::fromString("10.0.0")) {
+        dashboard_client_ = std::make_shared<urcl::DashboardClient>(robot_ip);
         // Connect the robot Dashboard
         if (!dashboard_client_->connect()) {
             URCL_LOG_ERROR("Could not connect to dashboard");
@@ -62,27 +61,19 @@ RobotWrapper::RobotWrapper(const std::string& robot_ip,
     }
 
     if (!initializeRobotWithPrimaryClient()) {
-        throw UrException("Could not initialize robot with primary client");
+        throw urcl::UrException("Could not initialize robot with primary client");
     }
 
-    UrDriverConfiguration driver_config;
+    urcl::UrDriverConfiguration driver_config;
     driver_config.robot_ip = robot_ip;
     driver_config.script_file = script_file;
     driver_config.output_recipe_file = output_recipe_file;
     driver_config.input_recipe_file = input_recipe_file;
     driver_config.handle_program_state = std::bind(&RobotWrapper::handleRobotProgramState, this, std::placeholders::_1);
-    driver_config.headless_mode = headless_mode;
-    ur_driver_ = std::make_shared<UrDriver>(driver_config);
+    driver_config.headless_mode = true;
+    ur_driver_ = std::make_shared<urcl::UrDriver>(driver_config);
 
-    if (!headless_mode && !std::empty(autostart_program)) {
-        startRobotProgram(autostart_program);
-    }
-
-    if (headless_mode || !std::empty(autostart_program)) {
-        if (!waitForProgramRunning(500)) {
-            throw UrException("Program did not start running. Is the robot in remote control?");
-        }
-    }
+    startRobotProgram(script_file);
 }
 
 RobotWrapper::~RobotWrapper() {
@@ -100,11 +91,11 @@ bool RobotWrapper::clearProtectiveStop() {
         }
         try {
             primary_client_->commandUnlockProtectiveStop();
-        } catch (const TimeoutException&) {
+        } catch (const urcl::TimeoutException&) {
             std::this_thread::sleep_for(std::chrono::seconds(5));
             try {
                 primary_client_->commandUnlockProtectiveStop();
-            } catch (const TimeoutException&) {
+            } catch (const urcl::TimeoutException&) {
                 URCL_LOG_ERROR("Robot could not unlock the protective stop");
                 return false;
             }
@@ -151,7 +142,7 @@ bool RobotWrapper::initializeRobotWithDashboard() {
 
 bool RobotWrapper::initializeRobotWithPrimaryClient() {
     try {
-        waitFor([&]() { return primary_client_->getRobotModeData() != nullptr; }, std::chrono::seconds(5));
+        urcl::waitFor([&]() { return primary_client_->getRobotModeData() != nullptr; }, std::chrono::seconds(5));
         clearProtectiveStop();
     } catch (const std::exception& exc) {
         URCL_LOG_ERROR("Could not clear protective stop (%s)", exc.what());
@@ -161,7 +152,7 @@ bool RobotWrapper::initializeRobotWithPrimaryClient() {
     try {
         primary_client_->commandStop();
         primary_client_->commandBrakeRelease();
-    } catch (const TimeoutException& exc) {
+    } catch (const urcl::TimeoutException& exc) {
         URCL_LOG_ERROR(exc.what());
         return false;
     }
@@ -216,7 +207,7 @@ void RobotWrapper::stopConsumingRTDEData() {
     }
 }
 
-bool RobotWrapper::readDataPackage(std::unique_ptr<rtde_interface::DataPackage>& data_pkg) {
+bool RobotWrapper::readDataPackage(std::unique_ptr<urcl::rtde_interface::DataPackage>& data_pkg) {
     if (consume_rtde_packages_ == true) {
         URCL_LOG_ERROR("Unable to read packages while consuming, this should not happen!");
         return false;
@@ -281,5 +272,3 @@ bool RobotWrapper::isHealthy() const {
     }
     return true;
 }
-
-}  // namespace urcl

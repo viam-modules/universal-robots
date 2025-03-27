@@ -57,8 +57,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
         throw std::runtime_error("required environment variable APPDIR unset");
     }
 
-    robot =
-        std::make_unique<RobotWrapper>(robot_ip, path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE, true, path_offset + SCRIPT_FILE);
+    robot = std::make_unique<RobotWrapper>(robot_ip, path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE, path_offset + SCRIPT_FILE);
     if (!robot->isHealthy()) {
         throw std::runtime_error("something in the robot initialization went wrong");
     }

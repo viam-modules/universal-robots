@@ -17,7 +17,7 @@
 
 #include "../trajectories/Path.h"
 #include "../trajectories/Trajectory.h"
-#include "robot_wrapper.h"
+#include "robot_wrapper.hpp"
 
 using namespace viam::sdk;
 using namespace urcl;
