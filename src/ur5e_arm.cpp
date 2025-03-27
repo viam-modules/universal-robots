@@ -57,48 +57,17 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
         throw std::runtime_error("required environment variable APPDIR unset");
     }
 
-    // connect to the robot dashboard
-    dashboard.reset(new DashboardClient(host));
-    if (!dashboard->connect()) {
-        throw std::runtime_error("couldn't connect to dashboard");
+    robot =
+        std::make_unique<RobotWrapper>(robot_ip, path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE, true, path_offset + SCRIPT_FILE);
+    if (!robot->isHealthy()) {
+        throw std::runtime_error("something in the robot initialization went wrong");
     }
-
-    // stop program, if there is one running
-    if (!dashboard->commandStop()) {
-        throw std::runtime_error("couldn't stop program running on dashboard");
-    }
-
-    // if the robot is not powered on and ready
-    std::string robotModeRunning("RUNNING");
-    while (!dashboard->commandRobotMode(robotModeRunning)) {
-        // power cycle the arm
-        if (!dashboard->commandPowerOff()) {
-            throw std::runtime_error("couldn't power off arm");
-        }
-        if (!dashboard->commandPowerOn()) {
-            throw std::runtime_error("couldn't power on arm");
-        }
-    }
-
-    // Release the brakes
-    if (!dashboard->commandBrakeRelease()) {
-        throw std::runtime_error("couldn't release the arm brakes");
-    }
-
-    UrDriverConfiguration driver_config;
-    driver_config.robot_ip = host;
-    driver_config.script_file = path_offset + SCRIPT_FILE;
-    driver_config.output_recipe_file = path_offset + OUTPUT_RECIPE;
-    driver_config.input_recipe_file = path_offset + INPUT_RECIPE;
-    driver_config.handle_program_state = &reportRobotProgramState;
-    driver_config.headless_mode = true;
-    driver = std::make_unique<UrDriver>(driver_config);
-    driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
+    robot->ur_driver_->registerTrajectoryDoneCallback(&reportTrajectoryState);
 
     // Once RTDE communication is started, we have to make sure to read from the interface buffer,
     // as otherwise we will get pipeline overflows. Therefore, do this directly before starting your
     // main loop
-    driver->startRTDECommunication();
+    robot->ur_driver_->startRTDECommunication();
     read_and_noop();
 
     // start background thread to continuously send no-ops and keep socket connection alive
@@ -125,14 +94,14 @@ T find_config_attribute(const ResourceConfig& cfg, std::string attribute) {
 
 void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     // extract relevant attributes from config
-    host = find_config_attribute<std::string>(cfg, "host");
+    robot_ip = find_config_attribute<std::string>(cfg, "host");
     speed = find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0);
     acceleration = find_config_attribute<double>(cfg, "acceleration_degs_per_sec2") * (M_PI / 180.0);
 }
 
 std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
     mu.lock();
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
+    std::unique_ptr<rtde_interface::DataPackage> data_pkg = robot->ur_driver_->getDataPackage();
     if (data_pkg && data_pkg->getData("actual_q", joint_state)) {
         std::vector<double> to_ret;
         for (double joint_pos_rad : joint_state) {
@@ -172,7 +141,7 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
 
 pose UR5eArm::get_end_position(const ProtoStruct& extra) {
     mu.lock();
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
+    std::unique_ptr<rtde_interface::DataPackage> data_pkg = robot->ur_driver_->getDataPackage();
     if (data_pkg && data_pkg->getData("actual_TCP_pose", tcp_state)) {
         pose to_ret = ur_vector_to_pose(tcp_state);
         mu.unlock();
@@ -212,7 +181,8 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
 void UR5eArm::stop(const ProtoStruct& extra) {
     if (trajectory_running) {
         trajectory_running = false;
-        driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
+        robot->ur_driver_->writeTrajectoryControlMessage(
+            urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
     }
 }
 
@@ -321,7 +291,7 @@ void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
                               const std::vector<double>& time,
                               bool use_spline_interpolation_) {
     assert(p_p.size() == time.size());
-    driver->writeTrajectoryControlMessage(
+    robot->ur_driver_->writeTrajectoryControlMessage(
         urcl::control::TrajectoryControlMessage::TRAJECTORY_START, p_p.size(), RobotReceiveTimeout::off());
 
     // log desired trajectory to a file
@@ -343,17 +313,17 @@ void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
         // move
         if (!use_spline_interpolation_) {
             // movej
-            driver->writeTrajectoryPoint(p_p[i], false, time[i], 0.0);
+            robot->ur_driver_->writeTrajectoryPoint(p_p[i], false, time[i], 0.0);
         } else {  // use spline interpolation
             if (p_v.size() == time.size() && p_a.size() == time.size() && p_v[i].size() == 6 && p_a[i].size() == 6) {
                 // quintic
-                driver->writeTrajectorySplinePoint(p_p[i], p_v[i], p_a[i], time[i]);
+                robot->ur_driver_->writeTrajectorySplinePoint(p_p[i], p_v[i], p_a[i], time[i]);
             } else if (p_v.size() == time.size() && p_v[i].size() == 6) {
                 // cubic
-                driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i]);
+                robot->ur_driver_->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i]);
             } else {
                 // linear
-                driver->writeTrajectorySplinePoint(p_p[i], time[i]);
+                robot->ur_driver_->writeTrajectorySplinePoint(p_p[i], time[i]);
             }
         }
     }
@@ -365,7 +335,7 @@ void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
 
 // helper function to read a data packet and send a noop message
 void UR5eArm::read_and_noop() {
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
+    std::unique_ptr<rtde_interface::DataPackage> data_pkg = robot->ur_driver_->getDataPackage();
     if (data_pkg) {
         // read current joint positions from robot data
         if (!data_pkg->getData("actual_q", joint_state)) {
@@ -373,6 +343,6 @@ void UR5eArm::read_and_noop() {
         }
 
         // send a noop to keep the connection alive
-        driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
+        robot->ur_driver_->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
     }
 }

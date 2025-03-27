@@ -1,7 +1,6 @@
 #pragma once
 
 #include <ur_client_library/control/trajectory_point_interface.h>
-#include <ur_client_library/example_robot_wrapper.h>
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
@@ -18,6 +17,7 @@
 
 #include "../trajectories/Path.h"
 #include "../trajectories/Trajectory.h"
+#include "robot_wrapper.h"
 
 using namespace viam::sdk;
 using namespace urcl;
@@ -105,8 +105,7 @@ class UR5eArm : public Arm, public Reconfigurable {
     void read_and_noop();
 
     // private variables to maintain connection and state
-    std::unique_ptr<UrDriver> driver;
-    std::unique_ptr<DashboardClient> dashboard;
+    std::unique_ptr<RobotWrapper> robot;
     vector6d_t joint_state, tcp_state;
     std::mutex mu;
 
@@ -114,7 +113,7 @@ class UR5eArm : public Arm, public Reconfigurable {
     const char* path_offset;
 
     // variables specified by ResourceConfig and set through reconfigure
-    std::string host;
+    std::string robot_ip;
     double speed;
     double acceleration;
 };
