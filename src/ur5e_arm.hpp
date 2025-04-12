@@ -41,6 +41,7 @@ const double TIMESTEP = 0.2;    // seconds
 class UR5eArm : public Arm, public Reconfigurable {
    public:
     UR5eArm(Dependencies deps, const ResourceConfig& cfg);
+    ~UR5eArm() override;    
 
     void reconfigure(const Dependencies& deps, const ResourceConfig& cfg) override;
 
