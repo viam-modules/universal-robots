@@ -316,6 +316,16 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     mu.unlock();
 }
 
+// Define the destructor
+UR5eArm::~UR5eArm() {
+    // stop the robot
+    stop(ProtoStruct{});
+    // disconnect from the dashboard
+    if (dashboard) {
+        dashboard->disconnect();
+    }
+}
+
 // helper function to send time-indexed position, velocity, acceleration setpoints to the UR driver
 void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
                               const std::vector<vector6d_t>& p_v,
