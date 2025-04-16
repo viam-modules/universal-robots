@@ -303,7 +303,16 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
             time.push_back(duration - (t - TIMESTEP));
 
         } else {
-            throw std::runtime_error("trajectory generation failed\n");
+            std::stringstream buffer;
+            buffer << "trajectory generation failed for path:";
+            for (auto position : positions_subset) {
+                buffer << "{";
+                for (int j = 0; j < 6; j++) {
+                    buffer << position[j] << " ";
+                }
+                buffer << "}";
+            }
+            throw std::runtime_error(buffer.str());
         }
     }
 
