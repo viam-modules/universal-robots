@@ -1,0 +1,8 @@
+# This file provides project-level configuration for the canon dev environment utility. https://github.com/viamrobotics/canon
+universal-robotics:
+    image_amd64: ghcr.io/viam-modules/universal-robots:amd64
+    update_interval: 168h0m0s
+    user: testbot
+    group: testbot
+    persistent: true
+    

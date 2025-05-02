@@ -221,12 +221,18 @@ void UR5eArm::stop(const ProtoStruct& extra) {
 ProtoStruct UR5eArm::do_command(const ProtoStruct& command) {
     ProtoStruct resp = ProtoStruct{};
     const auto vel = command.at("set_vel").get<double>();
-    if (vel != nullptr) {
-        resp.emplace("set_vel", "vel set");
-    }
-    const auto acc = command.at("set_acc").get<double>();
-    if (acc != nullptr) {
-        resp.emplace("set_acc", "acc set");
+
+    for (auto kv : command) {
+        if (kv.first == "set_vel") {
+            resp.emplace("set_vel", "vel set");
+            const double val = *kv.second.get<double>();
+            resp.emplace("set_vel_set", val);
+        }
+        if (kv.first == "set_acc") {
+            resp.emplace("set_acc", "acc set");
+            const double val = *kv.second.get<double>();
+            resp.emplace("set_acc_set", val);
+        }
     }
 
     return resp;
