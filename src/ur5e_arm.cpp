@@ -128,8 +128,8 @@ T find_config_attribute(const ResourceConfig& cfg, std::string attribute) {
 void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     // extract relevant attributes from config
     host = find_config_attribute<std::string>(cfg, "host");
-    speed = find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0);
-    acceleration = find_config_attribute<double>(cfg, "acceleration_degs_per_sec2") * (M_PI / 180.0);
+    speed.store(find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0));
+    acceleration.store(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2") * (M_PI / 180.0));
 }
 
 std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
@@ -220,18 +220,17 @@ void UR5eArm::stop(const ProtoStruct& extra) {
 
 ProtoStruct UR5eArm::do_command(const ProtoStruct& command) {
     ProtoStruct resp = ProtoStruct{};
-    const auto vel = command.at("set_vel").get<double>();
 
     for (auto kv : command) {
-        if (kv.first == "set_vel") {
-            resp.emplace("set_vel", "vel set");
+        if (kv.first == VEL_KEY) {
             const double val = *kv.second.get<double>();
-            resp.emplace("set_vel_set", val);
+            speed.store(val * (M_PI / 180.0));
+            resp.emplace(VEL_KEY, val);
         }
-        if (kv.first == "set_acc") {
-            resp.emplace("set_acc", "acc set");
+        if (kv.first == ACC_KEY) {
             const double val = *kv.second.get<double>();
-            resp.emplace("set_acc_set", val);
+            acceleration.store(val * (M_PI / 180.0));
+            resp.emplace(ACC_KEY, val);
         }
     }
 
@@ -283,11 +282,13 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     segments.push_back(waypoints.size() - 1);
 
     // set velocity/acceleration constraints
-    BOOST_LOG_TRIVIAL(debug) << "generating trajectory with max speed: " << speed * (180.0 / M_PI) << std::endl;
+    const double move_speed = speed.load();
+    const double move_acceleration = acceleration.load();
+    BOOST_LOG_TRIVIAL(debug) << "generating trajectory with max speed: " << move_speed * (180.0 / M_PI) << std::endl;
     Eigen::VectorXd max_acceleration(6);
     Eigen::VectorXd max_velocity(6);
-    max_acceleration << acceleration, acceleration, acceleration, acceleration, acceleration, acceleration;
-    max_velocity << speed, speed, speed, speed, speed, speed;
+    max_acceleration << move_acceleration, move_acceleration, move_acceleration, move_acceleration, move_acceleration, move_acceleration;
+    max_velocity << move_speed, move_speed, move_speed, move_speed, move_speed, move_speed;
 
     std::vector<vector6d_t> p;
     std::vector<vector6d_t> v;
