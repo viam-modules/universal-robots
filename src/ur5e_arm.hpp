@@ -38,6 +38,10 @@ const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
 const int NOOP_DELAY = 100000;  // 100 milliseconds
 const double TIMESTEP = 0.2;    // seconds
 
+// do_command keys
+const std::string VEL_KEY = "set_vel";
+const std::string ACC_KEY = "set_acc";
+
 class UR5eArm : public Arm, public Reconfigurable {
    public:
     UR5eArm(Dependencies deps, const ResourceConfig& cfg);
@@ -118,6 +122,6 @@ class UR5eArm : public Arm, public Reconfigurable {
 
     // variables specified by ResourceConfig and set through reconfigure
     std::string host;
-    double speed;
-    double acceleration;
+    std::atomic<double> speed;
+    std::atomic<double> acceleration;
 };
