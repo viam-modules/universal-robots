@@ -5,4 +5,3 @@ universal-robotics:
     user: testbot
     group: testbot
     persistent: true
-    

@@ -122,9 +122,6 @@ class UR5eArm : public Arm, public Reconfigurable {
 
     // variables specified by ResourceConfig and set through reconfigure
     std::string host;
-    // double speed;
-    // double acceleration;
-
     std::atomic<double> speed;
     std::atomic<double> acceleration;
 };
