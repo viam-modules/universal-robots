@@ -1,5 +1,7 @@
 #include "ur5e_arm.hpp"
 
+#include <cmath>
+
 // this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
 extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
 extern "C" void* orientation_vector_from_quaternion(void* q);
@@ -384,6 +386,10 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         }
 
         float duration = static_cast<float>(trajectory.getDuration());
+        if (std::isinf(duration)) {
+            BOOST_LOG_TRIVIAL(error) << "trajectory.getDuration() was infinite" << std::endl;
+            return false;
+        }
         float t = 0.0;
         while (t < duration) {
             Eigen::VectorXd position = trajectory.getPosition(t);
@@ -398,7 +404,12 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         Eigen::VectorXd velocity = trajectory.getVelocity(duration);
         p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-        time.push_back(duration - (t - TIMESTEP));
+        float t2 = duration - (t - TIMESTEP);
+        if (std::isinf(t2)) {
+            BOOST_LOG_TRIVIAL(error) << "duration - (t - TIMESTEP) was infinite" << std::endl;
+            return false;
+        }
+        time.push_back(t2);
     }
     BOOST_LOG_TRIVIAL(info) << "move: compute_trajectory end" << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
                             << " a " << a.size() << " time " << time.size() << std::endl;
