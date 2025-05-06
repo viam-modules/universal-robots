@@ -36,7 +36,7 @@ const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
 
 // constants for robot operation
 const int NOOP_DELAY = 100000;  // 100 milliseconds
-const double TIMESTEP = 0.2;    // seconds
+const float TIMESTEP = 0.2f;    // seconds
 
 // do_command keys
 const std::string VEL_KEY = "set_vel";
@@ -103,13 +103,12 @@ class UR5eArm : public Arm, public Reconfigurable {
 
    private:
     void keep_alive();
-    void move(std::vector<Eigen::VectorXd> waypoints);
-    void send_trajectory(const std::vector<vector6d_t>& p_p,
+    bool move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
+    bool send_trajectory(const std::vector<vector6d_t>& p_p,
                          const std::vector<vector6d_t>& p_v,
                          const std::vector<vector6d_t>& p_a,
-                         const std::vector<double>& time,
-                         bool use_spline_interpolation_);
-    void read_and_noop();
+                         const std::vector<float>& time);
+    bool read_and_noop();
 
     // private variables to maintain connection and state
     std::unique_ptr<UrDriver> driver;
@@ -118,7 +117,7 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::mutex mu;
 
     // specified through APPDIR environment variable
-    const char* path_offset;
+    std::string path_offset;
 
     // variables specified by ResourceConfig and set through reconfigure
     std::string host;
