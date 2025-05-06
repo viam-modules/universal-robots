@@ -97,6 +97,8 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
                               CALIBRATION_CHECKSUM));
     driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
 
+    usleep(3000000);
+
     // Once RTDE communication is started, we have to make sure to read from the interface buffer,
     // as otherwise we will get pipeline overflows. Therefore, do this directly before starting your
     // main loop
@@ -338,6 +340,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     trajectory_running = true;
     while (trajectory_running) {
         read_and_noop();
+        usleep(2000);
     }
     mu.unlock();
 }
