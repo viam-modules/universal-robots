@@ -50,6 +50,19 @@ void write_trajectory_to_file(std::string filepath,
     outputFile.close();
 }
 
+void log_waypoints_to_csv(std::string filepath, std::vector<Eigen::VectorXd> waypoints) {
+    std::stringstream buffer;
+    for (size_t i = 0; i < waypoints.size(); i++) {
+        for (size_t j = 0; j < 6; j++) {
+            buffer << waypoints[i][j] << ",";
+        }
+        buffer << std::endl;
+    }
+    std::ofstream outputFile(filepath);
+    outputFile << buffer.str();
+    outputFile.close();
+}
+
 // global used to track if a trajectory is in progress
 std::atomic<bool> trajectory_running(false);
 
@@ -199,6 +212,7 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
     Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
     waypoints.push_back(next_waypoint_rad);
     std::chrono::milliseconds unix_time_ms = unix_now_ms();
+    log_waypoints_to_csv(path_offset + WAYPOINTS_LOG, waypoints);
     if (!move(waypoints, unix_time_ms)) {
         throw std::runtime_error("move failed");
     };
@@ -216,6 +230,7 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
             waypoints.push_back(next_waypoint_rad);
         }
         std::chrono::milliseconds unix_time_ms = unix_now_ms();
+        log_waypoints_to_csv(path_offset + WAYPOINTS_LOG, waypoints);
         if (!move(waypoints, unix_time_ms)) {
             throw std::runtime_error("move failed");
         };
@@ -310,24 +325,11 @@ void UR5eArm::keep_alive() {
     }
 }
 
-void log_to_csv(std::string filepath, std::vector<Eigen::VectorXd> waypoints) {
-    std::stringstream buffer;
-    for (size_t i = 0; i < waypoints.size(); i++) {
-        for (size_t j = 0; j < 6; j++) {
-            buffer << waypoints[i][j] << ",";
-        }
-        buffer << std::endl;
-    }
-    std::ofstream outputFile(filepath);
-    outputFile << buffer.str();
-    outputFile.close();
-}
-
 bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
     BOOST_LOG_TRIVIAL(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size() << std::endl;
 
     // get current joint position and add that as starting pose to waypoints
-    BOOST_LOG_TRIVIAL(info) << "move: get_joint_positions star t" << unix_time_ms.count() << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "move: get_joint_positions star " << unix_time_ms.count() << std::endl;
     std::vector<double> curr_joint_pos = get_joint_positions(ProtoStruct{});
     BOOST_LOG_TRIVIAL(info) << "move: get_joint_positions end" << unix_time_ms.count() << std::endl;
 
