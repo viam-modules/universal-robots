@@ -23,4 +23,6 @@ find_package(viam-cpp-sdk CONFIG REQUIRED viamsdk)
 
 # add_compile_options(-Wall -Wextra -pedantic -Wno-unused-parameter -Wall -Wextra -Wpedantic -Wconversion  -Wnull-dereference -Wdouble-promotion -Wno-switch-enum -Wshadow -Wunused -Wenum-conversion -Wno-unused-function -Wuninitialized)
 add_executable(universal-robots main.cpp src/ur5e_arm.cpp trajectories/Path.cpp trajectories/Trajectory.cpp)
+add_executable(universal-robots-test test.cpp src/ur5e_arm.cpp trajectories/Path.cpp trajectories/Trajectory.cpp)
 target_link_libraries(universal-robots PRIVATE viam-cpp-sdk::viamsdk Eigen3::Eigen urcl)
+target_link_libraries(universal-robots-test PRIVATE viam-cpp-sdk::viamsdk Eigen3::Eigen urcl)

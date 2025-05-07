@@ -28,39 +28,46 @@ void write_trajectory_to_file(std::string filepath,
                               const std::vector<vector6d_t>& p_v,
                               const std::vector<vector6d_t>& p_a,
                               const std::vector<float>& time) {
-    // log desired trajectory to a file
-    std::stringstream buffer;
-    buffer << "t(s), j0, j1, j2, j3, j4, j5, v0, v1, v2, v3, v4, v5, a0, a1, a2, a3, a4, a5" << std::endl;
-    for (size_t i = 0; i < p_p.size() && p_p.size() == time.size() && p_p[i].size() == 6; i++) {
-        buffer << time[i];
+    bool valid = p_p.size() == p_v.size() && p_p.size() == p_a.size() && p_p.size() == time.size();
+    if (!valid) {
+        BOOST_LOG_TRIVIAL(info) << "write_trajectory_to_file called with invalid parameters";
+        return;
+    }
+    std::ofstream of(filepath);
+    of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5,a0,a1,a2,a3,a4,a5\n";
+    for (size_t i = 0; i < p_p.size(); i++) {
+        of << time[i];
         for (size_t j = 0; j < 6; j++) {
-            buffer << "," << p_p[i][j];
+            of << "," << p_p[i][j];
         }
         for (size_t j = 0; j < 6; j++) {
-            buffer << "," << p_v[i][j];
+            of << "," << p_v[i][j];
         }
         for (size_t j = 0; j < 6; j++) {
-            buffer << "," << p_a[i][j];
+            of << "," << p_a[i][j];
         }
-        buffer << std::endl;
+        of << "\n";
     }
 
-    std::ofstream outputFile(filepath);
-    outputFile << buffer.str();
-    outputFile.close();
+    of.close();
 }
 
-void log_waypoints_to_csv(std::string filepath, std::vector<Eigen::VectorXd> waypoints) {
-    std::stringstream buffer;
-    for (size_t i = 0; i < waypoints.size(); i++) {
-        for (size_t j = 0; j < 6; j++) {
-            buffer << waypoints[i][j] << ",";
+void write_waypoints_to_csv(std::string filepath, std::vector<Eigen::VectorXd> waypoints) {
+    unsigned i;
+    std::ofstream of(filepath);
+    for (const Eigen::VectorXd& vec : waypoints) {
+        i = 0;
+        for (const auto& n : vec) {
+            i++;
+            if (i == vec.size()) {
+                of << n;
+            } else {
+                of << n << ",";
+            }
         }
-        buffer << std::endl;
+        of << "\n";
     }
-    std::ofstream outputFile(filepath);
-    outputFile << buffer.str();
-    outputFile.close();
+    of.close();
 }
 
 // global used to track if a trajectory is in progress
@@ -209,13 +216,24 @@ std::chrono::milliseconds unix_now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(dtn);
 }
 
+std::string waypoints_filename(std::string path_offset, int unix_time_ms) {
+    auto fmt = boost::format(path_offset + WAYPOINTS_CSV_NAME_TEMPLATE);
+    return (fmt % std::to_string(unix_time_ms)).str();
+}
+
+std::string trajectory_filename(std::string path_offset, int unix_time_ms) {
+    auto fmt = boost::format(path_offset + TRAJECTORY_CSV_NAME_TEMPLATE);
+    return (fmt % std::to_string(unix_time_ms)).str();
+}
+
 void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct& extra) {
     std::vector<Eigen::VectorXd> waypoints;
     Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), positions.size());
     Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
     waypoints.push_back(next_waypoint_rad);
     std::chrono::milliseconds unix_time_ms = unix_now_ms();
-    // log_waypoints_to_csv(path_offset + WAYPOINTS_LOG, waypoints);
+    auto filename = waypoints_filename(path_offset, unix_time_ms.count());
+    write_waypoints_to_csv(filename, waypoints);
     if (!move(waypoints, unix_time_ms)) {
         throw std::runtime_error("move failed");
     };
@@ -233,7 +251,8 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
             waypoints.push_back(next_waypoint_rad);
         }
         std::chrono::milliseconds unix_time_ms = unix_now_ms();
-        // log_waypoints_to_csv(path_offset + WAYPOINTS_LOG, waypoints);
+        auto filename = waypoints_filename(path_offset, unix_time_ms.count());
+        write_waypoints_to_csv(filename, waypoints);
         if (!move(waypoints, unix_time_ms)) {
             throw std::runtime_error("move failed");
         };
@@ -422,7 +441,7 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
     BOOST_LOG_TRIVIAL(info) << "move: compute_trajectory end " << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
                             << " a " << a.size() << " time " << time.size();
 
-    // write_trajectory_to_file(path_offset + TRAJECTORY_LOG, p, v, a, time);
+    write_trajectory_to_file(trajectory_filename(path_offset, unix_time_ms.count()), p, v, a, time);
     mu.lock();
     if (!send_trajectory(p, v, a, time)) {
         mu.unlock();

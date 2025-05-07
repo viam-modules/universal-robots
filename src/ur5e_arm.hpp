@@ -5,6 +5,7 @@
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
 
+#include <boost/format.hpp>
 #include <boost/log/trivial.hpp>
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/components/component.hpp>
@@ -28,8 +29,8 @@ const std::string OUTPUT_RECIPE = "/src/control/rtde_output_recipe.txt";
 const std::string INPUT_RECIPE = "/src/control/rtde_input_recipe.txt";
 
 // locations of log files that will be written
-const std::string TRAJECTORY_LOG = "/logs/trajectory.csv";
-const std::string WAYPOINTS_LOG = "/logs/waypoints.csv";
+const std::string TRAJECTORY_CSV_NAME_TEMPLATE = "/%1%_trajectory.csv";
+const std::string WAYPOINTS_CSV_NAME_TEMPLATE = "/%1%_waypoints.csv";
 
 // TODO: using this is deprecated by the URCL, we could find some way around using it
 const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
@@ -41,6 +42,16 @@ const int NOOP_DELAY = 1000;  // 1 millisecond
 // do_command keys
 const std::string VEL_KEY = "set_vel";
 const std::string ACC_KEY = "set_acc";
+
+void reportRobotProgramState(bool program_running);
+void write_trajectory_to_file(std::string filepath,
+                              const std::vector<vector6d_t>& p_p,
+                              const std::vector<vector6d_t>& p_v,
+                              const std::vector<vector6d_t>& p_a,
+                              const std::vector<float>& time);
+void write_waypoints_to_csv(std::string filepath, std::vector<Eigen::VectorXd> waypoints);
+std::string waypoints_filename(std::string path_offset, int unix_time_ms);
+std::string trajectory_filename(std::string path_offset, int unix_time_ms);
 
 class UR5eArm : public Arm, public Reconfigurable {
    public:
