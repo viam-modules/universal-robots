@@ -69,7 +69,7 @@ std::atomic<bool> trajectory_running(false);
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
-    BOOST_LOG_TRIVIAL(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m\n" << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m\n";
 }
 
 // define callback function to be called by UR client library when trajectory state changes
@@ -87,10 +87,11 @@ void reportTrajectoryState(control::TrajectoryResult state) {
         default:
             report = "failure";
     }
-    BOOST_LOG_TRIVIAL(info) << "\033[1;32mtrajectory report: " << report << "\033[0m\n" << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "\033[1;32mtrajectory report: " << report << "\033[0m\n";
 }
 
 UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
+    BOOST_LOG_TRIVIAL(info) << "UR5eArm constructor start";
     this->reconfigure(deps, cfg);
 
     // get the APPDIR environment variable
@@ -149,8 +150,10 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     }
 
     // start background thread to continuously send no-ops and keep socket connection alive
+    BOOST_LOG_TRIVIAL(info) << "starting background_thread";
     std::thread t(&UR5eArm::keep_alive, this);
     t.detach();
+    BOOST_LOG_TRIVIAL(info) << "UR5eArm constructor end";
 }
 
 // helper function to extract an attribute value from its key within a ResourceConfig
@@ -182,13 +185,13 @@ std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg == nullptr) {
         mu.unlock();
-        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_joint_positions got nullptr from driver->getDataPackage()" << std::endl;
+        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_joint_positions got nullptr from driver->getDataPackage()";
         return std::vector<double>();
     }
 
     if (!data_pkg->getData("actual_q", joint_state)) {
         mu.unlock();
-        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_joint_positions()->getData(\"actual_q\") returned false" << std::endl;
+        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_joint_positions()->getData(\"actual_q\") returned false";
         return std::vector<double>();
     }
 
@@ -243,13 +246,12 @@ pose UR5eArm::get_end_position(const ProtoStruct& extra) {
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg == nullptr) {
         mu.unlock();
-        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_end_position got nullptr from driver->getDataPackage()" << std::endl;
+        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_end_position got nullptr from driver->getDataPackage()";
         return pose();
     }
     if (!data_pkg->getData("actual_TCP_pose", tcp_state)) {
         mu.unlock();
-        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_end_position driver->getDataPackage().getData(\"actual_TCP_pos\") returned false"
-                                   << std::endl;
+        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_end_position driver->getDataPackage().getData(\"actual_TCP_pos\") returned false";
         return pose();
     }
     pose to_ret = ur_vector_to_pose(tcp_state);
@@ -289,7 +291,7 @@ void UR5eArm::stop(const ProtoStruct& extra) {
         bool ok = driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
         if (!ok) {
-            BOOST_LOG_TRIVIAL(warning) << "UR5eArm::stop driver->writeTrajectoryControlMessage returned false" << std::endl;
+            BOOST_LOG_TRIVIAL(warning) << "UR5eArm::stop driver->writeTrajectoryControlMessage returned false";
             return;
         }
         trajectory_running.store(false);
@@ -317,23 +319,23 @@ ProtoStruct UR5eArm::do_command(const ProtoStruct& command) {
 
 // Send no-ops and keep socket connection alive
 void UR5eArm::keep_alive() {
+    BOOST_LOG_TRIVIAL(info) << "keep_alive thread started";
     while (true) {
         mu.lock();
         read_and_noop();
         mu.unlock();
-        usleep(NOOP_DELAY);
     }
 }
 
 bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
-    BOOST_LOG_TRIVIAL(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size() << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size();
 
     // get current joint position and add that as starting pose to waypoints
-    BOOST_LOG_TRIVIAL(info) << "move: get_joint_positions star " << unix_time_ms.count() << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "move: get_joint_positions star " << unix_time_ms.count();
     std::vector<double> curr_joint_pos = get_joint_positions(ProtoStruct{});
-    BOOST_LOG_TRIVIAL(info) << "move: get_joint_positions end" << unix_time_ms.count() << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "move: get_joint_positions end" << unix_time_ms.count();
 
-    BOOST_LOG_TRIVIAL(info) << "move: compute_trajectory start " << unix_time_ms.count() << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "move: compute_trajectory start " << unix_time_ms.count();
     Eigen::VectorXd curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), curr_joint_pos.size());
     Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI / 180.0);
     waypoints.insert(waypoints.begin(), curr_waypoint_rad);
@@ -356,7 +358,7 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
     // set velocity/acceleration constraints
     const double move_speed = speed.load();
     const double move_acceleration = acceleration.load();
-    BOOST_LOG_TRIVIAL(debug) << "generating trajectory with max speed: " << move_speed * (180.0 / M_PI) << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "generating trajectory with max speed: " << move_speed * (180.0 / M_PI);
     Eigen::VectorXd max_acceleration(6);
     Eigen::VectorXd max_velocity(6);
     max_acceleration << move_acceleration, move_acceleration, move_acceleration, move_acceleration, move_acceleration, move_acceleration;
@@ -383,13 +385,13 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
                 }
                 buffer << "}";
             }
-            BOOST_LOG_TRIVIAL(error) << buffer.str() << std::endl;
+            BOOST_LOG_TRIVIAL(error) << buffer.str();
             return false;
         }
 
         float duration = static_cast<float>(trajectory.getDuration());
         if (std::isinf(duration)) {
-            BOOST_LOG_TRIVIAL(error) << "trajectory.getDuration() was infinite" << std::endl;
+            BOOST_LOG_TRIVIAL(error) << "trajectory.getDuration() was infinite";
             return false;
         }
         float t = 0.0;
@@ -408,19 +410,19 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
         float t2 = duration - (t - TIMESTEP);
         if (std::isinf(t2)) {
-            BOOST_LOG_TRIVIAL(error) << "duration - (t - TIMESTEP) was infinite" << std::endl;
+            BOOST_LOG_TRIVIAL(error) << "duration - (t - TIMESTEP) was infinite";
             return false;
         }
         time.push_back(t2);
     }
     BOOST_LOG_TRIVIAL(info) << "move: compute_trajectory end" << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
-                            << " a " << a.size() << " time " << time.size() << std::endl;
+                            << " a " << a.size() << " time " << time.size();
 
     write_trajectory_to_file(path_offset + TRAJECTORY_LOG, p, v, a, time);
     mu.lock();
     if (!send_trajectory(p, v, a, time)) {
         mu.unlock();
-        BOOST_LOG_TRIVIAL(error) << "move: " << unix_time_ms.count() << " send_trajectory failed" << std::endl;
+        BOOST_LOG_TRIVIAL(error) << "move: " << unix_time_ms.count() << " send_trajectory failed";
         return false;
     };
 
@@ -431,11 +433,10 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
     mu.unlock();
 
     if (!ok) {
-        BOOST_LOG_TRIVIAL(error) << "move: unix_time_ms" << unix_time_ms.count() << " read_and_noop failed, couldn't get joint positions"
-                                 << std::endl;
+        BOOST_LOG_TRIVIAL(error) << "move: unix_time_ms" << unix_time_ms.count() << " read_and_noop failed, couldn't get joint positions";
         return false;
     }
-    BOOST_LOG_TRIVIAL(info) << "move: end unix_time_ms " << unix_time_ms.count() << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "move: end unix_time_ms " << unix_time_ms.count();
     return true;
 }
 
@@ -462,16 +463,16 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
                               const std::vector<vector6d_t>& p_v,
                               const std::vector<vector6d_t>& p_a,
                               const std::vector<float>& time) {
-    BOOST_LOG_TRIVIAL(info) << "UR5eArm::send_trajectory start" << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "UR5eArm::send_trajectory start";
     if (p_p.size() != time.size()) {
-        BOOST_LOG_TRIVIAL(error) << "UR5eArm::send_trajectory p_p.size() != time.size() not executing" << std::endl;
+        BOOST_LOG_TRIVIAL(error) << "UR5eArm::send_trajectory p_p.size() != time.size() not executing";
         return false;
     };
     // NOTE: (Nick) - why are we sending a control message before we are ready to actually do the work?
     auto point_number = static_cast<int>(p_p.size());
     if (!driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_START, point_number, RobotReceiveTimeout::off())) {
-        BOOST_LOG_TRIVIAL(error) << "read_and_noop driver->writeTrajectoryControlMessage returned false" << std::endl;
+        BOOST_LOG_TRIVIAL(error) << "read_and_noop driver->writeTrajectoryControlMessage returned false";
         return false;
     };
 
@@ -483,26 +484,25 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
         if (p_v.size() == time.size() && p_a.size() == time.size() && p_v[i].size() == 6 && p_a[i].size() == 6) {
             quintic++;
             if (!driver->writeTrajectorySplinePoint(p_p[i], p_v[i], p_a[i], time[i])) {
-                BOOST_LOG_TRIVIAL(error) << "send_trajectory quintic driver->writeTrajectorySplinePoint returned false" << std::endl;
+                BOOST_LOG_TRIVIAL(error) << "send_trajectory quintic driver->writeTrajectorySplinePoint returned false";
                 return false;
             };
         } else if (p_v.size() == time.size() && p_v[i].size() == 6) {
             cubic++;
             if (!driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i])) {
-                BOOST_LOG_TRIVIAL(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false" << std::endl;
+                BOOST_LOG_TRIVIAL(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
                 return false;
             };
         } else {
             linear++;
             if (!driver->writeTrajectorySplinePoint(p_p[i], time[i])) {
-                BOOST_LOG_TRIVIAL(error) << "send_trajectory linear driver->writeTrajectorySplinePoint returned false" << std::endl;
+                BOOST_LOG_TRIVIAL(error) << "send_trajectory linear driver->writeTrajectorySplinePoint returned false";
                 return false;
             };
         }
     }
 
-    BOOST_LOG_TRIVIAL(info) << "UR5eArm::send_trajectory end: quintic" << quintic << " cubic " << cubic << " linear " << linear
-                            << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "UR5eArm::send_trajectory end: quintic" << quintic << " cubic " << cubic << " linear " << linear;
     return true;
 }
 
@@ -510,18 +510,18 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
 bool UR5eArm::read_and_noop() {
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg == nullptr) {
-        BOOST_LOG_TRIVIAL(error) << "read_and_noop driver->getDataPackage() returned nullptr" << std::endl;
+        BOOST_LOG_TRIVIAL(error) << "read_and_noop driver->getDataPackage() returned nullptr";
         return false;
     }
     // read current joint positions from robot data
     if (!data_pkg->getData("actual_q", joint_state)) {
-        BOOST_LOG_TRIVIAL(error) << "read_and_noop driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false" << std::endl;
+        BOOST_LOG_TRIVIAL(error) << "read_and_noop driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
         return false;
     }
 
     // send a noop to keep the connection alive
     if (!driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-        BOOST_LOG_TRIVIAL(error) << "read_and_noop driver->writeTrajectoryControlMessage returned false" << std::endl;
+        BOOST_LOG_TRIVIAL(error) << "read_and_noop driver->writeTrajectoryControlMessage returned false";
         return false;
     };
     return true;
