@@ -449,7 +449,7 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
 
 // Define the destructor
 UR5eArm::~UR5eArm() {
-    BOOST_LOG_TRIVIAL(warn) << "UR5eArm distructor called";
+    BOOST_LOG_TRIVIAL(warning) << "UR5eArm distructor called";
     // stop the robot
     stop(ProtoStruct{});
     // disconnect from the dashboard
