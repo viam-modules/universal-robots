@@ -215,7 +215,7 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
     Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
     waypoints.push_back(next_waypoint_rad);
     std::chrono::milliseconds unix_time_ms = unix_now_ms();
-    log_waypoints_to_csv(path_offset + WAYPOINTS_LOG, waypoints);
+    // log_waypoints_to_csv(path_offset + WAYPOINTS_LOG, waypoints);
     if (!move(waypoints, unix_time_ms)) {
         throw std::runtime_error("move failed");
     };
@@ -233,7 +233,7 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
             waypoints.push_back(next_waypoint_rad);
         }
         std::chrono::milliseconds unix_time_ms = unix_now_ms();
-        log_waypoints_to_csv(path_offset + WAYPOINTS_LOG, waypoints);
+        // log_waypoints_to_csv(path_offset + WAYPOINTS_LOG, waypoints);
         if (!move(waypoints, unix_time_ms)) {
             throw std::runtime_error("move failed");
         };
@@ -318,7 +318,7 @@ ProtoStruct UR5eArm::do_command(const ProtoStruct& command) {
 }
 
 // Send no-ops and keep socket connection alive
-void UR5eArm::keep_alive() {
+void UR5eArm::keep_alive() try {
     BOOST_LOG_TRIVIAL(info) << "keep_alive thread started";
     while (true) {
         mu.lock();
@@ -326,13 +326,16 @@ void UR5eArm::keep_alive() {
         mu.unlock();
         usleep(NOOP_DELAY);
     }
+} catch (const std::exception& ex) {
+    BOOST_LOG_TRIVIAL(error) << "keep_alive failed Exception: " << std::string(ex.what()) << "\n";
+    keep_alive();
 }
 
-bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
+bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) try {
     BOOST_LOG_TRIVIAL(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size();
 
     // get current joint position and add that as starting pose to waypoints
-    BOOST_LOG_TRIVIAL(info) << "move: get_joint_positions star " << unix_time_ms.count();
+    BOOST_LOG_TRIVIAL(info) << "move: get_joint_positions start " << unix_time_ms.count();
     std::vector<double> curr_joint_pos = get_joint_positions(ProtoStruct{});
     BOOST_LOG_TRIVIAL(info) << "move: get_joint_positions end" << unix_time_ms.count();
 
@@ -416,10 +419,10 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         }
         time.push_back(t2);
     }
-    BOOST_LOG_TRIVIAL(info) << "move: compute_trajectory end" << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
+    BOOST_LOG_TRIVIAL(info) << "move: compute_trajectory end " << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
                             << " a " << a.size() << " time " << time.size();
 
-    write_trajectory_to_file(path_offset + TRAJECTORY_LOG, p, v, a, time);
+    // write_trajectory_to_file(path_offset + TRAJECTORY_LOG, p, v, a, time);
     mu.lock();
     if (!send_trajectory(p, v, a, time)) {
         mu.unlock();
@@ -439,10 +442,14 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
     }
     BOOST_LOG_TRIVIAL(info) << "move: end unix_time_ms " << unix_time_ms.count();
     return true;
+} catch (const std::exception& ex) {
+    BOOST_LOG_TRIVIAL(error) << "move failed. unix_time_ms " << unix_time_ms.count() << " Exception: " << std::string(ex.what()) << "\n";
+    return false;
 }
 
 // Define the destructor
 UR5eArm::~UR5eArm() {
+    BOOST_LOG_TRIVIAL(warn) << "UR5eArm distructor called";
     // stop the robot
     stop(ProtoStruct{});
     // disconnect from the dashboard
