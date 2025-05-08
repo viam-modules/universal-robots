@@ -49,7 +49,7 @@ void reportTrajectoryState(control::TrajectoryResult state) {
 }
 
 void reportTrajectoryDisconnected(int code) {
-    BOOST_LOG_TRIVIAL(info) << "\033[1;32mclient disconnected, code: " << something << "\033[0m\n" << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "\033[1;32mclient disconnected, code: " << code << "\033[0m\n" << std::endl;
 }
 
 UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
