@@ -102,7 +102,15 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     if (!tmp) {
         throw std::runtime_error("required environment variable APPDIR unset");
     }
-    path_offset = std::string(tmp);
+    appdir = std::string(tmp);
+    BOOST_LOG_TRIVIAL(info) << "appdir" << appdir << "\n";
+
+    tmp = std::getenv("VIAM_MODULE_DATA");
+    if (!tmp) {
+        throw std::runtime_error("required environment variable VIAM_MODULE_DATA unset");
+    }
+    viam_module_data = std::string(tmp);
+    BOOST_LOG_TRIVIAL(info) << "VIAM_MODULE_DATA" << viam_module_data << "\n";
 
     // connect to the robot dashboard
     dashboard.reset(new DashboardClient(host));
@@ -135,9 +143,9 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     // Now the robot is ready to receive a program
     std::unique_ptr<ToolCommSetup> tool_comm_setup;
     driver.reset(new UrDriver(host,
-                              path_offset + SCRIPT_FILE,
-                              path_offset + OUTPUT_RECIPE,
-                              path_offset + INPUT_RECIPE,
+                              appdir + SCRIPT_FILE,
+                              appdir + OUTPUT_RECIPE,
+                              appdir + INPUT_RECIPE,
                               &reportRobotProgramState,
                               true,  // headless mode
                               std::move(tool_comm_setup),
@@ -208,18 +216,18 @@ std::chrono::milliseconds unix_now_ms() {
     return chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
 }
 
-std::string waypoints_filename(std::string path_offset, int unix_time_ms) {
-    auto fmt = boost::format(path_offset + WAYPOINTS_CSV_NAME_TEMPLATE);
+std::string waypoints_filename(std::string path, int unix_time_ms) {
+    auto fmt = boost::format(path + WAYPOINTS_CSV_NAME_TEMPLATE);
     return (fmt % std::to_string(unix_time_ms)).str();
 }
 
-std::string trajectory_filename(std::string path_offset, int unix_time_ms) {
-    auto fmt = boost::format(path_offset + TRAJECTORY_CSV_NAME_TEMPLATE);
+std::string trajectory_filename(std::string path, int unix_time_ms) {
+    auto fmt = boost::format(path + TRAJECTORY_CSV_NAME_TEMPLATE);
     return (fmt % std::to_string(unix_time_ms)).str();
 }
 
-std::string arm_joint_positions_filename(std::string path_offset, int unix_time_ms) {
-    auto fmt = boost::format(path_offset + ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE);
+std::string arm_joint_positions_filename(std::string path, int unix_time_ms) {
+    auto fmt = boost::format(path + ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE);
     return (fmt % std::to_string(unix_time_ms)).str();
 }
 
@@ -229,7 +237,7 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
     Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
     waypoints.push_back(next_waypoint_rad);
     std::chrono::milliseconds unix_time_ms = unix_now_ms();
-    auto filename = waypoints_filename(path_offset, unix_time_ms.count());
+    auto filename = waypoints_filename(viam_module_data, unix_time_ms.count());
     write_waypoints_to_csv(filename, waypoints);
     if (!move(waypoints, unix_time_ms)) {
         throw std::runtime_error("move failed");
@@ -248,7 +256,7 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
             waypoints.push_back(next_waypoint_rad);
         }
         std::chrono::milliseconds unix_time_ms = unix_now_ms();
-        auto filename = waypoints_filename(path_offset, unix_time_ms.count());
+        auto filename = waypoints_filename(viam_module_data, unix_time_ms.count());
         write_waypoints_to_csv(filename, waypoints);
         if (!move(waypoints, unix_time_ms)) {
             throw std::runtime_error("move failed");
@@ -278,7 +286,7 @@ bool UR5eArm::is_moving() {
 
 UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
     // Open the file in binary mode
-    std::ifstream file(path_offset + SVA_FILE, std::ios::binary);
+    std::ifstream file(appdir + SVA_FILE, std::ios::binary);
     if (!file) {
         throw std::runtime_error("unable to open file");
     }
@@ -437,7 +445,7 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
     BOOST_LOG_TRIVIAL(info) << "move: compute_trajectory end " << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
                             << " time " << time.size();
 
-    write_trajectory_to_file(trajectory_filename(path_offset, unix_time_ms.count()), p, v, time);
+    write_trajectory_to_file(trajectory_filename(viam_module_data, unix_time_ms.count()), p, v, time);
     {  // note the open brace which introduces a new variable scope
         // construct a lock_guard: locks the mutex on construction and unlocks on destruction
         std::lock_guard<std::mutex> guard{mu};
@@ -463,7 +471,7 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
             return false;
         };
 
-        std::ofstream of(arm_joint_positions_filename(path_offset, unix_time_ms.count()));
+        std::ofstream of(arm_joint_positions_filename(viam_module_data, unix_time_ms.count()));
 
         of << "time_ms,read_attemp,joint_0_deg,joint_1_deg,joint_2_deg,joint_3_deg,joint_4_deg,joint_5_deg\n";
         of << pre_trajectory_state.str();

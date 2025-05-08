@@ -51,9 +51,9 @@ void write_trajectory_to_file(std::string filepath,
                               const std::vector<float>& time);
 void write_waypoints_to_csv(std::string filepath, std::vector<Eigen::VectorXd> waypoints);
 void write_joint_pos_deg(vector6d_t js, std::ostream& of, int unix_now_ms, unsigned attempt);
-std::string waypoints_filename(std::string path_offset, int unix_time_ms);
-std::string trajectory_filename(std::string path_offset, int unix_time_ms);
-std::string arm_joint_positions_filename(std::string path_offset, int unix_time_ms);
+std::string waypoints_filename(std::string path, int unix_time_ms);
+std::string trajectory_filename(std::string path, int unix_time_ms);
+std::string arm_joint_positions_filename(std::string path, int unix_time_ms);
 
 class UR5eArm : public Arm, public Reconfigurable {
    public:
@@ -127,7 +127,9 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::mutex mu;
 
     // specified through APPDIR environment variable
-    std::string path_offset;
+    std::string appdir;
+    // specified through VIAM_MODULE_DATA environment variable
+    std::string viam_module_data;
 
     // variables specified by ResourceConfig and set through reconfigure
     std::string host;
