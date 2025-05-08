@@ -72,7 +72,7 @@ std::atomic<bool> trajectory_running(false);
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
-    BOOST_LOG_TRIVIAL(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m\n";
+    BOOST_LOG_TRIVIAL(info) << "UR program running: " << std::boolalpha << program_running << "\n";
 }
 
 // define callback function to be called by UR client library when trajectory state changes
@@ -90,7 +90,7 @@ void reportTrajectoryState(control::TrajectoryResult state) {
         default:
             report = "failure";
     }
-    BOOST_LOG_TRIVIAL(info) << "\033[1;32mtrajectory report: " << report << "\033[0m\n";
+    BOOST_LOG_TRIVIAL(info) << "trajectory report: " << report << "\n";
 }
 
 UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
