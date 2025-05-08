@@ -184,16 +184,14 @@ void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
 }
 
 std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
-    mu.lock();
+    std::lock_guard<std::mutex> guard{mu};
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg == nullptr) {
-        mu.unlock();
         BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_joint_positions got nullptr from driver->getDataPackage()";
         return std::vector<double>();
     }
 
     if (!data_pkg->getData("actual_q", joint_state)) {
-        mu.unlock();
         BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_joint_positions()->getData(\"actual_q\") returned false";
         return std::vector<double>();
     }
@@ -203,13 +201,11 @@ std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
         double joint_pos_deg = 180.0 / M_PI * joint_pos_rad;
         to_ret.push_back(joint_pos_deg);
     }
-    mu.unlock();
     return to_ret;
 }
 std::chrono::milliseconds unix_now_ms() {
-    std::chrono::system_clock::time_point tp = std::chrono::system_clock::now();
-    std::chrono::system_clock::duration dtn = tp.time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(dtn);
+    namespace chrono = std::chrono;
+    return chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
 }
 
 std::string waypoints_filename(std::string path_offset, int unix_time_ms) {
@@ -262,20 +258,17 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
 }
 
 pose UR5eArm::get_end_position(const ProtoStruct& extra) {
-    mu.lock();
+    std::lock_guard<std::mutex> guard{mu};
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg == nullptr) {
-        mu.unlock();
         BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_end_position got nullptr from driver->getDataPackage()";
         return pose();
     }
     if (!data_pkg->getData("actual_TCP_pose", tcp_state)) {
-        mu.unlock();
         BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_end_position driver->getDataPackage().getData(\"actual_TCP_pos\") returned false";
         return pose();
     }
     pose to_ret = ur_vector_to_pose(tcp_state);
-    mu.unlock();
     return to_ret;
 }
 
@@ -338,17 +331,20 @@ ProtoStruct UR5eArm::do_command(const ProtoStruct& command) {
 }
 
 // Send no-ops and keep socket connection alive
-void UR5eArm::keep_alive() try {
+void UR5eArm::keep_alive() {
     BOOST_LOG_TRIVIAL(info) << "keep_alive thread started";
     while (true) {
-        mu.lock();
-        read_and_noop();
-        mu.unlock();
+        {
+            std::lock_guard<std::mutex> guard{mu};
+            try {
+                read_and_noop();
+            } catch (const std::exception& ex) {
+                BOOST_LOG_TRIVIAL(error) << "keep_alive failed Exception: " << std::string(ex.what()) << "\n";
+                continue;
+            }
+        }
         usleep(NOOP_DELAY);
     }
-} catch (const std::exception& ex) {
-    BOOST_LOG_TRIVIAL(error) << "keep_alive failed Exception: " << std::string(ex.what()) << "\n";
-    keep_alive();
 }
 
 bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) try {
@@ -442,45 +438,45 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
                             << " time " << time.size();
 
     write_trajectory_to_file(trajectory_filename(path_offset, unix_time_ms.count()), p, v, time);
-    mu.lock();
-    std::stringstream pre_trajectory_state;
-    {
-        bool ok = false;
-        int now = 0;
-        for (unsigned i = 0; i < 5; i++) {
-            now = unix_now_ms().count();
-            ok = read_and_noop();
-            if (ok) {
-                break;
+    {  // note the open brace which introduces a new variable scope
+        // construct a lock_guard: locks the mutex on construction and unlocks on destruction
+        std::lock_guard<std::mutex> guard{mu};
+        std::stringstream pre_trajectory_state;
+        {
+            bool ok = false;
+            int now = 0;
+            for (unsigned i = 0; i < 5; i++) {
+                now = unix_now_ms().count();
+                ok = read_and_noop();
+                if (ok) {
+                    break;
+                }
             }
+            if (!ok) {
+                BOOST_LOG_TRIVIAL(error) << "unable to get arm state before send_trajectory";
+                return false;
+            }
+            write_joint_pos_deg(joint_state, pre_trajectory_state, now, 0);
         }
-        if (!ok) {
-            mu.unlock();
-            BOOST_LOG_TRIVIAL(error) << "unable to get arm state before send_trajectory";
+        if (!send_trajectory(p, v, time)) {
+            BOOST_LOG_TRIVIAL(error) << "move: " << unix_time_ms.count() << " send_trajectory failed";
             return false;
-        }
-        write_joint_pos_deg(joint_state, pre_trajectory_state, now, 0);
+        };
+
+        std::ofstream of(arm_joint_positions_filename(path_offset, unix_time_ms.count()));
+
+        of << "time_ms,read_attemp,joint_0_deg,joint_1_deg,joint_2_deg,joint_3_deg,joint_4_deg,joint_5_deg\n";
+        of << pre_trajectory_state.str();
+        unsigned attempt = 1;
+        int now = 0;
+        do {
+            now = unix_now_ms().count();
+            read_and_noop();
+            write_joint_pos_deg(joint_state, of, now, attempt);
+            attempt++;
+        } while (trajectory_running.load());
+        of.close();
     }
-    if (!send_trajectory(p, v, time)) {
-        mu.unlock();
-        BOOST_LOG_TRIVIAL(error) << "move: " << unix_time_ms.count() << " send_trajectory failed";
-        return false;
-    };
-
-    std::ofstream of(arm_joint_positions_filename(path_offset, unix_time_ms.count()));
-
-    of << "time_ms,read_attemp,joint_0_deg,joint_1_deg,joint_2_deg,joint_3_deg,joint_4_deg,joint_5_deg\n";
-    of << pre_trajectory_state.str();
-    unsigned attempt = 1;
-    int now = 0;
-    do {
-        now = unix_now_ms().count();
-        read_and_noop();
-        write_joint_pos_deg(joint_state, of, now, attempt);
-        attempt++;
-    } while (trajectory_running.load());
-    of.close();
-    mu.unlock();
 
     BOOST_LOG_TRIVIAL(info) << "move: end unix_time_ms " << unix_time_ms.count();
     return true;
