@@ -116,7 +116,6 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::unique_ptr<DashboardClient> dashboard;
     vector6d_t joint_state, tcp_state;
     std::mutex mu;
-    std::mutex reset_driver_mu;
 
     // specified through APPDIR environment variable
     const char* path_offset;
