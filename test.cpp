@@ -52,22 +52,16 @@ BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
         {7.1, 2, 3, 4, 5, 6},
         {10.1, 2, 3, 4, 5, 6},
     };
-    const std::vector<vector6d_t> p_a = {
-        {1.3, 20000.33, 3, 4, 5, 6},
-        {5.2, 2, 3, 4, 5, 6},
-        {8.1, 2, 3, 4, 5, 6},
-        {11.1, 2, 3, 4, 5, 6},
-    };
     const std::vector<float> time = {1, 2, 3, 4};
 
     auto expected =
-        "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5,a0,a1,a2,a3,a4,a5\n"
-        "1,1.1,2,3,4,5,6,1.2,2,3,4,5,6,1.3,20000.3,3,4,5,6\n"
-        "2,3.1,2,3,4,5,6,4.2,2,3,4,5,6,5.2,2,3,4,5,6\n"
-        "3,6.1,2,3,4,5,6,7.1,2,3,4,5,6,8.1,2,3,4,5,6\n"
-        "4,9.1,2,3,4,5,6,10.1,2,3,4,5,6,11.1,2,3,4,5,6\n";
+        "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n"
+        "1,1.1,2,3,4,5,6,1.2,2,3,4,5,6\n"
+        "2,3.1,2,3,4,5,6,4.2,2,3,4,5,6\n"
+        "3,6.1,2,3,4,5,6,7.1,2,3,4,5,6\n"
+        "4,9.1,2,3,4,5,6,10.1,2,3,4,5,6\n";
 
-    write_trajectory_to_file("./write_trajectory_to_file_test.csv", p_p, p_v, p_a, time);
+    write_trajectory_to_file("./write_trajectory_to_file_test.csv", p_p, p_v, time);
     std::ifstream csv("./write_trajectory_to_file_test.csv");
     std::stringstream buf;
     buf << csv.rdbuf();
@@ -83,6 +77,22 @@ BOOST_AUTO_TEST_CASE(test_waypoints_filename) {
 BOOST_AUTO_TEST_CASE(test_trajectory_filename) {
     auto x = trajectory_filename("/home/user", 100000);
     BOOST_CHECK_EQUAL(x, "/home/user/100000_trajectory.csv");
+}
+
+BOOST_AUTO_TEST_CASE(test_arm_joint_positions_filename) {
+    auto x = arm_joint_positions_filename("/home/user", 100000);
+    BOOST_CHECK_EQUAL(x, "/home/user/100000_arm_joint_positions.csv");
+}
+
+BOOST_AUTO_TEST_CASE(test_write_joint_pos_deg) {
+    std::ostringstream buffer;
+    vector6d_t js1{1, 2, 3, 4, 5, 6};
+    write_joint_pos_deg(js1, buffer, 10000001, 0);
+    vector6d_t js2{7, 8, 9, 10, 11, 12};
+    write_joint_pos_deg(js2, buffer, 10000002, 1);
+    BOOST_CHECK_EQUAL(buffer.str(),
+                      "10000001,0,57.2958,114.592,171.887,229.183,286.479,343.775\n"
+                      "10000002,1,401.07,458.366,515.662,572.958,630.254,687.549\n");
 }
 
 BOOST_AUTO_TEST_SUITE_END()

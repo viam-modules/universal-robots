@@ -26,15 +26,14 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
 void write_trajectory_to_file(std::string filepath,
                               const std::vector<vector6d_t>& p_p,
                               const std::vector<vector6d_t>& p_v,
-                              const std::vector<vector6d_t>& p_a,
                               const std::vector<float>& time) {
-    bool valid = p_p.size() == p_v.size() && p_p.size() == p_a.size() && p_p.size() == time.size();
+    bool valid = p_p.size() == p_v.size() && p_p.size() == time.size();
     if (!valid) {
         BOOST_LOG_TRIVIAL(info) << "write_trajectory_to_file called with invalid parameters";
         return;
     }
     std::ofstream of(filepath);
-    of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5,a0,a1,a2,a3,a4,a5\n";
+    of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n";
     for (size_t i = 0; i < p_p.size(); i++) {
         of << time[i];
         for (size_t j = 0; j < 6; j++) {
@@ -42,9 +41,6 @@ void write_trajectory_to_file(std::string filepath,
         }
         for (size_t j = 0; j < 6; j++) {
             of << "," << p_v[i][j];
-        }
-        for (size_t j = 0; j < 6; j++) {
-            of << "," << p_a[i][j];
         }
         of << "\n";
     }
@@ -226,6 +222,11 @@ std::string trajectory_filename(std::string path_offset, int unix_time_ms) {
     return (fmt % std::to_string(unix_time_ms)).str();
 }
 
+std::string arm_joint_positions_filename(std::string path_offset, int unix_time_ms) {
+    auto fmt = boost::format(path_offset + ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE);
+    return (fmt % std::to_string(unix_time_ms)).str();
+}
+
 void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct& extra) {
     std::vector<Eigen::VectorXd> waypoints;
     Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), positions.size());
@@ -389,7 +390,6 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
 
     std::vector<vector6d_t> p;
     std::vector<vector6d_t> v;
-    std::vector<vector6d_t> a;
     std::vector<float> time;
 
     for (size_t i = 0; i < segments.size() - 1; i++) {
@@ -439,26 +439,49 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         time.push_back(t2);
     }
     BOOST_LOG_TRIVIAL(info) << "move: compute_trajectory end " << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
-                            << " a " << a.size() << " time " << time.size();
+                            << " time " << time.size();
 
-    write_trajectory_to_file(trajectory_filename(path_offset, unix_time_ms.count()), p, v, a, time);
+    write_trajectory_to_file(trajectory_filename(path_offset, unix_time_ms.count()), p, v, time);
     mu.lock();
-    if (!send_trajectory(p, v, a, time)) {
+    std::stringstream pre_trajectory_state;
+    {
+        bool ok = false;
+        int now = 0;
+        for (unsigned i = 0; i < 5; i++) {
+            now = unix_now_ms().count();
+            ok = read_and_noop();
+            if (ok) {
+                break;
+            }
+        }
+        if (!ok) {
+            mu.unlock();
+            BOOST_LOG_TRIVIAL(error) << "unable to get arm state before send_trajectory";
+            return false;
+        }
+        write_joint_pos_deg(joint_state, pre_trajectory_state, now, 0);
+    }
+    if (!send_trajectory(p, v, time)) {
         mu.unlock();
         BOOST_LOG_TRIVIAL(error) << "move: " << unix_time_ms.count() << " send_trajectory failed";
         return false;
     };
 
-    bool ok = false;
+    std::ofstream of(arm_joint_positions_filename(path_offset, unix_time_ms.count()));
+
+    of << "time_ms,read_attemp,joint_0_deg,joint_1_deg,joint_2_deg,joint_3_deg,joint_4_deg,joint_5_deg\n";
+    of << pre_trajectory_state.str();
+    unsigned attempt = 1;
+    int now = 0;
     do {
-        ok = read_and_noop();
-    } while (trajectory_running.load() && ok);
+        now = unix_now_ms().count();
+        read_and_noop();
+        write_joint_pos_deg(joint_state, of, now, attempt);
+        attempt++;
+    } while (trajectory_running.load());
+    of.close();
     mu.unlock();
 
-    if (!ok) {
-        BOOST_LOG_TRIVIAL(error) << "move: unix_time_ms" << unix_time_ms.count() << " read_and_noop failed, couldn't get joint positions";
-        return false;
-    }
     BOOST_LOG_TRIVIAL(info) << "move: end unix_time_ms " << unix_time_ms.count();
     return true;
 } catch (const std::exception& ex) {
@@ -476,26 +499,14 @@ UR5eArm::~UR5eArm() {
         dashboard->disconnect();
     }
 }
-// dashboard connect
-// dashboard disconnect
-// driver connect
-// driver getDataPackage
-// driver writeTrajectoryControlMessage
-// driver writeTrajectoryPoint
-// driver writeTrajectorySplinePoint
-// driver disconnect
 
 // helper function to send time-indexed position, velocity, acceleration setpoints to the UR driver
-bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
-                              const std::vector<vector6d_t>& p_v,
-                              const std::vector<vector6d_t>& p_a,
-                              const std::vector<float>& time) {
+bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time) {
     BOOST_LOG_TRIVIAL(info) << "UR5eArm::send_trajectory start";
-    if (p_p.size() != time.size()) {
-        BOOST_LOG_TRIVIAL(error) << "UR5eArm::send_trajectory p_p.size() != time.size() not executing";
+    if (p_p.size() != time.size() || p_v.size() != time.size()) {
+        BOOST_LOG_TRIVIAL(error) << "UR5eArm::send_trajectory p_p.size() != time.size() || p_v.size() != time.size(): not executing";
         return false;
     };
-    // NOTE: (Nick) - why are we sending a control message before we are ready to actually do the work?
     auto point_number = static_cast<int>(p_p.size());
     if (!driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_START, point_number, RobotReceiveTimeout::off())) {
@@ -504,33 +515,31 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
     };
 
     trajectory_running.store(true);
-    size_t quintic = 0;
-    size_t cubic = 0;
-    size_t linear = 0;
-    for (size_t i = 0; i < p_p.size() && p_p.size() == time.size() && p_p[i].size() == 6; i++) {
-        if (p_v.size() == time.size() && p_a.size() == time.size() && p_v[i].size() == 6 && p_a[i].size() == 6) {
-            quintic++;
-            if (!driver->writeTrajectorySplinePoint(p_p[i], p_v[i], p_a[i], time[i])) {
-                BOOST_LOG_TRIVIAL(error) << "send_trajectory quintic driver->writeTrajectorySplinePoint returned false";
-                return false;
-            };
-        } else if (p_v.size() == time.size() && p_v[i].size() == 6) {
-            cubic++;
-            if (!driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i])) {
-                BOOST_LOG_TRIVIAL(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
-                return false;
-            };
-        } else {
-            linear++;
-            if (!driver->writeTrajectorySplinePoint(p_p[i], time[i])) {
-                BOOST_LOG_TRIVIAL(error) << "send_trajectory linear driver->writeTrajectorySplinePoint returned false";
-                return false;
-            };
-        }
+    BOOST_LOG_TRIVIAL(info) << "UR5eArm::send_trajectory sending " << p_p.size() << " cubic writeTrajectorySplinePoint/3";
+    for (size_t i = 0; i < p_p.size(); i++) {
+        if (!driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i])) {
+            BOOST_LOG_TRIVIAL(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
+            return false;
+        };
     }
 
-    BOOST_LOG_TRIVIAL(info) << "UR5eArm::send_trajectory end: quintic" << quintic << " cubic " << cubic << " linear " << linear;
+    BOOST_LOG_TRIVIAL(info) << "UR5eArm::send_trajectory end";
     return true;
+}
+
+void write_joint_pos_deg(vector6d_t js, std::ostream& of, int unix_now_ms, unsigned attempt) {
+    of << unix_now_ms << "," << attempt << ",";
+    unsigned i = 0;
+    for (double joint_pos_rad : js) {
+        double joint_pos_deg = 180.0 / M_PI * joint_pos_rad;
+        i++;
+        if (i == js.size()) {
+            of << joint_pos_deg;
+        } else {
+            of << joint_pos_deg << ",";
+        }
+    }
+    of << "\n";
 }
 
 // helper function to read a data packet and send a noop message
@@ -551,5 +560,6 @@ bool UR5eArm::read_and_noop() {
         BOOST_LOG_TRIVIAL(error) << "read_and_noop driver->writeTrajectoryControlMessage returned false";
         return false;
     };
+
     return true;
 }
