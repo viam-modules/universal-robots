@@ -48,7 +48,7 @@ void reportTrajectoryState(control::TrajectoryResult state) {
     BOOST_LOG_TRIVIAL(info) << "\033[1;32mtrajectory report: " << report << "\033[0m\n" << std::endl;
 }
 
-void reportTrajectoryDisconnected(int something) {
+void reportTrajectoryDisconnected(int code) {
     BOOST_LOG_TRIVIAL(info) << "\033[1;32mclient disconnected, code: " << something << "\033[0m\n" << std::endl;
 }
 
