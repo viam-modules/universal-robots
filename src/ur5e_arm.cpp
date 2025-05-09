@@ -45,7 +45,11 @@ void reportTrajectoryState(control::TrajectoryResult state) {
         default:
             report = "failure";
     }
-    BOOST_LOG_TRIVIAL(debug) << "\033[1;32mtrajectory report: " << report << "\033[0m\n" << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "\033[1;32mtrajectory report: " << report << "\033[0m\n" << std::endl;
+}
+
+void reportTrajectoryDisconnected(int code) {
+    BOOST_LOG_TRIVIAL(info) << "\033[1;32mclient disconnected, code: " << code << "\033[0m\n" << std::endl;
 }
 
 UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
@@ -86,16 +90,17 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     }
 
     // Now the robot is ready to receive a program
-    std::unique_ptr<ToolCommSetup> tool_comm_setup;
-    driver.reset(new UrDriver(host,
-                              path_offset + SCRIPT_FILE,
-                              path_offset + OUTPUT_RECIPE,
-                              path_offset + INPUT_RECIPE,
-                              &reportRobotProgramState,
-                              true,  // headless mode
-                              std::move(tool_comm_setup),
-                              CALIBRATION_CHECKSUM));
+    // std::unique_ptr<ToolCommSetup> tool_comm_setup;
+    urcl::UrDriverConfiguration ur_cfg = {host,
+                                          path_offset + SCRIPT_FILE,
+                                          path_offset + OUTPUT_RECIPE,
+                                          path_offset + INPUT_RECIPE,
+                                          &reportRobotProgramState,
+                                          true,  // headless mode
+                                          nullptr};
+    driver.reset(new UrDriver(ur_cfg));
     driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
+    driver->registerTrajectoryInterfaceDisconnectedCallback(&reportTrajectoryDisconnected);
 
     // Once RTDE communication is started, we have to make sure to read from the interface buffer,
     // as otherwise we will get pipeline overflows. Therefore, do this directly before starting your
@@ -247,6 +252,22 @@ void UR5eArm::keep_alive() {
     }
 }
 
+void checkVels(Eigen::VectorXd vels) {
+    for (int i = 0; i < vels.size(); i++) {
+        if (vels[i] > 60.0 * (M_PI / 180.0)) {
+            BOOST_LOG_TRIVIAL(info) << "yo fast speed: " << vels[i] * (180.0 / M_PI) << std::endl;
+        }
+    }
+}
+
+void checkTimes(std::vector<double> time) {
+    for (int i = 0; i < time.size(); i++) {
+        if (time[i] < 0.001) {
+            BOOST_LOG_TRIVIAL(info) << "yo small time: " << time[i] << std::endl;
+        }
+    }
+}
+
 void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     // log to csv
     std::stringstream buffer;
@@ -284,7 +305,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     // set velocity/acceleration constraints
     const double move_speed = speed.load();
     const double move_acceleration = acceleration.load();
-    BOOST_LOG_TRIVIAL(debug) << "generating trajectory with max speed: " << move_speed * (180.0 / M_PI) << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "generating trajectory with max speed: " << move_speed * (180.0 / M_PI) << std::endl;
     Eigen::VectorXd max_acceleration(6);
     Eigen::VectorXd max_velocity(6);
     max_acceleration << move_acceleration, move_acceleration, move_acceleration, move_acceleration, move_acceleration, move_acceleration;
@@ -315,6 +336,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
 
             Eigen::VectorXd position = trajectory.getPosition(duration);
             Eigen::VectorXd velocity = trajectory.getVelocity(duration);
+            checkVels(velocity);
             p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
             v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
             time.push_back(duration - (t - TIMESTEP));
@@ -332,12 +354,14 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
             throw std::runtime_error(buffer.str());
         }
     }
+    checkTimes(time);
 
     mu.lock();
     send_trajectory(p, v, a, time, true);
     trajectory_running = true;
     while (trajectory_running) {
         read_and_noop();
+        usleep(2000);
     }
     mu.unlock();
 }
@@ -359,9 +383,8 @@ void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
                               const std::vector<double>& time,
                               bool use_spline_interpolation_) {
     assert(p_p.size() == time.size());
-    driver->writeTrajectoryControlMessage(
+    bool ok = driver->writeTrajectoryControlMessage(
         urcl::control::TrajectoryControlMessage::TRAJECTORY_START, p_p.size(), RobotReceiveTimeout::off());
-
     // log desired trajectory to a file
     std::stringstream buffer;
     buffer << "t(s), j0, j1, j2, j3, j4, j5, v0, v1, v2, v3, v4, v5, a0, a1, a2, a3, a4, a5" << std::endl;
@@ -403,6 +426,46 @@ void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
 
 // helper function to read a data packet and send a noop message
 void UR5eArm::read_and_noop() {
+    std::string status;
+    dashboard->commandSafetyStatus(status);
+    if (status.find(urcl::safetyStatusString(urcl::SafetyStatus::NORMAL)) == std::string::npos) {
+        estop.store(true);
+
+    } else {
+        // if in normal state
+        if (estop.load()) {
+            estop.store(false);
+            BOOST_LOG_TRIVIAL(info) << "recovering from e-stop" << std::endl;
+
+            driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
+
+            if (!dashboard->commandPowerOff()) {
+                BOOST_LOG_TRIVIAL(info) << "yo fail power down: " << status << std::endl;
+                throw std::runtime_error("couldn't power off arm");
+            }
+            if (!dashboard->commandPowerOn()) {
+                BOOST_LOG_TRIVIAL(info) << "yo fail power up: " << status << std::endl;
+                throw std::runtime_error("couldn't power on arm");
+            }
+            // Release the brakes
+            if (!dashboard->commandBrakeRelease()) {
+                BOOST_LOG_TRIVIAL(info) << "yo failed release: " << status << std::endl;
+                throw std::runtime_error("couldn't release the arm brakes");
+            }
+            BOOST_LOG_TRIVIAL(info) << "yo break released: " << status << std::endl;
+
+            bool send_prog = driver->sendRobotProgram();
+            // don't know what to do if this is false yet
+            BOOST_LOG_TRIVIAL(info) << "send robot program successful: " << send_prog << std::endl;
+
+            trajectory_running = false;
+
+            driver->startRTDECommunication();
+            BOOST_LOG_TRIVIAL(info) << "restarted communication" << std::endl;
+            return;
+        }
+    }
+
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg) {
         // read current joint positions from robot data
@@ -412,5 +475,9 @@ void UR5eArm::read_and_noop() {
 
         // send a noop to keep the connection alive
         driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
+    } else {
+        BOOST_LOG_TRIVIAL(info) << "no packet found, resetting connection manually" << std::endl;
+        driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
+        driver->startRTDECommunication();
     }
 }
