@@ -252,6 +252,22 @@ void UR5eArm::keep_alive() {
     }
 }
 
+void checkVels(Eigen::VectorXd vels) {
+    for (int i = 0; i < vels.size(); i++) {
+        if (vels[i] > 60.0 * (M_PI / 180.0)) {
+            BOOST_LOG_TRIVIAL(info) << "yo fast speed: " << vels[i] * (180.0 / M_PI) << std::endl;
+        }
+    }
+}
+
+void checkTimes(std::vector<double> time) {
+    for (int i = 0; i < time.size(); i++) {
+        if (time[i] < 0.001) {
+            BOOST_LOG_TRIVIAL(info) << "yo small time: " << time[i] << std::endl;
+        }
+    }
+}
+
 void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     // log to csv
     std::stringstream buffer;
@@ -320,6 +336,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
 
             Eigen::VectorXd position = trajectory.getPosition(duration);
             Eigen::VectorXd velocity = trajectory.getVelocity(duration);
+            checkVels(velocity);
             p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
             v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
             time.push_back(duration - (t - TIMESTEP));
@@ -337,6 +354,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
             throw std::runtime_error(buffer.str());
         }
     }
+    checkTimes(time);
 
     mu.lock();
     send_trajectory(p, v, a, time, true);
@@ -441,7 +459,6 @@ void UR5eArm::read_and_noop() {
             BOOST_LOG_TRIVIAL(info) << "send robot program successful: " << send_prog << std::endl;
 
             trajectory_running = false;
-            
 
             driver->startRTDECommunication();
             BOOST_LOG_TRIVIAL(info) << "restarted communication" << std::endl;
