@@ -12,7 +12,7 @@ include(FetchContent)
 FetchContent_Declare(
   Universal_Robots_Client_Library
   GIT_REPOSITORY https://github.com/UniversalRobots/Universal_Robots_Client_Library
-  GIT_TAG        1.3.7
+  GIT_TAG        2.0.0
   EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(Universal_Robots_Client_Library)

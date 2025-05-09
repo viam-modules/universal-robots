@@ -86,15 +86,15 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     }
 
     // Now the robot is ready to receive a program
-    std::unique_ptr<ToolCommSetup> tool_comm_setup;
-    driver.reset(new UrDriver(host,
-                              path_offset + SCRIPT_FILE,
-                              path_offset + OUTPUT_RECIPE,
-                              path_offset + INPUT_RECIPE,
-                              &reportRobotProgramState,
-                              true,  // headless mode
-                              std::move(tool_comm_setup),
-                              CALIBRATION_CHECKSUM));
+    // Now the robot is ready to receive a program
+    urcl::UrDriverConfiguration ur_cfg = {host,
+                                          path_offset + SCRIPT_FILE,
+                                          path_offset + OUTPUT_RECIPE,
+                                          path_offset + INPUT_RECIPE,
+                                          &reportRobotProgramState,
+                                          true,  // headless mode
+                                          nullptr};
+    driver.reset(new UrDriver(ur_cfg));
     driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
 
     // Once RTDE communication is started, we have to make sure to read from the interface buffer,
@@ -403,6 +403,54 @@ void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
 
 // helper function to read a data packet and send a noop message
 void UR5eArm::read_and_noop() {
+    // check to see if an estop has occurred.
+    std::string status;
+    dashboard->commandSafetyStatus(status);
+
+    if (status.find(urcl::safetyStatusString(urcl::SafetyStatus::NORMAL)) == std::string::npos) {
+        // the arm is currently estopped. save this state.
+        estop.store(true);
+    } else {
+        // the arm is in a normal state.
+        if (estop.load()) {
+            // if the arm was previously estopped, attempt to recover from the estop.
+            // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
+            try {
+                BOOST_LOG_TRIVIAL(info) << "recovering from e-stop" << std::endl;
+                driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
+
+                if (!dashboard->commandPowerOff()) {
+                    throw std::runtime_error("couldn't power off arm");
+                }
+                if (!dashboard->commandPowerOn()) {
+                    throw std::runtime_error("couldn't power on arm");
+                }
+                // Release the brakes
+                if (!dashboard->commandBrakeRelease()) {
+                    throw std::runtime_error("couldn't release the arm brakes");
+                }
+                BOOST_LOG_TRIVIAL(info) << "arm restarted, sending control program again" << std::endl;
+
+                // send control script
+                if (!driver->sendRobotProgram()) {
+                    throw std::runtime_error("failed to resend control program");
+                }
+                BOOST_LOG_TRIVIAL(info) << "send robot program successful, restarting communication" << std::endl;
+
+                // clear any currently running trajectory.
+                trajectory_running = false;
+
+                driver->startRTDECommunication();
+                BOOST_LOG_TRIVIAL(info) << "restarted communication" << std::endl;
+                estop.store(false);
+            } catch (...) {
+                BOOST_LOG_TRIVIAL(info) << "failed to restart the arm" << std::endl;
+            }
+            BOOST_LOG_TRIVIAL(info) << "arm successfully recovered from estop" << std::endl;
+            return;
+        }
+    }
+
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg) {
         // read current joint positions from robot data
@@ -412,5 +460,10 @@ void UR5eArm::read_and_noop() {
 
         // send a noop to keep the connection alive
         driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
+    } else {
+        // we received no data packet, so our comms are down. reset the comms from the driver.
+        BOOST_LOG_TRIVIAL(info) << "no packet found, resetting RTDE client connection" << std::endl;
+        driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
+        driver->startRTDECommunication();
     }
 }
