@@ -420,24 +420,24 @@ void UR5eArm::read_and_noop() {
                 driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
 
                 if (!dashboard->commandPowerOff()) {
-                    BOOST_LOG_TRIVIAL(info) << "yo fail power down: " << status << std::endl;
                     throw std::runtime_error("couldn't power off arm");
                 }
                 if (!dashboard->commandPowerOn()) {
-                    BOOST_LOG_TRIVIAL(info) << "yo fail power up: " << status << std::endl;
                     throw std::runtime_error("couldn't power on arm");
                 }
                 // Release the brakes
                 if (!dashboard->commandBrakeRelease()) {
-                    BOOST_LOG_TRIVIAL(info) << "yo failed release: " << status << std::endl;
                     throw std::runtime_error("couldn't release the arm brakes");
                 }
-                BOOST_LOG_TRIVIAL(info) << "yo break released: " << status << std::endl;
+                BOOST_LOG_TRIVIAL(info) << "arm restarted, sending control program again" << std::endl;
 
-                bool send_prog = driver->sendRobotProgram();
-                // don't know what to do if this is false yet
-                BOOST_LOG_TRIVIAL(info) << "send robot program successful: " << send_prog << std::endl;
+                // send control script
+                if (!driver->sendRobotProgram()) {
+                    throw std::runtime_error("failed to resend control program");
+                }
+                BOOST_LOG_TRIVIAL(info) << "send robot program successful, restarting communication" << std::endl;
 
+                // clear any currently running trajectory.
                 trajectory_running = false;
 
                 driver->startRTDECommunication();
@@ -446,6 +446,7 @@ void UR5eArm::read_and_noop() {
             } catch (...) {
                 BOOST_LOG_TRIVIAL(info) << "failed to restart the arm" << std::endl;
             }
+            BOOST_LOG_TRIVIAL(info) << "arm successfully recovered from estop" << std::endl;
             return;
         }
     }
