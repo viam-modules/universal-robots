@@ -124,4 +124,5 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::string host;
     std::atomic<double> speed;
     std::atomic<double> acceleration;
+    std::atomic<bool> estop = false;
 };
