@@ -86,15 +86,15 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     }
 
     // Now the robot is ready to receive a program
-    std::unique_ptr<ToolCommSetup> tool_comm_setup;
-    driver.reset(new UrDriver(host,
-                              path_offset + SCRIPT_FILE,
-                              path_offset + OUTPUT_RECIPE,
-                              path_offset + INPUT_RECIPE,
-                              &reportRobotProgramState,
-                              true,  // headless mode
-                              std::move(tool_comm_setup),
-                              CALIBRATION_CHECKSUM));
+    // Now the robot is ready to receive a program
+    urcl::UrDriverConfiguration ur_cfg = {host,
+                                          path_offset + SCRIPT_FILE,
+                                          path_offset + OUTPUT_RECIPE,
+                                          path_offset + INPUT_RECIPE,
+                                          &reportRobotProgramState,
+                                          true,  // headless mode
+                                          nullptr};
+    driver.reset(new UrDriver(ur_cfg));
     driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
 
     // Once RTDE communication is started, we have to make sure to read from the interface buffer,
