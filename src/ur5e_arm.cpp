@@ -86,15 +86,15 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     }
 
     // Now the robot is ready to receive a program
-   // Now the robot is ready to receive a program
+    // Now the robot is ready to receive a program
     urcl::UrDriverConfiguration ur_cfg = {host,
-        path_offset + SCRIPT_FILE,
-        path_offset + OUTPUT_RECIPE,
-        path_offset + INPUT_RECIPE,
-        &reportRobotProgramState,
-        true,  // headless mode
-        nullptr};
-driver.reset(new UrDriver(ur_cfg));
+                                          path_offset + SCRIPT_FILE,
+                                          path_offset + OUTPUT_RECIPE,
+                                          path_offset + INPUT_RECIPE,
+                                          &reportRobotProgramState,
+                                          true,  // headless mode
+                                          nullptr};
+    driver.reset(new UrDriver(ur_cfg));
     driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
 
     // Once RTDE communication is started, we have to make sure to read from the interface buffer,
@@ -412,8 +412,8 @@ void UR5eArm::read_and_noop() {
 
         // send a noop to keep the connection alive
         driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
-    }else{
-        // we received no data packet, so our comms are down. reset the comms from the driver. 
+    } else {
+        // we received no data packet, so our comms are down. reset the comms from the driver.
         BOOST_LOG_TRIVIAL(info) << "no packet found, resetting RTDE client connection" << std::endl;
         driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
         driver->startRTDECommunication();
