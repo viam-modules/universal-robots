@@ -407,13 +407,14 @@ bool UR5eArm::read_joint_keep_alive() {
     if (data_pkg) {
         // read current joint positions from robot data
         if (!data_pkg->getData("actual_q", joint_state)) {
-            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false"
+                                     << std::endl;
             return false;
         }
 
         // send a noop to keep the connection alive
         if (!driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false" << std::endl;
             return false;
         };
     } else {
@@ -423,7 +424,8 @@ bool UR5eArm::read_joint_keep_alive() {
             driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
             driver->startRTDECommunication();
         } catch (const std::exception& ex) {
-            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what()) << "\n";
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what())
+                                     << std::endl;
             return false;
         }
     }
