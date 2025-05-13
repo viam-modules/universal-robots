@@ -403,6 +403,62 @@ void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
 
 // helper function to read a data packet and send a noop message
 bool UR5eArm::read_joint_keep_alive() {
+    // check to see if an estop has occurred.
+    std::string status;
+    dashboard->commandSafetyStatus(status);
+
+    if (status.find(urcl::safetyStatusString(urcl::SafetyStatus::NORMAL)) == std::string::npos) {
+        // the arm is currently estopped. save this state.
+        estop.store(true);
+    } else {
+        // the arm is in a normal state.
+        if (estop.load()) {
+            // if the arm was previously estopped, attempt to recover from the estop.
+            // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
+            try {
+                BOOST_LOG_TRIVIAL(info) << "recovering from e-stop";
+                driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
+
+                if (!dashboard->commandPowerOff()) {
+                    BOOST_LOG_TRIVIAL(error)
+                        << "read_joint_keep_alive dashboard->commandPowerOff() returned false when attempting to restart the arm";
+                    return false;
+                }
+                if (!dashboard->commandPowerOn()) {
+                    BOOST_LOG_TRIVIAL(error)
+                        << "read_joint_keep_alive dashboard->commandPowerOn() returned false when attempting to restart the arm";
+                    return false;
+                }
+                // Release the brakes
+                if (!dashboard->commandBrakeRelease()) {
+                    BOOST_LOG_TRIVIAL(error)
+                        << "read_joint_keep_alive dashboard->commandBrakeRelease() returned false when attempting to restart the arm";
+                    return false;
+                }
+                BOOST_LOG_TRIVIAL(info) << "arm restarted, sending control program again";
+
+                // send control script
+                if (!driver->sendRobotProgram()) {
+                    BOOST_LOG_TRIVIAL(error)
+                        << "read_joint_keep_alive driver->sendRobotProgram() returned false when attempting to restart the arm";
+                    return false;
+                }
+
+            } catch (...) {
+                BOOST_LOG_TRIVIAL(info) << "failed to restart the arm";
+                return false;
+            }
+
+            BOOST_LOG_TRIVIAL(info) << "send robot program successful, restarting communication";
+            driver->startRTDECommunication();
+            // clear any currently running trajectory.
+            trajectory_running = false;
+            estop.store(false);
+            BOOST_LOG_TRIVIAL(info) << "arm successfully recovered from estop";
+            return true;
+        }
+    }
+
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg) {
         // read current joint positions from robot data
