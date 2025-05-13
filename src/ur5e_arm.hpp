@@ -109,7 +109,7 @@ class UR5eArm : public Arm, public Reconfigurable {
                          const std::vector<vector6d_t>& p_a,
                          const std::vector<double>& time,
                          bool use_spline_interpolation_);
-    void read_and_noop();
+    bool read_joint_keep_alive();
 
     // private variables to maintain connection and state
     std::unique_ptr<UrDriver> driver;
