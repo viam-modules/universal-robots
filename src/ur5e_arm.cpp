@@ -416,7 +416,7 @@ bool UR5eArm::read_joint_keep_alive() {
             // if the arm was previously estopped, attempt to recover from the estop.
             // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
             try {
-                BOOST_LOG_TRIVIAL(info) << "recovering from e-stop" << std::endl;
+                BOOST_LOG_TRIVIAL(info) << "recovering from e-stop";
                 driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
 
                 if (!dashboard->commandPowerOff()) {
@@ -435,7 +435,7 @@ bool UR5eArm::read_joint_keep_alive() {
                         << "read_joint_keep_alive dashboard->commandBrakeRelease() returned false when attempting to restart the arm";
                     return false;
                 }
-                BOOST_LOG_TRIVIAL(info) << "arm restarted, sending control program again" << std::endl;
+                BOOST_LOG_TRIVIAL(info) << "arm restarted, sending control program again";
 
                 // send control script
                 if (!driver->sendRobotProgram()) {
@@ -443,19 +443,18 @@ bool UR5eArm::read_joint_keep_alive() {
                         << "read_joint_keep_alive driver->sendRobotProgram() returned false when attempting to restart the arm";
                     return false;
                 }
-                BOOST_LOG_TRIVIAL(info) << "send robot program successful, restarting communication" << std::endl;
 
             } catch (...) {
-                BOOST_LOG_TRIVIAL(info) << "failed to restart the arm" << std::endl;
+                BOOST_LOG_TRIVIAL(info) << "failed to restart the arm";
                 return false;
             }
 
+            BOOST_LOG_TRIVIAL(info) << "send robot program successful, restarting communication";
             driver->startRTDECommunication();
-            BOOST_LOG_TRIVIAL(info) << "restarted communication" << std::endl;
             // clear any currently running trajectory.
             trajectory_running = false;
             estop.store(false);
-            BOOST_LOG_TRIVIAL(info) << "arm successfully recovered from estop" << std::endl;
+            BOOST_LOG_TRIVIAL(info) << "arm successfully recovered from estop";
             return true;
         }
     }
