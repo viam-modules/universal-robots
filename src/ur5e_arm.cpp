@@ -45,7 +45,7 @@ void reportTrajectoryState(control::TrajectoryResult state) {
         default:
             report = "failure";
     }
-    BOOST_LOG_TRIVIAL(debug) << "\033[1;32mtrajectory report: " << report << "\033[0m\n";
+    BOOST_LOG_TRIVIAL(info) << "\033[1;32mtrajectory report: " << report << "\033[0m\n";
 }
 
 UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
