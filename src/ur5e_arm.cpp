@@ -415,17 +415,18 @@ bool UR5eArm::read_joint_keep_alive() {
         if (!driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
             BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
             return false;
-        };
+        }
     } else {
         // we received no data packet, so our comms are down. reset the comms from the driver.
-        BOOST_LOG_TRIVIAL(info) << "no packet found, resetting RTDE client connection";
+        BOOST_LOG_TRIVIAL(error) << "no packet found, resetting RTDE client connection";
         try {
             driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
-            driver->startRTDECommunication();
         } catch (const std::exception& ex) {
             BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
             return false;
         }
+        driver->startRTDECommunication();
+        BOOST_LOG_TRIVIAL(info) << "RTDE client connection successfully restarted";
     }
     return true;
 }
