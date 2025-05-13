@@ -420,32 +420,41 @@ bool UR5eArm::read_joint_keep_alive() {
                 driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
 
                 if (!dashboard->commandPowerOff()) {
-                    throw std::runtime_error("couldn't power off arm");
+                    BOOST_LOG_TRIVIAL(error)
+                        << "read_joint_keep_alive dashboard->commandPowerOff() returned false when attempting to restart the arm";
+                    return false;
                 }
                 if (!dashboard->commandPowerOn()) {
-                    throw std::runtime_error("couldn't power on arm");
+                    BOOST_LOG_TRIVIAL(error)
+                        << "read_joint_keep_alive dashboard->commandPowerOn() returned false when attempting to restart the arm";
+                    return false;
                 }
                 // Release the brakes
                 if (!dashboard->commandBrakeRelease()) {
-                    throw std::runtime_error("couldn't release the arm brakes");
+                    BOOST_LOG_TRIVIAL(error)
+                        << "read_joint_keep_alive dashboard->commandBrakeRelease() returned false when attempting to restart the arm";
+                    return false;
                 }
                 BOOST_LOG_TRIVIAL(info) << "arm restarted, sending control program again" << std::endl;
 
                 // send control script
                 if (!driver->sendRobotProgram()) {
-                    throw std::runtime_error("failed to resend control program");
+                    BOOST_LOG_TRIVIAL(error)
+                        << "read_joint_keep_alive driver->sendRobotProgram() returned false when attempting to restart the arm";
+                    return false;
                 }
                 BOOST_LOG_TRIVIAL(info) << "send robot program successful, restarting communication" << std::endl;
 
-                // clear any currently running trajectory.
-                trajectory_running = false;
-
-                driver->startRTDECommunication();
-                BOOST_LOG_TRIVIAL(info) << "restarted communication" << std::endl;
-                estop.store(false);
             } catch (...) {
                 BOOST_LOG_TRIVIAL(info) << "failed to restart the arm" << std::endl;
+                return false;
             }
+
+            driver->startRTDECommunication();
+            BOOST_LOG_TRIVIAL(info) << "restarted communication" << std::endl;
+            // clear any currently running trajectory.
+            trajectory_running = false;
+            estop.store(false);
             BOOST_LOG_TRIVIAL(info) << "arm successfully recovered from estop" << std::endl;
             return true;
         }
