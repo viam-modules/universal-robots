@@ -101,7 +101,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     // as otherwise we will get pipeline overflows. Therefore, do this directly before starting your
     // main loop
     driver->startRTDECommunication();
-    read_and_noop();
+    read_joint_keep_alive();
 
     // start background thread to continuously send no-ops and keep socket connection alive
     std::thread t(&UR5eArm::keep_alive, this);
@@ -241,7 +241,7 @@ ProtoStruct UR5eArm::do_command(const ProtoStruct& command) {
 void UR5eArm::keep_alive() {
     while (true) {
         mu.lock();
-        read_and_noop();
+        read_joint_keep_alive();
         mu.unlock();
         usleep(NOOP_DELAY);
     }
@@ -337,7 +337,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     send_trajectory(p, v, a, time, true);
     trajectory_running = true;
     while (trajectory_running) {
-        read_and_noop();
+        read_joint_keep_alive();
     }
     mu.unlock();
 }
@@ -402,20 +402,30 @@ void UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p,
 }
 
 // helper function to read a data packet and send a noop message
-void UR5eArm::read_and_noop() {
+bool UR5eArm::read_joint_keep_alive() {
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg) {
         // read current joint positions from robot data
         if (!data_pkg->getData("actual_q", joint_state)) {
-            throw std::runtime_error("couldn't get joint positions");
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
+            return false;
         }
 
         // send a noop to keep the connection alive
-        driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off());
+        if (!driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
+            return false;
+        };
     } else {
         // we received no data packet, so our comms are down. reset the comms from the driver.
         BOOST_LOG_TRIVIAL(info) << "no packet found, resetting RTDE client connection" << std::endl;
-        driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
-        driver->startRTDECommunication();
+        try {
+            driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
+            driver->startRTDECommunication();
+        } catch (const std::exception& ex) {
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what()) << "\n";
+            return false;
+        }
     }
+    return true;
 }
