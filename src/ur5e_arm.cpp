@@ -27,7 +27,7 @@ std::atomic<bool> trajectory_running(false);
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
-    BOOST_LOG_TRIVIAL(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m\n" << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m\n";
 }
 
 // define callback function to be called by UR client library when trajectory state changes
@@ -45,7 +45,7 @@ void reportTrajectoryState(control::TrajectoryResult state) {
         default:
             report = "failure";
     }
-    BOOST_LOG_TRIVIAL(debug) << "\033[1;32mtrajectory report: " << report << "\033[0m\n" << std::endl;
+    BOOST_LOG_TRIVIAL(debug) << "\033[1;32mtrajectory report: " << report << "\033[0m\n";
 }
 
 UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
@@ -284,7 +284,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints) {
     // set velocity/acceleration constraints
     const double move_speed = speed.load();
     const double move_acceleration = acceleration.load();
-    BOOST_LOG_TRIVIAL(debug) << "generating trajectory with max speed: " << move_speed * (180.0 / M_PI) << std::endl;
+    BOOST_LOG_TRIVIAL(info) << "generating trajectory with max speed: " << move_speed * (180.0 / M_PI);
     Eigen::VectorXd max_acceleration(6);
     Eigen::VectorXd max_velocity(6);
     max_acceleration << move_acceleration, move_acceleration, move_acceleration, move_acceleration, move_acceleration, move_acceleration;
@@ -407,25 +407,23 @@ bool UR5eArm::read_joint_keep_alive() {
     if (data_pkg) {
         // read current joint positions from robot data
         if (!data_pkg->getData("actual_q", joint_state)) {
-            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false"
-                                     << std::endl;
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
             return false;
         }
 
         // send a noop to keep the connection alive
         if (!driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false" << std::endl;
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
             return false;
         };
     } else {
         // we received no data packet, so our comms are down. reset the comms from the driver.
-        BOOST_LOG_TRIVIAL(info) << "no packet found, resetting RTDE client connection" << std::endl;
+        BOOST_LOG_TRIVIAL(info) << "no packet found, resetting RTDE client connection";
         try {
             driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
             driver->startRTDECommunication();
         } catch (const std::exception& ex) {
-            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what())
-                                     << std::endl;
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
             return false;
         }
     }
