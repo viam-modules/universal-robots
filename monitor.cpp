@@ -132,9 +132,14 @@ int main(int argc, char** argv) {
         std::cerr << "must be run as an appimage APPDIR env var not set\n";
         return EXIT_FAILURE;
     }
-    appdir = std::string(tmp);
+    std::string appdir = std::string(tmp);
     std::cout << "host: " << host << " appdir " << appdir;
     Monitor m = {.host = host, .appdir = appdir};
-    // m.start();
+    try {
+        m.monitor();
+    } catch (const std::exception& ex) {
+        std::cerr << "monitor failed - err: " << ex.what() << "\n";
+        return EXIT_FAILURE;
+    }
     return EXIT_SUCCESS;
 };
