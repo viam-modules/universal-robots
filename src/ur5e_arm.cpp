@@ -160,14 +160,15 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     // as otherwise we will get pipeline overflows. Therefore, do this directly before starting your
     // main loop
     driver->startRTDECommunication();
-    if (!read_joint_keep_alive()) {
-        throw std::runtime_error("couldn't get joint positions");
+    while (!read_joint_keep_alive()) {
+        usleep(NOOP_DELAY);
     }
 
     // start background thread to continuously send no-ops and keep socket connection alive
     BOOST_LOG_TRIVIAL(info) << "starting background_thread";
     std::thread keep_alive_thread(&UR5eArm::keep_alive, this);
     BOOST_LOG_TRIVIAL(info) << "UR5eArm constructor end";
+    keep_alive_thread.detach();
 }
 
 // helper function to extract an attribute value from its key within a ResourceConfig
