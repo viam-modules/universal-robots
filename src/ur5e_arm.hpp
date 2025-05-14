@@ -124,10 +124,12 @@ class UR5eArm : public Arm, public Reconfigurable {
     bool read_joint_keep_alive();
 
     // private variables to maintain connection and state
+    std::mutex mu;
     std::unique_ptr<UrDriver> driver;
     std::unique_ptr<DashboardClient> dashboard;
     vector6d_t joint_state, tcp_state;
-    std::mutex mu;
+
+    std::thread keep_alive_thread;
 
     // specified through APPDIR environment variable
     std::string appdir;
@@ -140,4 +142,6 @@ class UR5eArm : public Arm, public Reconfigurable {
 
     std::mutex output_csv_dir_path_mu;
     std::string output_csv_dir_path;
+
+    std::atomic<bool> shutdown;
 };

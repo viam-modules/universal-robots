@@ -166,8 +166,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
 
     // start background thread to continuously send no-ops and keep socket connection alive
     BOOST_LOG_TRIVIAL(info) << "starting background_thread";
-    std::thread t(&UR5eArm::keep_alive, this);
-    t.detach();
+    std::thread keep_alive_thread(&UR5eArm::keep_alive, this);
     BOOST_LOG_TRIVIAL(info) << "UR5eArm constructor end";
 }
 
@@ -360,6 +359,9 @@ ProtoStruct UR5eArm::do_command(const ProtoStruct& command) {
 void UR5eArm::keep_alive() {
     BOOST_LOG_TRIVIAL(info) << "keep_alive thread started";
     while (true) {
+        if (shutdown.load()) {
+            return;
+        }
         {
             std::lock_guard<std::mutex> guard{mu};
             try {
@@ -496,12 +498,16 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         of << pre_trajectory_state.str();
         unsigned attempt = 1;
         unsigned long long now = 0;
-        do {
+        while (trajectory_running.load() && !shutdown.load()) {
             now = unix_now_ms().count();
             read_joint_keep_alive();
             write_joint_pos_deg(joint_state, of, now, attempt);
             attempt++;
-        } while (trajectory_running.load());
+        };
+
+        if (shutdown.load()) {
+            BOOST_LOG_TRIVIAL(error) << "move: " << unix_time_ms.count() << " interrupted by shutdown";
+        }
         of.close();
     }
 
@@ -515,12 +521,17 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
 // Define the destructor
 UR5eArm::~UR5eArm() {
     BOOST_LOG_TRIVIAL(warning) << "UR5eArm distructor called";
+    shutdown.store(true);
     // stop the robot
+    BOOST_LOG_TRIVIAL(info) << "UR5eArm distructor calling stop";
     stop(ProtoStruct{});
     // disconnect from the dashboard
     if (dashboard) {
+        BOOST_LOG_TRIVIAL(info) << "UR5eArm distructor calling dashboard->disconnect()";
         dashboard->disconnect();
     }
+    BOOST_LOG_TRIVIAL(info) << "UR5eArm distructor waiting for keep_alive thread to terminate";
+    keep_alive_thread.join();
 }
 
 // helper function to send time-indexed position, velocity, acceleration setpoints to the UR driver
