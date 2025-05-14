@@ -256,9 +256,14 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
     std::chrono::milliseconds unix_time_ms = unix_now_ms();
     auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms.count());
     write_waypoints_to_csv(filename, waypoints);
-    if (!move(waypoints, unix_time_ms)) {
-        throw std::runtime_error("move failed");
-    };
+
+    try {
+        move(waypoints, unix_time_ms);
+    } catch (const std::exception& ex) {
+        BOOST_LOG_TRIVIAL(error) << "move failed. unix_time_ms " << unix_time_ms.count() << " Exception: " << std::string(ex.what())
+                                 << "\n";
+        throw;
+    }
 }
 
 void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -275,9 +280,13 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
         std::chrono::milliseconds unix_time_ms = unix_now_ms();
         auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms.count());
         write_waypoints_to_csv(filename, waypoints);
-        if (!move(waypoints, unix_time_ms)) {
-            throw std::runtime_error("move failed");
-        };
+        try {
+            move(waypoints, unix_time_ms);
+        } catch (const std::exception& ex) {
+            BOOST_LOG_TRIVIAL(error) << "move failed. unix_time_ms " << unix_time_ms.count() << " Exception: " << std::string(ex.what())
+                                     << "\n";
+            throw;
+        }
     }
     return;
 }
@@ -368,14 +377,13 @@ void UR5eArm::keep_alive() {
                 read_joint_keep_alive();
             } catch (const std::exception& ex) {
                 BOOST_LOG_TRIVIAL(error) << "keep_alive failed Exception: " << std::string(ex.what()) << "\n";
-                continue;
             }
         }
         usleep(NOOP_DELAY);
     }
 }
 
-bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) try {
+void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
     BOOST_LOG_TRIVIAL(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size();
 
     // get current joint position and add that as starting pose to waypoints
@@ -424,7 +432,7 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         trajectory.outputPhasePlaneTrajectory();
         if (!trajectory.isValid()) {
             std::stringstream buffer;
-            buffer << "move: unix_time_ms " << unix_time_ms.count() << " trajectory generation failed for path:";
+            buffer << "trajectory generation failed for path:";
             for (auto position : positions_subset) {
                 buffer << "{";
                 for (size_t j = 0; j < 6; j++) {
@@ -432,14 +440,12 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
                 }
                 buffer << "}";
             }
-            BOOST_LOG_TRIVIAL(error) << buffer.str();
-            return false;
+            throw std::runtime_error(buffer.str());
         }
 
         float duration = static_cast<float>(trajectory.getDuration());
         if (std::isinf(duration)) {
-            BOOST_LOG_TRIVIAL(error) << "trajectory.getDuration() was infinite";
-            return false;
+            throw std::runtime_error("trajectory.getDuration() was infinite");
         }
         float t = 0.0;
         while (t < duration) {
@@ -457,8 +463,7 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
         float t2 = duration - (t - TIMESTEP);
         if (std::isinf(t2)) {
-            BOOST_LOG_TRIVIAL(error) << "duration - (t - TIMESTEP) was infinite";
-            return false;
+            throw std::runtime_error("duration - (t - TIMESTEP) was infinite");
         }
         time.push_back(t2);
     }
@@ -482,14 +487,12 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
                 }
             }
             if (!ok) {
-                BOOST_LOG_TRIVIAL(error) << "unable to get arm state before send_trajectory";
-                return false;
+                throw std::runtime_error("unable to get arm state before send_trajectory");
             }
             write_joint_pos_deg(joint_state, pre_trajectory_state, now, 0);
         }
         if (!send_trajectory(p, v, time)) {
-            BOOST_LOG_TRIVIAL(error) << "move: " << unix_time_ms.count() << " send_trajectory failed";
-            return false;
+            throw std::runtime_error("send_trajectory failed");
         };
 
         std::ofstream of(arm_joint_positions_filename(path, unix_time_ms.count()));
@@ -506,16 +509,13 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         };
 
         if (shutdown.load()) {
-            BOOST_LOG_TRIVIAL(error) << "move: " << unix_time_ms.count() << " interrupted by shutdown";
+            of.close();
+            throw std::runtime_error("interrupted by shutdown");
         }
         of.close();
     }
 
     BOOST_LOG_TRIVIAL(info) << "move: end unix_time_ms " << unix_time_ms.count();
-    return true;
-} catch (const std::exception& ex) {
-    BOOST_LOG_TRIVIAL(error) << "move failed. unix_time_ms " << unix_time_ms.count() << " Exception: " << std::string(ex.what()) << "\n";
-    return false;
 }
 
 // Define the destructor
