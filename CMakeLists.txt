@@ -21,4 +21,6 @@ find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 find_package(viam-cpp-sdk CONFIG REQUIRED viamsdk)
 
 add_executable(universal-robots main.cpp src/ur5e_arm.cpp trajectories/Path.cpp trajectories/Trajectory.cpp)
+add_executable(monitor monitor.cpp src/ur5e_arm.cpp trajectories/Path.cpp trajectories/Trajectory.cpp)
 target_link_libraries(universal-robots PRIVATE viam-cpp-sdk::viamsdk Eigen3::Eigen urcl)
+target_link_libraries(monitor PRIVATE viam-cpp-sdk::viamsdk Eigen3::Eigen urcl)
