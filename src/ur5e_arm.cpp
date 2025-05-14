@@ -161,7 +161,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     // main loop
     driver->startRTDECommunication();
     int retry_count = 100;
-    while (!read_joint_keep_alive()) {
+    while (!read_joint_keep_alive(false)) {
         if (retry_count <= 0) {
             throw std::runtime_error("couldn't get joint positions");
         }
@@ -381,7 +381,7 @@ void UR5eArm::keep_alive() {
         {
             std::lock_guard<std::mutex> guard{mu};
             try {
-                read_joint_keep_alive();
+                read_joint_keep_alive(true);
             } catch (const std::exception& ex) {
                 BOOST_LOG_TRIVIAL(error) << "keep_alive failed Exception: " << std::string(ex.what()) << "\n";
             }
@@ -490,7 +490,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
             unsigned long long now = 0;
             for (unsigned i = 0; i < 5; i++) {
                 now = unix_now_ms().count();
-                ok = read_joint_keep_alive();
+                ok = read_joint_keep_alive(true);
                 if (ok) {
                     break;
                 }
@@ -512,7 +512,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         unsigned long long now = 0;
         while (trajectory_running.load() && !shutdown.load()) {
             now = unix_now_ms().count();
-            read_joint_keep_alive();
+            read_joint_keep_alive(true);
             write_joint_pos_deg(joint_state, of, now, attempt);
             attempt++;
         };
@@ -590,31 +590,41 @@ void write_joint_pos_deg(vector6d_t js, std::ostream& of, unsigned long long uni
 }
 
 // helper function to read a data packet and send a noop message
-bool UR5eArm::read_joint_keep_alive() {
+bool UR5eArm::read_joint_keep_alive(bool log) {
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg == nullptr) {
         // we received no data packet, so our comms are down. reset the comms from the driver.
-        BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage() returned nullptr. resetting RTDE client connection";
+        if (log) {
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage() returned nullptr. resetting RTDE client connection";
+        }
         try {
             driver->resetRTDEClient(appdir + OUTPUT_RECIPE, appdir + INPUT_RECIPE);
         } catch (const std::exception& ex) {
-            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
+            if (log) {
+                BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
+            }
             return false;
         }
         driver->startRTDECommunication();
-        BOOST_LOG_TRIVIAL(info) << "RTDE client connection successfully restarted";
+        if (log) {
+            BOOST_LOG_TRIVIAL(info) << "RTDE client connection successfully restarted";
+        }
         return false;
     }
 
     // read current joint positions from robot data
     if (!data_pkg->getData("actual_q", joint_state)) {
-        BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
+        if (log) {
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
+        }
         return false;
     }
 
     // send a noop to keep the connection alive
     if (!driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-        BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
+        if (log) {
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
+        }
         return false;
     }
     return true;
