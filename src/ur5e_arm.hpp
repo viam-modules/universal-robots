@@ -144,4 +144,5 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::string output_csv_dir_path;
 
     std::atomic<bool> shutdown;
+    std::atomic<bool> keep_alive_thread_alive;
 };

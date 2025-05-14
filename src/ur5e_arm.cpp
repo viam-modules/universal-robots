@@ -160,12 +160,18 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     // as otherwise we will get pipeline overflows. Therefore, do this directly before starting your
     // main loop
     driver->startRTDECommunication();
+    int retry_count = 100;
     while (!read_joint_keep_alive()) {
+        if (retry_count <= 0) {
+            throw std::runtime_error("couldn't get joint positions");
+        }
+        retry_count--;
         usleep(NOOP_DELAY);
     }
 
     // start background thread to continuously send no-ops and keep socket connection alive
     BOOST_LOG_TRIVIAL(info) << "starting background_thread";
+    keep_alive_thread_alive.store(true);
     std::thread keep_alive_thread(&UR5eArm::keep_alive, this);
     BOOST_LOG_TRIVIAL(info) << "UR5eArm constructor end";
     keep_alive_thread.detach();
@@ -370,7 +376,7 @@ void UR5eArm::keep_alive() {
     BOOST_LOG_TRIVIAL(info) << "keep_alive thread started";
     while (true) {
         if (shutdown.load()) {
-            return;
+            break;
         }
         {
             std::lock_guard<std::mutex> guard{mu};
@@ -382,6 +388,8 @@ void UR5eArm::keep_alive() {
         }
         usleep(NOOP_DELAY);
     }
+    BOOST_LOG_TRIVIAL(info) << "keep_alive thread terminating";
+    keep_alive_thread_alive.store(false);
 }
 
 void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
@@ -532,7 +540,11 @@ UR5eArm::~UR5eArm() {
         dashboard->disconnect();
     }
     BOOST_LOG_TRIVIAL(info) << "UR5eArm distructor waiting for keep_alive thread to terminate";
-    keep_alive_thread.join();
+    while (keep_alive_thread_alive.load()) {
+        BOOST_LOG_TRIVIAL(info) << "UR5eArm distructor waiting for keep_alive thread to terminate";
+        usleep(NOOP_DELAY);
+    }
+    BOOST_LOG_TRIVIAL(info) << "keep_alive thread terminated";
 }
 
 // helper function to send time-indexed position, velocity, acceleration setpoints to the UR driver
