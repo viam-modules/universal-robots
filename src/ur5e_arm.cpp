@@ -474,7 +474,7 @@ bool UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
             unsigned long long now = 0;
             for (unsigned i = 0; i < 5; i++) {
                 now = unix_now_ms().count();
-                ok = read_and_noop();
+                ok = read_joint_keep_alive();
                 if (ok) {
                     break;
                 }
@@ -533,7 +533,7 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vec
     auto point_number = static_cast<int>(p_p.size());
     if (!driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_START, point_number, RobotReceiveTimeout::off())) {
-        BOOST_LOG_TRIVIAL(error) << "read_and_noop driver->writeTrajectoryControlMessage returned false";
+        BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
         return false;
     };
 
@@ -572,7 +572,7 @@ bool UR5eArm::read_joint_keep_alive() {
         // we received no data packet, so our comms are down. reset the comms from the driver.
         BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage() returned nullptr. resetting RTDE client connection";
         try {
-            driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
+            driver->resetRTDEClient(appdir + OUTPUT_RECIPE, appdir + INPUT_RECIPE);
         } catch (const std::exception& ex) {
             BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
             return false;
