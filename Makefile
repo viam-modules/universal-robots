@@ -5,16 +5,16 @@ format:
 	ls src/*.*pp main.cpp | xargs clang-format-15 -i --style=file
 
 build: 
-	mkdir build logs
+	mkdir build
 
 SANITIZE ?= OFF
-build/universal-robots: format build
+build/universal-robots: embed.h format build
 	cd build && \
-	cmake -G Ninja -DENABLE_SANITIZER=$(SANITIZE) .. && \
+	cmake -G Ninja -DWITH_ASAN=$(SANITIZE) -DBUILD_SHARED_LIBS=OFF .. && \
 	ninja all -j 4
 
 clean: 
-	rm -rf build logs
+	rm -rf build
 
 clean-all:
 	git clean -fxd
@@ -72,6 +72,14 @@ appimage-amd64: export ARCH = x86_64
 appimage-amd64: build/universal-robots
 	$(call BUILD_APPIMAGE,$(OUTPUT_NAME),$(ARCH))
 	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
+
+
+# this embeds the text files we need to operate into a header file which can be embeded in the 
+# executable
+embed.h: ./src/control/rtde_output_recipe.txt ./src/control/rtde_input_recipe.txt ./src/control/external_control.urscript
+	xxd -i -n rtde_output_recipe  ./src/control/rtde_output_recipe.txt > embed.h
+	xxd -i -n rtde_input_recipe  ./src/control/rtde_input_recipe.txt >> embed.h
+	xxd -i -n external_control_urscript  ./src/control/external_control.urscript >> embed.h
 
 appimages: appimage-amd64 appimage-arm64
 

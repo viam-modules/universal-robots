@@ -1,8 +1,14 @@
-#include <boost/log/trivial.hpp>
+#include <ur_client_library/ur/dashboard_client.h>
+#include <ur_client_library/ur/ur_driver.h>
+
 #include <csignal>
 #include <iostream>
 
-#include "src/ur5e_arm.hpp"
+#include "embed.h"
+
+const std::string SCRIPT_FILE = "/src/control/external_control.urscript";
+const std::string OUTPUT_RECIPE = "/src/control/rtde_output_recipe.txt";
+const std::string INPUT_RECIPE = "/src/control/rtde_input_recipe.txt";
 std::atomic<bool> exit_signal_received;
 void signal_handler(int signal) {
     exit_signal_received.store(true);
@@ -15,15 +21,15 @@ struct Monitor {
     void monitor();
     void read_joint_keep_alive();
 
-    std::unique_ptr<UrDriver> driver;
-    std::unique_ptr<DashboardClient> dashboard;
+    std::unique_ptr<urcl::UrDriver> driver;
+    std::unique_ptr<urcl::DashboardClient> dashboard;
     std::atomic<bool> trajectory_running;
-    vector6d_t joint_state, tcp_state;
+    urcl::vector6d_t joint_state, tcp_state;
 };
 
 void Monitor::monitor() {
     // connect to the robot dashboard
-    dashboard.reset(new DashboardClient(host));
+    dashboard.reset(new urcl::DashboardClient(host));
     if (!dashboard->connect()) {
         throw std::runtime_error("couldn't connect to dashboard");
     }
@@ -43,7 +49,7 @@ void Monitor::monitor() {
     // }
 
     std::function<void(bool)> logProgramState = [=](bool program_running) {
-        BOOST_LOG_TRIVIAL(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m\n";
+        std::cerr << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m\n";
     };
     // Now the robot is ready to receive a program
     urcl::UrDriverConfiguration ur_cfg = {.robot_ip = host,
@@ -52,23 +58,23 @@ void Monitor::monitor() {
                                           .input_recipe_file = appdir + INPUT_RECIPE,
                                           .handle_program_state = logProgramState,
                                           .headless_mode = true};
-    driver.reset(new UrDriver(ur_cfg));
+    driver.reset(new urcl::UrDriver(ur_cfg));
 
-    std::function<void(control::TrajectoryResult)> monitorTrajectoryState = [=](control::TrajectoryResult state) {
+    std::function<void(urcl::control::TrajectoryResult)> monitorTrajectoryState = [=](urcl::control::TrajectoryResult state) {
         trajectory_running.store(false);
         std::string report;
         switch (state) {
-            case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
+            case urcl::control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
                 report = "success";
                 break;
-            case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED:
+            case urcl::control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED:
                 report = "canceled";
                 break;
-            case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
+            case urcl::control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
             default:
                 report = "failure";
         }
-        BOOST_LOG_TRIVIAL(info) << "\033[1;32mtrajectory report: " << report << "\033[0m\n";
+        std::cerr << "\033[1;32mtrajectory report: " << report << "\033[0m\n";
     };
     driver->registerTrajectoryDoneCallback(monitorTrajectoryState);
 
@@ -84,35 +90,36 @@ void Monitor::monitor() {
 }
 
 void Monitor::read_joint_keep_alive() {
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
+    std::unique_ptr<urcl::rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg == nullptr) {
         // we received no data packet, so our comms are down. reset the comms from the driver.
-        BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage() returned nullptr. resetting RTDE client connection";
+        std::cerr << "read_joint_keep_alive driver->getDataPackage() returned nullptr. resetting RTDE client connection\n";
         try {
             driver->resetRTDEClient(appdir + OUTPUT_RECIPE, appdir + INPUT_RECIPE);
         } catch (const std::exception& ex) {
-            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
+            std::cerr << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what()) << "\n";
             return;
         }
         driver->startRTDECommunication();
-        BOOST_LOG_TRIVIAL(info) << "RTDE client connection successfully restarted";
+        std::cerr << "RTDE client connection successfully restarted\n";
         return;
     }
 
     // read current joint positions from robot data
     if (!data_pkg->getData("actual_q", joint_state)) {
-        BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
+        std::cerr << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false\n";
         return;
     }
 
     if (!data_pkg->getData("actual_TCP_pose", tcp_state)) {
-        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_end_position driver->getDataPackage().getData(\"actual_TCP_pos\") returned false";
+        std::cerr << "UR5eArm::get_end_position driver->getDataPackage().getData(\"actual_TCP_pos\") returned false\n";
         return;
     }
 
     // send a noop to keep the connection alive
-    if (!driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-        BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
+    if (!driver->writeTrajectoryControlMessage(
+            urcl::control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, urcl::RobotReceiveTimeout::off())) {
+        std::cerr << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false\n";
         return;
     }
 }
