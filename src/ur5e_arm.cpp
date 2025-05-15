@@ -487,7 +487,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
             if (!ok) {
                 throw std::runtime_error("unable to get arm state before send_trajectory");
             }
-            write_joint_pos_deg(joint_state, pre_trajectory_state, now, 0);
+            write_joint_pos_rad(joint_state, pre_trajectory_state, now, 0);
         }
         if (!send_trajectory(p, v, time)) {
             throw std::runtime_error("send_trajectory failed");
@@ -495,14 +495,14 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
 
         std::ofstream of(arm_joint_positions_filename(path, unix_time_ms.count()));
 
-        of << "time_ms,read_attemp,joint_0_deg,joint_1_deg,joint_2_deg,joint_3_deg,joint_4_deg,joint_5_deg\n";
+        of << "time_ms,read_attemp,joint_0_rad,joint_1_rad,joint_2_rad,joint_3_rad,joint_4_rad,joint_5_rad\n";
         of << pre_trajectory_state.str();
         unsigned attempt = 1;
         unsigned long long now = 0;
         while (trajectory_running.load() && !shutdown.load()) {
             now = unix_now_ms().count();
             read_joint_keep_alive(true);
-            write_joint_pos_deg(joint_state, of, now, attempt);
+            write_joint_pos_rad(joint_state, of, now, attempt);
             attempt++;
         };
 
@@ -563,16 +563,15 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vec
     return true;
 }
 
-void write_joint_pos_deg(vector6d_t js, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
+void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
     of << unix_now_ms << "," << attempt << ",";
     unsigned i = 0;
     for (double joint_pos_rad : js) {
-        double joint_pos_deg = 180.0 / M_PI * joint_pos_rad;
         i++;
         if (i == js.size()) {
-            of << joint_pos_deg;
+            of << joint_pos_rad;
         } else {
-            of << joint_pos_deg << ",";
+            of << joint_pos_rad << ",";
         }
     }
     of << "\n";
