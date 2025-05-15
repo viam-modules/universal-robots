@@ -72,7 +72,7 @@ std::atomic<bool> trajectory_running(false);
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
-    BOOST_LOG_TRIVIAL(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m\n";
+    BOOST_LOG_TRIVIAL(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
 }
 
 // define callback function to be called by UR client library when trajectory state changes
@@ -90,7 +90,7 @@ void reportTrajectoryState(control::TrajectoryResult state) {
         default:
             report = "failure";
     }
-    BOOST_LOG_TRIVIAL(info) << "\033[1;32mtrajectory report: " << report << "\033[0m\n";
+    BOOST_LOG_TRIVIAL(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
 }
 
 UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
@@ -163,7 +163,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     int retry_count = 100;
     while (!read_joint_keep_alive(false)) {
         if (retry_count <= 0) {
-            throw std::runtime_error("couldn't get joint positions");
+            throw std::runtime_error("couldn't get joint positions; unable to establish communication with the arm");
         }
         retry_count--;
         usleep(NOOP_DELAY);
@@ -208,17 +208,9 @@ void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
 
 std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
     std::lock_guard<std::mutex> guard{mu};
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
-    if (data_pkg == nullptr) {
-        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_joint_positions got nullptr from driver->getDataPackage()";
+    if (!read_joint_keep_alive(true)) {
         return std::vector<double>();
-    }
-
-    if (!data_pkg->getData("actual_q", joint_state)) {
-        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_joint_positions()->getData(\"actual_q\") returned false";
-        return std::vector<double>();
-    }
-
+    };
     std::vector<double> to_ret;
     for (double joint_pos_rad : joint_state) {
         double joint_pos_deg = 180.0 / M_PI * joint_pos_rad;
@@ -267,8 +259,7 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
     try {
         move(waypoints, unix_time_ms);
     } catch (const std::exception& ex) {
-        BOOST_LOG_TRIVIAL(error) << "move failed. unix_time_ms " << unix_time_ms.count() << " Exception: " << std::string(ex.what())
-                                 << "\n";
+        BOOST_LOG_TRIVIAL(error) << "move failed. unix_time_ms " << unix_time_ms.count() << " Exception: " << std::string(ex.what());
         throw;
     }
 }
@@ -290,8 +281,7 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
         try {
             move(waypoints, unix_time_ms);
         } catch (const std::exception& ex) {
-            BOOST_LOG_TRIVIAL(error) << "move failed. unix_time_ms " << unix_time_ms.count() << " Exception: " << std::string(ex.what())
-                                     << "\n";
+            BOOST_LOG_TRIVIAL(error) << "move failed. unix_time_ms " << unix_time_ms.count() << " Exception: " << std::string(ex.what());
             throw;
         }
     }
@@ -309,8 +299,7 @@ pose UR5eArm::get_end_position(const ProtoStruct& extra) {
         BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_end_position driver->getDataPackage().getData(\"actual_TCP_pos\") returned false";
         return pose();
     }
-    pose to_ret = ur_vector_to_pose(tcp_state);
-    return to_ret;
+    return ur_vector_to_pose(tcp_state);
 }
 
 bool UR5eArm::is_moving() {
@@ -383,7 +372,7 @@ void UR5eArm::keep_alive() {
             try {
                 read_joint_keep_alive(true);
             } catch (const std::exception& ex) {
-                BOOST_LOG_TRIVIAL(error) << "keep_alive failed Exception: " << std::string(ex.what()) << "\n";
+                BOOST_LOG_TRIVIAL(error) << "keep_alive failed Exception: " << std::string(ex.what());
             }
         }
         usleep(NOOP_DELAY);
@@ -529,19 +518,19 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
 
 // Define the destructor
 UR5eArm::~UR5eArm() {
-    BOOST_LOG_TRIVIAL(warning) << "UR5eArm distructor called";
+    BOOST_LOG_TRIVIAL(warning) << "UR5eArm destructor called";
     shutdown.store(true);
     // stop the robot
-    BOOST_LOG_TRIVIAL(info) << "UR5eArm distructor calling stop";
+    BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor calling stop";
     stop(ProtoStruct{});
     // disconnect from the dashboard
     if (dashboard) {
-        BOOST_LOG_TRIVIAL(info) << "UR5eArm distructor calling dashboard->disconnect()";
+        BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor calling dashboard->disconnect()";
         dashboard->disconnect();
     }
-    BOOST_LOG_TRIVIAL(info) << "UR5eArm distructor waiting for keep_alive thread to terminate";
+    BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor waiting for keep_alive thread to terminate";
     while (keep_alive_thread_alive.load()) {
-        BOOST_LOG_TRIVIAL(info) << "UR5eArm distructor waiting for keep_alive thread to terminate";
+        BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor waiting for keep_alive thread to terminate";
         usleep(NOOP_DELAY);
     }
     BOOST_LOG_TRIVIAL(info) << "keep_alive thread terminated";
@@ -557,7 +546,7 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vec
     auto point_number = static_cast<int>(p_p.size());
     if (!driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_START, point_number, RobotReceiveTimeout::off())) {
-        BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
+        BOOST_LOG_TRIVIAL(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
         return false;
     };
 

@@ -129,11 +129,12 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::unique_ptr<DashboardClient> dashboard;
     vector6d_t joint_state, tcp_state;
 
+    std::atomic<bool> shutdown;
     std::thread keep_alive_thread;
+    std::atomic<bool> keep_alive_thread_alive;
 
     // specified through APPDIR environment variable
     std::string appdir;
-    // specified through VIAM_MODULE_DATA environment variable
 
     // variables specified by ResourceConfig and set through reconfigure
     std::string host;
@@ -141,8 +142,6 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::atomic<double> acceleration;
 
     std::mutex output_csv_dir_path_mu;
+    // specified through VIAM_MODULE_DATA environment variable
     std::string output_csv_dir_path;
-
-    std::atomic<bool> shutdown;
-    std::atomic<bool> keep_alive_thread_alive;
 };
