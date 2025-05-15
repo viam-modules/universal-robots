@@ -113,7 +113,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
                 throw std::runtime_error("required environment variable VIAM_MODULE_DATA unset");
             }
             output_csv_dir_path = std::string(tmp);
-            BOOST_LOG_TRIVIAL(info) << "VIAM_MODULE_DATA" << output_csv_dir_path << "\n";
+            BOOST_LOG_TRIVIAL(info) << "VIAM_MODULE_DATA" << output_csv_dir_path;
         }
     }
 
