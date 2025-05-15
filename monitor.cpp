@@ -10,6 +10,7 @@ const std::string SCRIPT_FILE = "/src/control/external_control.urscript";
 const std::string OUTPUT_RECIPE = "/src/control/rtde_output_recipe.txt";
 const std::string INPUT_RECIPE = "/src/control/rtde_input_recipe.txt";
 std::atomic<bool> exit_signal_received;
+
 void signal_handler(int signal) {
     exit_signal_received.store(true);
 }
@@ -19,7 +20,7 @@ struct Monitor {
     std::string appdir;
 
     void monitor();
-    void read_joint_keep_alive();
+    void read_joint_keep_alive(unsigned long long int iteration);
 
     std::unique_ptr<urcl::UrDriver> driver;
     std::unique_ptr<urcl::DashboardClient> dashboard;
@@ -82,14 +83,25 @@ void Monitor::monitor() {
     // as otherwise we will get pipeline overflows. Therefore, do this directly before starting your
     // main loop
     driver->startRTDECommunication();
+    unsigned long long int iteration = 0;
     while (!exit_signal_received.load()) {
-        read_joint_keep_alive();
+        read_joint_keep_alive(iteration);
+        iteration++;
     }
 
     dashboard->disconnect();
 }
+std::string formatvector6d_t(urcl::vector6d_t data, std::string name, unsigned long long int iteration) {
+    std::ostringstream buffer;
+    buffer << iteration << ", " << name;
+    for (auto i : data) {
+        buffer << ", " << i;
+    }
+    buffer << "\n";
+    return buffer.str();
+}
 
-void Monitor::read_joint_keep_alive() {
+void Monitor::read_joint_keep_alive(unsigned long long int iteration) {
     std::unique_ptr<urcl::rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
     if (data_pkg == nullptr) {
         // we received no data packet, so our comms are down. reset the comms from the driver.
@@ -111,10 +123,14 @@ void Monitor::read_joint_keep_alive() {
         return;
     }
 
+    std::cout << formatvector6d_t(joint_state, "actual_q", iteration);
+
     if (!data_pkg->getData("actual_TCP_pose", tcp_state)) {
         std::cerr << "UR5eArm::get_end_position driver->getDataPackage().getData(\"actual_TCP_pos\") returned false\n";
         return;
     }
+
+    std::cout << formatvector6d_t(tcp_state, "actual_TCP_pose", iteration);
 
     // send a noop to keep the connection alive
     if (!driver->writeTrajectoryControlMessage(
