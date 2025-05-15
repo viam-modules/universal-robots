@@ -103,7 +103,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
         throw std::runtime_error("required environment variable APPDIR unset");
     }
     appdir = std::string(tmp);
-    BOOST_LOG_TRIVIAL(info) << "appdir" << appdir << "\n";
+    BOOST_LOG_TRIVIAL(info) << "appdir" << appdir;
 
     {
         std::lock_guard<std::mutex> guard{output_csv_dir_path_mu};
