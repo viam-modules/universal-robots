@@ -81,3 +81,7 @@ appimages: appimage-amd64 appimage-arm64
 module.tar.gz: meta.json
 	cp ./packaging/appimages/deploy/universal-robots-latest-$(ARCH).AppImage universal-robots.AppImage
 	tar czf $@ $^ universal-robots.AppImage
+
+UNIVERSAL_ROBOTS_CLIENT_LIBRARY-SRC = build/_deps/universal_robots_client_library-src
+ur5e-sim: build/universal-robots
+	$(UNIVERSAL_ROBOTS_CLIENT_LIBRARY-SRC)/scripts/start_ursim.sh -m ur5e 5.9.4 -p tests/resources/dockerursim/programs/e-serieuniversal_robots_client_library-srcs
