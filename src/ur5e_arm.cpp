@@ -586,6 +586,8 @@ bool UR5eArm::read_joint_keep_alive(bool log) {
     if (status.find(urcl::safetyStatusString(urcl::SafetyStatus::NORMAL)) == std::string::npos) {
         // the arm is currently estopped. save this state.
         estop.store(true);
+        // clear any currently running trajectory.
+        trajectory_running.store(false);
     } else {
         // the arm is in a normal state.
         if (estop.load()) {
@@ -611,9 +613,8 @@ bool UR5eArm::read_joint_keep_alive(bool log) {
                         << "read_joint_keep_alive dashboard->commandBrakeRelease() returned false when attempting to restart the arm";
                     return false;
                 }
-                BOOST_LOG_TRIVIAL(info) << "arm restarted, sending control program again";
 
-                // send control script
+                // send control script again to complete the restart
                 if (!driver->sendRobotProgram()) {
                     BOOST_LOG_TRIVIAL(error)
                         << "read_joint_keep_alive driver->sendRobotProgram() returned false when attempting to restart the arm";
@@ -627,8 +628,7 @@ bool UR5eArm::read_joint_keep_alive(bool log) {
 
             BOOST_LOG_TRIVIAL(info) << "send robot program successful, restarting communication";
             driver->startRTDECommunication();
-            // clear any currently running trajectory.
-            trajectory_running = false;
+
             estop.store(false);
             BOOST_LOG_TRIVIAL(info) << "arm successfully recovered from estop";
             return true;
