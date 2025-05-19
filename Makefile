@@ -1,5 +1,5 @@
 .PHONY: module.tar.gz ur5e-sim format test clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci
-default: format build/universal-robots
+default: build/universal-robots
 
 # format the source code
 format:
@@ -66,13 +66,13 @@ endef
 # Targets for building AppImages
 appimage-arm64: export OUTPUT_NAME = universal-robots
 appimage-arm64: export ARCH = aarch64
-appimage-arm64: build/universal-robots
+appimage-arm64: format build/universal-robots
 	$(call BUILD_APPIMAGE,$(OUTPUT_NAME),$(ARCH))
 	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
 
 appimage-amd64: export OUTPUT_NAME = universal-robots
 appimage-amd64: export ARCH = x86_64
-appimage-amd64: build/universal-robots
+appimage-amd64: format build/universal-robots
 	$(call BUILD_APPIMAGE,$(OUTPUT_NAME),$(ARCH))
 	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
 
