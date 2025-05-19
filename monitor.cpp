@@ -116,21 +116,7 @@ void Monitor::read_joint_keep_alive(unsigned long long int iteration) {
         std::cerr << "RTDE client connection successfully restarted\n";
         return;
     }
-
-    // read current joint positions from robot data
-    if (!data_pkg->getData("actual_q", joint_state)) {
-        std::cerr << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false\n";
-        return;
-    }
-
-    std::cout << formatvector6d_t(joint_state, "actual_q", iteration);
-
-    if (!data_pkg->getData("actual_TCP_pose", tcp_state)) {
-        std::cerr << "UR5eArm::get_end_position driver->getDataPackage().getData(\"actual_TCP_pos\") returned false\n";
-        return;
-    }
-
-    std::cout << formatvector6d_t(tcp_state, "actual_TCP_pose", iteration);
+    std::cout << iteration << ": " << data_pkg->toString();
 
     // send a noop to keep the connection alive
     if (!driver->writeTrajectoryControlMessage(
