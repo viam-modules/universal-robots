@@ -588,7 +588,12 @@ void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long uni
 bool UR5eArm::read_joint_keep_alive(bool log) {
     // check to see if an estop has occurred.
     std::string status;
-    dashboard->commandSafetyStatus(status);
+
+    if (!dashboard->commandSafetyStatus(status)) {
+        // we currently do not attempt to reconnect to the dashboard client. hopefully this error resolves itself.
+        BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive dashboard->commandSafetyStatus() returned false when retrieving the status";
+        return false;
+    }
 
     if (status.find(urcl::safetyStatusString(urcl::SafetyStatus::NORMAL)) == std::string::npos) {
         // the arm is currently estopped. save this state.
