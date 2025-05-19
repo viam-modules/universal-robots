@@ -248,6 +248,10 @@ std::string UR5eArm::get_output_csv_dir_path() {
 }
 
 void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct& extra) {
+    if (estop.load()) {
+        throw std::runtime_error("move_to_joint_positions cancelled -> emergency stop is currently active");
+    }
+
     std::vector<Eigen::VectorXd> waypoints;
     Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), positions.size());
     Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
@@ -267,6 +271,9 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
 void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
                                            const MoveOptions& options,
                                            const viam::sdk::ProtoStruct& extra) {
+    if (estop.load()) {
+        throw std::runtime_error("move_through_joint_positions cancelled -> emergency stop is currently active");
+    }
     // TODO: use options
     if (positions.size() > 0) {
         std::vector<Eigen::VectorXd> waypoints;
@@ -530,7 +537,7 @@ UR5eArm::~UR5eArm() {
     }
     BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor waiting for keep_alive thread to terminate";
     while (keep_alive_thread_alive.load()) {
-        BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor waiting for keep_alive thread to terminate";
+        BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor still waiting for keep_alive thread to terminate";
         usleep(NOOP_DELAY);
     }
     BOOST_LOG_TRIVIAL(info) << "keep_alive thread terminated";
@@ -586,8 +593,14 @@ bool UR5eArm::read_joint_keep_alive(bool log) {
     if (status.find(urcl::safetyStatusString(urcl::SafetyStatus::NORMAL)) == std::string::npos) {
         // the arm is currently estopped. save this state.
         estop.store(true);
+
         // clear any currently running trajectory.
         trajectory_running.store(false);
+
+        // sleep longer to prevent buffer error
+        // Removing this will cause the RTDE client to move into an unrecoverable state
+        usleep(ESTOP_DELAY);
+
     } else {
         // the arm is in a normal state.
         if (estop.load()) {
@@ -597,11 +610,6 @@ bool UR5eArm::read_joint_keep_alive(bool log) {
                 BOOST_LOG_TRIVIAL(info) << "recovering from e-stop";
                 driver->resetRTDEClient(appdir + OUTPUT_RECIPE, appdir + INPUT_RECIPE);
 
-                if (!dashboard->commandPowerOff()) {
-                    BOOST_LOG_TRIVIAL(error)
-                        << "read_joint_keep_alive dashboard->commandPowerOff() returned false when attempting to restart the arm";
-                    return false;
-                }
                 if (!dashboard->commandPowerOn()) {
                     BOOST_LOG_TRIVIAL(error)
                         << "read_joint_keep_alive dashboard->commandPowerOn() returned false when attempting to restart the arm";

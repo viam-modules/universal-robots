@@ -33,12 +33,10 @@ const std::string TRAJECTORY_CSV_NAME_TEMPLATE = "/%1%_trajectory.csv";
 const std::string WAYPOINTS_CSV_NAME_TEMPLATE = "/%1%_waypoints.csv";
 const std::string ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE = "/%1%_arm_joint_positions.csv";
 
-// TODO: using this is deprecated by the URCL, we could find some way around using it
-const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
-
 // constants for robot operation
-const float TIMESTEP = 0.2f;  // seconds
-const int NOOP_DELAY = 1000;  // 1 millisecond
+const float TIMESTEP = 0.2f;     // seconds
+const int NOOP_DELAY = 2000;     // 2 millisecond/500 Hz
+const int ESTOP_DELAY = 100000;  // 100 millisecond/10 Hz
 
 // do_command keys
 const std::string VEL_KEY = "set_vel";
