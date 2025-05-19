@@ -593,7 +593,7 @@ bool UR5eArm::read_joint_keep_alive(bool log) {
             // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
             try {
                 BOOST_LOG_TRIVIAL(info) << "recovering from e-stop";
-                driver->resetRTDEClient(path_offset + OUTPUT_RECIPE, path_offset + INPUT_RECIPE);
+                driver->resetRTDEClient(appdir + OUTPUT_RECIPE, appdir + INPUT_RECIPE);
 
                 if (!dashboard->commandPowerOff()) {
                     BOOST_LOG_TRIVIAL(error)

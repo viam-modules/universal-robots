@@ -145,5 +145,4 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::mutex output_csv_dir_path_mu;
     // specified through VIAM_MODULE_DATA environment variable
     std::string output_csv_dir_path;
-    
 };
