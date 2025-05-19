@@ -1,3 +1,4 @@
+.PHONY: module.tar.gz ur5e-sim format test clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci
 default: build/universal-robots
 
 # format the source code
@@ -77,11 +78,11 @@ appimage-amd64: build/universal-robots
 
 appimages: appimage-amd64 appimage-arm64
 
-.PHONY: module.tar.gz
 module.tar.gz: meta.json
 	cp ./packaging/appimages/deploy/universal-robots-latest-$(ARCH).AppImage universal-robots.AppImage
 	tar czf $@ $^ universal-robots.AppImage
 
-UNIVERSAL_ROBOTS_CLIENT_LIBRARY-SRC = build/_deps/universal_robots_client_library-src
-ur5e-sim:
-	$(UNIVERSAL_ROBOTS_CLIENT_LIBRARY-SRC)/scripts/start_ursim.sh -m ur5e 5.9.4 -p tests/resources/dockerursim/programs/e-serieuniversal_robots_client_library-srcs
+build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh:
+
+ur5e-sim: build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh
+	build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh -m ur5e 5.9.4 -p tests/resources/dockerursim/programs/e-serieuniversal_robots_client_library-srcs
