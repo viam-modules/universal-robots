@@ -1,4 +1,4 @@
-.PHONY: module.tar.gz ur5e-sim format test clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci
+.PHONY: module.tar.gz ur5e-sim format test clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci algrind-setup
 default: build/universal-robots
 
 # format the source code
@@ -39,6 +39,10 @@ docker-amd64:
 
 docker-upload:
 	docker push 'ghcr.io/viam-modules/universal-robots:amd64'
+
+docker-shell:
+	docker run --net=host --volume .:/src -e APPDIR='/src' -it ghcr.io/viam-modules/universal-robots:amd64
+
 
 # CI targets that automatically push, avoid for local test-first-then-push workflows
 docker-arm64-ci: MAIN_TAG = ghcr.io/viam-modules/universal-robots
@@ -96,3 +100,13 @@ ur5e-sim: build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh
 
 ur20-sim: build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh
 	build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh -m ur20 latest -p tests/resources/dockerursim/programs/e-serieuniversal_robots_client_library-srcs
+
+VALGRIND_VERSION = 3.25.1
+valgrind-setup: 
+	wget https://sourceware.org/pub/valgrind/valgrind-$(VALGRIND_VERSION).tar.bz2
+	tar xjf valgrind-$(VALGRIND_VERSION).tar.bz2
+	rm -rf valgrind-$(VALGRIND_VERSION).tar.bz2
+	cd valgrind-$(VALGRIND_VERSION)
+	cd valgrind-$(VALGRIND_VERSION) && ./configure && make && sudo make install
+	rm -rf valgrind-$(VALGRIND_VERSION).tar.bz2
+	rm -rf valgrind-$(VALGRIND_VERSION)
