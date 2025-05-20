@@ -1,3 +1,4 @@
+.PHONY: module.tar.gz ur5e-sim format test clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci
 default: build/universal-robots
 
 # format the source code
@@ -5,18 +6,18 @@ format:
 	ls src/*.*pp main.cpp | xargs clang-format-15 -i --style=file
 
 build: 
-	mkdir build logs
+	mkdir build
 
 test: build/universal-robots
 	./build/universal-robots-test
 
-build/universal-robots: format build
+build/universal-robots: build
 	cd build && \
 	cmake -G Ninja  .. && \
 	ninja all -j 4
 
 clean: 
-	rm -rf build logs
+	rm -rf build
 
 clean-all:
 	git clean -fxd
@@ -65,19 +66,33 @@ endef
 # Targets for building AppImages
 appimage-arm64: export OUTPUT_NAME = universal-robots
 appimage-arm64: export ARCH = aarch64
-appimage-arm64: build/universal-robots
+appimage-arm64: format build/universal-robots
 	$(call BUILD_APPIMAGE,$(OUTPUT_NAME),$(ARCH))
 	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
 
 appimage-amd64: export OUTPUT_NAME = universal-robots
 appimage-amd64: export ARCH = x86_64
-appimage-amd64: build/universal-robots
+appimage-amd64: format build/universal-robots
 	$(call BUILD_APPIMAGE,$(OUTPUT_NAME),$(ARCH))
 	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
 
 appimages: appimage-amd64 appimage-arm64
 
-.PHONY: module.tar.gz
 module.tar.gz: meta.json
 	cp ./packaging/appimages/deploy/universal-robots-latest-$(ARCH).AppImage universal-robots.AppImage
 	tar czf $@ $^ universal-robots.AppImage
+
+build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh: build
+	# we need to ignore `cmake -G Ninja  ..` failing as the this project's CMakeLists.txt 
+	# assumes that the viam sdk is available as a system package (which won't be true on most
+	# development machines).
+	# However even though it fails, it will still download theuniversal-robots SDK repo which
+	# is all we need to run the sim.
+	cd build && \
+	cmake -G Ninja  ..  || true
+
+ur5e-sim: build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh
+	build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh -m ur5e 5.9.4 -p tests/resources/dockerursim/programs/e-serieuniversal_robots_client_library-srcs
+
+ur20-sim: build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh
+	build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh -m ur20 latest -p tests/resources/dockerursim/programs/e-serieuniversal_robots_client_library-srcs
