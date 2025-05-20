@@ -634,8 +634,8 @@ bool UR5eArm::read_joint_keep_alive(bool log) {
                     return false;
                 }
 
-            } catch (...) {
-                BOOST_LOG_TRIVIAL(info) << "failed to restart the arm";
+            } catch (const std::exception& ex) {
+                BOOST_LOG_TRIVIAL(info) << "failed to restart the arm: : " << std::string(ex.what());
                 return false;
             }
 
@@ -678,7 +678,7 @@ bool UR5eArm::read_joint_keep_alive(bool log) {
     }
 
     // send a noop to keep the connection alive
-    if (!driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
+    if (!driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
         if (log) {
             BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
         }
