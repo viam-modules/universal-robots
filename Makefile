@@ -110,3 +110,4 @@ valgrind-setup:
 	cd valgrind-$(VALGRIND_VERSION) && ./configure && make && sudo make install
 	rm -rf valgrind-$(VALGRIND_VERSION).tar.bz2
 	rm -rf valgrind-$(VALGRIND_VERSION)
+	sudo apt-get install libc6-dbg
