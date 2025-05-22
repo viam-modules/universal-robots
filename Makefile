@@ -5,7 +5,7 @@ default: build/universal-robots
 format:
 	ls src/*.*pp main.cpp | xargs clang-format-15 -i --style=file
 
-build: 
+build:  
 	mkdir build
 
 test: build/universal-robots
@@ -41,7 +41,11 @@ docker-upload:
 	docker push 'ghcr.io/viam-modules/universal-robots:amd64'
 
 docker-shell:
-	docker run --net=host --volume .:/src -e APPDIR='/src' -it ghcr.io/viam-modules/universal-robots:amd64
+	docker run --net=host --volume .:/app -w /app -it ghcr.io/viam-modules/universal-robots:amd64
+
+valgrind:
+	docker volume create universal-robots-valgrind
+	docker run --net=host --volume .:/app --volume universal-robots-valgrind:/usr -w /app -it ghcr.io/viam-modules/universal-robots:amd64 
 
 
 # CI targets that automatically push, avoid for local test-first-then-push workflows

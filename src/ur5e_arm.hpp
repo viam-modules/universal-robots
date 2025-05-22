@@ -38,7 +38,7 @@ const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
 
 // constants for robot operation
 const float TIMESTEP = 0.2f;  // seconds
-const int NOOP_DELAY = 1000;  // 1 millisecond
+const int NOOP_DELAY = 1; 
 
 // do_command keys
 const std::string VEL_KEY = "set_vel";
