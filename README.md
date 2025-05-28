@@ -61,15 +61,9 @@ Clone this repository to your machine and from the newly created folder start a 
 
 ```
 git submodule update --init
-docker pull ghcr.io/viam-modules/universal-robots:amd64
-docker run --net=host --volume .:/src -e APPDIR='/src' -it ghcr.io/viam-modules/universal-robots:amd64
+canon make appimage-amd64
 ```
 
-Once inside the docker container build the binary using:
-
-```
-cd src && make appimages
-```
 
 Then, follow the instructions to [add a local module](https://docs.viam.com/registry/configure/#add-a-local-module) to add the local instance of the `universal-robots` module to your machine.
 Provide an **executable path** pointing toward the appropriate AppImage file which will have been created within the `packaging/appimages/deploy` subdirectory.

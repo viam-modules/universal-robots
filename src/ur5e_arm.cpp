@@ -212,7 +212,7 @@ std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
         return std::vector<double>();
     };
     std::vector<double> to_ret;
-    for (double joint_pos_rad : joint_state) {
+    for (double joint_pos_rad : joint_positions) {
         double joint_pos_deg = 180.0 / M_PI * joint_pos_rad;
         to_ret.push_back(joint_pos_deg);
     }
@@ -487,7 +487,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
             if (!ok) {
                 throw std::runtime_error("unable to get arm state before send_trajectory");
             }
-            write_joint_pos_rad(joint_state, pre_trajectory_state, now, 0);
+            write_joint_pos_rad(actual_joint_positions, actual_joint_velocities, pre_trajectory_state, now, 0);
         }
         if (!send_trajectory(p, v, time)) {
             throw std::runtime_error("send_trajectory failed");
@@ -495,14 +495,16 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
 
         std::ofstream of(arm_joint_positions_filename(path, unix_time_ms.count()));
 
-        of << "time_ms,read_attempt,joint_0_rad,joint_1_rad,joint_2_rad,joint_3_rad,joint_4_rad,joint_5_rad\n";
+        of << "time_ms,read_attempt,joint_0_rad,joint_1_rad,joint_2_rad,joint_3_rad,joint_4_rad,joint_5_rad,joint_0_velocity,joint_1_"
+              "velocity,joint_2_velocity,joint_3_velocity,joint_4_velocity,joint_5_velocity\n";
         of << pre_trajectory_state.str();
         unsigned attempt = 1;
         unsigned long long now = 0;
         while (trajectory_running.load() && !shutdown.load()) {
             now = unix_now_ms().count();
-            read_joint_keep_alive(true);
-            write_joint_pos_rad(joint_state, of, now, attempt);
+            if (read_joint_keep_alive(true)) {
+                write_joint_pos_rad(actual_joint_positions, actual_joint_velocities, of, now, attempt);
+            }
             attempt++;
         };
 
@@ -563,12 +565,16 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vec
     return true;
 }
 
-void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
+void write_joint_pos_rad(vector6d_t js, vector6d_t jv, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
     of << unix_now_ms << "," << attempt << ",";
-    unsigned i = 0;
     for (double joint_pos_rad : js) {
+        of << joint_pos_rad << ",";
+    }
+
+    unsigned i = 0;
+    for (double joint_vel : jv) {
         i++;
-        if (i == js.size()) {
+        if (i == jv.size()) {
             of << joint_pos_rad;
         } else {
             of << joint_pos_rad << ",";
@@ -601,9 +607,16 @@ bool UR5eArm::read_joint_keep_alive(bool log) {
     }
 
     // read current joint positions from robot data
-    if (!data_pkg->getData("actual_q", joint_state)) {
+    if (!data_pkg->getData("actual_q", actual_joint_positions)) {
         if (log) {
             BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
+        }
+        return false;
+    }
+
+    if (!data_pkg->getData("actual_qd", actual_joint_velocities)) {
+        if (log) {
+            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_qd\") returned false";
         }
         return false;
     }

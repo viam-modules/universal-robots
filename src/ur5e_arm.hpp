@@ -127,7 +127,7 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::mutex mu;
     std::unique_ptr<UrDriver> driver;
     std::unique_ptr<DashboardClient> dashboard;
-    vector6d_t joint_state, tcp_state;
+    vector6d_t actual_joint_positions, actual_joint_velocities, tcp_state;
 
     std::atomic<bool> shutdown{false};
     std::thread keep_alive_thread;
