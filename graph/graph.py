@@ -51,3 +51,4 @@ for i in range(6):
     motions_positions = motion_data[:, i]
     filename = f'joint_{i}_position_comparison.png'
     plot_joint_positions(time_of_traj_gen, traj_gen_joint_information, motion_time, motions_positions, i, filename)
+
