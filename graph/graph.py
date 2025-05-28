@@ -18,7 +18,7 @@ def plot_joint_positions(time_of_traj_gen, traj_gen_joint_information, motion_ti
     plt.close()
 
 if len(sys.argv) != 3:
-    print(f"Usage: python {sys.argv[0]} path/to/desired.csv path/to/actual.csv")
+    print(f"Usage: python {sys.argv[0]} path/to/trajectory.csv path/to/waypoints.csv")
     sys.exit(1)
 
 # the first argument is a path leading to *trajectory.csv <- this is what trajectory generation returns 
