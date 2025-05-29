@@ -260,12 +260,9 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
     auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms.count());
     write_waypoints_to_csv(filename, waypoints);
 
-    // try {
+    // move will throw if an error occurs
     move(waypoints, unix_time_ms);
-    // } catch (const std::exception& ex) {
-    //     BOOST_LOG_TRIVIAL(error) << "move failed. unix_time_ms " << unix_time_ms.count() << " Exception: " << std::string(ex.what());
-    //     throw;
-    // }
+
 }
 
 void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -285,12 +282,9 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
         std::chrono::milliseconds unix_time_ms = unix_now_ms();
         auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms.count());
         write_waypoints_to_csv(filename, waypoints);
-        // try {
+        
+        // move will throw if an error occurs
         move(waypoints, unix_time_ms);
-        // } catch (const std::exception& ex) {
-        //     BOOST_LOG_TRIVIAL(error) << "move failed. unix_time_ms " << unix_time_ms.count() << " Exception: " << std::string(ex.what());
-        //     throw;
-        // }
     }
     return;
 }
