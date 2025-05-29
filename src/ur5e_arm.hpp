@@ -114,12 +114,20 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::vector<GeometryConfig> get_geometries(const ProtoStruct& extra) {
         throw std::runtime_error("unimplemented");
     }
+    enum class UrDriverStatus : int8_t  // Only available on 3.10/5.4
+    {
+        NORMAL = 1,
+        ESTOPPED = 2,
+        READ_FAILURE = 3,
+        DASHBOARD_FAILURE = 4
+    };
+    std::string status_to_string(UrDriverStatus status);
 
    private:
     void keep_alive();
     void move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
     bool send_trajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time);
-    bool read_joint_keep_alive(bool log);
+    UR5eArm::UrDriverStatus read_joint_keep_alive(bool log);
 
     // private variables to maintain connection and state
     std::mutex mu;
