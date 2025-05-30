@@ -33,12 +33,10 @@ const std::string TRAJECTORY_CSV_NAME_TEMPLATE = "/%1%_trajectory.csv";
 const std::string WAYPOINTS_CSV_NAME_TEMPLATE = "/%1%_waypoints.csv";
 const std::string ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE = "/%1%_arm_joint_positions.csv";
 
-// TODO: using this is deprecated by the URCL, we could find some way around using it
-const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
-
 // constants for robot operation
-const float TIMESTEP = 0.2f;  // seconds
-const int NOOP_DELAY = 1000;  // 1 millisecond
+const float TIMESTEP = 0.2f;     // seconds
+const int NOOP_DELAY = 2000;     // 2 millisecond/500 Hz
+const int ESTOP_DELAY = 100000;  // 100 millisecond/10 Hz
 
 // do_command keys
 const std::string VEL_KEY = "set_vel";
@@ -116,12 +114,20 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::vector<GeometryConfig> get_geometries(const ProtoStruct& extra) {
         throw std::runtime_error("unimplemented");
     }
+    enum class UrDriverStatus : int8_t  // Only available on 3.10/5.4
+    {
+        NORMAL = 1,
+        ESTOPPED = 2,
+        READ_FAILURE = 3,
+        DASHBOARD_FAILURE = 4
+    };
+    std::string status_to_string(UrDriverStatus status);
 
    private:
     void keep_alive();
     void move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
     bool send_trajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time);
-    bool read_joint_keep_alive(bool log);
+    UR5eArm::UrDriverStatus read_joint_keep_alive(bool log);
 
     // private variables to maintain connection and state
     std::mutex mu;
@@ -140,6 +146,7 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::string host;
     std::atomic<double> speed{0};
     std::atomic<double> acceleration{0};
+    std::atomic<bool> estop{false};
 
     std::mutex output_csv_dir_path_mu;
     // specified through VIAM_MODULE_DATA environment variable
