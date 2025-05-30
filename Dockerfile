@@ -75,7 +75,7 @@ RUN apt install -y libgtest-dev
 # Install Eigen
 RUN apt install -y libeigen3-dev
 
-# Install Viam C++ SDK from source pinned to version 0.16.0
+# Install Viam C++ SDK from source
 RUN cd /root/opt/src && \
     git clone https://github.com/viamrobotics/viam-cpp-sdk && \
     cd viam-cpp-sdk && \
