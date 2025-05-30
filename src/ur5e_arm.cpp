@@ -34,8 +34,10 @@ void write_trajectory_to_file(std::string filepath,
     }
     std::ofstream of(filepath);
     of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n";
+    float time_traj = 0;
     for (size_t i = 0; i < p_p.size(); i++) {
-        of << time[i];
+        time_traj += time[i];
+        of << time_traj;
         for (size_t j = 0; j < 6; j++) {
             of << "," << p_p[i][j];
         }
