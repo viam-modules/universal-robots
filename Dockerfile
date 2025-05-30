@@ -26,7 +26,7 @@ RUN apt-get -y --no-install-recommends install \
     libxtensor-dev \
     libusb-1.0-0-dev \
     libudev-dev \
-    libgtk-3-dev \ 
+    libgtk-3-dev \
     ninja-build \
     pkg-config \
     protobuf-compiler-grpc \
@@ -67,7 +67,7 @@ RUN pip3 install -U pip setuptools urllib3==1.26.12 requests==2.26.0 --break-sys
 RUN pip3 install --break-system-packages git+https://github.com/AppImageCrafters/appimage-builder.git@61c8ddde9ef44b85d7444bbe79d80b44a6a5576d
 
 # Install Go
-RUN apt install -y golang-go 
+RUN apt install -y golang-go
 
 # Install GTest
 RUN apt install -y libgtest-dev
@@ -76,11 +76,10 @@ RUN apt install -y libgtest-dev
 RUN apt install -y libeigen3-dev
 
 # Install Viam C++ SDK from source pinned to version 0.16.0
-ENV PINNED_COMMIT_HASH="7c8487c"
 RUN cd /root/opt/src && \
     git clone https://github.com/viamrobotics/viam-cpp-sdk && \
     cd viam-cpp-sdk && \
-    git checkout ${PINNED_COMMIT_HASH} && \
+    git checkout releases/v0.13.2 && \
     mkdir build && \
     cd build && \
     cmake  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVIAMCPPSDK_USE_DYNAMIC_PROTOS=ON -DVIAMCPPSDK_OFFLINE_PROTO_GENERATION=ON -DCMAKE_INSTALL_PREFIX=/usr/local .. -G Ninja  && \
