@@ -75,14 +75,19 @@ RUN apt install -y libgtest-dev
 # Install Eigen
 RUN apt install -y libeigen3-dev
 
-# Install Viam C++ SDK from source
+# Install Viam C++ SDK from source. If you change the
+# version here, change it in the top level CMakeLists.txt as well.
 RUN cd /root/opt/src && \
     git clone https://github.com/viamrobotics/viam-cpp-sdk && \
     cd viam-cpp-sdk && \
     git checkout releases/v0.13.2 && \
-    mkdir build && \
-    cd build && \
-    cmake  -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVIAMCPPSDK_USE_DYNAMIC_PROTOS=ON -DVIAMCPPSDK_OFFLINE_PROTO_GENERATION=ON -DCMAKE_INSTALL_PREFIX=/usr/local .. -G Ninja  && \
-    ninja all -j 4 && \
-	ninja install -j 4 && \
+    cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DVIAMCPPSDK_USE_DYNAMIC_PROTOS=ON \
+        -DVIAMCPPSDK_OFFLINE_PROTO_GENERATION=ON \
+        -DVIAMCPPSDK_BUILD_EXAMPLES=OFF \
+        -DVIAMCPPSDK_BUILD_TESTS=OFF \
+        -G Ninja && \
+    cmake --build build --target all -- -j4 && \
+    cmake --install build --prefix /usr/local && \
     rm -rf /root/opt/src/viam-cpp-sdk
