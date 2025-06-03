@@ -20,11 +20,10 @@ def check_file_exists(path, label):
         print(f"Error: {label} file '{path}' does not exist.")
         sys.exit(1)
 
-def compute_cumulative_time(df, time_col='t(s)'):
-    df['time_cumulative'] = df[time_col].cumsum()
-    return df['time_cumulative'].to_numpy()
+def get_time_vector(df, time_col='t(s)'):
+    return df[time_col].to_numpy()
 
-def plot_comparison_df(time_ref, data_ref, time_cmp, data_cmp, labels, ylabel, filename, use_markers=False):
+def plot_df(time_ref, data_ref, time_cmp, data_cmp, labels, ylabel, filename, use_markers=False):
     plt.figure(figsize=(20, 16))
     df_ref = pd.DataFrame({ 'time': time_ref, 'trajectory': data_ref })
     df_cmp = pd.DataFrame({ 'time': time_cmp, 'waypoints': data_cmp })
@@ -52,13 +51,13 @@ def main():
         check_file_exists(motion_path, 'Waypoints CSV')
 
         df_traj_gen = pd.read_csv(traj_gen_path)
-        time_traj_gen = compute_cumulative_time(df_traj_gen)
+        time_traj_gen = get_time_vector(df_traj_gen)
 
         motion_data = np.loadtxt(motion_path, delimiter=',')
         motion_time = np.linspace(time_traj_gen[0], time_traj_gen[-1], motion_data.shape[0])
 
         for i in range(6):
-            plot_comparison_df(
+            plot_df(
                 time_traj_gen,
                 df_traj_gen[f'j{i}'],
                 motion_time,
@@ -76,14 +75,14 @@ def main():
         check_file_exists(waypt_pose_path, 'Waypoint Pose CSV')
 
         df_traj_pose = pd.read_csv(traj_pose_path)
-        time_traj_pose = compute_cumulative_time(df_traj_pose)
+        time_traj_pose = get_time_vector(df_traj_pose)
 
         df_waypt_pose = pd.read_csv(waypt_pose_path)
         time_waypt_pose = np.linspace(time_traj_pose[0], time_traj_pose[-1], df_waypt_pose.shape[0])
 
         for axis in ['x', 'y', 'z']:
             interp_data = np.interp(time_traj_pose, time_waypt_pose, df_waypt_pose[axis].values)
-            plot_comparison_df(
+            plot_df(
                 time_traj_pose,
                 df_traj_pose[axis],
                 time_traj_pose,
@@ -93,7 +92,6 @@ def main():
                 f'{axis}_comparison.png',
                 use_markers=True
             )
-
 
 if __name__ == '__main__':
     main()
