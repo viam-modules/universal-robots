@@ -1,3 +1,4 @@
+#include <viam/sdk/common/instance.hpp>
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/module/module.hpp>
@@ -12,6 +13,8 @@
 using namespace viam::sdk;
 
 int main(int argc, char** argv) {
+    const Instance instance;
+
     API arm_api = API::get<Arm>();
     Model ur5e_model("viam", "universal-robots", "ur5e");
 

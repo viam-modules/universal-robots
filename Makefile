@@ -5,18 +5,18 @@ default: build/universal-robots
 format:
 	ls src/*.*pp main.cpp | xargs clang-format-15 -i --style=file
 
-build: 
+build:
 	mkdir build
 
 test: build/universal-robots
 	./build/universal-robots-test
 
 build/universal-robots: build
-	cd build && \
-	cmake -G Ninja  .. && \
-	ninja all -j 4
+	cmake -S . -B build -G Ninja
+	cmake --build build --target all -- -j4
+	cmake --install build --prefix build/install/usr
 
-clean: 
+clean:
 	rm -rf build
 
 clean-all:
@@ -83,7 +83,7 @@ module.tar.gz: meta.json
 	tar czf $@ $^ universal-robots.AppImage
 
 build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh: build
-	# we need to ignore `cmake -G Ninja  ..` failing as the this project's CMakeLists.txt 
+	# we need to ignore `cmake -G Ninja  ..` failing as the this project's CMakeLists.txt
 	# assumes that the viam sdk is available as a system package (which won't be true on most
 	# development machines).
 	# However even though it fails, it will still download theuniversal-robots SDK repo which
