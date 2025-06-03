@@ -32,19 +32,6 @@ type config struct {
 	OutputWaypointPoses   string `json:"output_waypoint_poses"`
 }
 
-func loadConfig(path string) (config, error) {
-	var cfg config
-	file, err := os.Open(path)
-	if err != nil {
-		return cfg, err
-	}
-	defer file.Close()
-
-	decoder := json.NewDecoder(file)
-	err = decoder.Decode(&cfg)
-	return cfg, err
-}
-
 func expandPath(path string) string {
 	if len(path) > 1 && path[:2] == "~/" {
 		home, err := os.UserHomeDir()
@@ -56,95 +43,56 @@ func expandPath(path string) string {
 	return path
 }
 
-func main() {
-	logger := logging.NewLogger("graph")
-	cfg, err := loadConfig("config.json")
+func loadConfig(path string) (config, error) {
+	var cfg config
+	file, err := os.Open(path)
 	if err != nil {
-		logger.Fatalf("failed to load config: %v", err)
+		return cfg, err
 	}
-
-	urModel, err := referenceframe.ParseModelJSONFile("../src/kinematics/ur5e.json", "")
-	if err != nil {
-		logger.Fatalf("failed to load ur5e.json: %v", err)
-	}
-
-	trajInputs, err := readTrajectoryCSV(cfg.TrajectoryCSV)
-	if err != nil {
-		logger.Fatalf("failed to read trajectory CSV: %v", err)
-	}
-
-	var trajectoryPoses []trajPoses
-	for _, trajInput := range trajInputs {
-		pose, err := urModel.Transform(trajInput.JointInputs)
-		if err != nil {
-			logger.Error(err)
-			return
-		}
-		trajectoryPoses = append(trajectoryPoses, trajPoses{Timestamp: trajInput.Timestamp, Pose: pose})
-	}
-
-	waypoints, err := readWaypointCSV(cfg.WaypointsCSV)
-	if err != nil {
-		logger.Fatalf("failed to read waypoint CSV: %v", err)
-	}
-
-	var waypointPoses []spatialmath.Pose
-	for _, pos := range waypoints {
-		pose, err := urModel.Transform(pos)
-		if err != nil {
-			logger.Error(err)
-			return
-		}
-		waypointPoses = append(waypointPoses, pose)
-	}
-
-	if err := writeTrajectoryPosesCSV(cfg.OutputTrajectoryPoses, trajectoryPoses); err != nil {
-		logger.Error(err)
-		return
-	}
-	if err := writeWaypointPosesCSV(cfg.OutputWaypointPoses, waypointPoses); err != nil {
-		logger.Error(err)
-		return
-	}
+	defer file.Close()
+	return cfg, json.NewDecoder(file).Decode(&cfg)
 }
 
-func parseTrajectoryRow(row []string) (trajInput, error) {
-	if len(row) != 13 {
-		return trajInput{}, fmt.Errorf("invalid row length: %d", len(row))
-	}
-	t, err := strconv.ParseFloat(row[0], 64)
-	if err != nil {
-		return trajInput{}, err
-	}
-
-	var jointPositions []float64
-	for i := 1; i <= 6; i++ {
-		pos, err := strconv.ParseFloat(row[i], 64)
+func parseFloatSlice(fields []string) ([]float64, error) {
+	var values []float64
+	for _, str := range fields {
+		v, err := strconv.ParseFloat(str, 64)
 		if err != nil {
-			return trajInput{}, err
+			return nil, err
 		}
-		jointPositions = append(jointPositions, pos)
+		values = append(values, v)
 	}
-
-	return trajInput{Timestamp: t, JointInputs: referenceframe.FloatsToInputs(jointPositions)}, nil
+	return values, nil
 }
 
-func readTrajectoryCSV(filepath string) ([]trajInput, error) {
-	file, err := os.Open(expandPath(filepath))
+func transformInputs(model referenceframe.Model, inputSets [][]referenceframe.Input) ([]spatialmath.Pose, error) {
+	var poses []spatialmath.Pose
+	for _, inputs := range inputSets {
+		pose, err := model.Transform(inputs)
+		if err != nil {
+			return nil, err
+		}
+		poses = append(poses, pose)
+	}
+	return poses, nil
+}
+
+func readCSV(path string) ([][]string, error) {
+	file, err := os.Open(expandPath(path))
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 
 	reader := csv.NewReader(file)
-	_, err = reader.Read() // discard header
+	_, err = reader.Read() // skip header
 	if err != nil {
 		return nil, err
 	}
 
-	var data []trajInput
+	var rows [][]string
 	for {
-		record, err := reader.Read()
+		row, err := reader.Read()
 		if err == io.EOF {
 			break
 		}
@@ -152,61 +100,62 @@ func readTrajectoryCSV(filepath string) ([]trajInput, error) {
 			log.Printf("error reading row: %v", err)
 			continue
 		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
 
-		input, err := parseTrajectoryRow(record)
-		if err != nil {
-			log.Printf("error parsing row: %v", err)
+func readTrajectoryCSV(path string) ([]trajInput, error) {
+	rows, err := readCSV(path)
+	if err != nil {
+		return nil, err
+	}
+	var data []trajInput
+	for _, row := range rows {
+		if len(row) != 13 {
+			log.Printf("invalid trajectory row length: %d", len(row))
 			continue
 		}
-		data = append(data, input)
+		t, err := strconv.ParseFloat(row[0], 64)
+		if err != nil {
+			log.Printf("invalid timestamp: %v", err)
+			continue
+		}
+		jointVals, err := parseFloatSlice(row[1:7])
+		if err != nil {
+			log.Printf("invalid joint values: %v", err)
+			continue
+		}
+		data = append(data, trajInput{
+			Timestamp:   t,
+			JointInputs: referenceframe.FloatsToInputs(jointVals),
+		})
 	}
 	return data, nil
 }
 
-func readWaypointCSV(filepath string) ([][]referenceframe.Input, error) {
-	file, err := os.Open(expandPath(filepath))
+func readWaypointCSV(path string) ([][]referenceframe.Input, error) {
+	rows, err := readCSV(path)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-	_, err = reader.Read() // read the first line of the csv file which houses the header
-	if err != nil {
-		return nil, err
-	}
-
-	var positions [][]referenceframe.Input
-	for {
-		record, err := reader.Read()
-		if err == io.EOF {
-			break
+	var allInputs [][]referenceframe.Input
+	for _, row := range rows {
+		if len(row) != 6 {
+			log.Printf("invalid waypoint row length: %d", len(row))
+			continue
 		}
+		vals, err := parseFloatSlice(row)
 		if err != nil {
-			log.Printf("error reading row: %v", err)
+			log.Printf("invalid waypoint values: %v", err)
 			continue
 		}
-
-		if len(record) != 6 {
-			log.Printf("invalid waypoint row length: %d", len(record))
-			continue
-		}
-
-		var joints []float64
-		for _, str := range record {
-			val, err := strconv.ParseFloat(str, 64)
-			if err != nil {
-				log.Printf("invalid joint value: %v", err)
-				continue
-			}
-			joints = append(joints, val)
-		}
-		positions = append(positions, referenceframe.FloatsToInputs(joints))
+		allInputs = append(allInputs, referenceframe.FloatsToInputs(vals))
 	}
-	return positions, nil
+	return allInputs, nil
 }
 
-func writeTrajectoryPosesCSV(path string, data []trajPoses) error {
+func writeCSV(path string, header []string, rows [][]string) error {
 	file, err := os.Create(expandPath(path))
 	if err != nil {
 		return err
@@ -216,14 +165,23 @@ func writeTrajectoryPosesCSV(path string, data []trajPoses) error {
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
-	header := []string{"t(s)", "x", "y", "z", "ox", "oy", "oz", "theta"}
 	if err := writer.Write(header); err != nil {
 		return err
 	}
+	for _, row := range rows {
+		if err := writer.Write(row); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
+func writeTrajectoryPosesCSV(path string, data []trajPoses) error {
+	header := []string{"t(s)", "x", "y", "z", "ox", "oy", "oz", "theta"}
+	var rows [][]string
 	for _, p := range data {
 		ov := p.Pose.Orientation().OrientationVectorDegrees()
-		record := []string{
+		row := []string{
 			fmt.Sprintf("%.6f", p.Timestamp),
 			fmt.Sprintf("%.6f", p.Pose.Point().X),
 			fmt.Sprintf("%.6f", p.Pose.Point().Y),
@@ -233,31 +191,17 @@ func writeTrajectoryPosesCSV(path string, data []trajPoses) error {
 			fmt.Sprintf("%.6f", ov.OZ),
 			fmt.Sprintf("%.6f", ov.Theta),
 		}
-		if err := writer.Write(record); err != nil {
-			return err
-		}
+		rows = append(rows, row)
 	}
-	return nil
+	return writeCSV(path, header, rows)
 }
 
 func writeWaypointPosesCSV(path string, poses []spatialmath.Pose) error {
-	file, err := os.Create(expandPath(path))
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
 	header := []string{"x", "y", "z", "ox", "oy", "oz", "theta"}
-	if err := writer.Write(header); err != nil {
-		return err
-	}
-
+	var rows [][]string
 	for _, p := range poses {
 		ov := p.Orientation().OrientationVectorDegrees()
-		record := []string{
+		row := []string{
 			fmt.Sprintf("%.6f", p.Point().X),
 			fmt.Sprintf("%.6f", p.Point().Y),
 			fmt.Sprintf("%.6f", p.Point().Z),
@@ -266,9 +210,61 @@ func writeWaypointPosesCSV(path string, poses []spatialmath.Pose) error {
 			fmt.Sprintf("%.6f", ov.OZ),
 			fmt.Sprintf("%.6f", ov.Theta),
 		}
-		if err := writer.Write(record); err != nil {
-			return err
-		}
+		rows = append(rows, row)
 	}
-	return nil
+	return writeCSV(path, header, rows)
+}
+
+func main() {
+	logger := logging.NewLogger("graph")
+
+	cfg, err := loadConfig("config.json")
+	if err != nil {
+		logger.Fatalf("failed to load config: %v", err)
+	}
+
+	urModel, err := referenceframe.ParseModelJSONFile("../src/kinematics/ur5e.json", "")
+	if err != nil {
+		logger.Fatalf("failed to load model: %v", err)
+	}
+
+	trajInputs, err := readTrajectoryCSV(cfg.TrajectoryCSV)
+	if err != nil {
+		logger.Fatalf("failed to read trajectory CSV: %v", err)
+	}
+
+	var trajInputSets [][]referenceframe.Input
+	for _, t := range trajInputs {
+		trajInputSets = append(trajInputSets, t.JointInputs)
+	}
+	trajectoryPoses, err := transformInputs(urModel, trajInputSets)
+	if err != nil {
+		logger.Error(err)
+		return
+	}
+
+	var outputTraj []trajPoses
+	for i, pose := range trajectoryPoses {
+		outputTraj = append(outputTraj, trajPoses{
+			Timestamp: trajInputs[i].Timestamp,
+			Pose:      pose,
+		})
+	}
+
+	waypointInputs, err := readWaypointCSV(cfg.WaypointsCSV)
+	if err != nil {
+		logger.Fatalf("failed to read waypoint CSV: %v", err)
+	}
+	waypointPoses, err := transformInputs(urModel, waypointInputs)
+	if err != nil {
+		logger.Error(err)
+		return
+	}
+
+	if err := writeTrajectoryPosesCSV(cfg.OutputTrajectoryPoses, outputTraj); err != nil {
+		logger.Error(err)
+	}
+	if err := writeWaypointPosesCSV(cfg.OutputWaypointPoses, waypointPoses); err != nil {
+		logger.Error(err)
+	}
 }
