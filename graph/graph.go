@@ -1,21 +1,18 @@
 package main
 
 import (
-	"context"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 
-	"go.viam.com/rdk/components/arm"
 	"go.viam.com/rdk/logging"
 	"go.viam.com/rdk/referenceframe"
-	"go.viam.com/rdk/robot/client"
 	"go.viam.com/rdk/spatialmath"
-	"go.viam.com/utils/rpc"
 )
 
 type trajInput struct {
@@ -29,12 +26,6 @@ type trajPoses struct {
 }
 
 type config struct {
-	Viam struct {
-		Host     string `json:"host"`
-		EntityID string `json:"entity_id"`
-		APIKey   string `json:"api_key"`
-	} `json:"viam"`
-	ArmName               string `json:"arm_name"`
 	TrajectoryCSV         string `json:"trajectory_csv"`
 	WaypointsCSV          string `json:"waypoints_csv"`
 	OutputTrajectoryPoses string `json:"output_trajectory_poses"`
@@ -54,46 +45,37 @@ func loadConfig(path string) (config, error) {
 	return cfg, err
 }
 
-func main() {
-	logger := logging.NewDebugLogger("client")
-	ctx := context.Background()
+func expandPath(path string) string {
+	if len(path) > 1 && path[:2] == "~/" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			log.Fatal(err)
+		}
+		return filepath.Join(home, path[2:])
+	}
+	return path
+}
 
+func main() {
+	logger := logging.NewLogger("graph")
 	cfg, err := loadConfig("config.json")
 	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+		logger.Fatalf("failed to load config: %v", err)
 	}
 
-	machine, err := client.New(
-		context.Background(),
-		cfg.Viam.Host,
-		logger,
-		client.WithDialOptions(rpc.WithEntityCredentials(
-			cfg.Viam.EntityID,
-			rpc.Credentials{
-				Type:    rpc.CredentialsTypeAPIKey,
-				Payload: cfg.Viam.APIKey,
-			},
-		)),
-	)
+	urModel, err := referenceframe.ParseModelJSONFile("../src/kinematics/ur5e.json", "")
 	if err != nil {
-		logger.Fatal(err)
-	}
-	defer machine.Close(ctx)
-
-	ur, err := arm.FromRobot(machine, cfg.ArmName)
-	if err != nil {
-		logger.Error(err)
-		return
+		logger.Fatalf("failed to load ur5e.json: %v", err)
 	}
 
 	trajInputs, err := readTrajectoryCSV(cfg.TrajectoryCSV)
 	if err != nil {
-		log.Fatalf("failed to read trajectory CSV: %v", err)
+		logger.Fatalf("failed to read trajectory CSV: %v", err)
 	}
 
 	var trajectoryPoses []trajPoses
 	for _, trajInput := range trajInputs {
-		pose, err := ur.ModelFrame().Transform(trajInput.JointInputs)
+		pose, err := urModel.Transform(trajInput.JointInputs)
 		if err != nil {
 			logger.Error(err)
 			return
@@ -103,12 +85,12 @@ func main() {
 
 	waypoints, err := readWaypointCSV(cfg.WaypointsCSV)
 	if err != nil {
-		log.Fatalf("failed to read waypoint CSV: %v", err)
+		logger.Fatalf("failed to read waypoint CSV: %v", err)
 	}
 
 	var waypointPoses []spatialmath.Pose
 	for _, pos := range waypoints {
-		pose, err := ur.ModelFrame().Transform(pos)
+		pose, err := urModel.Transform(pos)
 		if err != nil {
 			logger.Error(err)
 			return
@@ -148,7 +130,7 @@ func parseTrajectoryRow(row []string) (trajInput, error) {
 }
 
 func readTrajectoryCSV(filepath string) ([]trajInput, error) {
-	file, err := os.Open(filepath)
+	file, err := os.Open(expandPath(filepath))
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +164,7 @@ func readTrajectoryCSV(filepath string) ([]trajInput, error) {
 }
 
 func readWaypointCSV(filepath string) ([][]referenceframe.Input, error) {
-	file, err := os.Open(filepath)
+	file, err := os.Open(expandPath(filepath))
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +207,7 @@ func readWaypointCSV(filepath string) ([][]referenceframe.Input, error) {
 }
 
 func writeTrajectoryPosesCSV(path string, data []trajPoses) error {
-	file, err := os.Create(path)
+	file, err := os.Create(expandPath(path))
 	if err != nil {
 		return err
 	}
@@ -259,7 +241,7 @@ func writeTrajectoryPosesCSV(path string, data []trajPoses) error {
 }
 
 func writeWaypointPosesCSV(path string, poses []spatialmath.Pose) error {
-	file, err := os.Create(path)
+	file, err := os.Create(expandPath(path))
 	if err != nil {
 		return err
 	}

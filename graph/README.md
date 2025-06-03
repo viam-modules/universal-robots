@@ -1,33 +1,9 @@
 ### Instructions
 
 In order to run we first need to create a virtual environment.
-We recommend using [uv](https://docs.astral.sh/uv/getting-started/installation/)
-Once you have  `uv` installed you need to do
-```
-uv venv -p python3.10 graph
-source graph/bin/activate
-uv pip install matplotlib numpy pandas
-```
+We will be using [uv](https://docs.astral.sh/uv/getting-started/installation/) for virtual environment management.
+To install please run `make install-uv`
+To setup the virtual environment please run `make create-venv`
+Next, run `make create-config`. This will create a `config.json` file which the user will need to update with two pieces of information, the part-id of the machine as well as the unix timestamp of the data they wish to graph.
 
-Next create a json file named `config.json` within this directory
-```json
-{
-  "viam": {
-    "host": "",
-    "entity_id": "",
-    "api_key": ""
-  },
-  "arm_name": "ur5e-modular",
-  "trajectory_csv": "~/.viam/module-data/[part-id]/universal-robots-executable/1748360427793_trajectory.csv",
-  "waypoints_csv": "~/.viam/module-data/[part-id]/universal-robots-executable/1748360427793_waypoints.csv",
-  "output_trajectory_poses": "~/trajectory_poses.csv",
-  "output_waypoint_poses": "~/waypoint_poses.csv"
-}
-```
-
-Plotting Joint Positions
-`python3 graph_joint_positions.py`
-
-Plotting XYZ Positions
-`go run graph.go`
-`python3 graph_poses.py`
+Now we are ready to create graphs! To do so just run `make graphs`
