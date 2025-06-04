@@ -130,25 +130,29 @@ class UR5eArm : public Arm, public Reconfigurable {
     UR5eArm::UrDriverStatus read_joint_keep_alive(bool log);
 
     // private variables to maintain connection and state
-    std::mutex mu;
-    std::unique_ptr<UrDriver> driver;
-    std::unique_ptr<DashboardClient> dashboard;
-    vector6d_t joint_state, tcp_state;
+    struct state_ {
+        std::mutex mu;
+        std::unique_ptr<UrDriver> driver;
+        std::unique_ptr<DashboardClient> dashboard;
+        vector6d_t joint_state, tcp_state;
 
-    std::atomic<bool> shutdown{false};
-    std::thread keep_alive_thread;
-    std::atomic<bool> keep_alive_thread_alive{false};
+        std::atomic<bool> shutdown{false};
+        std::thread keep_alive_thread;
+        std::atomic<bool> keep_alive_thread_alive{false};
 
-    // specified through APPDIR environment variable
-    std::string appdir;
+        // specified through APPDIR environment variable
+        std::string appdir;
 
-    // variables specified by ResourceConfig and set through reconfigure
-    std::string host;
-    std::atomic<double> speed{0};
-    std::atomic<double> acceleration{0};
-    std::atomic<bool> estop{false};
+        // variables specified by ResourceConfig and set through reconfigure
+        std::string host;
+        std::atomic<double> speed{0};
+        std::atomic<double> acceleration{0};
+        std::atomic<bool> estop{false};
 
-    std::mutex output_csv_dir_path_mu;
-    // specified through VIAM_MODULE_DATA environment variable
-    std::string output_csv_dir_path;
+        std::mutex output_csv_dir_path_mu;
+        // specified through VIAM_MODULE_DATA environment variable
+        std::string output_csv_dir_path;
+    };
+
+    std::unique_ptr<state_> current_state_;
 };
