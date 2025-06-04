@@ -97,6 +97,7 @@ void reportTrajectoryState(control::TrajectoryResult state) {
 
 UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
     BOOST_LOG_TRIVIAL(info) << "UR5eArm constructor start";
+    current_state_ = std::make_unique<state_>();
     this->reconfigure(deps, cfg);
 
     // get the APPDIR environment variable
@@ -104,64 +105,64 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     if (!tmp) {
         throw std::runtime_error("required environment variable APPDIR unset");
     }
-    appdir = std::string(tmp);
-    BOOST_LOG_TRIVIAL(info) << "appdir" << appdir;
+    current_state_->appdir = std::string(tmp);
+    BOOST_LOG_TRIVIAL(info) << "appdir" << current_state_->appdir;
 
     {
-        std::lock_guard<std::mutex> guard{output_csv_dir_path_mu};
-        if (output_csv_dir_path.empty()) {
+        std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
+        if (current_state_->output_csv_dir_path.empty()) {
             tmp = std::getenv("VIAM_MODULE_DATA");
             if (!tmp) {
                 throw std::runtime_error("required environment variable VIAM_MODULE_DATA unset");
             }
-            output_csv_dir_path = std::string(tmp);
-            BOOST_LOG_TRIVIAL(info) << "VIAM_MODULE_DATA" << output_csv_dir_path;
+            current_state_->output_csv_dir_path = std::string(tmp);
+            BOOST_LOG_TRIVIAL(info) << "VIAM_MODULE_DATA" << current_state_->output_csv_dir_path;
         }
     }
 
     // connect to the robot dashboard
-    dashboard.reset(new DashboardClient(host));
-    if (!dashboard->connect()) {
+    current_state_->dashboard.reset(new DashboardClient(current_state_->host));
+    if (!current_state_->dashboard->connect()) {
         throw std::runtime_error("couldn't connect to dashboard");
     }
 
     // stop program, if there is one running
-    if (!dashboard->commandStop()) {
+    if (!current_state_->dashboard->commandStop()) {
         throw std::runtime_error("couldn't stop program running on dashboard");
     }
 
     // if the robot is not powered on and ready
     std::string robotModeRunning("RUNNING");
-    while (!dashboard->commandRobotMode(robotModeRunning)) {
+    while (!current_state_->dashboard->commandRobotMode(robotModeRunning)) {
         // power cycle the arm
-        if (!dashboard->commandPowerOff()) {
+        if (!current_state_->dashboard->commandPowerOff()) {
             throw std::runtime_error("couldn't power off arm");
         }
-        if (!dashboard->commandPowerOn()) {
+        if (!current_state_->dashboard->commandPowerOn()) {
             throw std::runtime_error("couldn't power on arm");
         }
     }
 
     // Release the brakes
-    if (!dashboard->commandBrakeRelease()) {
+    if (!current_state_->dashboard->commandBrakeRelease()) {
         throw std::runtime_error("couldn't release the arm brakes");
     }
 
     // Now the robot is ready to receive a program
-    urcl::UrDriverConfiguration ur_cfg = {host,
-                                          appdir + SCRIPT_FILE,
-                                          appdir + OUTPUT_RECIPE,
-                                          appdir + INPUT_RECIPE,
+    urcl::UrDriverConfiguration ur_cfg = {current_state_->host,
+                                          current_state_->appdir + SCRIPT_FILE,
+                                          current_state_->appdir + OUTPUT_RECIPE,
+                                          current_state_->appdir + INPUT_RECIPE,
                                           &reportRobotProgramState,
                                           true,  // headless mode
                                           nullptr};
-    driver.reset(new UrDriver(ur_cfg));
-    driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
+    current_state_->driver.reset(new UrDriver(ur_cfg));
+    current_state_->driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
 
     // Once RTDE communication is started, we have to make sure to read from the interface buffer,
     // as otherwise we will get pipeline overflows. Therefore, do this directly before starting your
     // main loop
-    driver->startRTDECommunication();
+    current_state_->driver->startRTDECommunication();
     int retry_count = 100;
     while (read_joint_keep_alive(false) != UrDriverStatus::NORMAL) {
         if (retry_count <= 0) {
@@ -173,7 +174,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
 
     // start background thread to continuously send no-ops and keep socket connection alive
     BOOST_LOG_TRIVIAL(info) << "starting background_thread";
-    keep_alive_thread_alive.store(true);
+    current_state_->keep_alive_thread_alive.store(true);
     std::thread keep_alive_thread(&UR5eArm::keep_alive, this);
     BOOST_LOG_TRIVIAL(info) << "UR5eArm constructor end";
     keep_alive_thread.detach();
@@ -198,28 +199,29 @@ T find_config_attribute(const ResourceConfig& cfg, std::string attribute) {
 
 void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     // extract relevant attributes from config
-    host = find_config_attribute<std::string>(cfg, "host");
-    speed.store(find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0));
-    acceleration.store(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2") * (M_PI / 180.0));
+    current_state_->host = find_config_attribute<std::string>(cfg, "host");
+    current_state_->speed.store(find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0));
+    current_state_->acceleration.store(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2") * (M_PI / 180.0));
     try {
-        std::lock_guard<std::mutex> guard{output_csv_dir_path_mu};
-        output_csv_dir_path = find_config_attribute<std::string>(cfg, "csv_output_path");
+        std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
+        current_state_->output_csv_dir_path = find_config_attribute<std::string>(cfg, "csv_output_path");
     } catch (...) {
     }
 }
 
 std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
-    std::lock_guard<std::mutex> guard{mu};
+    std::lock_guard<std::mutex> guard{current_state_->mu};
     if (read_joint_keep_alive(true) == UrDriverStatus::READ_FAILURE) {
         throw std::runtime_error("failed to read from arm");
     };
     std::vector<double> to_ret;
-    for (double joint_pos_rad : joint_state) {
+    for (double joint_pos_rad : current_state_->joint_state) {
         double joint_pos_deg = 180.0 / M_PI * joint_pos_rad;
         to_ret.push_back(joint_pos_deg);
     }
     return to_ret;
 }
+
 std::chrono::milliseconds unix_now_ms() {
     namespace chrono = std::chrono;
     return chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
@@ -243,14 +245,14 @@ std::string arm_joint_positions_filename(std::string path, unsigned long long un
 std::string UR5eArm::get_output_csv_dir_path() {
     std::string path;
     {
-        std::lock_guard<std::mutex> guard{output_csv_dir_path_mu};
-        path = output_csv_dir_path;
+        std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
+        path = current_state_->output_csv_dir_path;
     }
     return path;
 }
 
 void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct& extra) {
-    if (estop.load()) {
+    if (current_state_->estop.load()) {
         throw std::runtime_error("move_to_joint_positions cancelled -> emergency stop is currently active");
     }
 
@@ -269,7 +271,7 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
 void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
                                            const MoveOptions& options,
                                            const viam::sdk::ProtoStruct& extra) {
-    if (estop.load()) {
+    if (current_state_->estop.load()) {
         throw std::runtime_error("move_through_joint_positions cancelled -> emergency stop is currently active");
     }
     // TODO: use options
@@ -291,17 +293,17 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
 }
 
 pose UR5eArm::get_end_position(const ProtoStruct& extra) {
-    std::lock_guard<std::mutex> guard{mu};
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
+    std::lock_guard<std::mutex> guard{current_state_->mu};
+    std::unique_ptr<rtde_interface::DataPackage> data_pkg = current_state_->driver->getDataPackage();
     if (data_pkg == nullptr) {
         BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_end_position got nullptr from driver->getDataPackage()";
         return pose();
     }
-    if (!data_pkg->getData("actual_TCP_pose", tcp_state)) {
+    if (!data_pkg->getData("actual_TCP_pose", current_state_->tcp_state)) {
         BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_end_position driver->getDataPackage().getData(\"actual_TCP_pos\") returned false";
         return pose();
     }
-    return ur_vector_to_pose(tcp_state);
+    return ur_vector_to_pose(current_state_->tcp_state);
 }
 
 bool UR5eArm::is_moving() {
@@ -310,7 +312,7 @@ bool UR5eArm::is_moving() {
 
 UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
     // Open the file in binary mode
-    std::ifstream file(appdir + SVA_FILE, std::ios::binary);
+    std::ifstream file(current_state_->appdir + SVA_FILE, std::ios::binary);
     if (!file) {
         throw std::runtime_error("unable to open file");
     }
@@ -333,7 +335,7 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
 
 void UR5eArm::stop(const ProtoStruct& extra) {
     if (trajectory_running.load()) {
-        bool ok = driver->writeTrajectoryControlMessage(
+        bool ok = current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
         if (!ok) {
             BOOST_LOG_TRIVIAL(warning) << "UR5eArm::stop driver->writeTrajectoryControlMessage returned false";
@@ -349,12 +351,12 @@ ProtoStruct UR5eArm::do_command(const ProtoStruct& command) {
     for (auto kv : command) {
         if (kv.first == VEL_KEY) {
             const double val = *kv.second.get<double>();
-            speed.store(val * (M_PI / 180.0));
+            current_state_->speed.store(val * (M_PI / 180.0));
             resp.emplace(VEL_KEY, val);
         }
         if (kv.first == ACC_KEY) {
             const double val = *kv.second.get<double>();
-            acceleration.store(val * (M_PI / 180.0));
+            current_state_->acceleration.store(val * (M_PI / 180.0));
             resp.emplace(ACC_KEY, val);
         }
     }
@@ -366,11 +368,11 @@ ProtoStruct UR5eArm::do_command(const ProtoStruct& command) {
 void UR5eArm::keep_alive() {
     BOOST_LOG_TRIVIAL(info) << "keep_alive thread started";
     while (true) {
-        if (shutdown.load()) {
+        if (current_state_->shutdown.load()) {
             break;
         }
         {
-            std::lock_guard<std::mutex> guard{mu};
+            std::lock_guard<std::mutex> guard{current_state_->mu};
             try {
                 read_joint_keep_alive(true);
             } catch (const std::exception& ex) {
@@ -380,7 +382,7 @@ void UR5eArm::keep_alive() {
         usleep(NOOP_DELAY);
     }
     BOOST_LOG_TRIVIAL(info) << "keep_alive thread terminating";
-    keep_alive_thread_alive.store(false);
+    current_state_->keep_alive_thread_alive.store(false);
 }
 
 void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
@@ -412,8 +414,8 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
     segments.push_back(waypoints.size() - 1);
 
     // set velocity/acceleration constraints
-    const double move_speed = speed.load();
-    const double move_acceleration = acceleration.load();
+    const double move_speed = current_state_->speed.load();
+    const double move_acceleration = current_state_->acceleration.load();
     BOOST_LOG_TRIVIAL(info) << "generating trajectory with max speed: " << move_speed * (180.0 / M_PI);
     Eigen::VectorXd max_acceleration(6);
     Eigen::VectorXd max_velocity(6);
@@ -474,7 +476,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
     write_trajectory_to_file(trajectory_filename(path, unix_time_ms.count()), p, v, time);
     {  // note the open brace which introduces a new variable scope
         // construct a lock_guard: locks the mutex on construction and unlocks on destruction
-        std::lock_guard<std::mutex> guard{mu};
+        std::lock_guard<std::mutex> guard{current_state_->mu};
         std::stringstream pre_trajectory_state;
         {
             UrDriverStatus status;
@@ -489,7 +491,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
             if (status != UrDriverStatus::NORMAL) {
                 throw std::runtime_error("unable to get arm state before send_trajectory");
             }
-            write_joint_pos_rad(joint_state, pre_trajectory_state, now, 0);
+            write_joint_pos_rad(current_state_->joint_state, pre_trajectory_state, now, 0);
         }
         if (!send_trajectory(p, v, time)) {
             throw std::runtime_error("send_trajectory failed");
@@ -502,17 +504,17 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         unsigned attempt = 1;
         unsigned long long now = 0;
         UrDriverStatus status;
-        while (trajectory_running.load() && !shutdown.load()) {
+        while (trajectory_running.load() && !current_state_->shutdown.load()) {
             now = unix_now_ms().count();
             status = read_joint_keep_alive(true);
             if (status != UrDriverStatus::NORMAL) {
                 trajectory_running.store(false);
                 break;
             }
-            write_joint_pos_rad(joint_state, of, now, attempt);
+            write_joint_pos_rad(current_state_->joint_state, of, now, attempt);
             attempt++;
         };
-        if (shutdown.load()) {
+        if (current_state_->shutdown.load()) {
             of.close();
             throw std::runtime_error("interrupted by shutdown");
         }
@@ -550,17 +552,17 @@ std::string UR5eArm::status_to_string(UrDriverStatus status) {
 // Define the destructor
 UR5eArm::~UR5eArm() {
     BOOST_LOG_TRIVIAL(warning) << "UR5eArm destructor called";
-    shutdown.store(true);
+    current_state_->shutdown.store(true);
     // stop the robot
     BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor calling stop";
     stop(ProtoStruct{});
     // disconnect from the dashboard
-    if (dashboard) {
+    if (current_state_->dashboard) {
         BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor calling dashboard->disconnect()";
-        dashboard->disconnect();
+        current_state_->dashboard->disconnect();
     }
     BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor waiting for keep_alive thread to terminate";
-    while (keep_alive_thread_alive.load()) {
+    while (current_state_->keep_alive_thread_alive.load()) {
         BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor still waiting for keep_alive thread to terminate";
         usleep(NOOP_DELAY);
     }
@@ -575,7 +577,7 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vec
         return false;
     };
     auto point_number = static_cast<int>(p_p.size());
-    if (!driver->writeTrajectoryControlMessage(
+    if (!current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_START, point_number, RobotReceiveTimeout::off())) {
         BOOST_LOG_TRIVIAL(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
         return false;
@@ -584,7 +586,7 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vec
     trajectory_running.store(true);
     BOOST_LOG_TRIVIAL(info) << "UR5eArm::send_trajectory sending " << p_p.size() << " cubic writeTrajectorySplinePoint/3";
     for (size_t i = 0; i < p_p.size(); i++) {
-        if (!driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i])) {
+        if (!current_state_->driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i])) {
             BOOST_LOG_TRIVIAL(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
             return false;
         };
@@ -614,7 +616,7 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     std::string status;
 
     try {
-        if (!dashboard->commandSafetyStatus(status)) {
+        if (!current_state_->dashboard->commandSafetyStatus(status)) {
             // we currently do not attempt to reconnect to the dashboard client. hopefully this error resolves itself.
             BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive dashboard->commandSafetyStatus() returned false when retrieving the status";
             return UrDriverStatus::DASHBOARD_FAILURE;
@@ -626,7 +628,7 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
 
     if (status.find(urcl::safetyStatusString(urcl::SafetyStatus::NORMAL)) == std::string::npos) {
         // the arm is currently estopped. save this state.
-        estop.store(true);
+        current_state_->estop.store(true);
 
         // clear any currently running trajectory.
         trajectory_running.store(false);
@@ -638,31 +640,31 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
 
     } else {
         // the arm is in a normal state.
-        if (estop.load()) {
+        if (current_state_->estop.load()) {
             // if the arm was previously estopped, attempt to recover from the estop.
             // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
             try {
                 BOOST_LOG_TRIVIAL(info) << "recovering from e-stop";
-                driver->resetRTDEClient(appdir + OUTPUT_RECIPE, appdir + INPUT_RECIPE);
+                current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
 
                 BOOST_LOG_TRIVIAL(info) << "restarting arm";
-                if (!dashboard->commandPowerOff()) {
+                if (!current_state_->dashboard->commandPowerOff()) {
                     std::runtime_error(
                         "read_joint_keep_alive dashboard->commandPowerOff() returned false when attempting to restart the arm");
                 }
 
-                if (!dashboard->commandPowerOn()) {
+                if (!current_state_->dashboard->commandPowerOn()) {
                     std::runtime_error(
                         "read_joint_keep_alive dashboard->commandPowerOn() returned false when attempting to restart the arm");
                 }
                 // Release the brakes
-                if (!dashboard->commandBrakeRelease()) {
+                if (!current_state_->dashboard->commandBrakeRelease()) {
                     std::runtime_error(
                         "read_joint_keep_alive dashboard->commandBrakeRelease() returned false when attempting to restart the arm");
                 }
 
                 // send control script again to complete the restart
-                if (!driver->sendRobotProgram()) {
+                if (!current_state_->driver->sendRobotProgram()) {
                     std::runtime_error(
                         "read_joint_keep_alive driver->sendRobotProgram() returned false when attempting to restart the arm");
                 }
@@ -673,29 +675,29 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
             }
 
             BOOST_LOG_TRIVIAL(info) << "send robot program successful, restarting communication";
-            driver->startRTDECommunication();
+            current_state_->driver->startRTDECommunication();
 
-            estop.store(false);
+            current_state_->estop.store(false);
             BOOST_LOG_TRIVIAL(info) << "arm successfully recovered from estop";
             return UrDriverStatus::NORMAL;
         }
     }
 
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = driver->getDataPackage();
+    std::unique_ptr<rtde_interface::DataPackage> data_pkg = current_state_->driver->getDataPackage();
     if (data_pkg == nullptr) {
         // we received no data packet, so our comms are down. reset the comms from the driver.
         if (log) {
             BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage() returned nullptr. resetting RTDE client connection";
         }
         try {
-            driver->resetRTDEClient(appdir + OUTPUT_RECIPE, appdir + INPUT_RECIPE);
+            current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
         } catch (const std::exception& ex) {
             if (log) {
                 BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
             }
             return UrDriverStatus::READ_FAILURE;
         }
-        driver->startRTDECommunication();
+        current_state_->driver->startRTDECommunication();
         if (log) {
             BOOST_LOG_TRIVIAL(info) << "RTDE client connection successfully restarted";
         }
@@ -704,7 +706,7 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     }
 
     // read current joint positions from robot data
-    if (!data_pkg->getData("actual_q", joint_state)) {
+    if (!data_pkg->getData("actual_q", current_state_->joint_state)) {
         if (log) {
             BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
         }
@@ -712,7 +714,8 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     }
 
     // send a noop to keep the connection alive
-    if (!driver->writeTrajectoryControlMessage(control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
+    if (!current_state_->driver->writeTrajectoryControlMessage(
+            control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
         if (log) {
             BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
         }
@@ -720,7 +723,7 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     }
 
     // check if we detect an estop. while estopped we could still retrieve data from the arm
-    if (estop.load()) {
+    if (current_state_->estop.load()) {
         return UrDriverStatus::ESTOPPED;
     }
     return UrDriverStatus::NORMAL;
