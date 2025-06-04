@@ -7,6 +7,13 @@ project(
   LANGUAGES CXX
 )
 
+# - `VIAM_UR_USE_WALL_WERROR`
+#
+# This causes the internal code to compile with `-Wall` and
+# `-Werror` flags.
+#
+option(VIAM_UR_USE_WALL_WERROR "Build with -Wall and -Werror flags" OFF)
+
 
 # If no build type is selected, build optimized but retain debug
 # info. This is probably the right build type for packaging and
@@ -53,7 +60,8 @@ FetchContent_Declare(
   Universal_Robots_Client_Library
   GIT_REPOSITORY https://github.com/UniversalRobots/Universal_Robots_Client_Library
   GIT_TAG        2.0.0
-  EXCLUDE_FROM_ALL
+  GIT_SHALLOW TRUE
+  SYSTEM
 )
 FetchContent_MakeAvailable(Universal_Robots_Client_Library)
 
@@ -62,6 +70,7 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
   GIT_TAG releases/v0.13.2 # Keep in sync with Dockerfile
   GIT_SHALLOW TRUE
+  SYSTEM
   FIND_PACKAGE_ARGS
 )
 FetchContent_MakeAvailable(viam-cpp-sdk)
@@ -76,6 +85,7 @@ find_package(Threads REQUIRED)
 
 # Declare targets
 add_library(trajectories)
+set_target_properties(trajectories PROPERTIES SYSTEM TRUE)
 target_sources(trajectories
   PRIVATE
     trajectories/Trajectory.cpp
@@ -106,6 +116,29 @@ install(
     viam-ur
 )
 
+# If we have opted into more extensive warnings as errors, apply them now
+if (VIAM_UR_USE_WALL_WERROR)
+  set(GNULIKE_COMPILERS "Clang" "AppleClang" "GNU")
+  if (CMAKE_CXX_COMPILER_ID IN_LIST GNULIKE_COMPILERS)
+    target_compile_options(viam-ur PRIVATE
+      -Wall
+      -Werror
+      -Wextra
+      -pedantic
+      -Wconversion
+      -Wdouble-promotion
+      -Wenum-conversion
+      -Wnull-dereference
+      -Wunused
+    )
+  elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    target_compile_options(viam-ur PRIVATE /W4 /WX)
+  else()
+    message(FATAL_ERROR "VIAM_UR_USE_WALL_ERROR is set, but not known how to enable for compiler ID ${CMAKE_CXX_COMPILER_ID}")
+  endif()
+endif()
+
+
 add_executable(universal-robots)
 target_sources(universal-robots
   PRIVATE
@@ -129,5 +162,3 @@ target_link_libraries(universal-robots-test
   PRIVATE
     viam-ur
 )
-
-# add_compile_options(-Wall -Wextra -pedantic -Wno-unused-parameter -Wall -Wextra -Wpedantic -Wconversion  -Wnull-dereference -Wdouble-promotion -Wno-switch-enum -Wshadow -Wunused -Wenum-conversion -Wno-unused-function -Wuninitialized)
