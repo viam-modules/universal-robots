@@ -29,7 +29,7 @@ void write_trajectory_to_file(std::string filepath,
                               const std::vector<float>& time) {
     bool valid = p_p.size() == p_v.size() && p_p.size() == time.size();
     if (!valid) {
-        BOOST_LOG_TRIVIAL(info) << "write_trajectory_to_file called with invalid parameters";
+        VIAM_SDK_LOG(info) << "write_trajectory_to_file called with invalid parameters";
         return;
     }
     std::ofstream of(filepath);
@@ -74,7 +74,7 @@ std::atomic<bool> trajectory_running(false);
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
-    BOOST_LOG_TRIVIAL(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
+    VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
 }
 
 // define callback function to be called by UR client library when trajectory state changes
@@ -92,11 +92,11 @@ void reportTrajectoryState(control::TrajectoryResult state) {
         default:
             report = "failure";
     }
-    BOOST_LOG_TRIVIAL(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
+    VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
 }
 
 UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
-    BOOST_LOG_TRIVIAL(info) << "UR5eArm constructor start";
+    VIAM_SDK_LOG(info) << "UR5eArm constructor start";
     current_state_ = std::make_unique<state_>();
     this->reconfigure(deps, cfg);
 
@@ -106,7 +106,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
         throw std::runtime_error("required environment variable APPDIR unset");
     }
     current_state_->appdir = std::string(tmp);
-    BOOST_LOG_TRIVIAL(info) << "appdir" << current_state_->appdir;
+    VIAM_SDK_LOG(info) << "appdir" << current_state_->appdir;
 
     {
         std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
@@ -116,7 +116,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
                 throw std::runtime_error("required environment variable VIAM_MODULE_DATA unset");
             }
             current_state_->output_csv_dir_path = std::string(tmp);
-            BOOST_LOG_TRIVIAL(info) << "VIAM_MODULE_DATA" << current_state_->output_csv_dir_path;
+            VIAM_SDK_LOG(info) << "VIAM_MODULE_DATA" << current_state_->output_csv_dir_path;
         }
     }
 
@@ -173,10 +173,10 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     }
 
     // start background thread to continuously send no-ops and keep socket connection alive
-    BOOST_LOG_TRIVIAL(info) << "starting background_thread";
+    VIAM_SDK_LOG(info) << "starting background_thread";
     current_state_->keep_alive_thread_alive.store(true);
     std::thread keep_alive_thread(&UR5eArm::keep_alive, this);
-    BOOST_LOG_TRIVIAL(info) << "UR5eArm constructor end";
+    VIAM_SDK_LOG(info) << "UR5eArm constructor end";
     keep_alive_thread.detach();
 }
 
@@ -296,11 +296,11 @@ pose UR5eArm::get_end_position(const ProtoStruct& extra) {
     std::lock_guard<std::mutex> guard{current_state_->mu};
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = current_state_->driver->getDataPackage();
     if (data_pkg == nullptr) {
-        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_end_position got nullptr from driver->getDataPackage()";
+        VIAM_SDK_LOG(warn) << "UR5eArm::get_end_position got nullptr from driver->getDataPackage()";
         return pose();
     }
     if (!data_pkg->getData("actual_TCP_pose", current_state_->tcp_state)) {
-        BOOST_LOG_TRIVIAL(warning) << "UR5eArm::get_end_position driver->getDataPackage().getData(\"actual_TCP_pos\") returned false";
+        VIAM_SDK_LOG(warn) << "UR5eArm::get_end_position driver->getDataPackage().getData(\"actual_TCP_pos\") returned false";
         return pose();
     }
     return ur_vector_to_pose(current_state_->tcp_state);
@@ -338,7 +338,7 @@ void UR5eArm::stop(const ProtoStruct& extra) {
         bool ok = current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
         if (!ok) {
-            BOOST_LOG_TRIVIAL(warning) << "UR5eArm::stop driver->writeTrajectoryControlMessage returned false";
+            VIAM_SDK_LOG(warn) << "UR5eArm::stop driver->writeTrajectoryControlMessage returned false";
             return;
         }
         trajectory_running.store(false);
@@ -366,7 +366,7 @@ ProtoStruct UR5eArm::do_command(const ProtoStruct& command) {
 
 // Send no-ops and keep socket connection alive
 void UR5eArm::keep_alive() {
-    BOOST_LOG_TRIVIAL(info) << "keep_alive thread started";
+    VIAM_SDK_LOG(info) << "keep_alive thread started";
     while (true) {
         if (current_state_->shutdown.load()) {
             break;
@@ -376,24 +376,24 @@ void UR5eArm::keep_alive() {
             try {
                 read_joint_keep_alive(true);
             } catch (const std::exception& ex) {
-                BOOST_LOG_TRIVIAL(error) << "keep_alive failed Exception: " << std::string(ex.what());
+                VIAM_SDK_LOG(error) << "keep_alive failed Exception: " << std::string(ex.what());
             }
         }
         usleep(NOOP_DELAY);
     }
-    BOOST_LOG_TRIVIAL(info) << "keep_alive thread terminating";
+    VIAM_SDK_LOG(info) << "keep_alive thread terminating";
     current_state_->keep_alive_thread_alive.store(false);
 }
 
 void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
-    BOOST_LOG_TRIVIAL(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size();
+    VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size();
 
     // get current joint position and add that as starting pose to waypoints
-    BOOST_LOG_TRIVIAL(info) << "move: get_joint_positions start " << unix_time_ms.count();
+    VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time_ms.count();
     std::vector<double> curr_joint_pos = get_joint_positions(ProtoStruct{});
-    BOOST_LOG_TRIVIAL(info) << "move: get_joint_positions end" << unix_time_ms.count();
+    VIAM_SDK_LOG(info) << "move: get_joint_positions end" << unix_time_ms.count();
 
-    BOOST_LOG_TRIVIAL(info) << "move: compute_trajectory start " << unix_time_ms.count();
+    VIAM_SDK_LOG(info) << "move: compute_trajectory start " << unix_time_ms.count();
     Eigen::VectorXd curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), curr_joint_pos.size());
     Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI / 180.0);
     waypoints.insert(waypoints.begin(), curr_waypoint_rad);
@@ -416,7 +416,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
     // set velocity/acceleration constraints
     const double move_speed = current_state_->speed.load();
     const double move_acceleration = current_state_->acceleration.load();
-    BOOST_LOG_TRIVIAL(info) << "generating trajectory with max speed: " << move_speed * (180.0 / M_PI);
+    VIAM_SDK_LOG(info) << "generating trajectory with max speed: " << move_speed * (180.0 / M_PI);
     Eigen::VectorXd max_acceleration(6);
     Eigen::VectorXd max_velocity(6);
     max_acceleration << move_acceleration, move_acceleration, move_acceleration, move_acceleration, move_acceleration, move_acceleration;
@@ -469,8 +469,8 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         }
         time.push_back(t2);
     }
-    BOOST_LOG_TRIVIAL(info) << "move: compute_trajectory end " << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
-                            << " time " << time.size();
+    VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
+                       << " time " << time.size();
 
     std::string path = get_output_csv_dir_path();
     write_trajectory_to_file(trajectory_filename(path, unix_time_ms.count()), p, v, time);
@@ -520,7 +520,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         }
 
         of.close();
-        BOOST_LOG_TRIVIAL(info) << "move: end unix_time_ms " << unix_time_ms.count();
+        VIAM_SDK_LOG(info) << "move: end unix_time_ms " << unix_time_ms.count();
 
         switch (status) {
             case UrDriverStatus::ESTOPPED:
@@ -551,48 +551,48 @@ std::string UR5eArm::status_to_string(UrDriverStatus status) {
 
 // Define the destructor
 UR5eArm::~UR5eArm() {
-    BOOST_LOG_TRIVIAL(warning) << "UR5eArm destructor called";
+    VIAM_SDK_LOG(warn) << "UR5eArm destructor called";
     current_state_->shutdown.store(true);
     // stop the robot
-    BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor calling stop";
+    VIAM_SDK_LOG(info) << "UR5eArm destructor calling stop";
     stop(ProtoStruct{});
     // disconnect from the dashboard
     if (current_state_->dashboard) {
-        BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor calling dashboard->disconnect()";
+        VIAM_SDK_LOG(info) << "UR5eArm destructor calling dashboard->disconnect()";
         current_state_->dashboard->disconnect();
     }
-    BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor waiting for keep_alive thread to terminate";
+    VIAM_SDK_LOG(info) << "UR5eArm destructor waiting for keep_alive thread to terminate";
     while (current_state_->keep_alive_thread_alive.load()) {
-        BOOST_LOG_TRIVIAL(info) << "UR5eArm destructor still waiting for keep_alive thread to terminate";
+        VIAM_SDK_LOG(info) << "UR5eArm destructor still waiting for keep_alive thread to terminate";
         usleep(NOOP_DELAY);
     }
-    BOOST_LOG_TRIVIAL(info) << "keep_alive thread terminated";
+    VIAM_SDK_LOG(info) << "keep_alive thread terminated";
 }
 
 // helper function to send time-indexed position, velocity, acceleration setpoints to the UR driver
 bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time) {
-    BOOST_LOG_TRIVIAL(info) << "UR5eArm::send_trajectory start";
+    VIAM_SDK_LOG(info) << "UR5eArm::send_trajectory start";
     if (p_p.size() != time.size() || p_v.size() != time.size()) {
-        BOOST_LOG_TRIVIAL(error) << "UR5eArm::send_trajectory p_p.size() != time.size() || p_v.size() != time.size(): not executing";
+        VIAM_SDK_LOG(error) << "UR5eArm::send_trajectory p_p.size() != time.size() || p_v.size() != time.size(): not executing";
         return false;
     };
     auto point_number = static_cast<int>(p_p.size());
     if (!current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_START, point_number, RobotReceiveTimeout::off())) {
-        BOOST_LOG_TRIVIAL(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
+        VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
         return false;
     };
 
     trajectory_running.store(true);
-    BOOST_LOG_TRIVIAL(info) << "UR5eArm::send_trajectory sending " << p_p.size() << " cubic writeTrajectorySplinePoint/3";
+    VIAM_SDK_LOG(info) << "UR5eArm::send_trajectory sending " << p_p.size() << " cubic writeTrajectorySplinePoint/3";
     for (size_t i = 0; i < p_p.size(); i++) {
         if (!current_state_->driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i])) {
-            BOOST_LOG_TRIVIAL(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
+            VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
             return false;
         };
     }
 
-    BOOST_LOG_TRIVIAL(info) << "UR5eArm::send_trajectory end";
+    VIAM_SDK_LOG(info) << "UR5eArm::send_trajectory end";
     return true;
 }
 
@@ -618,11 +618,11 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     try {
         if (!current_state_->dashboard->commandSafetyStatus(status)) {
             // we currently do not attempt to reconnect to the dashboard client. hopefully this error resolves itself.
-            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive dashboard->commandSafetyStatus() returned false when retrieving the status";
+            VIAM_SDK_LOG(error) << "read_joint_keep_alive dashboard->commandSafetyStatus() returned false when retrieving the status";
             return UrDriverStatus::DASHBOARD_FAILURE;
         }
     } catch (const std::exception& ex) {
-        BOOST_LOG_TRIVIAL(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
+        VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
         return UrDriverStatus::DASHBOARD_FAILURE;
     }
 
@@ -644,10 +644,10 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
             // if the arm was previously estopped, attempt to recover from the estop.
             // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
             try {
-                BOOST_LOG_TRIVIAL(info) << "recovering from e-stop";
+                VIAM_SDK_LOG(info) << "recovering from e-stop";
                 current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
 
-                BOOST_LOG_TRIVIAL(info) << "restarting arm";
+                VIAM_SDK_LOG(info) << "restarting arm";
                 if (!current_state_->dashboard->commandPowerOff()) {
                     std::runtime_error(
                         "read_joint_keep_alive dashboard->commandPowerOff() returned false when attempting to restart the arm");
@@ -670,15 +670,15 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
                 }
 
             } catch (const std::exception& ex) {
-                BOOST_LOG_TRIVIAL(info) << "failed to restart the arm: : " << std::string(ex.what());
+                VIAM_SDK_LOG(info) << "failed to restart the arm: : " << std::string(ex.what());
                 return UrDriverStatus::ESTOPPED;
             }
 
-            BOOST_LOG_TRIVIAL(info) << "send robot program successful, restarting communication";
+            VIAM_SDK_LOG(info) << "send robot program successful, restarting communication";
             current_state_->driver->startRTDECommunication();
 
             current_state_->estop.store(false);
-            BOOST_LOG_TRIVIAL(info) << "arm successfully recovered from estop";
+            VIAM_SDK_LOG(info) << "arm successfully recovered from estop";
             return UrDriverStatus::NORMAL;
         }
     }
@@ -687,19 +687,19 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     if (data_pkg == nullptr) {
         // we received no data packet, so our comms are down. reset the comms from the driver.
         if (log) {
-            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage() returned nullptr. resetting RTDE client connection";
+            VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage() returned nullptr. resetting RTDE client connection";
         }
         try {
             current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
         } catch (const std::exception& ex) {
             if (log) {
-                BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
+                VIAM_SDK_LOG(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
             }
             return UrDriverStatus::READ_FAILURE;
         }
         current_state_->driver->startRTDECommunication();
         if (log) {
-            BOOST_LOG_TRIVIAL(info) << "RTDE client connection successfully restarted";
+            VIAM_SDK_LOG(info) << "RTDE client connection successfully restarted";
         }
         // we restarted the RTDE client so the robot should be back to a normal state
         return UrDriverStatus::NORMAL;
@@ -708,7 +708,7 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     // read current joint positions from robot data
     if (!data_pkg->getData("actual_q", current_state_->joint_state)) {
         if (log) {
-            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
+            VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
         }
         return UrDriverStatus::READ_FAILURE;
     }
@@ -717,7 +717,7 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     if (!current_state_->driver->writeTrajectoryControlMessage(
             control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
         if (log) {
-            BOOST_LOG_TRIVIAL(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
+            VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
         }
         return UrDriverStatus::READ_FAILURE;
     }

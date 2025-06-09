@@ -6,7 +6,6 @@
 #include <ur_client_library/ur/ur_driver.h>
 
 #include <boost/format.hpp>
-#include <boost/log/trivial.hpp>
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/config/resource.hpp>
