@@ -614,7 +614,20 @@ void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long uni
 UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     // check to see if an estop has occurred.
     std::string status;
+    VIAM_SDK_LOG(error) << "yo here here";
+    if (current_state_->local_disconnect.load()) {
+        VIAM_SDK_LOG(error) << "yo local";
 
+        usleep(ESTOP_DELAY);
+        if (!current_state_->dashboard->commandIsInRemoteControl()) {
+            return UrDriverStatus::DASHBOARD_FAILURE;
+        }
+        current_state_->local_disconnect.store(false);
+        return UrDriverStatus::NORMAL;
+        // if (!dashboard->connect()) {
+        //     throw std::runtime_error("couldn't connect to dashboard");
+        // }
+    }
     try {
         if (!current_state_->dashboard->commandSafetyStatus(status)) {
             // we currently do not attempt to reconnect to the dashboard client. hopefully this error resolves itself.
@@ -622,6 +635,12 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
             return UrDriverStatus::DASHBOARD_FAILURE;
         }
     } catch (const std::exception& ex) {
+        current_state_->local_disconnect.store(true);
+        VIAM_SDK_LOG(error) << "yo local detected";
+        current_state_->dashboard->disconnect();
+        current_state_->dashboard->connect();
+        current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
+
         VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
         return UrDriverStatus::DASHBOARD_FAILURE;
     }

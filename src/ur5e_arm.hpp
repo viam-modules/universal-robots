@@ -147,6 +147,7 @@ class UR5eArm : public Arm, public Reconfigurable {
         std::atomic<double> speed{0};
         std::atomic<double> acceleration{0};
         std::atomic<bool> estop{false};
+        std::atomic<bool> local_disconnect{false};
 
         std::mutex output_csv_dir_path_mu;
         // specified through VIAM_MODULE_DATA environment variable
