@@ -107,26 +107,8 @@ class URArm final : public Arm, public Reconfigurable {
 
     void trajectory_done_cb(control::TrajectoryResult);
 
-        std::atomic<bool> shutdown{false};
-        std::thread keep_alive_thread;
-        std::atomic<bool> keep_alive_thread_alive{false};
-
-        // specified through APPDIR environment variable
-        std::string appdir;
-
-        // variables specified by ResourceConfig and set through reconfigure
-        std::string host;
-        std::atomic<double> speed{0};
-        std::atomic<double> acceleration{0};
-        std::atomic<bool> estop{false};
-        std::atomic<bool> local_disconnect{false};
-
-        std::mutex output_csv_dir_path_mu;
-        // specified through VIAM_MODULE_DATA environment variable
-        std::string output_csv_dir_path;
-    };
-
     URArm::UrDriverStatus read_joint_keep_alive(bool log);
+
     const Model model_;
     std::unique_ptr<state_> current_state_;
 };
