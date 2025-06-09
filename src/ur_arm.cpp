@@ -803,8 +803,6 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
             // if the arm was previously estopped, attempt to recover from the estop.
             // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
             try {
-                bool is_remote = current_state_->dashboard->commandIsInRemoteControl();
-                VIAM_SDK_LOG(error) << "yo estopped local: " << is_remote;
                 VIAM_SDK_LOG(info) << "recovering from e-stop";
                 current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
 
