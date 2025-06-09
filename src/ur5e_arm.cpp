@@ -210,6 +210,9 @@ void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
 }
 
 std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
+    // if (current_state_->local_disconnect.load()) {
+    //     throw std::runtime_error("arm is currently in local mode");
+    // }
     std::lock_guard<std::mutex> guard{current_state_->mu};
     if (read_joint_keep_alive(true) == UrDriverStatus::READ_FAILURE) {
         throw std::runtime_error("failed to read from arm");
@@ -252,6 +255,9 @@ std::string UR5eArm::get_output_csv_dir_path() {
 }
 
 void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct& extra) {
+    if (current_state_->local_disconnect.load()) {
+        throw std::runtime_error("arm is currently in local mode");
+    }
     if (current_state_->estop.load()) {
         throw std::runtime_error("move_to_joint_positions cancelled -> emergency stop is currently active");
     }
@@ -271,6 +277,9 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
 void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
                                            const MoveOptions& options,
                                            const viam::sdk::ProtoStruct& extra) {
+    if (current_state_->local_disconnect.load()) {
+        throw std::runtime_error("arm is currently in local mode");
+    }
     if (current_state_->estop.load()) {
         throw std::runtime_error("move_through_joint_positions cancelled -> emergency stop is currently active");
     }
@@ -623,6 +632,7 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
             return UrDriverStatus::DASHBOARD_FAILURE;
         }
         current_state_->local_disconnect.store(false);
+        current_state_->estop.store(true);
         return UrDriverStatus::NORMAL;
         // if (!dashboard->connect()) {
         //     throw std::runtime_error("couldn't connect to dashboard");
