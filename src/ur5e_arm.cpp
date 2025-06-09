@@ -310,7 +310,7 @@ bool UR5eArm::is_moving() {
 
 UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
     // Open the file in binary mode
-    std::ifstream file(appdir + SVA_FILE, std::ios::binary);
+    std::ifstream file(appdir + SVA_UR20_FILE, std::ios::binary);
     if (!file) {
         throw std::runtime_error("unable to open file");
     }
