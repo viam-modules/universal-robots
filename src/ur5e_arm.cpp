@@ -68,31 +68,10 @@ void write_waypoints_to_csv(std::string filepath, std::vector<Eigen::VectorXd> w
     of.close();
 }
 
-// global used to track if a trajectory is in progress
-std::atomic<bool> trajectory_running(false);
-
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
     VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
-}
-
-// define callback function to be called by UR client library when trajectory state changes
-void reportTrajectoryState(control::TrajectoryResult state) {
-    trajectory_running.store(false);
-    std::string report;
-    switch (state) {
-        case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
-            report = "success";
-            break;
-        case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED:
-            report = "canceled";
-            break;
-        case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
-        default:
-            report = "failure";
-    }
-    VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
 }
 
 UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
@@ -157,7 +136,9 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
                                           true,  // headless mode
                                           nullptr};
     current_state_->driver.reset(new UrDriver(ur_cfg));
-    current_state_->driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
+
+    // define callback function to be called by UR client library when trajectory state changes
+    current_state_->driver->registerTrajectoryDoneCallback(std::bind(&UR5eArm::trajectory_done_cb, this, std::placeholders::_1));
 
     // Once RTDE communication is started, we have to make sure to read from the interface buffer,
     // as otherwise we will get pipeline overflows. Therefore, do this directly before starting your
@@ -178,6 +159,23 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     std::thread keep_alive_thread(&UR5eArm::keep_alive, this);
     VIAM_SDK_LOG(info) << "UR5eArm constructor end";
     keep_alive_thread.detach();
+}
+
+void UR5eArm::trajectory_done_cb(const control::TrajectoryResult state) {
+    current_state_->trajectory_running.store(false);
+    std::string report;
+    switch (state) {
+        case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
+            report = "success";
+            break;
+        case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED:
+            report = "canceled";
+            break;
+        case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
+        default:
+            report = "failure";
+    }
+    VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
 }
 
 // helper function to extract an attribute value from its key within a ResourceConfig
@@ -319,7 +317,7 @@ pose UR5eArm::get_end_position(const ProtoStruct& extra) {
 }
 
 bool UR5eArm::is_moving() {
-    return trajectory_running.load();
+    return current_state_->trajectory_running.load();
 }
 
 UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
@@ -346,14 +344,14 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
 }
 
 void UR5eArm::stop(const ProtoStruct& extra) {
-    if (trajectory_running.load()) {
+    if (current_state_->trajectory_running.load()) {
         bool ok = current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
         if (!ok) {
             VIAM_SDK_LOG(warn) << "UR5eArm::stop driver->writeTrajectoryControlMessage returned false";
             return;
         }
-        trajectory_running.store(false);
+        current_state_->trajectory_running.store(false);
     }
 }
 
@@ -516,11 +514,11 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         unsigned attempt = 1;
         unsigned long long now = 0;
         UrDriverStatus status;
-        while (trajectory_running.load() && !current_state_->shutdown.load()) {
+        while (current_state_->trajectory_running.load() && !current_state_->shutdown.load()) {
             now = unix_now_ms().count();
             status = read_joint_keep_alive(true);
             if (status != UrDriverStatus::NORMAL) {
-                trajectory_running.store(false);
+                current_state_->trajectory_running.store(false);
                 break;
             }
             write_joint_pos_rad(current_state_->joint_state, of, now, attempt);
@@ -595,7 +593,7 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vec
         return false;
     };
 
-    trajectory_running.store(true);
+    current_state_->trajectory_running.store(true);
     VIAM_SDK_LOG(info) << "UR5eArm::send_trajectory sending " << p_p.size() << " cubic writeTrajectorySplinePoint/3";
     for (size_t i = 0; i < p_p.size(); i++) {
         if (!current_state_->driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i])) {
@@ -685,7 +683,7 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
         current_state_->estop.store(true);
 
         // clear any currently running trajectory.
-        trajectory_running.store(false);
+        current_state_->trajectory_running.store(false);
 
         // TODO: further investigate the need for this delay
         // sleep longer to prevent buffer error
