@@ -195,7 +195,7 @@ T find_config_attribute(const ResourceConfig& cfg, std::string attribute) {
     return *val;
 }
 
-void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
+void UR5eArm::reconfigure(const Dependencies&, const ResourceConfig& cfg) {
     // extract relevant attributes from config
     current_state_->host = find_config_attribute<std::string>(cfg, "host");
     current_state_->speed.store(find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0));
@@ -207,7 +207,7 @@ void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     }
 }
 
-std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
+std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct&) {
     std::lock_guard<std::mutex> guard{current_state_->mu};
     if (read_joint_keep_alive(true) == UrDriverStatus::READ_FAILURE) {
         throw std::runtime_error("failed to read from arm");
@@ -249,7 +249,7 @@ std::string UR5eArm::get_output_csv_dir_path() {
     return path;
 }
 
-void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct& extra) {
+void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
     if (current_state_->estop.load()) {
         throw std::runtime_error("move_to_joint_positions cancelled -> emergency stop is currently active");
     }
@@ -267,8 +267,8 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
 }
 
 void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
-                                           const MoveOptions& options,
-                                           const viam::sdk::ProtoStruct& extra) {
+                                           const MoveOptions&,
+                                           const viam::sdk::ProtoStruct&) {
     if (current_state_->estop.load()) {
         throw std::runtime_error("move_through_joint_positions cancelled -> emergency stop is currently active");
     }
@@ -290,7 +290,7 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
     return;
 }
 
-pose UR5eArm::get_end_position(const ProtoStruct& extra) {
+pose UR5eArm::get_end_position(const ProtoStruct&) {
     std::lock_guard<std::mutex> guard{current_state_->mu};
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = current_state_->driver->getDataPackage();
     if (data_pkg == nullptr) {
@@ -308,7 +308,7 @@ bool UR5eArm::is_moving() {
     return current_state_->trajectory_running.load();
 }
 
-UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
+UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct&) {
     // Open the file in binary mode
     std::ifstream file(current_state_->appdir + SVA_FILE, std::ios::binary);
     if (!file) {
@@ -331,7 +331,7 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
     return KinematicsDataSVA(std::move(urdf_bytes));
 }
 
-void UR5eArm::stop(const ProtoStruct& extra) {
+void UR5eArm::stop(const ProtoStruct&) {
     if (current_state_->trajectory_running.load()) {
         bool ok = current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
