@@ -210,9 +210,9 @@ void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
 }
 
 std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct& extra) {
-    // if (current_state_->local_disconnect.load()) {
-    //     throw std::runtime_error("arm is currently in local mode");
-    // }
+    if (current_state_->local_disconnect.load()) {
+        throw std::runtime_error("arm is currently in local mode");
+    }
     std::lock_guard<std::mutex> guard{current_state_->mu};
     if (read_joint_keep_alive(true) == UrDriverStatus::READ_FAILURE) {
         throw std::runtime_error("failed to read from arm");
@@ -302,6 +302,9 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
 }
 
 pose UR5eArm::get_end_position(const ProtoStruct& extra) {
+    if (current_state_->local_disconnect.load()) {
+        throw std::runtime_error("arm is currently in local mode");
+    }
     std::lock_guard<std::mutex> guard{current_state_->mu};
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = current_state_->driver->getDataPackage();
     if (data_pkg == nullptr) {
@@ -623,16 +626,20 @@ void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long uni
 UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     // check to see if an estop has occurred.
     std::string status;
-    VIAM_SDK_LOG(error) << "yo here here";
     if (current_state_->local_disconnect.load()) {
-        VIAM_SDK_LOG(error) << "yo local";
+        bool is_remote = current_state_->dashboard->commandIsInRemoteControl();
+        VIAM_SDK_LOG(error) << "yo local: " << is_remote;
 
         usleep(ESTOP_DELAY);
-        if (!current_state_->dashboard->commandIsInRemoteControl()) {
+
+        if (!is_remote) {
             return UrDriverStatus::DASHBOARD_FAILURE;
         }
         current_state_->local_disconnect.store(false);
         current_state_->estop.store(true);
+        current_state_->dashboard->disconnect();
+        current_state_->dashboard->connect();
+
         return UrDriverStatus::NORMAL;
         // if (!dashboard->connect()) {
         //     throw std::runtime_error("couldn't connect to dashboard");
@@ -647,6 +654,8 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     } catch (const std::exception& ex) {
         current_state_->local_disconnect.store(true);
         VIAM_SDK_LOG(error) << "yo local detected";
+        // current_state_->dashboard.reset(new DashboardClient(current_state_->host));
+
         current_state_->dashboard->disconnect();
         current_state_->dashboard->connect();
         current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
@@ -656,6 +665,7 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     }
 
     if (status.find(urcl::safetyStatusString(urcl::SafetyStatus::NORMAL)) == std::string::npos) {
+        VIAM_SDK_LOG(error) << "yo status: " << status;
         // the arm is currently estopped. save this state.
         current_state_->estop.store(true);
 
