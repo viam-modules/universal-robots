@@ -136,6 +136,7 @@ class UR5eArm : public Arm, public Reconfigurable {
         vector6d_t joint_state, tcp_state;
 
         std::atomic<bool> shutdown{false};
+        std::atomic<bool> trajectory_running{false};
         std::thread keep_alive_thread;
         std::atomic<bool> keep_alive_thread_alive{false};
 
