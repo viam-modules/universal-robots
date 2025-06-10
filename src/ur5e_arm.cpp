@@ -138,22 +138,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     current_state_->driver.reset(new UrDriver(ur_cfg));
 
     // define callback function to be called by UR client library when trajectory state changes
-    current_state_->driver->registerTrajectoryDoneCallback([this](const control::TrajectoryResult state) {
-        current_state_->trajectory_running.store(false);
-        std::string report;
-        switch (state) {
-            case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
-                report = "success";
-                break;
-            case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED:
-                report = "canceled";
-                break;
-            case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
-            default:
-                report = "failure";
-        }
-        VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
-    });
+    current_state_->driver->registerTrajectoryDoneCallback(std::bind(&UR5eArm::trajectory_done_cb, this, std::placeholders::_1));
 
     // Once RTDE communication is started, we have to make sure to read from the interface buffer,
     // as otherwise we will get pipeline overflows. Therefore, do this directly before starting your
@@ -174,6 +159,23 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     std::thread keep_alive_thread(&UR5eArm::keep_alive, this);
     VIAM_SDK_LOG(info) << "UR5eArm constructor end";
     keep_alive_thread.detach();
+}
+
+void UR5eArm::trajectory_done_cb(const control::TrajectoryResult state) {
+    current_state_->trajectory_running.store(false);
+    std::string report;
+    switch (state) {
+        case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
+            report = "success";
+            break;
+        case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED:
+            report = "canceled";
+            break;
+        case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
+        default:
+            report = "failure";
+    }
+    VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
 }
 
 // helper function to extract an attribute value from its key within a ResourceConfig

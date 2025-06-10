@@ -126,6 +126,7 @@ class UR5eArm : public Arm, public Reconfigurable {
     void keep_alive();
     void move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
     bool send_trajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time);
+    void trajectory_done_cb(control::TrajectoryResult);
     UR5eArm::UrDriverStatus read_joint_keep_alive(bool log);
 
     // private variables to maintain connection and state
