@@ -786,6 +786,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
     }
 
     if (status.find(urcl::safetyStatusString(urcl::SafetyStatus::NORMAL)) == std::string::npos) {
+        VIAM_SDK_LOG(error) << "yo status: " << status;
         // the arm is currently estopped. save this state.
         current_state_->estop.store(true);
 
