@@ -12,7 +12,7 @@ project(
 # This causes the internal code to compile with `-Wall` and
 # `-Werror` flags.
 #
-option(VIAM_UR_USE_WALL_WERROR "Build with -Wall and -Werror flags" OFF)
+option(VIAM_UR_USE_WALL_WERROR "Build with -Wall and -Werror flags" ON)
 
 
 # If no build type is selected, build optimized but retain debug
