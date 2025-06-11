@@ -195,7 +195,7 @@ T find_config_attribute(const ResourceConfig& cfg, std::string attribute) {
     return *val;
 }
 
-void UR5eArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
+void UR5eArm::reconfigure(const Dependencies&, const ResourceConfig& cfg) {
     // extract relevant attributes from config
     current_state_->host = find_config_attribute<std::string>(cfg, "host");
     current_state_->speed.store(find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0));
@@ -320,7 +320,7 @@ bool UR5eArm::is_moving() {
     return current_state_->trajectory_running.load();
 }
 
-UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
+UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct&) {
     // Open the file in binary mode
     std::ifstream file(current_state_->appdir + SVA_FILE, std::ios::binary);
     if (!file) {
@@ -343,7 +343,7 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct& extra) {
     return KinematicsDataSVA(std::move(urdf_bytes));
 }
 
-void UR5eArm::stop(const ProtoStruct& extra) {
+void UR5eArm::stop(const ProtoStruct&) {
     if (current_state_->trajectory_running.load()) {
         bool ok = current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
