@@ -162,17 +162,19 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
 }
 
 void UR5eArm::trajectory_done_cb(const control::TrajectoryResult state) {
-    current_state_->trajectory_status.store(TrajectoryStatus::STOPPED);
     std::string report;
     switch (state) {
         case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
             report = "success";
+            current_state_->trajectory_status.store(TrajectoryStatus::STOPPED);
             break;
         case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED:
             report = "canceled";
+            current_state_->trajectory_status.store(TrajectoryStatus::CANCELLED);
             break;
         case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
         default:
+            current_state_->trajectory_status.store(TrajectoryStatus::STOPPED);
             report = "failure";
     }
     VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
@@ -337,9 +339,8 @@ void UR5eArm::stop(const ProtoStruct&) {
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
         if (!ok) {
             VIAM_SDK_LOG(warn) << "UR5eArm::stop driver->writeTrajectoryControlMessage returned false";
-            return;
+            throw std::runtime_error("failed to write trajectory control cancel message to UR5eArm");
         }
-        current_state_->trajectory_status.store(TrajectoryStatus::STOPPED);
     }
 }
 
@@ -506,7 +507,6 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
             now = unix_now_ms().count();
             status = read_joint_keep_alive(true);
             if (status != UrDriverStatus::NORMAL) {
-                current_state_->trajectory_status.store(TrajectoryStatus::CANCELLED);
                 break;
             }
             write_joint_pos_rad(current_state_->joint_state, of, now, attempt);
