@@ -1,3 +1,5 @@
 .vscode/*
 logs
 build
+module.tar.gz
+universal-robots.AppImage
