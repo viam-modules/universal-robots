@@ -121,6 +121,7 @@ class UR5eArm : public Arm, public Reconfigurable {
         DASHBOARD_FAILURE = 4
     };
     std::string status_to_string(UrDriverStatus status);
+    enum class TrajectoryStatus : int8_t { RUNNING = 1, CANCELLED = 2, STOPPED = 3 };
 
    private:
     void keep_alive();
@@ -137,7 +138,7 @@ class UR5eArm : public Arm, public Reconfigurable {
         vector6d_t joint_state, tcp_state;
 
         std::atomic<bool> shutdown{false};
-        std::atomic<bool> trajectory_running{false};
+        std::atomic<TrajectoryStatus> trajectory_status{TrajectoryStatus::STOPPED};
         std::thread keep_alive_thread;
         std::atomic<bool> keep_alive_thread_alive{false};
 
