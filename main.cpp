@@ -15,13 +15,13 @@ using namespace viam::sdk;
 int main(int argc, char** argv) {
     const Instance instance;
 
-    API arm_api = API::get<Arm>();
-    Model ur5e_model("viam", "universal-robots", "ur5e");
+    const API arm_api = API::get<Arm>();
+    const Model ur5e_model("viam", "universal-robots", "ur5e");
 
-    std::shared_ptr<ModelRegistration> ur5e_mr = std::make_shared<ModelRegistration>(
-        arm_api, ur5e_model, [](Dependencies dep, ResourceConfig cfg) { return std::make_unique<UR5eArm>(dep, cfg); });
+    const auto ur5e_mr = std::make_shared<ModelRegistration>(
+        arm_api, ur5e_model, [](const Dependencies& dep, const ResourceConfig& cfg) { return std::make_unique<UR5eArm>(dep, cfg); });
 
-    std::vector<std::shared_ptr<ModelRegistration>> mrs = {ur5e_mr};
+    const std::vector<std::shared_ptr<ModelRegistration>> mrs = {ur5e_mr};
     std::make_shared<ModuleService>(argc, argv, mrs)->serve();
 
     return EXIT_SUCCESS;

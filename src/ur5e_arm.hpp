@@ -22,40 +22,40 @@ using namespace viam::sdk;
 using namespace urcl;
 
 // locations of files necessary to build module, specified as relative paths
-const std::string SVA_FILE = "/src/kinematics/ur5e.json";
-const std::string SCRIPT_FILE = "/src/control/external_control.urscript";
-const std::string OUTPUT_RECIPE = "/src/control/rtde_output_recipe.txt";
-const std::string INPUT_RECIPE = "/src/control/rtde_input_recipe.txt";
+constexpr char SVA_FILE[] = "/src/kinematics/ur5e.json";
+constexpr char SCRIPT_FILE[] = "/src/control/external_control.urscript";
+constexpr char OUTPUT_RECIPE[] = "/src/control/rtde_output_recipe.txt";
+constexpr char INPUT_RECIPE[] = "/src/control/rtde_input_recipe.txt";
 
 // locations of log files that will be written
-const std::string TRAJECTORY_CSV_NAME_TEMPLATE = "/%1%_trajectory.csv";
-const std::string WAYPOINTS_CSV_NAME_TEMPLATE = "/%1%_waypoints.csv";
-const std::string ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE = "/%1%_arm_joint_positions.csv";
+constexpr char TRAJECTORY_CSV_NAME_TEMPLATE[] = "/%1%_trajectory.csv";
+constexpr char WAYPOINTS_CSV_NAME_TEMPLATE[] = "/%1%_waypoints.csv";
+constexpr char ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE[] = "/%1%_arm_joint_positions.csv";
 
 // constants for robot operation
-const float TIMESTEP = 0.2f;     // seconds
-const int NOOP_DELAY = 2000;     // 2 millisecond/500 Hz
-const int ESTOP_DELAY = 100000;  // 100 millisecond/10 Hz
+constexpr float TIMESTEP = 0.2F;     // seconds
+constexpr int NOOP_DELAY = 2000;     // 2 millisecond/500 Hz
+constexpr int ESTOP_DELAY = 100000;  // 100 millisecond/10 Hz
 
 // do_command keys
-const std::string VEL_KEY = "set_vel";
-const std::string ACC_KEY = "set_acc";
+constexpr char VEL_KEY[] = "set_vel";
+constexpr char ACC_KEY[] = "set_acc";
 
 void reportRobotProgramState(bool program_running);
-void write_trajectory_to_file(std::string filepath,
+void write_trajectory_to_file(const std::string& filepath,
                               const std::vector<vector6d_t>& p_p,
                               const std::vector<vector6d_t>& p_v,
                               const std::vector<float>& time);
-void write_waypoints_to_csv(std::string filepath, std::vector<Eigen::VectorXd> waypoints);
+void write_waypoints_to_csv(const std::string& filepath, const std::vector<Eigen::VectorXd>& waypoints);
 void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt);
-std::string waypoints_filename(std::string path, unsigned long long unix_time_ms);
-std::string trajectory_filename(std::string path, unsigned long long unix_time_ms);
-std::string arm_joint_positions_filename(std::string path, unsigned long long unix_time_ms);
+std::string waypoints_filename(const std::string& path, unsigned long long unix_time_ms);
+std::string trajectory_filename(const std::string& path, unsigned long long unix_time_ms);
+std::string arm_joint_positions_filename(const std::string& path, unsigned long long unix_time_ms);
 std::chrono::milliseconds unix_now_ms();
 
-class UR5eArm : public Arm, public Reconfigurable {
+class UR5eArm final : public Arm, public Reconfigurable {
    public:
-    UR5eArm(Dependencies deps, const ResourceConfig& cfg);
+    UR5eArm(const Dependencies& deps, const ResourceConfig& cfg);
     ~UR5eArm() override;
 
     void reconfigure(const Dependencies& deps, const ResourceConfig& cfg) override;
@@ -110,7 +110,7 @@ class UR5eArm : public Arm, public Reconfigurable {
     std::string get_output_csv_dir_path();
 
     // the arm server within RDK will reconstruct the geometries from the kinematics and joint positions if left unimplemented
-    std::vector<GeometryConfig> get_geometries(const ProtoStruct&) {
+    std::vector<GeometryConfig> get_geometries(const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
     }
     enum class UrDriverStatus : int8_t  // Only available on 3.10/5.4
@@ -120,7 +120,7 @@ class UR5eArm : public Arm, public Reconfigurable {
         READ_FAILURE = 3,
         DASHBOARD_FAILURE = 4
     };
-    std::string status_to_string(UrDriverStatus status);
+    static std::string status_to_string(UrDriverStatus status);
 
    private:
     void keep_alive();
