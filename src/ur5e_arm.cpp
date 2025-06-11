@@ -1,5 +1,7 @@
 #include "ur5e_arm.hpp"
 
+#include <boost/numeric/conversion/cast.hpp>
+
 #include <cmath>
 
 // this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
@@ -9,8 +11,10 @@ extern "C" double* orientation_vector_get_components(void* ov);
 extern "C" void free_orientation_vector_memory(void* ov);
 extern "C" void free_quaternion_memory(void* q);
 
+namespace {
+
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
-    double norm = sqrt(vec[3] * vec[3] + vec[4] * vec[4] + vec[5] * vec[5]);
+    const double norm = sqrt((vec[3] * vec[3]) + (vec[4] * vec[4]) + (vec[5] * vec[5]));
     void* q = quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm);
     void* ov = orientation_vector_from_quaternion(q);
     double* components = orientation_vector_get_components(ov);  // returned as ox, oy, oz, theta
@@ -23,11 +27,30 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     return pose{position, orientation, theta};
 }
 
-void write_trajectory_to_file(std::string filepath,
+// helper function to extract an attribute value from its key within a ResourceConfig
+template <class T>
+T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute) {
+    std::ostringstream buffer;
+    auto key = cfg.attributes().find(attribute);
+    if (key == cfg.attributes().end()) {
+        buffer << "required attribute `" << attribute << "` not found in configuration";
+        throw std::invalid_argument(buffer.str());
+    }
+    const auto* const val = key->second.get<T>();
+    if (!val) {
+        buffer << "required non-empty attribute `" << attribute << " could not be decoded";
+        throw std::invalid_argument(buffer.str());
+    }
+    return *val;
+}
+
+}  // namespace
+
+void write_trajectory_to_file(const std::string& filepath,
                               const std::vector<vector6d_t>& p_p,
                               const std::vector<vector6d_t>& p_v,
                               const std::vector<float>& time) {
-    bool valid = p_p.size() == p_v.size() && p_p.size() == time.size();
+    const bool valid = p_p.size() == p_v.size() && p_p.size() == time.size();
     if (!valid) {
         VIAM_SDK_LOG(info) << "write_trajectory_to_file called with invalid parameters";
         return;
@@ -50,7 +73,7 @@ void write_trajectory_to_file(std::string filepath,
     of.close();
 }
 
-void write_waypoints_to_csv(std::string filepath, std::vector<Eigen::VectorXd> waypoints) {
+void write_waypoints_to_csv(const std::string& filepath, const std::vector<Eigen::VectorXd>& waypoints) {
     unsigned i;
     std::ofstream of(filepath);
     for (const Eigen::VectorXd& vec : waypoints) {
@@ -74,13 +97,13 @@ void reportRobotProgramState(bool program_running) {
     VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
 }
 
-UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
+UR5eArm::UR5eArm(const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
     VIAM_SDK_LOG(info) << "UR5eArm constructor start";
     current_state_ = std::make_unique<state_>();
     this->reconfigure(deps, cfg);
 
     // get the APPDIR environment variable
-    auto tmp = std::getenv("APPDIR");
+    auto* tmp = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
     if (!tmp) {
         throw std::runtime_error("required environment variable APPDIR unset");
     }
@@ -88,9 +111,9 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     VIAM_SDK_LOG(info) << "appdir" << current_state_->appdir;
 
     {
-        std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
+        const std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
         if (current_state_->output_csv_dir_path.empty()) {
-            tmp = std::getenv("VIAM_MODULE_DATA");
+            tmp = std::getenv("VIAM_MODULE_DATA");  // NOLINT: Yes, we know getenv isn't thread safe
             if (!tmp) {
                 throw std::runtime_error("required environment variable VIAM_MODULE_DATA unset");
             }
@@ -128,13 +151,13 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
     }
 
     // Now the robot is ready to receive a program
-    urcl::UrDriverConfiguration ur_cfg = {current_state_->host,
-                                          current_state_->appdir + SCRIPT_FILE,
-                                          current_state_->appdir + OUTPUT_RECIPE,
-                                          current_state_->appdir + INPUT_RECIPE,
-                                          &reportRobotProgramState,
-                                          true,  // headless mode
-                                          nullptr};
+    const urcl::UrDriverConfiguration ur_cfg = {current_state_->host,
+                                                current_state_->appdir + SCRIPT_FILE,
+                                                current_state_->appdir + OUTPUT_RECIPE,
+                                                current_state_->appdir + INPUT_RECIPE,
+                                                &reportRobotProgramState,
+                                                true,  // headless mode
+                                                nullptr};
     current_state_->driver.reset(new UrDriver(ur_cfg));
 
     // define callback function to be called by UR client library when trajectory state changes
@@ -178,43 +201,26 @@ void UR5eArm::trajectory_done_cb(const control::TrajectoryResult state) {
     VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
 }
 
-// helper function to extract an attribute value from its key within a ResourceConfig
-template <class T>
-T find_config_attribute(const ResourceConfig& cfg, std::string attribute) {
-    std::ostringstream buffer;
-    auto key = cfg.attributes().find(attribute);
-    if (key == cfg.attributes().end()) {
-        buffer << "required attribute `" << attribute << "` not found in configuration";
-        throw std::invalid_argument(buffer.str());
-    }
-    const auto* const val = key->second.get<T>();
-    if (!val) {
-        buffer << "required non-empty attribute `" << attribute << " could not be decoded";
-        throw std::invalid_argument(buffer.str());
-    }
-    return *val;
-}
-
 void UR5eArm::reconfigure(const Dependencies&, const ResourceConfig& cfg) {
     // extract relevant attributes from config
     current_state_->host = find_config_attribute<std::string>(cfg, "host");
     current_state_->speed.store(find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0));
     current_state_->acceleration.store(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2") * (M_PI / 180.0));
     try {
-        std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
+        const std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
         current_state_->output_csv_dir_path = find_config_attribute<std::string>(cfg, "csv_output_path");
-    } catch (...) {
+    } catch (...) {  // NOLINT: TODO: What should actually happen if the attribute is missing?
     }
 }
 
 std::vector<double> UR5eArm::get_joint_positions(const ProtoStruct&) {
-    std::lock_guard<std::mutex> guard{current_state_->mu};
+    const std::lock_guard<std::mutex> guard{current_state_->mu};
     if (read_joint_keep_alive(true) == UrDriverStatus::READ_FAILURE) {
         throw std::runtime_error("failed to read from arm");
     };
     std::vector<double> to_ret;
-    for (double joint_pos_rad : current_state_->joint_state) {
-        double joint_pos_deg = 180.0 / M_PI * joint_pos_rad;
+    for (const double joint_pos_rad : current_state_->joint_state) {
+        const double joint_pos_deg = 180.0 / M_PI * joint_pos_rad;
         to_ret.push_back(joint_pos_deg);
     }
     return to_ret;
@@ -225,17 +231,17 @@ std::chrono::milliseconds unix_now_ms() {
     return chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
 }
 
-std::string waypoints_filename(std::string path, unsigned long long unix_time_ms) {
+std::string waypoints_filename(const std::string& path, unsigned long long unix_time_ms) {
     auto fmt = boost::format(path + WAYPOINTS_CSV_NAME_TEMPLATE);
     return (fmt % std::to_string(unix_time_ms)).str();
 }
 
-std::string trajectory_filename(std::string path, unsigned long long unix_time_ms) {
+std::string trajectory_filename(const std::string& path, unsigned long long unix_time_ms) {
     auto fmt = boost::format(path + TRAJECTORY_CSV_NAME_TEMPLATE);
     return (fmt % std::to_string(unix_time_ms)).str();
 }
 
-std::string arm_joint_positions_filename(std::string path, unsigned long long unix_time_ms) {
+std::string arm_joint_positions_filename(const std::string& path, unsigned long long unix_time_ms) {
     auto fmt = boost::format(path + ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE);
     return (fmt % std::to_string(unix_time_ms)).str();
 }
@@ -243,7 +249,7 @@ std::string arm_joint_positions_filename(std::string path, unsigned long long un
 std::string UR5eArm::get_output_csv_dir_path() {
     std::string path;
     {
-        std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
+        const std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
         path = current_state_->output_csv_dir_path;
     }
     return path;
@@ -255,10 +261,10 @@ void UR5eArm::move_to_joint_positions(const std::vector<double>& positions, cons
     }
 
     std::vector<Eigen::VectorXd> waypoints;
-    Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), positions.size());
-    Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
+    const Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size()));
+    const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
     waypoints.push_back(next_waypoint_rad);
-    std::chrono::milliseconds unix_time_ms = unix_now_ms();
+    const std::chrono::milliseconds unix_time_ms = unix_now_ms();
     auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms.count());
     write_waypoints_to_csv(filename, waypoints);
 
@@ -273,25 +279,25 @@ void UR5eArm::move_through_joint_positions(const std::vector<std::vector<double>
         throw std::runtime_error("move_through_joint_positions cancelled -> emergency stop is currently active");
     }
     // TODO: use options
-    if (positions.size() > 0) {
+    if (!positions.empty()) {
         std::vector<Eigen::VectorXd> waypoints;
         for (auto position : positions) {
-            Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(position.data(), position.size());
-            Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
+            const Eigen::VectorXd next_waypoint_deg =
+                Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
+            const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
             waypoints.push_back(next_waypoint_rad);
         }
-        std::chrono::milliseconds unix_time_ms = unix_now_ms();
+        const std::chrono::milliseconds unix_time_ms = unix_now_ms();
         auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms.count());
         write_waypoints_to_csv(filename, waypoints);
 
         // move will throw if an error occurs
         move(waypoints, unix_time_ms);
     }
-    return;
 }
 
 pose UR5eArm::get_end_position(const ProtoStruct&) {
-    std::lock_guard<std::mutex> guard{current_state_->mu};
+    const std::lock_guard<std::mutex> guard{current_state_->mu};
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = current_state_->driver->getDataPackage();
     if (data_pkg == nullptr) {
         VIAM_SDK_LOG(warn) << "UR5eArm::get_end_position got nullptr from driver->getDataPackage()";
@@ -317,7 +323,7 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct&) {
 
     // Determine the file size
     file.seekg(0, std::ios::end);
-    std::streamsize fileSize = file.tellg();
+    const std::streamsize fileSize = file.tellg();
     file.seekg(0, std::ios::beg);
 
     // Create a buffer to hold the file contents
@@ -333,7 +339,7 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct&) {
 
 void UR5eArm::stop(const ProtoStruct&) {
     if (current_state_->trajectory_running.load()) {
-        bool ok = current_state_->driver->writeTrajectoryControlMessage(
+        const bool ok = current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
         if (!ok) {
             VIAM_SDK_LOG(warn) << "UR5eArm::stop driver->writeTrajectoryControlMessage returned false";
@@ -370,7 +376,7 @@ void UR5eArm::keep_alive() {
             break;
         }
         {
-            std::lock_guard<std::mutex> guard{current_state_->mu};
+            const std::lock_guard<std::mutex> guard{current_state_->mu};
             try {
                 read_joint_keep_alive(true);
             } catch (const std::exception& ex) {
@@ -392,8 +398,9 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
     VIAM_SDK_LOG(info) << "move: get_joint_positions end" << unix_time_ms.count();
 
     VIAM_SDK_LOG(info) << "move: compute_trajectory start " << unix_time_ms.count();
-    Eigen::VectorXd curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), curr_joint_pos.size());
-    Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI / 180.0);
+    const Eigen::VectorXd curr_waypoint_deg =
+        Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
+    const Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI / 180.0);
     waypoints.insert(waypoints.begin(), curr_waypoint_rad);
 
     // calculate dot products and identify any consecutive segments with dot product == -1
@@ -404,7 +411,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         Eigen::VectorXd segment_BC = (waypoints[i] - waypoints[i - 1]);
         segment_AB.normalize();
         segment_BC.normalize();
-        double dot = segment_BC.dot(segment_AB);
+        const double dot = segment_BC.dot(segment_AB);
         if (abs(dot + 1) < 1e-3) {
             segments.push_back(i - 1);
         }
@@ -425,17 +432,17 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
     std::vector<float> time;
 
     for (size_t i = 0; i < segments.size() - 1; i++) {
-        size_t start = segments[i];
-        size_t end = segments[i + 1] + 1;
-        std::list<Eigen::VectorXd> positions_subset(waypoints.begin() + start, waypoints.begin() + end);
-        Trajectory trajectory(Path(positions_subset, 0.1), max_velocity, max_acceleration);
+        const auto start = boost::numeric_cast<decltype(waypoints)::difference_type>(segments[i]);
+        const auto end = boost::numeric_cast<decltype(waypoints)::difference_type>(segments[i + 1] + 1);
+        const std::list<Eigen::VectorXd> positions_subset(waypoints.begin() + start, waypoints.begin() + end);
+        const Trajectory trajectory(Path(positions_subset, 0.1), max_velocity, max_acceleration);
         trajectory.outputPhasePlaneTrajectory();
         if (!trajectory.isValid()) {
             std::stringstream buffer;
             buffer << "trajectory generation failed for path:";
             for (auto position : positions_subset) {
                 buffer << "{";
-                for (size_t j = 0; j < 6; j++) {
+                for (Eigen::Index j = 0; j < 6; j++) {
                     buffer << position[j] << " ";
                 }
                 buffer << "}";
@@ -443,7 +450,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
             throw std::runtime_error(buffer.str());
         }
 
-        float duration = static_cast<float>(trajectory.getDuration());
+        const float duration = static_cast<float>(trajectory.getDuration());
         if (std::isinf(duration)) {
             throw std::runtime_error("trajectory.getDuration() was infinite");
         }
@@ -461,7 +468,7 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         Eigen::VectorXd velocity = trajectory.getVelocity(duration);
         p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-        float t2 = duration - (t - TIMESTEP);
+        const float t2 = duration - (t - TIMESTEP);
         if (std::isinf(t2)) {
             throw std::runtime_error("duration - (t - TIMESTEP) was infinite");
         }
@@ -470,11 +477,11 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
     VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
                        << " time " << time.size();
 
-    std::string path = get_output_csv_dir_path();
+    const std::string path = get_output_csv_dir_path();
     write_trajectory_to_file(trajectory_filename(path, unix_time_ms.count()), p, v, time);
     {  // note the open brace which introduces a new variable scope
         // construct a lock_guard: locks the mutex on construction and unlocks on destruction
-        std::lock_guard<std::mutex> guard{current_state_->mu};
+        const std::lock_guard<std::mutex> guard{current_state_->mu};
         std::stringstream pre_trajectory_state;
         {
             UrDriverStatus status;
@@ -597,7 +604,7 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vec
 void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
     of << unix_now_ms << "," << attempt << ",";
     unsigned i = 0;
-    for (double joint_pos_rad : js) {
+    for (const double joint_pos_rad : js) {
         i++;
         if (i == js.size()) {
             of << joint_pos_rad;
@@ -647,23 +654,23 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
 
                 VIAM_SDK_LOG(info) << "restarting arm";
                 if (!current_state_->dashboard->commandPowerOff()) {
-                    std::runtime_error(
+                    throw std::runtime_error(
                         "read_joint_keep_alive dashboard->commandPowerOff() returned false when attempting to restart the arm");
                 }
 
                 if (!current_state_->dashboard->commandPowerOn()) {
-                    std::runtime_error(
+                    throw std::runtime_error(
                         "read_joint_keep_alive dashboard->commandPowerOn() returned false when attempting to restart the arm");
                 }
                 // Release the brakes
                 if (!current_state_->dashboard->commandBrakeRelease()) {
-                    std::runtime_error(
+                    throw std::runtime_error(
                         "read_joint_keep_alive dashboard->commandBrakeRelease() returned false when attempting to restart the arm");
                 }
 
                 // send control script again to complete the restart
                 if (!current_state_->driver->sendRobotProgram()) {
-                    std::runtime_error(
+                    throw std::runtime_error(
                         "read_joint_keep_alive driver->sendRobotProgram() returned false when attempting to restart the arm");
                 }
 
