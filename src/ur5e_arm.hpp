@@ -103,14 +103,14 @@ class UR5eArm : public Arm, public Reconfigurable {
     ProtoStruct do_command(const ProtoStruct& command) override;
 
     // --------------- UNIMPLEMENTED FUNCTIONS ---------------
-    void move_to_position(const pose& pose, const ProtoStruct& extra) override {
+    void move_to_position(const pose&, const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
     }
 
     std::string get_output_csv_dir_path();
 
     // the arm server within RDK will reconstruct the geometries from the kinematics and joint positions if left unimplemented
-    std::vector<GeometryConfig> get_geometries(const ProtoStruct& extra) {
+    std::vector<GeometryConfig> get_geometries(const ProtoStruct&) {
         throw std::runtime_error("unimplemented");
     }
     enum class UrDriverStatus : int8_t  // Only available on 3.10/5.4
