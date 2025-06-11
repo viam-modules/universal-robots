@@ -162,7 +162,7 @@ UR5eArm::UR5eArm(Dependencies deps, const ResourceConfig& cfg) : Arm(cfg.name())
 }
 
 void UR5eArm::trajectory_done_cb(const control::TrajectoryResult state) {
-    current_state_->trajectory_running.store(false);
+    current_state_->trajectory_status.store(TrajectoryStatus::STOPPED);
     std::string report;
     switch (state) {
         case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
@@ -305,7 +305,7 @@ pose UR5eArm::get_end_position(const ProtoStruct&) {
 }
 
 bool UR5eArm::is_moving() {
-    return current_state_->trajectory_running.load();
+    return current_state_->trajectory_status.load() == TrajectoryStatus::RUNNING;
 }
 
 UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct&) {
@@ -332,14 +332,14 @@ UR5eArm::KinematicsData UR5eArm::get_kinematics(const ProtoStruct&) {
 }
 
 void UR5eArm::stop(const ProtoStruct&) {
-    if (current_state_->trajectory_running.load()) {
+    if (current_state_->trajectory_status.load() == TrajectoryStatus::RUNNING) {
         bool ok = current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
         if (!ok) {
             VIAM_SDK_LOG(warn) << "UR5eArm::stop driver->writeTrajectoryControlMessage returned false";
             return;
         }
-        current_state_->trajectory_running.store(false);
+        current_state_->trajectory_status.store(TrajectoryStatus::STOPPED);
     }
 }
 
@@ -502,11 +502,11 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
         unsigned attempt = 1;
         unsigned long long now = 0;
         UrDriverStatus status;
-        while (current_state_->trajectory_running.load() && !current_state_->shutdown.load()) {
+        while ((current_state_->trajectory_status.load() == TrajectoryStatus::RUNNING) && !current_state_->shutdown.load()) {
             now = unix_now_ms().count();
             status = read_joint_keep_alive(true);
             if (status != UrDriverStatus::NORMAL) {
-                current_state_->trajectory_running.store(false);
+                current_state_->trajectory_status.store(TrajectoryStatus::CANCELLED);
                 break;
             }
             write_joint_pos_rad(current_state_->joint_state, of, now, attempt);
@@ -519,6 +519,10 @@ void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisec
 
         of.close();
         VIAM_SDK_LOG(info) << "move: end unix_time_ms " << unix_time_ms.count();
+
+        if (current_state_->trajectory_status.load() == TrajectoryStatus::CANCELLED) {
+            throw std::runtime_error("arm's current trajectory cancelled by code");
+        }
 
         switch (status) {
             case UrDriverStatus::ESTOPPED:
@@ -581,7 +585,7 @@ bool UR5eArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vec
         return false;
     };
 
-    current_state_->trajectory_running.store(true);
+    current_state_->trajectory_status.store(TrajectoryStatus::RUNNING);
     VIAM_SDK_LOG(info) << "UR5eArm::send_trajectory sending " << p_p.size() << " cubic writeTrajectorySplinePoint/3";
     for (size_t i = 0; i < p_p.size(); i++) {
         if (!current_state_->driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i])) {
@@ -629,7 +633,7 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
         current_state_->estop.store(true);
 
         // clear any currently running trajectory.
-        current_state_->trajectory_running.store(false);
+        current_state_->trajectory_status.store(TrajectoryStatus::STOPPED);
 
         // TODO: further investigate the need for this delay
         // sleep longer to prevent buffer error
