@@ -6,6 +6,7 @@
 #include <ur_client_library/ur/ur_driver.h>
 
 #include <boost/format.hpp>
+#include <thread>
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/config/resource.hpp>
@@ -139,7 +140,6 @@ class UR5eArm final : public Arm, public Reconfigurable {
         std::atomic<bool> shutdown{false};
         std::atomic<bool> trajectory_running{false};
         std::thread keep_alive_thread;
-        std::atomic<bool> keep_alive_thread_alive{false};
 
         // specified through APPDIR environment variable
         std::string appdir;
