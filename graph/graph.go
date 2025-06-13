@@ -269,8 +269,6 @@ func saveChartPNG(
 				YValues: yWay,
 				Style: chart.Style{
 					Show:        true,
-					DotColor:    chart.ColorRed,
-					DotWidth:    1.5,
 					StrokeColor: chart.ColorOrange,
 				},
 			},
