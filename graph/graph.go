@@ -270,8 +270,8 @@ func saveChartPNG(
 				Style: chart.Style{
 					Show:        true,
 					DotColor:    chart.ColorRed,
-					DotWidth:    2.5,
-					StrokeColor: chart.ColorTransparent,
+					DotWidth:    1.5,
+					StrokeColor: chart.ColorOrange,
 				},
 			},
 		},
