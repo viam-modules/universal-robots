@@ -4,9 +4,13 @@ go 1.23.8
 
 toolchain go1.23.9
 
-require go.viam.com/rdk v0.77.0
+require (
+	github.com/wcharczuk/go-chart v2.0.1+incompatible
+	go.viam.com/rdk v0.77.0
+)
 
 require (
+	github.com/blend/go-sdk v1.1.1 // indirect
 	github.com/bytedance/sonic v1.13.2 // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
@@ -20,6 +24,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.0.5 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.0 // indirect
+	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/golang/geo v0.0.0-20210211234256-740aa86cb551 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
