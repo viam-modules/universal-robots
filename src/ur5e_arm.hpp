@@ -2,8 +2,6 @@
 
 #include <ur_client_library/control/trajectory_point_interface.h>
 #include <ur_client_library/types.h>
-#include <ur_client_library/ur/dashboard_client.h>
-#include <ur_client_library/ur/ur_driver.h>
 
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
@@ -84,6 +82,10 @@ class UR5eArm final : public Arm, public Reconfigurable {
     std::vector<GeometryConfig> get_geometries(const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
     }
+
+   private:
+    struct state_;
+
     enum class UrDriverStatus : int8_t  // Only available on 3.10/5.4
     {
         NORMAL = 1,
@@ -91,40 +93,18 @@ class UR5eArm final : public Arm, public Reconfigurable {
         READ_FAILURE = 3,
         DASHBOARD_FAILURE = 4
     };
+
     static std::string status_to_string(UrDriverStatus status);
 
-   private:
     void keep_alive();
+
     void move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
+
     bool send_trajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time);
+
     void trajectory_done_cb(control::TrajectoryResult);
+
     UR5eArm::UrDriverStatus read_joint_keep_alive(bool log);
-
-    // private variables to maintain connection and state
-    struct state_ {
-        std::mutex mu;
-        std::unique_ptr<UrDriver> driver;
-        std::unique_ptr<DashboardClient> dashboard;
-        vector6d_t joint_state, tcp_state;
-
-        std::atomic<bool> shutdown{false};
-        std::atomic<bool> trajectory_running{false};
-        std::thread keep_alive_thread;
-        std::atomic<bool> keep_alive_thread_alive{false};
-
-        // specified through APPDIR environment variable
-        std::string appdir;
-
-        // variables specified by ResourceConfig and set through reconfigure
-        std::string host;
-        std::atomic<double> speed{0};
-        std::atomic<double> acceleration{0};
-        std::atomic<bool> estop{false};
-
-        std::mutex output_csv_dir_path_mu;
-        // specified through VIAM_MODULE_DATA environment variable
-        std::string output_csv_dir_path;
-    };
 
     std::unique_ptr<state_> current_state_;
 };

@@ -1,10 +1,11 @@
 #include "ur5e_arm.hpp"
 
-#include <boost/numeric/conversion/cast.hpp>
+#include <ur_client_library/ur/dashboard_client.h>
+#include <ur_client_library/ur/ur_driver.h>
+
 #include <boost/format.hpp>
-
+#include <boost/numeric/conversion/cast.hpp>
 #include <cmath>
-
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/module/module.hpp>
 #include <viam/sdk/module/service.hpp>
@@ -125,6 +126,32 @@ void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
     VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
 }
+
+// private variables to maintain connection and state
+struct UR5eArm::state_ {
+    std::mutex mu;
+    std::unique_ptr<UrDriver> driver;
+    std::unique_ptr<DashboardClient> dashboard;
+    vector6d_t joint_state, tcp_state;
+
+    std::atomic<bool> shutdown{false};
+    std::atomic<bool> trajectory_running{false};
+    std::thread keep_alive_thread;
+    std::atomic<bool> keep_alive_thread_alive{false};
+
+    // specified through APPDIR environment variable
+    std::string appdir;
+
+    // variables specified by ResourceConfig and set through reconfigure
+    std::string host;
+    std::atomic<double> speed{0};
+    std::atomic<double> acceleration{0};
+    std::atomic<bool> estop{false};
+
+    std::mutex output_csv_dir_path_mu;
+    // specified through VIAM_MODULE_DATA environment variable
+    std::string output_csv_dir_path;
+};
 
 UR5eArm::UR5eArm(const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
     VIAM_SDK_LOG(info) << "UR5eArm constructor start";
