@@ -14,6 +14,15 @@
 
 #include "../trajectories/Trajectory.h"
 
+// this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
+extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
+extern "C" void* orientation_vector_from_quaternion(void* q);
+extern "C" double* orientation_vector_get_components(void* ov);
+extern "C" void free_orientation_vector_memory(void* ov);
+extern "C" void free_quaternion_memory(void* q);
+
+namespace {
+
 // locations of files necessary to build module, specified as relative paths
 constexpr char SVA_FILE[] = "/src/kinematics/ur5e.json";
 constexpr char SCRIPT_FILE[] = "/src/control/external_control.urscript";
@@ -33,15 +42,6 @@ constexpr int ESTOP_DELAY = 100000;  // 100 millisecond/10 Hz
 // do_command keys
 constexpr char VEL_KEY[] = "set_vel";
 constexpr char ACC_KEY[] = "set_acc";
-
-// this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
-extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
-extern "C" void* orientation_vector_from_quaternion(void* q);
-extern "C" double* orientation_vector_get_components(void* ov);
-extern "C" void free_orientation_vector_memory(void* ov);
-extern "C" void free_quaternion_memory(void* q);
-
-namespace {
 
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = sqrt((vec[3] * vec[3]) + (vec[4] * vec[4]) + (vec[5] * vec[5]));
@@ -151,6 +151,14 @@ struct UR5eArm::state_ {
     std::mutex output_csv_dir_path_mu;
     // specified through VIAM_MODULE_DATA environment variable
     std::string output_csv_dir_path;
+};
+
+enum class UR5eArm::UrDriverStatus : int8_t  // Only available on 3.10/5.4
+{
+    NORMAL = 1,
+    ESTOPPED = 2,
+    READ_FAILURE = 3,
+    DASHBOARD_FAILURE = 4
 };
 
 UR5eArm::UR5eArm(const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
