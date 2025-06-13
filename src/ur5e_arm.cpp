@@ -1,8 +1,18 @@
 #include "ur5e_arm.hpp"
 
-#include <boost/numeric/conversion/cast.hpp>
+#include <ur_client_library/ur/dashboard_client.h>
+#include <ur_client_library/ur/ur_driver.h>
 
+#include <boost/format.hpp>
+#include <boost/numeric/conversion/cast.hpp>
 #include <cmath>
+#include <viam/sdk/components/component.hpp>
+#include <viam/sdk/module/module.hpp>
+#include <viam/sdk/module/service.hpp>
+#include <viam/sdk/registry/registry.hpp>
+#include <viam/sdk/resource/resource.hpp>
+
+#include "../trajectories/Trajectory.h"
 
 // this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
 extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
@@ -12,6 +22,26 @@ extern "C" void free_orientation_vector_memory(void* ov);
 extern "C" void free_quaternion_memory(void* q);
 
 namespace {
+
+// locations of files necessary to build module, specified as relative paths
+constexpr char SVA_FILE[] = "/src/kinematics/ur5e.json";
+constexpr char SCRIPT_FILE[] = "/src/control/external_control.urscript";
+constexpr char OUTPUT_RECIPE[] = "/src/control/rtde_output_recipe.txt";
+constexpr char INPUT_RECIPE[] = "/src/control/rtde_input_recipe.txt";
+
+// locations of log files that will be written
+constexpr char TRAJECTORY_CSV_NAME_TEMPLATE[] = "/%1%_trajectory.csv";
+constexpr char WAYPOINTS_CSV_NAME_TEMPLATE[] = "/%1%_waypoints.csv";
+constexpr char ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE[] = "/%1%_arm_joint_positions.csv";
+
+// constants for robot operation
+constexpr float TIMESTEP = 0.2F;     // seconds
+constexpr int NOOP_DELAY = 2000;     // 2 millisecond/500 Hz
+constexpr int ESTOP_DELAY = 100000;  // 100 millisecond/10 Hz
+
+// do_command keys
+constexpr char VEL_KEY[] = "set_vel";
+constexpr char ACC_KEY[] = "set_acc";
 
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = sqrt((vec[3] * vec[3]) + (vec[4] * vec[4]) + (vec[5] * vec[5]));
@@ -96,6 +126,40 @@ void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
     VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
 }
+
+// private variables to maintain connection and state
+struct UR5eArm::state_ {
+    std::mutex mu;
+    std::unique_ptr<UrDriver> driver;
+    std::unique_ptr<DashboardClient> dashboard;
+    vector6d_t joint_state, tcp_state;
+
+    std::atomic<bool> shutdown{false};
+    std::atomic<bool> trajectory_running{false};
+    std::thread keep_alive_thread;
+    std::atomic<bool> keep_alive_thread_alive{false};
+
+    // specified through APPDIR environment variable
+    std::string appdir;
+
+    // variables specified by ResourceConfig and set through reconfigure
+    std::string host;
+    std::atomic<double> speed{0};
+    std::atomic<double> acceleration{0};
+    std::atomic<bool> estop{false};
+
+    std::mutex output_csv_dir_path_mu;
+    // specified through VIAM_MODULE_DATA environment variable
+    std::string output_csv_dir_path;
+};
+
+enum class UR5eArm::UrDriverStatus : int8_t  // Only available on 3.10/5.4
+{
+    NORMAL = 1,
+    ESTOPPED = 2,
+    READ_FAILURE = 3,
+    DASHBOARD_FAILURE = 4
+};
 
 UR5eArm::UR5eArm(const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
     VIAM_SDK_LOG(info) << "UR5eArm constructor start";
