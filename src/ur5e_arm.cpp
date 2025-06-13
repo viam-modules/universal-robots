@@ -1,8 +1,17 @@
 #include "ur5e_arm.hpp"
 
 #include <boost/numeric/conversion/cast.hpp>
+#include <boost/format.hpp>
 
 #include <cmath>
+
+#include <viam/sdk/components/component.hpp>
+#include <viam/sdk/module/module.hpp>
+#include <viam/sdk/module/service.hpp>
+#include <viam/sdk/registry/registry.hpp>
+#include <viam/sdk/resource/resource.hpp>
+
+#include "../trajectories/Trajectory.h"
 
 // locations of files necessary to build module, specified as relative paths
 constexpr char SVA_FILE[] = "/src/kinematics/ur5e.json";

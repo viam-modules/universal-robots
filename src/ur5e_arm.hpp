@@ -5,18 +5,11 @@
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
 
-#include <boost/format.hpp>
 #include <viam/sdk/components/arm.hpp>
-#include <viam/sdk/components/component.hpp>
 #include <viam/sdk/config/resource.hpp>
-#include <viam/sdk/module/module.hpp>
-#include <viam/sdk/module/service.hpp>
-#include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/reconfigurable.hpp>
-#include <viam/sdk/resource/resource.hpp>
 
 #include "../trajectories/Path.h"
-#include "../trajectories/Trajectory.h"
 
 using namespace viam::sdk;
 using namespace urcl;
