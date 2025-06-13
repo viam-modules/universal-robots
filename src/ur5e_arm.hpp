@@ -21,26 +21,6 @@
 using namespace viam::sdk;
 using namespace urcl;
 
-// locations of files necessary to build module, specified as relative paths
-constexpr char SVA_FILE[] = "/src/kinematics/ur5e.json";
-constexpr char SCRIPT_FILE[] = "/src/control/external_control.urscript";
-constexpr char OUTPUT_RECIPE[] = "/src/control/rtde_output_recipe.txt";
-constexpr char INPUT_RECIPE[] = "/src/control/rtde_input_recipe.txt";
-
-// locations of log files that will be written
-constexpr char TRAJECTORY_CSV_NAME_TEMPLATE[] = "/%1%_trajectory.csv";
-constexpr char WAYPOINTS_CSV_NAME_TEMPLATE[] = "/%1%_waypoints.csv";
-constexpr char ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE[] = "/%1%_arm_joint_positions.csv";
-
-// constants for robot operation
-constexpr float TIMESTEP = 0.2F;     // seconds
-constexpr int NOOP_DELAY = 2000;     // 2 millisecond/500 Hz
-constexpr int ESTOP_DELAY = 100000;  // 100 millisecond/10 Hz
-
-// do_command keys
-constexpr char VEL_KEY[] = "set_vel";
-constexpr char ACC_KEY[] = "set_acc";
-
 void reportRobotProgramState(bool program_running);
 void write_trajectory_to_file(const std::string& filepath,
                               const std::vector<vector6d_t>& p_p,

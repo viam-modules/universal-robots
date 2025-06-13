@@ -4,6 +4,26 @@
 
 #include <cmath>
 
+// locations of files necessary to build module, specified as relative paths
+constexpr char SVA_FILE[] = "/src/kinematics/ur5e.json";
+constexpr char SCRIPT_FILE[] = "/src/control/external_control.urscript";
+constexpr char OUTPUT_RECIPE[] = "/src/control/rtde_output_recipe.txt";
+constexpr char INPUT_RECIPE[] = "/src/control/rtde_input_recipe.txt";
+
+// locations of log files that will be written
+constexpr char TRAJECTORY_CSV_NAME_TEMPLATE[] = "/%1%_trajectory.csv";
+constexpr char WAYPOINTS_CSV_NAME_TEMPLATE[] = "/%1%_waypoints.csv";
+constexpr char ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE[] = "/%1%_arm_joint_positions.csv";
+
+// constants for robot operation
+constexpr float TIMESTEP = 0.2F;     // seconds
+constexpr int NOOP_DELAY = 2000;     // 2 millisecond/500 Hz
+constexpr int ESTOP_DELAY = 100000;  // 100 millisecond/10 Hz
+
+// do_command keys
+constexpr char VEL_KEY[] = "set_vel";
+constexpr char ACC_KEY[] = "set_acc";
+
 // this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
 extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
 extern "C" void* orientation_vector_from_quaternion(void* q);
