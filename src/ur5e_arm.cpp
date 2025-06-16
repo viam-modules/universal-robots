@@ -6,6 +6,7 @@
 #include <boost/format.hpp>
 #include <boost/numeric/conversion/cast.hpp>
 #include <cmath>
+#include <thread>
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/module/module.hpp>
 #include <viam/sdk/module/service.hpp>
@@ -137,7 +138,6 @@ struct UR5eArm::state_ {
     std::atomic<bool> shutdown{false};
     std::atomic<bool> trajectory_running{false};
     std::thread keep_alive_thread;
-    std::atomic<bool> keep_alive_thread_alive{false};
 
     // specified through APPDIR environment variable
     std::string appdir;
@@ -242,10 +242,8 @@ UR5eArm::UR5eArm(const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.
 
     // start background thread to continuously send no-ops and keep socket connection alive
     VIAM_SDK_LOG(info) << "starting background_thread";
-    current_state_->keep_alive_thread_alive.store(true);
-    std::thread keep_alive_thread(&UR5eArm::keep_alive, this);
+    current_state_->keep_alive_thread = std::thread(&UR5eArm::keep_alive, this);
     VIAM_SDK_LOG(info) << "UR5eArm constructor end";
-    keep_alive_thread.detach();
 }
 
 void UR5eArm::trajectory_done_cb(const control::TrajectoryResult state) {
@@ -450,7 +448,6 @@ void UR5eArm::keep_alive() {
         usleep(NOOP_DELAY);
     }
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
-    current_state_->keep_alive_thread_alive.store(false);
 }
 
 void UR5eArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
@@ -631,10 +628,7 @@ UR5eArm::~UR5eArm() {
         current_state_->dashboard->disconnect();
     }
     VIAM_SDK_LOG(info) << "UR5eArm destructor waiting for keep_alive thread to terminate";
-    while (current_state_->keep_alive_thread_alive.load()) {
-        VIAM_SDK_LOG(info) << "UR5eArm destructor still waiting for keep_alive thread to terminate";
-        usleep(NOOP_DELAY);
-    }
+    current_state_->keep_alive_thread.join();
     VIAM_SDK_LOG(info) << "keep_alive thread terminated";
 }
 
