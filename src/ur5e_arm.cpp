@@ -25,7 +25,7 @@ extern "C" void free_quaternion_memory(void* q);
 namespace {
 
 // locations of files necessary to build module, specified as relative paths
-constexpr char SVA_FILE[] = "/src/kinematics/ur5e.json";
+constexpr char SVA_FILE_TEMPLATE[] = "%1%/src/kinematics/%2%.json";
 constexpr char SCRIPT_FILE[] = "/src/control/external_control.urscript";
 constexpr char OUTPUT_RECIPE[] = "/src/control/rtde_output_recipe.txt";
 constexpr char INPUT_RECIPE[] = "/src/control/rtde_input_recipe.txt";
@@ -161,8 +161,27 @@ enum class URArm::UrDriverStatus : int8_t  // Only available on 3.10/5.4
     DASHBOARD_FAILURE = 4
 };
 
-URArm::URArm(const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()) {
-    VIAM_SDK_LOG(info) << "URArm constructor start";
+std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registrations() {
+    using namespace std::placeholders;
+
+    constexpr auto arm_factory = [](Model model, const Dependencies& deps, const ResourceConfig& config) {
+        return std::make_unique<URArm>(std::move(model), deps, config);
+    };
+
+    const auto arm = API::get<Arm>();
+    const auto registration_factory = [&](const Model& model) {
+        return std::make_shared<ModelRegistration>(arm, model, std::bind(arm_factory, model, _1, _2));
+    };
+
+    const auto family = ModelFamily{"viam", "universal-robots"};
+    return {
+        registration_factory({family, "ur5e"}),
+        registration_factory({family, "ur20"}),
+    };
+}
+
+URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
+    VIAM_SDK_LOG(info) << "URArm constructor start (model: " << model_.to_string() << ")";
     current_state_ = std::make_unique<state_>();
     this->reconfigure(deps, cfg);
 
@@ -335,8 +354,8 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
-                                           const MoveOptions&,
-                                           const viam::sdk::ProtoStruct&) {
+                                         const MoveOptions&,
+                                         const viam::sdk::ProtoStruct&) {
     if (current_state_->estop.load()) {
         throw std::runtime_error("move_through_joint_positions cancelled -> emergency stop is currently active");
     }
@@ -377,22 +396,35 @@ bool URArm::is_moving() {
 }
 
 URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
+    // The `Model` class absurdly lacks accessors
+    const std::string model_string = [&] {
+        const auto family = ModelFamily{"viam", "universal-robots"};
+        if (model_ == Model{family, "ur5e"}) {
+            return "ur5e";
+        } else if (model_ == Model{family, "ur20"}) {
+            return "ur20";
+        }
+        throw std::runtime_error(str(boost::format("no kinematics file known for model '%1'") % model_.to_string()));
+    }();
+
+    const auto sva_file_path = str(boost::format(SVA_FILE_TEMPLATE) % current_state_->appdir % model_string);
+
     // Open the file in binary mode
-    std::ifstream file(current_state_->appdir + SVA_FILE, std::ios::binary);
-    if (!file) {
-        throw std::runtime_error("unable to open file");
+    std::ifstream sva_file(sva_file_path, std::ios::binary);
+    if (!sva_file) {
+        throw std::runtime_error(str(boost::format("unable to open kinematics file '%1'") % sva_file_path));
     }
 
     // Determine the file size
-    file.seekg(0, std::ios::end);
-    const std::streamsize fileSize = file.tellg();
-    file.seekg(0, std::ios::beg);
+    sva_file.seekg(0, std::ios::end);
+    const std::streamsize fileSize = sva_file.tellg();
+    sva_file.seekg(0, std::ios::beg);
 
     // Create a buffer to hold the file contents
     std::vector<unsigned char> urdf_bytes(fileSize);
 
     // Read the file contents into the buffer
-    if (!file.read(reinterpret_cast<char*>(urdf_bytes.data()), fileSize)) {
+    if (!sva_file.read(reinterpret_cast<char*>(urdf_bytes.data()), fileSize)) {
         throw std::runtime_error("Error reading file");
     }
 

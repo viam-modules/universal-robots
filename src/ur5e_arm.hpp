@@ -5,6 +5,7 @@
 
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
+#include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/reconfigurable.hpp>
 
 #include "../trajectories/Path.h"
@@ -24,7 +25,10 @@ std::string arm_joint_positions_filename(const std::string& path, unsigned long 
 
 class URArm final : public Arm, public Reconfigurable {
    public:
-    URArm(const Dependencies& deps, const ResourceConfig& cfg);
+    /// @brief Returns a registration for each model of ARM supported by this class.
+    static std::vector<std::shared_ptr<ModelRegistration>> create_model_registrations();
+
+    URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg);
     ~URArm() override;
 
     void reconfigure(const Dependencies& deps, const ResourceConfig& cfg) override;
@@ -99,5 +103,6 @@ class URArm final : public Arm, public Reconfigurable {
 
     URArm::UrDriverStatus read_joint_keep_alive(bool log);
 
+    const Model model_;
     std::unique_ptr<state_> current_state_;
 };
