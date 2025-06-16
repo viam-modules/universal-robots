@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
     const Model ur5e_model("viam", "universal-robots", "ur5e");
 
     const auto ur5e_mr = std::make_shared<ModelRegistration>(
-        arm_api, ur5e_model, [](const Dependencies& dep, const ResourceConfig& cfg) { return std::make_unique<UR5eArm>(dep, cfg); });
+        arm_api, ur5e_model, [](const Dependencies& dep, const ResourceConfig& cfg) { return std::make_unique<URArm>(dep, cfg); });
 
     const std::vector<std::shared_ptr<ModelRegistration>> mrs = {ur5e_mr};
     std::make_shared<ModuleService>(argc, argv, mrs)->serve();
