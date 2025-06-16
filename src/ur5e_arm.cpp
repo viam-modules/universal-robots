@@ -636,9 +636,28 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
             return UrDriverStatus::DASHBOARD_FAILURE;
         }
         current_state_->local_disconnect.store(false);
-        current_state_->estop.store(true);
-        current_state_->dashboard->disconnect();
-        current_state_->dashboard->connect();
+        // current_state_->estop.store(true);
+
+        current_state_->dashboard.reset(new DashboardClient(current_state_->host));
+
+        // current_state_->dashboard->connect();
+        VIAM_SDK_LOG(error) << "yo dash connected: " << current_state_->dashboard->connect();
+        // VIAM_SDK_LOG(error) << "yo reverse connected: " << current_state_->driver->isReverseInterfaceConnected();
+        // VIAM_SDK_LOG(error) << "yo traj connected: " << current_state_->driver->isTrajectoryInterfaceConnected();
+
+        // Now the robot is ready to receive a program
+        // urcl::UrDriverConfiguration ur_cfg = {current_state_->host,
+        //                                       current_state_->appdir + SCRIPT_FILE,
+        //                                       current_state_->appdir + OUTPUT_RECIPE,
+        //                                       current_state_->appdir + INPUT_RECIPE,
+        //                                       &reportRobotProgramState,
+        //                                       true,  // headless mode
+        //                                       nullptr};
+        // current_state_->driver.reset(new UrDriver(ur_cfg));
+        // current_state_->driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
+        // current_state_->dashboard->disconnect();
+        // current_state_->dashboard->connect();
+        current_state_->driver->startRTDECommunication();
 
         return UrDriverStatus::NORMAL;
         // if (!dashboard->connect()) {
@@ -654,10 +673,10 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     } catch (const std::exception& ex) {
         current_state_->local_disconnect.store(true);
         VIAM_SDK_LOG(error) << "yo local detected";
-        // current_state_->dashboard.reset(new DashboardClient(current_state_->host));
+        current_state_->dashboard.reset(new DashboardClient(current_state_->host));
 
-        current_state_->dashboard->disconnect();
-        current_state_->dashboard->connect();
+        // current_state_->dashboard->connect();
+        VIAM_SDK_LOG(error) << "yo dash connected: " << current_state_->dashboard->connect();
         current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
 
         VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
