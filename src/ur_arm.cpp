@@ -1,4 +1,4 @@
-#include "ur5e_arm.hpp"
+#include "ur_arm.hpp"
 
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>

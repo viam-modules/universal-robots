@@ -1,7 +1,7 @@
 #include <viam/sdk/common/instance.hpp>
 #include <viam/sdk/module/service.hpp>
 
-#include "src/ur5e_arm.hpp"
+#include "src/ur_arm.hpp"
 
 using namespace viam::sdk;
 
