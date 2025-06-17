@@ -744,7 +744,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
 
             // reconnect to the tablet. We have to do this, otherwise the client will assume that the arm is still in local mode.
             // yes, even though the client can already recognize that we are in remote control mode
-            current_state_->dashboard.reset(new DashboardClient(current_state_->host));
+            current_state_->dashboard->disconnect();
             if (!current_state_->dashboard->connect()) {
                 return UrDriverStatus::DASHBOARD_FAILURE;
             }
@@ -759,6 +759,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
 
             // reset the flag and return to the "happy" path
             current_state_->local_disconnect.store(false);
+            VIAM_SDK_LOG(debug) << "recovered from local mode";
 
             return UrDriverStatus::NORMAL;
         }
@@ -772,7 +773,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
         current_state_->local_disconnect.store(true);
 
         // attempt to reconnect to the arm. Even if we reconnect, we will have to check that the tablet is not in local mode.
-        current_state_->dashboard.reset(new DashboardClient(current_state_->host));
+        current_state_->dashboard->disconnect();
         if (!current_state_->dashboard->connect()) {
             // we failed to reconnect to the tablet, so we might not even be able to talk to it.
             // return an error so we can attempt to reconnect again
