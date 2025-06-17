@@ -636,13 +636,15 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
                 return UrDriverStatus::DASHBOARD_FAILURE;
             }
 
-            // reconnect to the tablet
+            // reconnect to the tablet. We have to do this, otherwise the client will assume that the arm is still in local mode.
+            // yes, even though the client can already recognize that we are in remote control mode
             current_state_->dashboard.reset(new DashboardClient(current_state_->host));
             if (!current_state_->dashboard->connect()) {
                 return UrDriverStatus::DASHBOARD_FAILURE;
             }
 
             // reset the primary client so the driver is aware the arm is back in remote mode
+            // this has to happen, otherwise when an estop is triggered the arm will return error code C210A0
             current_state_->driver->stopPrimaryClientCommunication();
             current_state_->driver->startPrimaryClientCommunication();
 
