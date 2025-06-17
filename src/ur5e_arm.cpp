@@ -626,57 +626,52 @@ void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long uni
 UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     // check to see if an estop has occurred.
     std::string status;
-    if (current_state_->local_disconnect.load()) {
-        bool is_remote = current_state_->dashboard->commandIsInRemoteControl();
-        VIAM_SDK_LOG(error) << "yo local: " << is_remote;
-
-        usleep(ESTOP_DELAY);
-
-        if (!is_remote) {
-            return UrDriverStatus::DASHBOARD_FAILURE;
-        }
-        current_state_->local_disconnect.store(false);
-        // current_state_->estop.store(true);
-
-        current_state_->dashboard.reset(new DashboardClient(current_state_->host));
-
-        // current_state_->dashboard->connect();
-        VIAM_SDK_LOG(error) << "yo dash connected: " << current_state_->dashboard->connect();
-        // VIAM_SDK_LOG(error) << "yo reverse connected: " << current_state_->driver->isReverseInterfaceConnected();
-        // VIAM_SDK_LOG(error) << "yo traj connected: " << current_state_->driver->isTrajectoryInterfaceConnected();
-
-        // Now the robot is ready to receive a program
-        // urcl::UrDriverConfiguration ur_cfg = {current_state_->host,
-        //                                       current_state_->appdir + SCRIPT_FILE,
-        //                                       current_state_->appdir + OUTPUT_RECIPE,
-        //                                       current_state_->appdir + INPUT_RECIPE,
-        //                                       &reportRobotProgramState,
-        //                                       true,  // headless mode
-        //                                       nullptr};
-        // current_state_->driver.reset(new UrDriver(ur_cfg));
-        // current_state_->driver->registerTrajectoryDoneCallback(&reportTrajectoryState);
-        // current_state_->dashboard->disconnect();
-        // current_state_->dashboard->connect();
-        current_state_->driver->startRTDECommunication();
-
-        return UrDriverStatus::NORMAL;
-        // if (!dashboard->connect()) {
-        //     throw std::runtime_error("couldn't connect to dashboard");
-        // }
-    }
     try {
+        if (current_state_->local_disconnect.load()) {
+            // sleep just so we don't spam
+            // this may be unnecessary
+            usleep(ESTOP_DELAY);
+
+            if (!current_state_->dashboard->commandIsInRemoteControl()) {
+                return UrDriverStatus::DASHBOARD_FAILURE;
+            }
+
+            // reconnect to the tablet
+            current_state_->dashboard.reset(new DashboardClient(current_state_->host));
+            if (!current_state_->dashboard->connect()) {
+                return UrDriverStatus::DASHBOARD_FAILURE;
+            }
+
+            // reset the primary client so the driver is aware the arm is back in remote mode
+            current_state_->driver->stopPrimaryClientCommunication();
+            current_state_->driver->startPrimaryClientCommunication();
+
+            // turn communication with the RTDE client back on so we can receive data from the arm
+            current_state_->driver->startRTDECommunication();
+
+            // reset the flag and return to the "happy" path
+            current_state_->local_disconnect.store(false);
+
+            return UrDriverStatus::NORMAL;
+        }
         if (!current_state_->dashboard->commandSafetyStatus(status)) {
-            // we currently do not attempt to reconnect to the dashboard client. hopefully this error resolves itself.
+            // We should not end up in here, as commandSafetyStatus will probably throw before returning false
             VIAM_SDK_LOG(error) << "read_joint_keep_alive dashboard->commandSafetyStatus() returned false when retrieving the status";
             return UrDriverStatus::DASHBOARD_FAILURE;
         }
     } catch (const std::exception& ex) {
+        // if we end up here that means we can no longer talk to the arm. store the state so we can try to recover from this.
         current_state_->local_disconnect.store(true);
-        VIAM_SDK_LOG(error) << "yo local detected";
-        current_state_->dashboard.reset(new DashboardClient(current_state_->host));
 
-        // current_state_->dashboard->connect();
-        VIAM_SDK_LOG(error) << "yo dash connected: " << current_state_->dashboard->connect();
+        // attempt to reconnect to the arm. Even if we reconnect, we will have to check that the tablet is not in local mode.
+        current_state_->dashboard.reset(new DashboardClient(current_state_->host));
+        if (!current_state_->dashboard->connect()) {
+            // we failed to reconnect to the tablet, so we might not even be able to talk to it.
+            // return an error so we can attempt to reconnect again
+            return UrDriverStatus::DASHBOARD_FAILURE;
+        }
+
+        // reset the driver client so we stop trying to ask for more data
         current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
 
         VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
@@ -684,7 +679,6 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
     }
 
     if (status.find(urcl::safetyStatusString(urcl::SafetyStatus::NORMAL)) == std::string::npos) {
-        VIAM_SDK_LOG(error) << "yo status: " << status;
         // the arm is currently estopped. save this state.
         current_state_->estop.store(true);
 
@@ -702,6 +696,8 @@ UR5eArm::UrDriverStatus UR5eArm::read_joint_keep_alive(bool log) {
             // if the arm was previously estopped, attempt to recover from the estop.
             // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
             try {
+                bool is_remote = current_state_->dashboard->commandIsInRemoteControl();
+                VIAM_SDK_LOG(error) << "yo estopped local: " << is_remote;
                 VIAM_SDK_LOG(info) << "recovering from e-stop";
                 current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
 
