@@ -26,16 +26,12 @@ extern "C" void free_quaternion_memory(void* q);
 namespace {
 
 // locations of files necessary to build module, specified as relative paths
-constexpr char kOutputRecipe[] = "/src/control/rtde_output_recipe.txt";
-constexpr char kInputRecipe[] = "/src/control/rtde_input_recipe.txt";
+constexpr char k_output_recipe[] = "/src/control/rtde_output_recipe.txt";
+constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
 
 // constants for robot operation
-constexpr std::chrono::milliseconds kNoopDelay = std::chrono::milliseconds(2000);     // 2 millisecond/500 Hz
-constexpr std::chrono::milliseconds kEStopDelay = std::chrono::milliseconds(100000);  // 100 millisecond/10 Hz
-
-// do_command keys
-constexpr char VEL_KEY[] = "set_vel";
-constexpr char ACC_KEY[] = "set_acc";
+constexpr auto k_noop_delay = std::chrono::milliseconds(2000);     // 2 millisecond/500 Hz
+constexpr auto k_estop_delay = std::chrono::milliseconds(100000);  // 100 millisecond/10 Hz
 
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = sqrt((vec[3] * vec[3]) + (vec[4] * vec[4]) + (vec[5] * vec[5]));
@@ -236,13 +232,13 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
         throw std::runtime_error("couldn't release the arm brakes");
     }
 
-    constexpr char kScriptFile[] = "/src/control/external_control.urscript";
+    constexpr char k_script_file[] = "/src/control/external_control.urscript";
 
     // Now the robot is ready to receive a program
     const urcl::UrDriverConfiguration ur_cfg = {current_state_->host,
-                                                current_state_->appdir + kScriptFile,
-                                                current_state_->appdir + kOutputRecipe,
-                                                current_state_->appdir + kInputRecipe,
+                                                current_state_->appdir + k_script_file,
+                                                current_state_->appdir + k_output_recipe,
+                                                current_state_->appdir + k_input_recipe,
                                                 &reportRobotProgramState,
                                                 true,  // headless mode
                                                 nullptr};
@@ -261,7 +257,7 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
             throw std::runtime_error("couldn't get joint positions; unable to establish communication with the arm");
         }
         retry_count--;
-        std::this_thread::sleep_for(kNoopDelay);
+        std::this_thread::sleep_for(k_noop_delay);
     }
 
     // start background thread to continuously send no-ops and keep socket connection alive
@@ -455,16 +451,18 @@ void URArm::stop(const ProtoStruct&) {
 ProtoStruct URArm::do_command(const ProtoStruct& command) {
     ProtoStruct resp = ProtoStruct{};
 
+    constexpr char k_acc_key[] = "set_acc";
+    constexpr char k_vel_key[] = "set_vel";
     for (auto kv : command) {
-        if (kv.first == VEL_KEY) {
+        if (kv.first == k_vel_key) {
             const double val = *kv.second.get<double>();
             current_state_->speed.store(val * (M_PI / 180.0));
-            resp.emplace(VEL_KEY, val);
+            resp.emplace(k_vel_key, val);
         }
-        if (kv.first == ACC_KEY) {
+        if (kv.first == k_acc_key) {
             const double val = *kv.second.get<double>();
             current_state_->acceleration.store(val * (M_PI / 180.0));
-            resp.emplace(ACC_KEY, val);
+            resp.emplace(k_acc_key, val);
         }
     }
 
@@ -486,7 +484,7 @@ void URArm::keep_alive() {
                 VIAM_SDK_LOG(error) << "keep_alive failed Exception: " << std::string(ex.what());
             }
         }
-        std::this_thread::sleep_for(kNoopDelay);
+        std::this_thread::sleep_for(k_noop_delay);
     }
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
@@ -741,7 +739,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
         // TODO: further investigate the need for this delay
         // sleep longer to prevent buffer error
         // Removing this will cause the RTDE client to move into an unrecoverable state
-        std::this_thread::sleep_for(kEStopDelay);
+        std::this_thread::sleep_for(k_estop_delay);
 
     } else {
         // the arm is in a normal state.
@@ -750,7 +748,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
             // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
             try {
                 VIAM_SDK_LOG(info) << "recovering from e-stop";
-                current_state_->driver->resetRTDEClient(current_state_->appdir + kOutputRecipe, current_state_->appdir + kInputRecipe);
+                current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
 
                 VIAM_SDK_LOG(info) << "restarting arm";
                 if (!current_state_->dashboard->commandPowerOff()) {
@@ -795,7 +793,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
             VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage() returned nullptr. resetting RTDE client connection";
         }
         try {
-            current_state_->driver->resetRTDEClient(current_state_->appdir + kOutputRecipe, current_state_->appdir + kInputRecipe);
+            current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
         } catch (const std::exception& ex) {
             if (log) {
                 VIAM_SDK_LOG(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
