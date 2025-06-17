@@ -2,64 +2,40 @@
 
 #include <ur_client_library/control/trajectory_point_interface.h>
 #include <ur_client_library/types.h>
-#include <ur_client_library/ur/dashboard_client.h>
-#include <ur_client_library/ur/ur_driver.h>
 
-#include <boost/format.hpp>
-#include <boost/log/trivial.hpp>
 #include <viam/sdk/components/arm.hpp>
-#include <viam/sdk/components/component.hpp>
 #include <viam/sdk/config/resource.hpp>
-#include <viam/sdk/module/module.hpp>
-#include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/reconfigurable.hpp>
-#include <viam/sdk/resource/resource.hpp>
 
 #include "../trajectories/Path.h"
-#include "../trajectories/Trajectory.h"
 
 using namespace viam::sdk;
 using namespace urcl;
 
-// locations of files necessary to build module, specified as relative paths
-const std::string SVA_FILE = "/src/kinematics/ur5e.json";
-const std::string SCRIPT_FILE = "/src/control/external_control.urscript";
-const std::string OUTPUT_RECIPE = "/src/control/rtde_output_recipe.txt";
-const std::string INPUT_RECIPE = "/src/control/rtde_input_recipe.txt";
-
-// locations of log files that will be written
-const std::string TRAJECTORY_CSV_NAME_TEMPLATE = "/%1%_trajectory.csv";
-const std::string WAYPOINTS_CSV_NAME_TEMPLATE = "/%1%_waypoints.csv";
-const std::string ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE = "/%1%_arm_joint_positions.csv";
-
-// TODO: using this is deprecated by the URCL, we could find some way around using it
-const std::string CALIBRATION_CHECKSUM = "calib_12788084448423163542";
-
-// constants for robot operation
-const float TIMESTEP = 0.2f;  // seconds
-const int NOOP_DELAY = 1000;  // 1 millisecond
-
-// do_command keys
-const std::string VEL_KEY = "set_vel";
-const std::string ACC_KEY = "set_acc";
-
-void reportRobotProgramState(bool program_running);
-void write_trajectory_to_file(std::string filepath,
+void write_trajectory_to_file(const std::string& filepath,
                               const std::vector<vector6d_t>& p_p,
                               const std::vector<vector6d_t>& p_v,
                               const std::vector<float>& time);
-void write_waypoints_to_csv(std::string filepath, std::vector<Eigen::VectorXd> waypoints);
+void write_waypoints_to_csv(const std::string& filepath, const std::vector<Eigen::VectorXd>& waypoints);
 void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt);
-std::string waypoints_filename(std::string path, unsigned long long unix_time_ms);
-std::string trajectory_filename(std::string path, unsigned long long unix_time_ms);
-std::string arm_joint_positions_filename(std::string path, unsigned long long unix_time_ms);
-std::chrono::milliseconds unix_now_ms();
+std::string waypoints_filename(const std::string& path, unsigned long long unix_time_ms);
+std::string trajectory_filename(const std::string& path, unsigned long long unix_time_ms);
+std::string arm_joint_positions_filename(const std::string& path, unsigned long long unix_time_ms);
 
-class UR5eArm : public Arm, public Reconfigurable {
+class URArm final : public Arm, public Reconfigurable {
    public:
-    UR5eArm(Dependencies deps, const ResourceConfig& cfg);
-    ~UR5eArm() override;
+    /// @brief Returns the common ModelFamily for all implementations
+    static const ModelFamily& model_family();
+
+    /// @brief Returns a Model in the correct family for the given model name.
+    static Model model(std::string model_name);
+
+    /// @brief Returns a registration for each model of ARM supported by this class.
+    static std::vector<std::shared_ptr<ModelRegistration>> create_model_registrations();
+
+    URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg);
+    ~URArm() override;
 
     void reconfigure(const Dependencies& deps, const ResourceConfig& cfg) override;
 
@@ -106,42 +82,33 @@ class UR5eArm : public Arm, public Reconfigurable {
     ProtoStruct do_command(const ProtoStruct& command) override;
 
     // --------------- UNIMPLEMENTED FUNCTIONS ---------------
-    void move_to_position(const pose& pose, const ProtoStruct& extra) override {
+    void move_to_position(const pose&, const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
     }
 
     std::string get_output_csv_dir_path();
 
     // the arm server within RDK will reconstruct the geometries from the kinematics and joint positions if left unimplemented
-    std::vector<GeometryConfig> get_geometries(const ProtoStruct& extra) {
+    std::vector<GeometryConfig> get_geometries(const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
     }
 
    private:
+    struct state_;
+
+    enum class UrDriverStatus : int8_t;  // Only available on 3.10/5.4
+    static std::string status_to_string(UrDriverStatus status);
+
     void keep_alive();
+
     void move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
+
     bool send_trajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time);
-    bool read_joint_keep_alive(bool log);
 
-    // private variables to maintain connection and state
-    std::mutex mu;
-    std::unique_ptr<UrDriver> driver;
-    std::unique_ptr<DashboardClient> dashboard;
-    vector6d_t joint_state, tcp_state;
+    void trajectory_done_cb(control::TrajectoryResult);
 
-    std::atomic<bool> shutdown{false};
-    std::thread keep_alive_thread;
-    std::atomic<bool> keep_alive_thread_alive{false};
+    URArm::UrDriverStatus read_joint_keep_alive(bool log);
 
-    // specified through APPDIR environment variable
-    std::string appdir;
-
-    // variables specified by ResourceConfig and set through reconfigure
-    std::string host;
-    std::atomic<double> speed{0};
-    std::atomic<double> acceleration{0};
-
-    std::mutex output_csv_dir_path_mu;
-    // specified through VIAM_MODULE_DATA environment variable
-    std::string output_csv_dir_path;
+    const Model model_;
+    std::unique_ptr<state_> current_state_;
 };

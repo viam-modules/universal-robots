@@ -1,16 +1,22 @@
 #define BOOST_TEST_MODULE test module test_ur5e
 
+#include "src/ur_arm.hpp"
+
+#include <boost/numeric/conversion/cast.hpp>
 #include <boost/test/included/unit_test.hpp>
 
-#include "src/ur5e_arm.hpp"
 BOOST_AUTO_TEST_SUITE(test_1)
 
+namespace {
+
 Eigen::VectorXd makeVector(std::vector<double> data) {
-    return Eigen::Map<Eigen::VectorXd>(data.data(), data.size());
+    return Eigen::Map<Eigen::VectorXd>(data.data(), boost::numeric_cast<Eigen::Index>(data.size()));
 }
 
+}  // namespace
+
 BOOST_AUTO_TEST_CASE(test_write_waypoints_to_csv) {
-    std::vector<Eigen::VectorXd> waypoints = {
+    const std::vector<Eigen::VectorXd> waypoints = {
         makeVector({10.1, 0, 0, 0, 0, 0}),
         makeVector({20.2, 0, 0, 0, 0, 0}),
         makeVector({30.3, 0, 0, 0, 0, 0}),
@@ -21,7 +27,7 @@ BOOST_AUTO_TEST_CASE(test_write_waypoints_to_csv) {
         makeVector({80.8, 0, 0, 0, 0, 0}),
     };
 
-    auto expected =
+    const auto* const expected =
         "10.1,0,0,0,0,0\n"
         "20.2,0,0,0,0,0\n"
         "30.3,0,0,0,0,0\n"
@@ -32,10 +38,10 @@ BOOST_AUTO_TEST_CASE(test_write_waypoints_to_csv) {
         "80.8,0,0,0,0,0\n";
 
     write_waypoints_to_csv("./write_waypoints_to_csv_test.csv", waypoints);
-    std::ifstream csv("./write_waypoints_to_csv_test.csv");
+    const std::ifstream csv("./write_waypoints_to_csv_test.csv");
     std::stringstream buf;
     buf << csv.rdbuf();
-    std::remove("./write_waypoints_to_csv_test.csv");
+    BOOST_CHECK_EQUAL(std::remove("./write_waypoints_to_csv_test.csv"), 0);
     BOOST_CHECK_EQUAL(buf.str(), expected);
 }
 
@@ -52,9 +58,10 @@ BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
         {7.1, 2, 3, 4, 5, 6},
         {10.1, 2, 3, 4, 5, 6},
     };
-    const std::vector<float> time = {1.2, 2, 3, 4};
+    // the time vector is provided in relative time
+    const std::vector<float> time = {1.2, 0.8, 1, 1};
 
-    auto expected =
+    const auto* const expected =
         "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n"
         "1.2,1.1,2,3,4,5,6,1.2,2,3,4,5,6\n"
         "2,3.1,2,3,4,5,6,4.2,2,3,4,5,6\n"
@@ -62,10 +69,10 @@ BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
         "4,9.1,2,3,4,5,6,10.1,2,3,4,5,6\n";
 
     write_trajectory_to_file("./write_trajectory_to_file_test.csv", p_p, p_v, time);
-    std::ifstream csv("./write_trajectory_to_file_test.csv");
+    const std::ifstream csv("./write_trajectory_to_file_test.csv");
     std::stringstream buf;
     buf << csv.rdbuf();
-    std::remove("./write_trajectory_to_file_test.csv");
+    BOOST_CHECK_EQUAL(std::remove("./write_trajectory_to_file_test.csv"), 0);
     BOOST_CHECK_EQUAL(buf.str(), expected);
 }
 
