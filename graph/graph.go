@@ -1,12 +1,9 @@
 package main
 
 import (
-	"encoding/csv"
+	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,6 +12,7 @@ import (
 	"go.viam.com/rdk/referenceframe"
 	"go.viam.com/rdk/spatialmath"
 
+	"github.com/rocketlaunchr/dataframe-go/imports"
 	chart "github.com/wcharczuk/go-chart"
 )
 
@@ -33,15 +31,16 @@ type config struct {
 	WaypointsCSV  string `json:"waypoints_csv"`
 }
 
-func expandPath(path string) string {
+func loadFile(path string) (*os.File, error) {
+	expandedPath := path
 	if len(path) > 1 && path[:2] == "~/" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			log.Fatal(err)
+			return nil, err
 		}
-		return filepath.Join(home, path[2:])
+		expandedPath = filepath.Join(home, path[2:])
 	}
-	return path
+	return os.Open(expandedPath)
 }
 
 func loadConfig(path string) (config, error) {
@@ -54,103 +53,125 @@ func loadConfig(path string) (config, error) {
 	return cfg, json.NewDecoder(file).Decode(&cfg)
 }
 
-func parseFloatSlice(fields []string) ([]float64, error) {
-	var values []float64
-	for _, str := range fields {
-		v, err := strconv.ParseFloat(str, 64)
-		if err != nil {
-			return nil, err
-		}
-		values = append(values, v)
-	}
-	return values, nil
-}
-
-func readCSV(path string, skipHeader bool) ([][]string, error) {
-	file, err := os.Open(expandPath(path))
+func readTrajectoryCSV(path string, urModel referenceframe.Model) ([]trajInput, []trajPoses, error) {
+	file, err := loadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer file.Close()
 
-	reader := csv.NewReader(file)
-	if skipHeader {
-		// Skip header if and only if one exists
-		_, err = reader.Read()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	var rows [][]string
-	for {
-		row, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("error reading row: %v", err)
-			continue
-		}
-		rows = append(rows, row)
-	}
-	return rows, nil
-}
-
-func readTrajectoryCSV(path string) ([]trajInput, error) {
-	rows, err := readCSV(path, true)
+	df, err := imports.LoadFromCSV(context.Background(), file, imports.CSVLoadOptions{
+		DictateDataType: map[string]interface{}{
+			"t(s)": float64(0),
+			"j0":   float64(0),
+			"j1":   float64(0),
+			"j2":   float64(0),
+			"j3":   float64(0),
+			"j4":   float64(0),
+			"j5":   float64(0),
+		},
+	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var data []trajInput
-	for _, row := range rows {
-		if len(row) != 13 {
-			log.Printf("invalid trajectory row length: %d", len(row))
-			continue
+
+	var trajectoryInputs []trajInput
+	var allInputs [][]referenceframe.Input
+	// start at 1 so we skip the header
+	for i := 1; i < df.NRows(); i++ {
+		row := df.Row(i, false)
+		rowInputs := []float64{}
+		for j := range 6 {
+			inputValue, ok := row["j"+strconv.Itoa(j)].(float64)
+			if !ok {
+				return nil, nil, fmt.Errorf("j%d not found in row", j)
+			}
+			rowInputs = append(rowInputs, inputValue)
 		}
-		t, err := strconv.ParseFloat(row[0], 64)
-		if err != nil {
-			log.Printf("invalid timestamp: %v", err)
-			continue
+		timeStep, ok := row["t(s)"].(float64)
+		if !ok {
+			return nil, nil, fmt.Errorf("t(s) not found in row")
 		}
-		jointVals, err := parseFloatSlice(row[1:7])
-		if err != nil {
-			log.Printf("invalid joint values: %v", err)
-			continue
-		}
-		data = append(data, trajInput{
-			Timestamp:   t,
-			JointInputs: referenceframe.FloatsToInputs(jointVals),
+		trajectoryInputs = append(trajectoryInputs,
+			trajInput{
+				Timestamp:   timeStep,
+				JointInputs: referenceframe.FloatsToInputs(rowInputs),
+			},
+		)
+		allInputs = append(allInputs, referenceframe.FloatsToInputs(rowInputs))
+	}
+
+	if len(trajectoryInputs) == 0 {
+		return nil, nil, fmt.Errorf("readTrajectoryCSV produced []trajInput of length zero")
+	}
+
+	posesFromInputs, err := transformInputs(urModel, allInputs)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var trajectoryPoses []trajPoses
+	for i, pose := range posesFromInputs {
+		trajectoryPoses = append(trajectoryPoses, trajPoses{
+			Timestamp: trajectoryInputs[i].Timestamp,
+			Pose:      pose,
 		})
 	}
-	if len(data) == 0 {
-		return nil, errors.New("readTrajectoryCSV produced []trajInput of length zero")
-	}
-	return data, nil
+	return trajectoryInputs, trajectoryPoses, nil
 }
 
-func readWaypointCSV(path string) ([][]referenceframe.Input, error) {
-	rows, err := readCSV(path, false)
+func readWaypointCSV(path string, urModel referenceframe.Model) ([][]referenceframe.Input, []spatialmath.Pose, error) {
+	file, err := loadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	defer file.Close()
+
+	df, err := imports.LoadFromCSV(context.Background(), file, imports.CSVLoadOptions{
+		InferDataTypes: false,
+		// induce keys so that we know the value of j_i
+		DictateDataType: map[string]interface{}{
+			"0": float64(0),
+			"1": float64(0),
+			"2": float64(0),
+			"3": float64(0),
+			"4": float64(0),
+			"5": float64(0),
+		},
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
 	var allInputs [][]referenceframe.Input
-	for _, row := range rows {
-		if len(row) != 6 {
-			log.Printf("invalid waypoint row length: %d", len(row))
-			continue
+	for i := 0; i < df.NRows(); i++ {
+		row := df.Row(i, false)
+		rowInputs := []float64{}
+		for j := 0; j < 6; j++ {
+			strVal, ok := row[j].(string)
+			if !ok {
+				return nil, nil, fmt.Errorf("key %d not found in row %d", j, i)
+			}
+			parsedVal, err := strconv.ParseFloat(strVal, 64)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to parse float at row %d, col %d with the followin error: %v", i, j, err)
+			}
+
+			rowInputs = append(rowInputs, parsedVal)
 		}
-		vals, err := parseFloatSlice(row)
-		if err != nil {
-			log.Printf("invalid waypoint values: %v", err)
-			continue
-		}
-		allInputs = append(allInputs, referenceframe.FloatsToInputs(vals))
+		allInputs = append(allInputs, referenceframe.FloatsToInputs(rowInputs))
 	}
+
 	if len(allInputs) == 0 {
-		return nil, errors.New("readWaypointCSV produced [][]referenceframe.Input of length zero")
+		return nil, nil, fmt.Errorf("readWaypointCSV produced [][]referenceframe.Input of length zero")
 	}
-	return allInputs, nil
+
+	waypointPoses, err := transformInputs(urModel, allInputs)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return allInputs, waypointPoses, nil
 }
 
 func transformInputs(model referenceframe.Model, inputSets [][]referenceframe.Input) ([]spatialmath.Pose, error) {
@@ -163,7 +184,7 @@ func transformInputs(model referenceframe.Model, inputSets [][]referenceframe.In
 		poses = append(poses, pose)
 	}
 	if len(poses) == 0 {
-		return nil, errors.New("transformInputs produced []spatialmath.Pose of length zero")
+		return nil, fmt.Errorf("transformInputs produced []spatialmath.Pose of length zero")
 	}
 	return poses, nil
 }
@@ -182,43 +203,21 @@ func main() {
 		logger.Fatalf("failed to load model: %v", err)
 	}
 
-	trajInputs, err := readTrajectoryCSV(cfg.TrajectoryCSV)
+	trajectoryInputs, trajectoryPoses, err := readTrajectoryCSV(cfg.TrajectoryCSV, urModel)
 	if err != nil {
 		logger.Fatalf("failed to read trajectory CSV: %v", err)
 	}
 
-	var trajInputSets [][]referenceframe.Input
-	for _, t := range trajInputs {
-		trajInputSets = append(trajInputSets, t.JointInputs)
-	}
-	trajectoryPoses, err := transformInputs(urModel, trajInputSets)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
-	var outputTraj []trajPoses
-	for i, pose := range trajectoryPoses {
-		outputTraj = append(outputTraj, trajPoses{
-			Timestamp: trajInputs[i].Timestamp,
-			Pose:      pose,
-		})
-	}
-
-	waypointInputs, err := readWaypointCSV(cfg.WaypointsCSV)
+	waypointInputs, waypointPoses, err := readWaypointCSV(cfg.WaypointsCSV, urModel)
 	if err != nil {
 		logger.Fatalf("failed to read waypoint CSV: %v", err)
 	}
 
-	waypointPoses, err := transformInputs(urModel, waypointInputs)
-	if err != nil {
-		logger.Fatalf("could not get waypoint poses: %v", err)
-	}
-
-	if err := plotJointComparison(trajInputs, waypointInputs); err != nil {
+	if err := plotJointComparison(trajectoryInputs, waypointInputs); err != nil {
 		logger.Fatalf("could not plot joint comparisons: %v", err)
 	}
 
-	if err := plotPoseComparison(outputTraj, waypointPoses); err != nil {
+	if err := plotPoseComparison(trajectoryPoses, waypointPoses); err != nil {
 		logger.Fatalf("could not plot pose comparisons: %v", err)
 	}
 }
@@ -242,6 +241,26 @@ func saveChartPNG(
 	fileName, yAxisLabel string,
 	xTraj, yTraj, xWay, yWay []float64,
 ) error {
+	trajSeries := chart.ContinuousSeries{
+		Name:    "Trajectory",
+		XValues: xTraj,
+		YValues: yTraj,
+		Style: chart.Style{
+			Show:        true,
+			StrokeColor: chart.ColorBlue,
+		},
+	}
+
+	waypointSeries := chart.ContinuousSeries{
+		Name:    "Waypoints",
+		XValues: xWay,
+		YValues: yWay,
+		Style: chart.Style{
+			Show:        true,
+			StrokeColor: chart.ColorOrange,
+		},
+	}
+
 	graph := chart.Chart{
 		XAxis: chart.XAxis{
 			Name:      "Time (s)",
@@ -254,26 +273,19 @@ func saveChartPNG(
 			Style:     chart.StyleShow(),
 		},
 		Series: []chart.Series{
-			chart.ContinuousSeries{
-				Name:    "Trajectory",
-				XValues: xTraj,
-				YValues: yTraj,
-				Style: chart.Style{
-					Show:        true,
-					StrokeColor: chart.ColorBlue,
+			trajSeries,
+			waypointSeries,
+		},
+		Elements: []chart.Renderable{
+			chart.Legend(&chart.Chart{
+				Series: []chart.Series{
+					trajSeries,
+					waypointSeries,
 				},
-			},
-			chart.ContinuousSeries{
-				Name:    "Waypoints",
-				XValues: xWay,
-				YValues: yWay,
-				Style: chart.Style{
-					Show:        true,
-					StrokeColor: chart.ColorOrange,
-				},
-			},
+			}),
 		},
 	}
+
 	f, err := os.Create(fileName)
 	if err != nil {
 		return err
@@ -282,34 +294,64 @@ func saveChartPNG(
 	return graph.Render(chart.PNG, f)
 }
 
-func plotJointComparison(trajInputs []trajInput, waypointInputs [][]referenceframe.Input) error {
-	for jointIdx := range 6 {
-		trajTimes := make([]float64, len(trajInputs))
-		trajJVals := make([]float64, len(trajInputs))
-		for i, t := range trajInputs {
-			trajTimes[i] = t.Timestamp
-			trajJVals[i] = t.JointInputs[jointIdx].Value
-		}
+func plotCharts(
+	prefix, yAxisLabelFormat string,
+	trajTimes []float64,
+	trajSeries [][]float64,
+	waypointTimes []float64,
+	waypointSeries [][]float64,
+	isPosition bool,
+) error {
+	if len(trajSeries) != len(waypointSeries) {
+		return fmt.Errorf("trajectory and waypoint series count mismatch")
+	}
+	positionSuffix := []string{"X", "Y", "Z"}
 
-		totalTime := trajTimes[len(trajTimes)-1]
-		if totalTime <= 0 {
-			return fmt.Errorf("Invalid totalTime: %v", totalTime)
+	for i := range trajSeries {
+		fileName := fmt.Sprintf("%s%d_comparison.png", prefix, i)
+		if isPosition {
+			fileName = fmt.Sprintf("%s%s_comparison.png", prefix, positionSuffix[i])
 		}
-
-		numWaypoints := len(waypointInputs)
-		waypointTimes := evenlySpacedTimes(trajTimes[0], totalTime, numWaypoints)
-		waypointJVals := make([]float64, numWaypoints)
-		for i := range numWaypoints {
-			waypointJVals[i] = waypointInputs[i][jointIdx].Value
-		}
-
-		fileName := fmt.Sprintf("joint%d_comparison.png", jointIdx)
-		yAxis := fmt.Sprintf("Joint %d Angle (rad)", jointIdx)
-		if err := saveChartPNG(fileName, yAxis, trajTimes, trajJVals, waypointTimes, waypointJVals); err != nil {
+		yAxis := fmt.Sprintf(yAxisLabelFormat, i)
+		if err := saveChartPNG(fileName, yAxis, trajTimes, trajSeries[i], waypointTimes, waypointSeries[i]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func plotJointComparison(trajInputs []trajInput, waypointInputs [][]referenceframe.Input) error {
+	jointCount := 6
+	trajTimes := make([]float64, len(trajInputs))
+	for i, t := range trajInputs {
+		trajTimes[i] = t.Timestamp
+	}
+
+	totalTime := trajTimes[len(trajTimes)-1]
+	if totalTime <= 0 {
+		return fmt.Errorf("invalid totalTime: %v", totalTime)
+	}
+
+	numWaypoints := len(waypointInputs)
+	waypointTimes := evenlySpacedTimes(trajTimes[0], totalTime, numWaypoints)
+
+	trajSeries := make([][]float64, jointCount)
+	waypointSeries := make([][]float64, jointCount)
+
+	for jointIdx := 0; jointIdx < jointCount; jointIdx++ {
+		trajJVals := make([]float64, len(trajInputs))
+		for i := range trajInputs {
+			trajJVals[i] = trajInputs[i].JointInputs[jointIdx].Value
+		}
+		waypointJVals := make([]float64, numWaypoints)
+		for i := range waypointInputs {
+			waypointJVals[i] = waypointInputs[i][jointIdx].Value
+		}
+		trajSeries[jointIdx] = trajJVals
+		waypointSeries[jointIdx] = waypointJVals
+	}
+
+	return plotCharts("joint", "Joint %d Angle (rad)", trajTimes, trajSeries, waypointTimes, waypointSeries, false)
 }
 
 func plotPoseComparison(outputTraj []trajPoses, waypointPoses []spatialmath.Pose) error {
@@ -321,31 +363,31 @@ func plotPoseComparison(outputTraj []trajPoses, waypointPoses []spatialmath.Pose
 	}
 
 	trajTimes := make([]float64, len(outputTraj))
-	trajX, trajY, trajZ := make([]float64, len(outputTraj)), make([]float64, len(outputTraj)), make([]float64, len(outputTraj))
+	trajX := make([]float64, len(outputTraj))
+	trajY := make([]float64, len(outputTraj))
+	trajZ := make([]float64, len(outputTraj))
 	for i, tp := range outputTraj {
 		trajTimes[i] = tp.Timestamp
-		trajX[i] = tp.Pose.Point().X
-		trajY[i] = tp.Pose.Point().Y
-		trajZ[i] = tp.Pose.Point().Z
+		pt := tp.Pose.Point()
+		trajX[i] = pt.X
+		trajY[i] = pt.Y
+		trajZ[i] = pt.Z
 	}
 
 	numWaypoints := len(waypointPoses)
 	waypointTimes := evenlySpacedTimes(startTime, endTime, numWaypoints)
-	waypointX, waypointY, waypointZ := make([]float64, numWaypoints), make([]float64, numWaypoints), make([]float64, numWaypoints)
+	waypointX := make([]float64, numWaypoints)
+	waypointY := make([]float64, numWaypoints)
+	waypointZ := make([]float64, numWaypoints)
 	for i, pose := range waypointPoses {
-		waypointX[i] = pose.Point().X
-		waypointY[i] = pose.Point().Y
-		waypointZ[i] = pose.Point().Z
+		pt := pose.Point()
+		waypointX[i] = pt.X
+		waypointY[i] = pt.Y
+		waypointZ[i] = pt.Z
 	}
 
-	if err := saveChartPNG("position_X.png", "Position X (mm)", trajTimes, trajX, waypointTimes, waypointX); err != nil {
-		return err
-	}
-	if err := saveChartPNG("position_Y.png", "Position Y (mm)", trajTimes, trajY, waypointTimes, waypointY); err != nil {
-		return err
-	}
-	if err := saveChartPNG("position_Z.png", "Position Z (mm)", trajTimes, trajZ, waypointTimes, waypointZ); err != nil {
-		return err
-	}
-	return nil
+	trajSeries := [][]float64{trajX, trajY, trajZ}
+	waypointSeries := [][]float64{waypointX, waypointY, waypointZ}
+
+	return plotCharts("position_", "Position %c (mm)", trajTimes, trajSeries, waypointTimes, waypointSeries, true)
 }
