@@ -1,6 +1,6 @@
 #define BOOST_TEST_MODULE test module test_ur5e
 
-#include "src/ur5e_arm.hpp"
+#include "src/ur_arm.hpp"
 
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/test/included/unit_test.hpp>

@@ -8,6 +8,10 @@
     {
       "api": "rdk:component:arm",
       "model": "viam:universal-robots:ur5e"
+    },
+    {
+      "api": "rdk:component:arm",
+      "model": "viam:universal-robots:ur20"
     }
   ],
   "entrypoint": "universal-robots.AppImage"
