@@ -1,6 +1,9 @@
 # [`universal-robots` module](https://app.viam.com/module/viam/universal-robots)
 
-This repo is a [module](https://docs.viam.com/registry/#modular-resources) that implements the [`rdk:component:arm` API](https://docs.viam.com/components/arm/) resource to allow control over [Universal Robots](https://www.universal-robots.com/) arms
+This repo is a [module](https://docs.viam.com/registry/#modular-resources) that implements the [`rdk:component:arm` API](https://docs.viam.com/components/arm/) resource to allow control over [Universal Robots](https://www.universal-robots.com/) arms. Currently the following models are supported:
+
+- UR5e, as `viam:universal-robots:ur5e`
+- UR20, as `viam:universal-robots:ur20`
 
 ## Configuration and Usage
 
@@ -17,7 +20,7 @@ On the new component panel, copy and paste the following attribute template into
 }
 ```
 
-> [!NOTE]  
+> [!NOTE]
 > For more information, see [Configure a Machine](https://docs.viam.com/manage/configuration/).
 
 ### Attributes
@@ -74,7 +77,7 @@ cd src && make appimages
 Then, follow the instructions to [add a local module](https://docs.viam.com/registry/configure/#add-a-local-module) to add the local instance of the `universal-robots` module to your machine.
 Provide an **executable path** pointing toward the appropriate AppImage file which will have been created within the `packaging/appimages/deploy` subdirectory.
 
-> [!NOTE]  
+> [!NOTE]
 > Simply running `make` instead of `make appimages` is a faster way to build but creates an executable that must be run from within the Docker container.  If you are interested in making and testing many quick changes to this module it will likely be faster to ony build this way and then run `viam-server` from within the Docker container, pointing to a config file that has a local instance of this module wih an **executable path** of `src/build/universal/robots`.  To download and run `viam-server` this way run:
 > ```
 > wget https://storage.googleapis.com/packages.viam.com/apps/viam-server/viam-server-stable-x86_64

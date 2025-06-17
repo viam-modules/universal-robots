@@ -25,6 +25,12 @@ std::string arm_joint_positions_filename(const std::string& path, unsigned long 
 
 class URArm final : public Arm, public Reconfigurable {
    public:
+    /// @brief Returns the common ModelFamily for all implementations
+    static const ModelFamily& model_family();
+
+    /// @brief Returns a Model in the correct family for the given model name.
+    static Model model(std::string model_name);
+
     /// @brief Returns a registration for each model of ARM supported by this class.
     static std::vector<std::shared_ptr<ModelRegistration>> create_model_registrations();
 

@@ -161,6 +161,17 @@ enum class URArm::UrDriverStatus : int8_t  // Only available on 3.10/5.4
     DASHBOARD_FAILURE = 4
 };
 
+const ModelFamily& URArm::model_family() {
+    // TODO: If ModelFamily had a constexpr constructor, we wouldn't need
+    // this function at all and could just inline it into the class definition.
+    static const auto family = ModelFamily{"viam", "universal-robots"};
+    return family;
+}
+
+Model URArm::model(std::string model_name) {
+    return {model_family(), std::move(model_name)};
+}
+
 std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registrations() {
     using namespace std::placeholders;
 
@@ -173,10 +184,9 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
         return std::make_shared<ModelRegistration>(arm, model, std::bind(arm_factory, model, _1, _2));
     };
 
-    const auto family = ModelFamily{"viam", "universal-robots"};
     return {
-        registration_factory({family, "ur5e"}),
-        registration_factory({family, "ur20"}),
+        registration_factory(URArm::model("ur5e")),
+        registration_factory(URArm::model("ur20")),
     };
 }
 
@@ -398,10 +408,9 @@ bool URArm::is_moving() {
 URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     // The `Model` class absurdly lacks accessors
     const std::string model_string = [&] {
-        const auto family = ModelFamily{"viam", "universal-robots"};
-        if (model_ == Model{family, "ur5e"}) {
+        if (model_ == model("ur5e")) {
             return "ur5e";
-        } else if (model_ == Model{family, "ur20"}) {
+        } else if (model_ == model("ur20")) {
             return "ur20";
         }
         throw std::runtime_error(str(boost::format("no kinematics file known for model '%1'") % model_.to_string()));
