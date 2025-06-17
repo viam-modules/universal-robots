@@ -149,6 +149,7 @@ struct URArm::state_ {
     std::atomic<bool> estop{false};
     std::atomic<bool> local_disconnect{false};
 
+
     std::mutex output_csv_dir_path_mu;
     // specified through VIAM_MODULE_DATA environment variable
     std::string output_csv_dir_path;
@@ -354,6 +355,7 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     if (current_state_->local_disconnect.load()) {
         throw std::runtime_error("arm is currently in local mode");
     }
+
     if (current_state_->estop.load()) {
         throw std::runtime_error("move_to_joint_positions cancelled -> emergency stop is currently active");
     }
@@ -803,8 +805,6 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
             // if the arm was previously estopped, attempt to recover from the estop.
             // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
             try {
-                bool is_remote = current_state_->dashboard->commandIsInRemoteControl();
-                VIAM_SDK_LOG(error) << "yo estopped local: " << is_remote;
                 VIAM_SDK_LOG(info) << "recovering from e-stop";
                 current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
 
