@@ -555,23 +555,23 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             throw std::runtime_error("trajectory.getDuration() was infinite");
         }
         float t = 0.0;
-        constexpr float kTimestep = 0.2F;  // seconds
+        constexpr float k_timestep = 0.2F;  // seconds
         while (t < duration) {
             Eigen::VectorXd position = trajectory.getPosition(t);
             Eigen::VectorXd velocity = trajectory.getVelocity(t);
             p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
             v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-            time.push_back(kTimestep);
-            t += kTimestep;
+            time.push_back(k_timestep);
+            t += k_timestep;
         }
 
         Eigen::VectorXd position = trajectory.getPosition(duration);
         Eigen::VectorXd velocity = trajectory.getVelocity(duration);
         p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-        const float t2 = duration - (t - kTimestep);
+        const float t2 = duration - (t - k_timestep);
         if (std::isinf(t2)) {
-            throw std::runtime_error("duration - (t - kTimestep) was infinite");
+            throw std::runtime_error("duration - (t - k_timestep) was infinite");
         }
         time.push_back(t2);
     }
