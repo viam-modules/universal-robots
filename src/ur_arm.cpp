@@ -25,15 +25,8 @@ extern "C" void free_quaternion_memory(void* q);
 namespace {
 
 // locations of files necessary to build module, specified as relative paths
-constexpr char SVA_FILE_TEMPLATE[] = "%1%/src/kinematics/%2%.json";
-constexpr char SCRIPT_FILE[] = "/src/control/external_control.urscript";
-constexpr char OUTPUT_RECIPE[] = "/src/control/rtde_output_recipe.txt";
-constexpr char INPUT_RECIPE[] = "/src/control/rtde_input_recipe.txt";
-
-// locations of log files that will be written
-constexpr char TRAJECTORY_CSV_NAME_TEMPLATE[] = "/%1%_trajectory.csv";
-constexpr char WAYPOINTS_CSV_NAME_TEMPLATE[] = "/%1%_waypoints.csv";
-constexpr char ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE[] = "/%1%_arm_joint_positions.csv";
+constexpr char kOutputRecipe[] = "/src/control/rtde_output_recipe.txt";
+constexpr char kInputRecipe[] = "/src/control/rtde_input_recipe.txt";
 
 // constants for robot operation
 constexpr float TIMESTEP = 0.2F;     // seconds
@@ -243,11 +236,13 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
         throw std::runtime_error("couldn't release the arm brakes");
     }
 
+    constexpr char kScriptFile[] = "/src/control/external_control.urscript";
+
     // Now the robot is ready to receive a program
     const urcl::UrDriverConfiguration ur_cfg = {current_state_->host,
-                                                current_state_->appdir + SCRIPT_FILE,
-                                                current_state_->appdir + OUTPUT_RECIPE,
-                                                current_state_->appdir + INPUT_RECIPE,
+                                                current_state_->appdir + kScriptFile,
+                                                current_state_->appdir + kOutputRecipe,
+                                                current_state_->appdir + kInputRecipe,
                                                 &reportRobotProgramState,
                                                 true,  // headless mode
                                                 nullptr};
@@ -323,17 +318,20 @@ std::chrono::milliseconds unix_now_ms() {
 }
 
 std::string waypoints_filename(const std::string& path, unsigned long long unix_time_ms) {
-    auto fmt = boost::format(path + WAYPOINTS_CSV_NAME_TEMPLATE);
+    constexpr char kWaypointsCsvNameTemplate[] = "/%1%_waypoints.csv";
+    auto fmt = boost::format(path + kWaypointsCsvNameTemplate);
     return (fmt % std::to_string(unix_time_ms)).str();
 }
 
 std::string trajectory_filename(const std::string& path, unsigned long long unix_time_ms) {
-    auto fmt = boost::format(path + TRAJECTORY_CSV_NAME_TEMPLATE);
+    constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_trajectory.csv";
+    auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
     return (fmt % std::to_string(unix_time_ms)).str();
 }
 
 std::string arm_joint_positions_filename(const std::string& path, unsigned long long unix_time_ms) {
-    auto fmt = boost::format(path + ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE);
+    constexpr char kArmJointPositionsCsvNameTemplate[] = "/%1%_arm_joint_positions.csv";
+    auto fmt = boost::format(path + kArmJointPositionsCsvNameTemplate);
     return (fmt % std::to_string(unix_time_ms)).str();
 }
 
@@ -416,7 +414,9 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         throw std::runtime_error(str(boost::format("no kinematics file known for model '%1'") % model_.to_string()));
     }();
 
-    const auto sva_file_path = str(boost::format(SVA_FILE_TEMPLATE) % current_state_->appdir % model_string);
+    constexpr char kSvaFileTemplate[] = "%1%/src/kinematics/%2%.json";
+
+    const auto sva_file_path = str(boost::format(kSvaFileTemplate) % current_state_->appdir % model_string);
 
     // Open the file in binary mode
     std::ifstream sva_file(sva_file_path, std::ios::binary);
@@ -749,7 +749,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
             // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
             try {
                 VIAM_SDK_LOG(info) << "recovering from e-stop";
-                current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
+                current_state_->driver->resetRTDEClient(current_state_->appdir + kOutputRecipe, current_state_->appdir + kInputRecipe);
 
                 VIAM_SDK_LOG(info) << "restarting arm";
                 if (!current_state_->dashboard->commandPowerOff()) {
@@ -794,7 +794,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
             VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage() returned nullptr. resetting RTDE client connection";
         }
         try {
-            current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
+            current_state_->driver->resetRTDEClient(current_state_->appdir + kOutputRecipe, current_state_->appdir + kInputRecipe);
         } catch (const std::exception& ex) {
             if (log) {
                 VIAM_SDK_LOG(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
