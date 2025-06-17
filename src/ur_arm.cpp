@@ -430,14 +430,14 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     sva_file.seekg(0, std::ios::beg);
 
     // Create a buffer to hold the file contents
-    std::vector<unsigned char> urdf_bytes(fileSize);
+    std::vector<unsigned char> kinematics_bytes(fileSize);
 
     // Read the file contents into the buffer
-    if (!sva_file.read(reinterpret_cast<char*>(urdf_bytes.data()), fileSize)) {
+    if (!sva_file.read(reinterpret_cast<char*>(kinematics_bytes.data()), fileSize)) {
         throw std::runtime_error("Error reading file");
     }
 
-    return KinematicsDataSVA(std::move(urdf_bytes));
+    return KinematicsDataSVA(std::move(kinematics_bytes));
 }
 
 void URArm::stop(const ProtoStruct&) {
