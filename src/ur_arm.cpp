@@ -30,7 +30,6 @@ constexpr char kOutputRecipe[] = "/src/control/rtde_output_recipe.txt";
 constexpr char kInputRecipe[] = "/src/control/rtde_input_recipe.txt";
 
 // constants for robot operation
-constexpr float kTimestep = 0.2F;                                                     // seconds
 constexpr std::chrono::milliseconds kNoopDelay = std::chrono::milliseconds(2000);     // 2 millisecond/500 Hz
 constexpr std::chrono::milliseconds kEStopDelay = std::chrono::milliseconds(100000);  // 100 millisecond/10 Hz
 
@@ -558,6 +557,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             throw std::runtime_error("trajectory.getDuration() was infinite");
         }
         float t = 0.0;
+        constexpr float kTimestep = 0.2F;  // seconds
         while (t < duration) {
             Eigen::VectorXd position = trajectory.getPosition(t);
             Eigen::VectorXd velocity = trajectory.getVelocity(t);
