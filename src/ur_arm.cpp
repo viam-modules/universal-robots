@@ -405,7 +405,7 @@ pose URArm::get_end_position(const ProtoStruct&) {
     return ur_vector_to_pose(current_state_->tcp_state);
 }
 
-bool UR5eArm::is_moving() {
+bool URArm::is_moving() {
     return current_state_->trajectory_status.load() == TrajectoryStatus::k_running;
 }
 
@@ -450,7 +450,7 @@ void URArm::stop(const ProtoStruct&) {
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
         if (!ok) {
             VIAM_SDK_LOG(warn) << "URArm::stop driver->writeTrajectoryControlMessage returned false";
-            throw std::runtime_error("failed to write trajectory control cancel message to UR5eArm");
+            throw std::runtime_error("failed to write trajectory control cancel message to URArm");
         }
     }
 }
@@ -694,7 +694,7 @@ bool URArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vecto
     };
 
     current_state_->trajectory_status.store(TrajectoryStatus::k_running);
-    VIAM_SDK_LOG(info) << "UR5eArm::send_trajectory sending " << p_p.size() << " cubic writeTrajectorySplinePoint/3";
+    VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << p_p.size() << " cubic writeTrajectorySplinePoint/3";
     for (size_t i = 0; i < p_p.size(); i++) {
         if (!current_state_->driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i])) {
             VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
