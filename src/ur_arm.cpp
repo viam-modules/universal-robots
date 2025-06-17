@@ -5,6 +5,7 @@
 
 #include <boost/format.hpp>
 #include <boost/numeric/conversion/cast.hpp>
+#include <chrono>
 #include <cmath>
 #include <thread>
 #include <viam/sdk/components/component.hpp>
@@ -29,9 +30,9 @@ constexpr char kOutputRecipe[] = "/src/control/rtde_output_recipe.txt";
 constexpr char kInputRecipe[] = "/src/control/rtde_input_recipe.txt";
 
 // constants for robot operation
-constexpr float kTimestep = 0.2F;     // seconds
-constexpr int kNoopDelay = 2000;     // 2 millisecond/500 Hz
-constexpr int kEStopDelay = 100000;  // 100 millisecond/10 Hz
+constexpr float kTimestep = 0.2F;                                                     // seconds
+constexpr std::chrono::milliseconds kNoopDelay = std::chrono::milliseconds(2000);     // 2 millisecond/500 Hz
+constexpr std::chrono::milliseconds kEStopDelay = std::chrono::milliseconds(100000);  // 100 millisecond/10 Hz
 
 // do_command keys
 constexpr char VEL_KEY[] = "set_vel";
@@ -261,7 +262,7 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
             throw std::runtime_error("couldn't get joint positions; unable to establish communication with the arm");
         }
         retry_count--;
-        usleep(kNoopDelay);
+        std::this_thread::sleep_for(kNoopDelay);
     }
 
     // start background thread to continuously send no-ops and keep socket connection alive
@@ -486,7 +487,7 @@ void URArm::keep_alive() {
                 VIAM_SDK_LOG(error) << "keep_alive failed Exception: " << std::string(ex.what());
             }
         }
-        usleep(kNoopDelay);
+        std::this_thread::sleep_for(kNoopDelay);
     }
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
@@ -740,7 +741,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
         // TODO: further investigate the need for this delay
         // sleep longer to prevent buffer error
         // Removing this will cause the RTDE client to move into an unrecoverable state
-        usleep(kEStopDelay);
+        std::this_thread::sleep_for(kEStopDelay);
 
     } else {
         // the arm is in a normal state.
