@@ -75,6 +75,8 @@ T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute)
     return *val;
 }
 
+enum class TrajectoryStatus { k_running = 1, k_cancelled = 2, k_stopped = 3 };
+
 }  // namespace
 
 void write_trajectory_to_file(const std::string& filepath,
@@ -128,8 +130,6 @@ void reportRobotProgramState(bool program_running) {
     VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
 }
 
-enum class TrajectoryStatus : int8_t { RUNNING = 1, CANCELLED = 2, STOPPED = 3 };
-
 // private variables to maintain connection and state
 struct URArm::state_ {
     std::mutex mu;
@@ -138,7 +138,7 @@ struct URArm::state_ {
     vector6d_t joint_state, tcp_state;
 
     std::atomic<bool> shutdown{false};
-    std::atomic<TrajectoryStatus> trajectory_status{TrajectoryStatus::STOPPED};
+    std::atomic<TrajectoryStatus> trajectory_status{TrajectoryStatus::k_stopped};
     std::thread keep_alive_thread;
 
     // specified through APPDIR environment variable
@@ -282,15 +282,15 @@ void URArm::trajectory_done_cb(const control::TrajectoryResult state) {
     switch (state) {
         case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
             report = "success";
-            current_state_->trajectory_status.store(TrajectoryStatus::STOPPED);
+            current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
             break;
         case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED:
             report = "canceled";
-            current_state_->trajectory_status.store(TrajectoryStatus::CANCELLED);
+            current_state_->trajectory_status.store(TrajectoryStatus::k_cancelled);
             break;
         case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
         default:
-            current_state_->trajectory_status.store(TrajectoryStatus::STOPPED);
+            current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
             report = "failure";
     }
     VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
@@ -405,8 +405,8 @@ pose URArm::get_end_position(const ProtoStruct&) {
     return ur_vector_to_pose(current_state_->tcp_state);
 }
 
-bool URArm::is_moving() {
-    return current_state_->trajectory_status.load() == TrajectoryStatus::RUNNING;
+bool UR5eArm::is_moving() {
+    return current_state_->trajectory_status.load() == TrajectoryStatus::k_running;
 }
 
 URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
@@ -445,7 +445,7 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
 }
 
 void URArm::stop(const ProtoStruct&) {
-    if (current_state_->trajectory_status.load() == TrajectoryStatus::RUNNING) {
+    if (current_state_->trajectory_status.load() == TrajectoryStatus::k_running) {
         const bool ok = current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
         if (!ok) {
@@ -614,7 +614,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         unsigned attempt = 1;
         unsigned long long now = 0;
         UrDriverStatus status;
-        while ((current_state_->trajectory_status.load() == TrajectoryStatus::RUNNING) && !current_state_->shutdown.load()) {
+        while ((current_state_->trajectory_status.load() == TrajectoryStatus::k_running) && !current_state_->shutdown.load()) {
             now = unix_now_ms().count();
             status = read_joint_keep_alive(true);
             if (status != UrDriverStatus::NORMAL) {
@@ -631,7 +631,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         of.close();
         VIAM_SDK_LOG(info) << "move: end unix_time_ms " << unix_time_ms.count();
 
-        if (current_state_->trajectory_status.load() == TrajectoryStatus::CANCELLED) {
+        if (current_state_->trajectory_status.load() == TrajectoryStatus::k_cancelled) {
             throw std::runtime_error("arm's current trajectory cancelled by code");
         }
 
@@ -693,8 +693,8 @@ bool URArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vecto
         return false;
     };
 
-    current_state_->trajectory_status.store(TrajectoryStatus::RUNNING);
-    VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << p_p.size() << " cubic writeTrajectorySplinePoint/3";
+    current_state_->trajectory_status.store(TrajectoryStatus::k_running);
+    VIAM_SDK_LOG(info) << "UR5eArm::send_trajectory sending " << p_p.size() << " cubic writeTrajectorySplinePoint/3";
     for (size_t i = 0; i < p_p.size(); i++) {
         if (!current_state_->driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i])) {
             VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
@@ -741,7 +741,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
         current_state_->estop.store(true);
 
         // clear any currently running trajectory.
-        current_state_->trajectory_status.store(TrajectoryStatus::STOPPED);
+        current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
 
         // TODO: further investigate the need for this delay
         // sleep longer to prevent buffer error
