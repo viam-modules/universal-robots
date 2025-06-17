@@ -514,7 +514,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         segment_AB.normalize();
         segment_BC.normalize();
         const double dot = segment_BC.dot(segment_AB);
-        if (abs(dot + 1) < 1e-3) {
+        if (std::fabs(dot + 1.0) < 1e-3) {
             segments.push_back(i - 1);
         }
     }
