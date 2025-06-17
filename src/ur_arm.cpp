@@ -29,9 +29,9 @@ constexpr char kOutputRecipe[] = "/src/control/rtde_output_recipe.txt";
 constexpr char kInputRecipe[] = "/src/control/rtde_input_recipe.txt";
 
 // constants for robot operation
-constexpr float TIMESTEP = 0.2F;     // seconds
-constexpr int NOOP_DELAY = 2000;     // 2 millisecond/500 Hz
-constexpr int ESTOP_DELAY = 100000;  // 100 millisecond/10 Hz
+constexpr float kTimestep = 0.2F;     // seconds
+constexpr int kNoopDelay = 2000;     // 2 millisecond/500 Hz
+constexpr int kEStopDelay = 100000;  // 100 millisecond/10 Hz
 
 // do_command keys
 constexpr char VEL_KEY[] = "set_vel";
@@ -261,7 +261,7 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
             throw std::runtime_error("couldn't get joint positions; unable to establish communication with the arm");
         }
         retry_count--;
-        usleep(NOOP_DELAY);
+        usleep(kNoopDelay);
     }
 
     // start background thread to continuously send no-ops and keep socket connection alive
@@ -486,7 +486,7 @@ void URArm::keep_alive() {
                 VIAM_SDK_LOG(error) << "keep_alive failed Exception: " << std::string(ex.what());
             }
         }
-        usleep(NOOP_DELAY);
+        usleep(kNoopDelay);
     }
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
@@ -562,17 +562,17 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             Eigen::VectorXd velocity = trajectory.getVelocity(t);
             p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
             v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-            time.push_back(TIMESTEP);
-            t += TIMESTEP;
+            time.push_back(kTimestep);
+            t += kTimestep;
         }
 
         Eigen::VectorXd position = trajectory.getPosition(duration);
         Eigen::VectorXd velocity = trajectory.getVelocity(duration);
         p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-        const float t2 = duration - (t - TIMESTEP);
+        const float t2 = duration - (t - kTimestep);
         if (std::isinf(t2)) {
-            throw std::runtime_error("duration - (t - TIMESTEP) was infinite");
+            throw std::runtime_error("duration - (t - kTimestep) was infinite");
         }
         time.push_back(t2);
     }
@@ -740,7 +740,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
         // TODO: further investigate the need for this delay
         // sleep longer to prevent buffer error
         // Removing this will cause the RTDE client to move into an unrecoverable state
-        usleep(ESTOP_DELAY);
+        usleep(kEStopDelay);
 
     } else {
         // the arm is in a normal state.
