@@ -103,7 +103,7 @@ install(
 add_library(viam-ur)
 target_sources(viam-ur
   PRIVATE
-    src/ur5e_arm.cpp
+    src/ur_arm.cpp
 )
 target_link_libraries(viam-ur
   PUBLIC

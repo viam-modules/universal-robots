@@ -5,6 +5,7 @@
 
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
+#include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/reconfigurable.hpp>
 
 #include "../trajectories/Path.h"
@@ -22,10 +23,19 @@ std::string waypoints_filename(const std::string& path, unsigned long long unix_
 std::string trajectory_filename(const std::string& path, unsigned long long unix_time_ms);
 std::string arm_joint_positions_filename(const std::string& path, unsigned long long unix_time_ms);
 
-class UR5eArm final : public Arm, public Reconfigurable {
+class URArm final : public Arm, public Reconfigurable {
    public:
-    UR5eArm(const Dependencies& deps, const ResourceConfig& cfg);
-    ~UR5eArm() override;
+    /// @brief Returns the common ModelFamily for all implementations
+    static const ModelFamily& model_family();
+
+    /// @brief Returns a Model in the correct family for the given model name.
+    static Model model(std::string model_name);
+
+    /// @brief Returns a registration for each model of ARM supported by this class.
+    static std::vector<std::shared_ptr<ModelRegistration>> create_model_registrations();
+
+    URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg);
+    ~URArm() override;
 
     void reconfigure(const Dependencies& deps, const ResourceConfig& cfg) override;
 
@@ -97,7 +107,8 @@ class UR5eArm final : public Arm, public Reconfigurable {
 
     void trajectory_done_cb(control::TrajectoryResult);
 
-    UR5eArm::UrDriverStatus read_joint_keep_alive(bool log);
+    URArm::UrDriverStatus read_joint_keep_alive(bool log);
 
+    const Model model_;
     std::unique_ptr<state_> current_state_;
 };
