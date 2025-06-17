@@ -1,5 +1,3 @@
 .vscode/*
 logs
 build
-*.png
-config.json
