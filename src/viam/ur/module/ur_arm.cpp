@@ -880,7 +880,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
     }
 
     // read current joint positions from robot data
-    vector6d joints_position{};
+    vector6d_t joints_position{};
     if (!data_pkg->getData("actual_q", joints_position)) {
         if (log) {
             VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
@@ -889,7 +889,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
     }
 
     // read current joint velocities from robot data
-    vector6d joints_velocity{};
+    vector6d_t joints_velocity{};
     if (!data_pkg->getData("actual_qd", joints_velocity)) {
         if (log) {
             VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_qd\") returned false";
