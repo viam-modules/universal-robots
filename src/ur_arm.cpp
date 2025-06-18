@@ -1,13 +1,15 @@
 #include "ur_arm.hpp"
 
-#include <ur_client_library/ur/dashboard_client.h>
-#include <ur_client_library/ur/ur_driver.h>
-
-#include <boost/format.hpp>
-#include <boost/numeric/conversion/cast.hpp>
 #include <chrono>
 #include <cmath>
 #include <thread>
+
+#include <boost/format.hpp>
+#include <boost/numeric/conversion/cast.hpp>
+
+#include <ur_client_library/ur/dashboard_client.h>
+#include <ur_client_library/ur/ur_driver.h>
+
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/module/module.hpp>
 #include <viam/sdk/module/service.hpp>
