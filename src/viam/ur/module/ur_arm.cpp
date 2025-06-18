@@ -49,6 +49,24 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     return pose{position, orientation, theta};
 }
 
+void write_joint_data(vector6d_t jp, vector6d_t jv, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
+    of << unix_now_ms << "," << attempt << ",";
+    for (const double joint_pos : jp) {
+        of << joint_pos << ",";
+    }
+
+    unsigned i = 0;
+    for (const double joint_velocity : jv) {
+        i++;
+        if (i == jv.size()) {
+            of << joint_velocity;
+        } else {
+            of << joint_velocity << ",";
+        }
+    }
+    of << "\n";
+}
+
 // helper function to extract an attribute value from its key within a ResourceConfig
 template <class T>
 T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute) {
@@ -620,7 +638,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             if (status != UrDriverStatus::NORMAL) {
                 throw std::runtime_error("unable to get arm state before send_trajectory");
             }
-            write_joint_pos_rad(current_state_->joints_position, pre_trajectory_state, now, 0);
+            write_joint_data(current_state_->joints_position, current_state_->joints_velocity, pre_trajectory_state, now, 0);
         }
         if (!send_trajectory(p, v, time)) {
             throw std::runtime_error("send_trajectory failed");
@@ -628,7 +646,8 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
 
         std::ofstream of(arm_joint_positions_filename(path, unix_time_ms.count()));
 
-        of << "time_ms,read_attempt,joint_0_rad,joint_1_rad,joint_2_rad,joint_3_rad,joint_4_rad,joint_5_rad\n";
+        of << "time_ms,read_attempt,joint_0_rad,joint_1_rad,joint_2_rad,joint_3_rad,joint_4_rad,joint_5_rad,joint_0_v,joint_1_v,joint_2_v,"
+              "joint_3_v,joint_4_v,joint_5_v\n";
         of << pre_trajectory_state.str();
         unsigned attempt = 1;
         unsigned long long now = 0;
@@ -639,7 +658,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             if (status != UrDriverStatus::NORMAL) {
                 break;
             }
-            write_joint_pos_rad(current_state_->joints_position, of, now, attempt);
+            write_joint_data(current_state_->joints_position, current_state_->joints_velocity, of, now, attempt);
             attempt++;
         };
         if (current_state_->shutdown.load()) {
@@ -723,20 +742,6 @@ bool URArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vecto
 
     VIAM_SDK_LOG(info) << "URArm::send_trajectory end";
     return true;
-}
-
-void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
-    of << unix_now_ms << "," << attempt << ",";
-    unsigned i = 0;
-    for (const double joint_pos_rad : js) {
-        i++;
-        if (i == js.size()) {
-            of << joint_pos_rad;
-        } else {
-            of << joint_pos_rad << ",";
-        }
-    }
-    of << "\n";
 }
 
 // helper function to read a data packet and send a noop message
