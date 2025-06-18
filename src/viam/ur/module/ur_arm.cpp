@@ -624,7 +624,6 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
     {  // note the open brace which introduces a new variable scope
         // construct a lock_guard: locks the mutex on construction and unlocks on destruction
         const std::lock_guard<std::mutex> guard{current_state_->mu};
-        std::stringstream pre_trajectory_state;
         {
             UrDriverStatus status;
             unsigned long long now = 0;
@@ -638,18 +637,14 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             if (status != UrDriverStatus::NORMAL) {
                 throw std::runtime_error("unable to get arm state before send_trajectory");
             }
-            write_joint_data(current_state_->joints_position, current_state_->joints_velocity, pre_trajectory_state, now, 0);
         }
         if (!send_trajectory(p, v, time)) {
             throw std::runtime_error("send_trajectory failed");
         };
 
-        std::ofstream of(arm_joint_positions_filename(path, unix_time_ms.count()));
-
         of << "time_ms,read_attempt,joint_0_rad,joint_1_rad,joint_2_rad,joint_3_rad,joint_4_rad,joint_5_rad,joint_0_v,joint_1_v,joint_2_v,"
               "joint_3_v,joint_4_v,joint_5_v\n";
-        of << pre_trajectory_state.str();
-        unsigned attempt = 1;
+        unsigned attempt = 0;
         unsigned long long now = 0;
         UrDriverStatus status;
         while ((current_state_->trajectory_status.load() == TrajectoryStatus::k_running) && !current_state_->shutdown.load()) {
