@@ -778,6 +778,8 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
         current_state_->local_disconnect.store(true);
 
         // attempt to reconnect to the arm. Even if we reconnect, we will have to check that the tablet is not in local mode.
+        // we reconnect in the catch to attempt to limit the amount of times we connect to the arm to avoid a "no controller" error
+        // https://forum.universal-robots.com/t/no-controller-error-on-real-robot/3127
         current_state_->dashboard->disconnect();
         if (!current_state_->dashboard->connect()) {
             // we failed to reconnect to the tablet, so we might not even be able to talk to it.
