@@ -138,6 +138,7 @@ struct URArm::state_ {
     std::atomic<double> speed{0};
     std::atomic<double> acceleration{0};
     std::atomic<bool> estop{false};
+    std::atomic<bool> local_disconnect{false};
 
     std::mutex output_csv_dir_path_mu;
     // specified through VIAM_MODULE_DATA environment variable
@@ -300,6 +301,9 @@ void URArm::reconfigure(const Dependencies&, const ResourceConfig& cfg) {
 }
 
 std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
+    if (current_state_->local_disconnect.load()) {
+        throw std::runtime_error("arm is currently in local mode");
+    }
     const std::lock_guard<std::mutex> guard{current_state_->mu};
     if (read_joint_keep_alive(true) == UrDriverStatus::READ_FAILURE) {
         throw std::runtime_error("failed to read from arm");
@@ -345,6 +349,10 @@ std::string URArm::get_output_csv_dir_path() {
 }
 
 void URArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
+    if (current_state_->local_disconnect.load()) {
+        throw std::runtime_error("arm is currently in local mode");
+    }
+
     if (current_state_->estop.load()) {
         throw std::runtime_error("move_to_joint_positions cancelled -> emergency stop is currently active");
     }
@@ -364,6 +372,9 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
                                          const MoveOptions&,
                                          const viam::sdk::ProtoStruct&) {
+    if (current_state_->local_disconnect.load()) {
+        throw std::runtime_error("arm is currently in local mode");
+    }
     if (current_state_->estop.load()) {
         throw std::runtime_error("move_through_joint_positions cancelled -> emergency stop is currently active");
     }
@@ -386,6 +397,9 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {
+    if (current_state_->local_disconnect.load()) {
+        throw std::runtime_error("arm is currently in local mode");
+    }
     const std::lock_guard<std::mutex> guard{current_state_->mu};
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = current_state_->driver->getDataPackage();
     if (data_pkg == nullptr) {
@@ -723,14 +737,59 @@ void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long uni
 URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
     // check to see if an estop has occurred.
     std::string status;
-
     try {
+        if (current_state_->local_disconnect.load()) {
+            // sleep just so we don't spam
+            // this may be unnecessary
+            std::this_thread::sleep_for(k_estop_delay);
+
+            if (!current_state_->dashboard->commandIsInRemoteControl()) {
+                return UrDriverStatus::DASHBOARD_FAILURE;
+            }
+
+            // reconnect to the tablet. We have to do this, otherwise the client will assume that the arm is still in local mode.
+            // yes, even though the client can already recognize that we are in remote control mode
+            current_state_->dashboard->disconnect();
+            if (!current_state_->dashboard->connect()) {
+                return UrDriverStatus::DASHBOARD_FAILURE;
+            }
+
+            // reset the primary client so the driver is aware the arm is back in remote mode
+            // this has to happen, otherwise when an estop is triggered the arm will return error code C210A0
+            current_state_->driver->stopPrimaryClientCommunication();
+            current_state_->driver->startPrimaryClientCommunication();
+
+            // turn communication with the RTDE client back on so we can receive data from the arm
+            current_state_->driver->startRTDECommunication();
+
+            // reset the flag and return to the "happy" path
+            current_state_->local_disconnect.store(false);
+            VIAM_SDK_LOG(debug) << "recovered from local mode";
+
+            return UrDriverStatus::NORMAL;
+        }
         if (!current_state_->dashboard->commandSafetyStatus(status)) {
-            // we currently do not attempt to reconnect to the dashboard client. hopefully this error resolves itself.
+            // We should not end up in here, as commandSafetyStatus will probably throw before returning false
             VIAM_SDK_LOG(error) << "read_joint_keep_alive dashboard->commandSafetyStatus() returned false when retrieving the status";
             return UrDriverStatus::DASHBOARD_FAILURE;
         }
     } catch (const std::exception& ex) {
+        // if we end up here that means we can no longer talk to the arm. store the state so we can try to recover from this.
+        current_state_->local_disconnect.store(true);
+
+        // attempt to reconnect to the arm. Even if we reconnect, we will have to check that the tablet is not in local mode.
+        // we reconnect in the catch to attempt to limit the amount of times we connect to the arm to avoid a "no controller" error
+        // https://forum.universal-robots.com/t/no-controller-error-on-real-robot/3127
+        current_state_->dashboard->disconnect();
+        if (!current_state_->dashboard->connect()) {
+            // we failed to reconnect to the tablet, so we might not even be able to talk to it.
+            // return an error so we can attempt to reconnect again
+            return UrDriverStatus::DASHBOARD_FAILURE;
+        }
+
+        // reset the driver client so we stop trying to ask for more data
+        current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
+
         VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
         return UrDriverStatus::DASHBOARD_FAILURE;
     }
