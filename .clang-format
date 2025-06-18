@@ -13,5 +13,5 @@ MaxEmptyLinesToKeep: 1
 NamespaceIndentation: None
 SortIncludes: true
 SpaceBeforeAssignmentOperators: true
-Standard: Cpp11
+Standard: c++17
 UseTab: Never
