@@ -16,7 +16,7 @@
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/resource.hpp>
 
-#include "../trajectories/Trajectory.h"
+#include "third_party/trajectories/Trajectory.h"
 
 // this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
 extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);

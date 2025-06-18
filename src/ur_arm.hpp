@@ -8,7 +8,7 @@
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/reconfigurable.hpp>
 
-#include "../trajectories/Path.h"
+#include "third_party/trajectories/Path.h"
 
 using namespace viam::sdk;
 using namespace urcl;

@@ -88,8 +88,8 @@ add_library(trajectories)
 set_target_properties(trajectories PROPERTIES SYSTEM TRUE)
 target_sources(trajectories
   PRIVATE
-    trajectories/Trajectory.cpp
-    trajectories/Path.cpp
+    src/third_party/trajectories/Trajectory.cpp
+    src/third_party/trajectories/Path.cpp
 )
 target_link_libraries(trajectories
   PUBLIC
