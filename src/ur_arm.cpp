@@ -124,7 +124,11 @@ struct URArm::state_ {
     std::mutex mu;
     std::unique_ptr<UrDriver> driver;
     std::unique_ptr<DashboardClient> dashboard;
-    vector6d_t joint_state, tcp_state;
+
+    // data from received robot
+    vector6d_t joints_position;
+    vector6d_t joints_velocity;
+    vector6d_t tcp_state;
 
     std::atomic<bool> shutdown{false};
     std::atomic<TrajectoryStatus> trajectory_status{TrajectoryStatus::k_stopped};
@@ -309,7 +313,7 @@ std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
         throw std::runtime_error("failed to read from arm");
     };
     std::vector<double> to_ret;
-    for (const double joint_pos_rad : current_state_->joint_state) {
+    for (const double joint_pos_rad : current_state_->joints_position) {
         const double joint_pos_deg = 180.0 / M_PI * joint_pos_rad;
         to_ret.push_back(joint_pos_deg);
     }
@@ -614,7 +618,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             if (status != UrDriverStatus::NORMAL) {
                 throw std::runtime_error("unable to get arm state before send_trajectory");
             }
-            write_joint_pos_rad(current_state_->joint_state, pre_trajectory_state, now, 0);
+            write_joint_pos_rad(current_state_->joints_position, pre_trajectory_state, now, 0);
         }
         if (!send_trajectory(p, v, time)) {
             throw std::runtime_error("send_trajectory failed");
@@ -633,7 +637,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             if (status != UrDriverStatus::NORMAL) {
                 break;
             }
-            write_joint_pos_rad(current_state_->joint_state, of, now, attempt);
+            write_joint_pos_rad(current_state_->joints_position, of, now, attempt);
             attempt++;
         };
         if (current_state_->shutdown.load()) {
@@ -874,12 +878,26 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
     }
 
     // read current joint positions from robot data
-    if (!data_pkg->getData("actual_q", current_state_->joint_state)) {
+    vector6d joints_position{};
+    if (!data_pkg->getData("actual_q", joints_position)) {
         if (log) {
             VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
         }
         return UrDriverStatus::READ_FAILURE;
     }
+
+    // read current joint velocities from robot data
+    vector6d joints_velocity{};
+    if (!data_pkg->getData("actual_qd", joints_velocity)) {
+        if (log) {
+            VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_qd\") returned false";
+        }
+        return UrDriverStatus::READ_FAILURE;
+    }
+
+    // for consistency, update cached data only after all getData calls succeed
+    current_state_->joints_position = joints_position;
+    current_state_->joints_velocity = joints_velocity;
 
     // send a noop to keep the connection alive
     if (!current_state_->driver->writeTrajectoryControlMessage(
