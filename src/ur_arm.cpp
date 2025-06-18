@@ -30,8 +30,8 @@ constexpr char k_output_recipe[] = "/src/control/rtde_output_recipe.txt";
 constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
 
 // constants for robot operation
-constexpr auto k_noop_delay = std::chrono::milliseconds(2000);     // 2 millisecond/500 Hz
-constexpr auto k_estop_delay = std::chrono::milliseconds(100000);  // 100 millisecond/10 Hz
+  constexpr auto k_noop_delay = std::chrono::milliseconds(2);     // 2 millisecond, 500 Hz
+  constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
 
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = sqrt((vec[3] * vec[3]) + (vec[4] * vec[4]) + (vec[5] * vec[5]));
