@@ -3,7 +3,7 @@ default: build/universal-robots
 
 # format the source code
 format:
-	ls src/*.*pp main.cpp test.cpp | xargs clang-format-19 -i --style=file
+	ls src/viam/ur/module/*.*pp | xargs clang-format-19 -i --style=file
 
 build:
 	mkdir build
