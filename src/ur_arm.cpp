@@ -741,7 +741,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
         if (current_state_->local_disconnect.load()) {
             // sleep just so we don't spam
             // this may be unnecessary
-            usleep(ESTOP_DELAY);
+            std::this_thread::sleep_for(k_estop_delay);
 
             if (!current_state_->dashboard->commandIsInRemoteControl()) {
                 return UrDriverStatus::DASHBOARD_FAILURE;
@@ -786,7 +786,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
         }
 
         // reset the driver client so we stop trying to ask for more data
-        current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
+        current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
 
         VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
         return UrDriverStatus::DASHBOARD_FAILURE;
