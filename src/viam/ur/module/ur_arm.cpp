@@ -626,9 +626,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         const std::lock_guard<std::mutex> guard{current_state_->mu};
         {
             UrDriverStatus status;
-            unsigned long long now = 0;
             for (unsigned i = 0; i < 5; i++) {
-                now = unix_now_ms().count();
                 status = read_joint_keep_alive(true);
                 if (status == UrDriverStatus::NORMAL) {
                     break;
@@ -647,10 +645,9 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         of << "time_ms,read_attempt,joint_0_rad,joint_1_rad,joint_2_rad,joint_3_rad,joint_4_rad,joint_5_rad,joint_0_v,joint_1_v,joint_2_v,"
               "joint_3_v,joint_4_v,joint_5_v\n";
         unsigned attempt = 0;
-        unsigned long long now = 0;
         UrDriverStatus status;
         while ((current_state_->trajectory_status.load() == TrajectoryStatus::k_running) && !current_state_->shutdown.load()) {
-            now = unix_now_ms().count();
+            auto now = unix_now_ms().count();
             status = read_joint_keep_alive(true);
             if (status != UrDriverStatus::NORMAL) {
                 break;
