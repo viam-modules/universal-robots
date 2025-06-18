@@ -5,6 +5,7 @@
 
 #include <boost/format.hpp>
 #include <boost/numeric/conversion/cast.hpp>
+#include <chrono>
 #include <cmath>
 #include <thread>
 #include <viam/sdk/components/component.hpp>
@@ -25,24 +26,12 @@ extern "C" void free_quaternion_memory(void* q);
 namespace {
 
 // locations of files necessary to build module, specified as relative paths
-constexpr char SVA_FILE_TEMPLATE[] = "%1%/src/kinematics/%2%.json";
-constexpr char SCRIPT_FILE[] = "/src/control/external_control.urscript";
-constexpr char OUTPUT_RECIPE[] = "/src/control/rtde_output_recipe.txt";
-constexpr char INPUT_RECIPE[] = "/src/control/rtde_input_recipe.txt";
-
-// locations of log files that will be written
-constexpr char TRAJECTORY_CSV_NAME_TEMPLATE[] = "/%1%_trajectory.csv";
-constexpr char WAYPOINTS_CSV_NAME_TEMPLATE[] = "/%1%_waypoints.csv";
-constexpr char ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE[] = "/%1%_arm_joint_positions.csv";
+constexpr char k_output_recipe[] = "/src/control/rtde_output_recipe.txt";
+constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
 
 // constants for robot operation
-constexpr float TIMESTEP = 0.2F;     // seconds
-constexpr int NOOP_DELAY = 2000;     // 2 millisecond/500 Hz
-constexpr int ESTOP_DELAY = 100000;  // 100 millisecond/10 Hz
-
-// do_command keys
-constexpr char VEL_KEY[] = "set_vel";
-constexpr char ACC_KEY[] = "set_acc";
+constexpr auto k_noop_delay = std::chrono::milliseconds(2000);     // 2 millisecond/500 Hz
+constexpr auto k_estop_delay = std::chrono::milliseconds(100000);  // 100 millisecond/10 Hz
 
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = sqrt((vec[3] * vec[3]) + (vec[4] * vec[4]) + (vec[5] * vec[5]));
@@ -245,11 +234,13 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
         throw std::runtime_error("couldn't release the arm brakes");
     }
 
+    constexpr char k_script_file[] = "/src/control/external_control.urscript";
+
     // Now the robot is ready to receive a program
     const urcl::UrDriverConfiguration ur_cfg = {current_state_->host,
-                                                current_state_->appdir + SCRIPT_FILE,
-                                                current_state_->appdir + OUTPUT_RECIPE,
-                                                current_state_->appdir + INPUT_RECIPE,
+                                                current_state_->appdir + k_script_file,
+                                                current_state_->appdir + k_output_recipe,
+                                                current_state_->appdir + k_input_recipe,
                                                 &reportRobotProgramState,
                                                 true,  // headless mode
                                                 nullptr};
@@ -268,7 +259,7 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
             throw std::runtime_error("couldn't get joint positions; unable to establish communication with the arm");
         }
         retry_count--;
-        usleep(NOOP_DELAY);
+        std::this_thread::sleep_for(k_noop_delay);
     }
 
     // start background thread to continuously send no-ops and keep socket connection alive
@@ -327,17 +318,20 @@ std::chrono::milliseconds unix_now_ms() {
 }
 
 std::string waypoints_filename(const std::string& path, unsigned long long unix_time_ms) {
-    auto fmt = boost::format(path + WAYPOINTS_CSV_NAME_TEMPLATE);
+    constexpr char kWaypointsCsvNameTemplate[] = "/%1%_waypoints.csv";
+    auto fmt = boost::format(path + kWaypointsCsvNameTemplate);
     return (fmt % std::to_string(unix_time_ms)).str();
 }
 
 std::string trajectory_filename(const std::string& path, unsigned long long unix_time_ms) {
-    auto fmt = boost::format(path + TRAJECTORY_CSV_NAME_TEMPLATE);
+    constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_trajectory.csv";
+    auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
     return (fmt % std::to_string(unix_time_ms)).str();
 }
 
 std::string arm_joint_positions_filename(const std::string& path, unsigned long long unix_time_ms) {
-    auto fmt = boost::format(path + ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE);
+    constexpr char kArmJointPositionsCsvNameTemplate[] = "/%1%_arm_joint_positions.csv";
+    auto fmt = boost::format(path + kArmJointPositionsCsvNameTemplate);
     return (fmt % std::to_string(unix_time_ms)).str();
 }
 
@@ -420,7 +414,9 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         throw std::runtime_error(str(boost::format("no kinematics file known for model '%1'") % model_.to_string()));
     }();
 
-    const auto sva_file_path = str(boost::format(SVA_FILE_TEMPLATE) % current_state_->appdir % model_string);
+    constexpr char kSvaFileTemplate[] = "%1%/src/kinematics/%2%.json";
+
+    const auto sva_file_path = str(boost::format(kSvaFileTemplate) % current_state_->appdir % model_string);
 
     // Open the file in binary mode
     std::ifstream sva_file(sva_file_path, std::ios::binary);
@@ -458,16 +454,18 @@ void URArm::stop(const ProtoStruct&) {
 ProtoStruct URArm::do_command(const ProtoStruct& command) {
     ProtoStruct resp = ProtoStruct{};
 
+    constexpr char k_acc_key[] = "set_acc";
+    constexpr char k_vel_key[] = "set_vel";
     for (auto kv : command) {
-        if (kv.first == VEL_KEY) {
+        if (kv.first == k_vel_key) {
             const double val = *kv.second.get<double>();
             current_state_->speed.store(val * (M_PI / 180.0));
-            resp.emplace(VEL_KEY, val);
+            resp.emplace(k_vel_key, val);
         }
-        if (kv.first == ACC_KEY) {
+        if (kv.first == k_acc_key) {
             const double val = *kv.second.get<double>();
             current_state_->acceleration.store(val * (M_PI / 180.0));
-            resp.emplace(ACC_KEY, val);
+            resp.emplace(k_acc_key, val);
         }
     }
 
@@ -489,7 +487,7 @@ void URArm::keep_alive() {
                 VIAM_SDK_LOG(error) << "keep_alive failed Exception: " << std::string(ex.what());
             }
         }
-        usleep(NOOP_DELAY);
+        std::this_thread::sleep_for(k_noop_delay);
     }
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
@@ -560,22 +558,23 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             throw std::runtime_error("trajectory.getDuration() was infinite");
         }
         float t = 0.0;
+        constexpr float k_timestep = 0.2F;  // seconds
         while (t < duration) {
             Eigen::VectorXd position = trajectory.getPosition(t);
             Eigen::VectorXd velocity = trajectory.getVelocity(t);
             p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
             v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-            time.push_back(TIMESTEP);
-            t += TIMESTEP;
+            time.push_back(k_timestep);
+            t += k_timestep;
         }
 
         Eigen::VectorXd position = trajectory.getPosition(duration);
         Eigen::VectorXd velocity = trajectory.getVelocity(duration);
         p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-        const float t2 = duration - (t - TIMESTEP);
+        const float t2 = duration - (t - k_timestep);
         if (std::isinf(t2)) {
-            throw std::runtime_error("duration - (t - TIMESTEP) was infinite");
+            throw std::runtime_error("duration - (t - k_timestep) was infinite");
         }
         time.push_back(t2);
     }
@@ -746,7 +745,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
         // TODO: further investigate the need for this delay
         // sleep longer to prevent buffer error
         // Removing this will cause the RTDE client to move into an unrecoverable state
-        usleep(ESTOP_DELAY);
+        std::this_thread::sleep_for(k_estop_delay);
 
     } else {
         // the arm is in a normal state.
@@ -755,7 +754,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
             // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
             try {
                 VIAM_SDK_LOG(info) << "recovering from e-stop";
-                current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
+                current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
 
                 VIAM_SDK_LOG(info) << "restarting arm";
                 if (!current_state_->dashboard->commandPowerOff()) {
@@ -800,7 +799,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
             VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage() returned nullptr. resetting RTDE client connection";
         }
         try {
-            current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
+            current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
         } catch (const std::exception& ex) {
             if (log) {
                 VIAM_SDK_LOG(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
