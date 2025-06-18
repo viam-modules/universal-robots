@@ -5,4 +5,13 @@ BasedOnStyle: Google
 BinPackArguments: false
 BinPackParameters: false
 ColumnLimit: 140
+Cpp11BracedListStyle: true
+DerivePointerAlignment: false
+IncludeBlocks: Preserve
 IndentWidth: 4
+MaxEmptyLinesToKeep: 1
+NamespaceIndentation: None
+SortIncludes: true
+SpaceBeforeAssignmentOperators: true
+Standard: c++17
+UseTab: Never

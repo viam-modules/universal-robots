@@ -1,20 +1,22 @@
 #include "ur_arm.hpp"
 
-#include <ur_client_library/ur/dashboard_client.h>
-#include <ur_client_library/ur/ur_driver.h>
-
-#include <boost/format.hpp>
-#include <boost/numeric/conversion/cast.hpp>
 #include <chrono>
 #include <cmath>
 #include <thread>
+
+#include <boost/format.hpp>
+#include <boost/numeric/conversion/cast.hpp>
+
+#include <ur_client_library/ur/dashboard_client.h>
+#include <ur_client_library/ur/ur_driver.h>
+
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/module/module.hpp>
 #include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/resource.hpp>
 
-#include "../trajectories/Trajectory.h"
+#include "../../../third_party/trajectories/Trajectory.h"
 
 // this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
 extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);

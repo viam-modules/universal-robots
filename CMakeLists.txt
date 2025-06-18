@@ -88,8 +88,8 @@ add_library(trajectories)
 set_target_properties(trajectories PROPERTIES SYSTEM TRUE)
 target_sources(trajectories
   PRIVATE
-    trajectories/Trajectory.cpp
-    trajectories/Path.cpp
+    src/third_party/trajectories/Trajectory.cpp
+    src/third_party/trajectories/Path.cpp
 )
 target_link_libraries(trajectories
   PUBLIC
@@ -103,7 +103,7 @@ install(
 add_library(viam-ur)
 target_sources(viam-ur
   PRIVATE
-    src/ur_arm.cpp
+    src/viam/ur/module/ur_arm.cpp
 )
 target_link_libraries(viam-ur
   PUBLIC
@@ -142,7 +142,7 @@ endif()
 add_executable(universal-robots)
 target_sources(universal-robots
   PRIVATE
-    main.cpp
+    src/viam/ur/module/main.cpp
 )
 target_link_libraries(universal-robots
   PRIVATE
@@ -156,7 +156,7 @@ install(
 add_executable(universal-robots-test)
 target_sources(universal-robots-test
   PRIVATE
-    test.cpp
+    src/viam/ur/module/test.cpp
 )
 target_link_libraries(universal-robots-test
   PRIVATE
