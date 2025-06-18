@@ -103,7 +103,7 @@ install(
 add_library(viam-ur)
 target_sources(viam-ur
   PRIVATE
-    src/ur_arm.cpp
+    src/viam/ur/ur_arm.cpp
 )
 target_link_libraries(viam-ur
   PUBLIC
@@ -142,7 +142,7 @@ endif()
 add_executable(universal-robots)
 target_sources(universal-robots
   PRIVATE
-    main.cpp
+    src/viam/ur/main.cpp
 )
 target_link_libraries(universal-robots
   PRIVATE
@@ -156,7 +156,7 @@ install(
 add_executable(universal-robots-test)
 target_sources(universal-robots-test
   PRIVATE
-    test.cpp
+    src/viam/ur/test.cpp
 )
 target_link_libraries(universal-robots-test
   PRIVATE
