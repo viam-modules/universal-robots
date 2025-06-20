@@ -647,7 +647,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         unsigned attempt = 0;
         UrDriverStatus status;
         while ((current_state_->trajectory_status.load() == TrajectoryStatus::k_running) && !current_state_->shutdown.load()) {
-            auto now = unix_now_ms().count();
+            const auto now = unix_now_ms().count();
             status = read_joint_keep_alive(true);
             if (status != UrDriverStatus::NORMAL) {
                 break;
