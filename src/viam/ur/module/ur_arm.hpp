@@ -18,7 +18,6 @@ void write_trajectory_to_file(const std::string& filepath,
                               const std::vector<vector6d_t>& p_v,
                               const std::vector<float>& time);
 void write_waypoints_to_csv(const std::string& filepath, const std::vector<Eigen::VectorXd>& waypoints);
-void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt);
 std::string waypoints_filename(const std::string& path, unsigned long long unix_time_ms);
 std::string trajectory_filename(const std::string& path, unsigned long long unix_time_ms);
 std::string arm_joint_positions_filename(const std::string& path, unsigned long long unix_time_ms);
