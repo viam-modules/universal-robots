@@ -2,6 +2,7 @@
 
 This repo is a [module](https://docs.viam.com/registry/#modular-resources) that implements the [`rdk:component:arm` API](https://docs.viam.com/components/arm/) resource to allow control over [Universal Robots](https://www.universal-robots.com/) arms. Currently the following models are supported:
 
+- UR3e, as `viam:universal-robots:ur3e`
 - UR5e, as `viam:universal-robots:ur5e`
 - UR20, as `viam:universal-robots:ur20`
 

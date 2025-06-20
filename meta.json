@@ -7,6 +7,10 @@
   "models": [
     {
       "api": "rdk:component:arm",
+      "model": "viam:universal-robots:ur3e"
+    },
+    {
+      "api": "rdk:component:arm",
       "model": "viam:universal-robots:ur5e"
     },
     {
