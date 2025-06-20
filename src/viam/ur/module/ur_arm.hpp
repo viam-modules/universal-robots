@@ -96,7 +96,12 @@ class URArm final : public Arm, public Reconfigurable {
     struct state_;
 
     enum class UrDriverStatus : int8_t;  // Only available on 3.10/5.4
+
     static std::string status_to_string(UrDriverStatus status);
+
+    void startup_(const Dependencies& deps, const ResourceConfig& config);
+
+    void shutdown_() noexcept;
 
     void keep_alive();
 

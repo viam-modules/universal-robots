@@ -86,6 +86,24 @@ T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute)
 
 enum class TrajectoryStatus { k_running = 1, k_cancelled = 2, k_stopped = 3 };
 
+template <typename Callable>
+auto make_scope_guard(Callable&& cleanup) {
+    struct guard {
+       public:
+        explicit guard(Callable&& cleanup) : cleanup_(std::move(cleanup)) {}
+        void deactivate() {
+            cleanup_ = [] {};
+        }
+        ~guard() {
+            cleanup_();
+        }
+
+       private:
+        std::function<void()> cleanup_;
+    };
+    return guard{std::move(cleanup)};
+}
+
 }  // namespace
 
 void write_trajectory_to_file(const std::string& filepath,
@@ -207,7 +225,14 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
 }
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
-    VIAM_SDK_LOG(info) << "URArm constructor start (model: " << model_.to_string() << ")";
+    VIAM_SDK_LOG(info) << "URArm constructor called (model: " << model_.to_string() << ")";
+    startup_(deps, cfg);
+}
+
+void URArm::startup_(const Dependencies&, const ResourceConfig& cfg) {
+    if (current_state_) {
+        throw std::logic_error("URArm::startup_ was called for an already running instance");
+    }
 
     // check model type is valid, map to ur_client data type
     // https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/bff7bf2e2a85c17fa3f88adda241763040596ff1/include/ur_client_library/ur/datatypes.h#L204
@@ -225,8 +250,26 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
         }
     }();
 
+    VIAM_SDK_LOG(info) << "URArm starting up";
     current_state_ = std::make_unique<state_>();
-    this->reconfigure(deps, cfg);
+
+    // If we fail to make it through the startup sequence, execute the shutdown code. The
+    // shutdown code must be prepared to be called from any intermediate state that this
+    // function may have constructed due to partial execution.
+    auto failure_handler = make_scope_guard([&] {
+        VIAM_SDK_LOG(warn) << "URArm startup failed - shutting down";
+        shutdown_();
+    });
+
+    // extract relevant attributes from config
+    current_state_->host = find_config_attribute<std::string>(cfg, "host");
+    current_state_->speed.store(find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0));
+    current_state_->acceleration.store(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2") * (M_PI / 180.0));
+    try {
+        const std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
+        current_state_->output_csv_dir_path = find_config_attribute<std::string>(cfg, "csv_output_path");
+    } catch (...) {  // NOLINT: TODO: What should actually happen if the attribute is missing?
+    }
 
     // get the APPDIR environment variable
     auto* tmp = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
@@ -319,7 +362,9 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
     // start background thread to continuously send no-ops and keep socket connection alive
     VIAM_SDK_LOG(info) << "starting background_thread";
     current_state_->keep_alive_thread = std::thread(&URArm::keep_alive, this);
-    VIAM_SDK_LOG(info) << "URArm constructor end";
+
+    VIAM_SDK_LOG(info) << "URArm startup complete";
+    failure_handler.deactivate();
 }
 
 void URArm::trajectory_done_cb(const control::TrajectoryResult state) {
@@ -341,16 +386,12 @@ void URArm::trajectory_done_cb(const control::TrajectoryResult state) {
     VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
 }
 
-void URArm::reconfigure(const Dependencies&, const ResourceConfig& cfg) {
-    // extract relevant attributes from config
-    current_state_->host = find_config_attribute<std::string>(cfg, "host");
-    current_state_->speed.store(find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0));
-    current_state_->acceleration.store(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2") * (M_PI / 180.0));
-    try {
-        const std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
-        current_state_->output_csv_dir_path = find_config_attribute<std::string>(cfg, "csv_output_path");
-    } catch (...) {  // NOLINT: TODO: What should actually happen if the attribute is missing?
-    }
+void URArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
+    VIAM_SDK_LOG(warn) << "Reconfigure called: shutting down current state";
+    shutdown_();
+    VIAM_SDK_LOG(warn) << "Reconfigure: starting up with new state";
+    startup_(deps, cfg);
+    VIAM_SDK_LOG(info) << "Reconfigure completed OK";
 }
 
 std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
@@ -725,19 +766,43 @@ std::string URArm::status_to_string(UrDriverStatus status) {
 
 // Define the destructor
 URArm::~URArm() {
-    VIAM_SDK_LOG(warn) << "URArm destructor called";
-    current_state_->shutdown.store(true);
-    // stop the robot
-    VIAM_SDK_LOG(info) << "URArm destructor calling stop";
-    stop(ProtoStruct{});
-    // disconnect from the dashboard
-    if (current_state_->dashboard) {
-        VIAM_SDK_LOG(info) << "URArm destructor calling dashboard->disconnect()";
-        current_state_->dashboard->disconnect();
+    VIAM_SDK_LOG(warn) << "URArm destructor called, shutting down";
+    shutdown_();
+    VIAM_SDK_LOG(warn) << "URArm destroyed";
+}
+
+void URArm::shutdown_() noexcept {
+    try {
+        VIAM_SDK_LOG(warn) << "URArm shutdown called";
+        if (current_state_) {
+            const auto destroy_state = make_scope_guard([&] { current_state_.reset(); });
+
+            current_state_->shutdown.store(true);
+            // stop the robot
+            VIAM_SDK_LOG(info) << "URArm shutdown calling stop";
+            stop(ProtoStruct{});
+            // disconnect from the dashboard
+            if (current_state_->dashboard) {
+                VIAM_SDK_LOG(info) << "URArm shutdown calling dashboard->disconnect()";
+                current_state_->dashboard->disconnect();
+            }
+            if (current_state_->keep_alive_thread.joinable()) {
+                VIAM_SDK_LOG(info) << "URArm shutdown waiting for keep_alive thread to terminate";
+                current_state_->keep_alive_thread.join();
+                VIAM_SDK_LOG(info) << "keep_alive thread terminated";
+            }
+            VIAM_SDK_LOG(info) << "URArm shutdown complete";
+        }
+    } catch (...) {
+        const auto unconditional_abort = make_scope_guard([] { std::abort(); });
+        try {
+            throw;
+        } catch (const std::exception& ex) {
+            VIAM_SDK_LOG(error) << "URArm shutdown failed with a std::exception - module service will terminate: " << ex.what();
+        } catch (...) {
+            VIAM_SDK_LOG(error) << "URArm shutdown failed with an unknown exception - module service will terminate";
+        }
     }
-    VIAM_SDK_LOG(info) << "URArm destructor waiting for keep_alive thread to terminate";
-    current_state_->keep_alive_thread.join();
-    VIAM_SDK_LOG(info) << "keep_alive thread terminated";
 }
 
 // helper function to send time-indexed position, velocity, acceleration setpoints to the UR driver
