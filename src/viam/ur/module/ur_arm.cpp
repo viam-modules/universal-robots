@@ -49,7 +49,7 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     return pose{position, orientation, theta};
 }
 
-void write_joint_data(vector6d_t jp, vector6d_t jv, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
+void write_joint_data(const& vector6d_t jp, const& vector6d_t jv, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
     of << unix_now_ms << "," << attempt << ",";
     for (const double joint_pos : jp) {
         of << joint_pos << ",";
@@ -652,8 +652,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             if (status != UrDriverStatus::NORMAL) {
                 break;
             }
-            write_joint_data(current_state_->joints_position, current_state_->joints_velocity, of, now, attempt);
-            attempt++;
+            write_joint_data(current_state_->joints_position, current_state_->joints_velocity, of, now, attempt++);
         };
         if (current_state_->shutdown.load()) {
             of.close();
@@ -897,8 +896,8 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
     }
 
     // for consistency, update cached data only after all getData calls succeed
-    current_state_->joints_position = joints_position;
-    current_state_->joints_velocity = joints_velocity;
+    current_state_->joints_position = std::move(joints_position);
+    current_state_->joints_velocity = std::move(joints_velocity);
 
     // send a noop to keep the connection alive
     if (!current_state_->driver->writeTrajectoryControlMessage(
