@@ -179,6 +179,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
     };
 
     return {
+        registration_factory(URArm::model("ur3e")),
         registration_factory(URArm::model("ur5e")),
         registration_factory(URArm::model("ur20")),
     };
@@ -422,7 +423,9 @@ bool URArm::is_moving() {
 URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     // The `Model` class absurdly lacks accessors
     const std::string model_string = [&] {
-        if (model_ == model("ur5e")) {
+        if (model_ == model("ur3e")) {
+            return "ur3e";
+        } else if (model_ == model("ur5e")) {
             return "ur5e";
         } else if (model_ == model("ur20")) {
             return "ur20";
