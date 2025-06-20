@@ -49,7 +49,7 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     return pose{position, orientation, theta};
 }
 
-void write_joint_data(const& vector6d_t jp, const& vector6d_t jv, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
+void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
     of << unix_now_ms << "," << attempt << ",";
     for (const double joint_pos : jp) {
         of << joint_pos << ",";
