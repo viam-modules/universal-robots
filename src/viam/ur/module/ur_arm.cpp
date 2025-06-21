@@ -49,6 +49,17 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     return pose{position, orientation, theta};
 }
 
+// https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/bff7bf2e2a85c17fa3f88adda241763040596ff1/include/ur_client_library/ur/datatypes.h#L204
+std::string to_robot_type_string(const std::string& model) {
+    if (model == "viam:universal-robots:ur5e") {
+        return "UR5";
+    }
+    if (model == "viam:universal-robots:ur20e") {
+        return "UR20";
+    }
+    return "UNRECOGNIZED_ROBOT_TYPE:" + model;
+}
+
 // helper function to extract an attribute value from its key within a ResourceConfig
 template <class T>
 T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute) {
@@ -213,6 +224,20 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
     current_state_->dashboard.reset(new DashboardClient(current_state_->host));
     if (!current_state_->dashboard->connect()) {
         throw std::runtime_error("couldn't connect to dashboard");
+    }
+
+    // verify that the connected arm is the same model as the configured module
+    {
+        std::string conn_model_type{};
+        if (!current_state_->dashboard->commandGetRobotModel(conn_model_type)) {
+            throw std::runtime_error("failed to get model info of connected arm");
+        }
+
+        std::string cfg_model_type = to_robot_type_string(model_.to_string());
+        if (cfg_model_type != conn_model_type) {
+            const auto err = "configured model type `" + cfg_model_type + "` does not match connected arm `" + conn_model_type + "`";
+            throw std::runtime_error(err);
+        }
     }
 
     // stop program, if there is one running
