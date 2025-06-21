@@ -101,9 +101,9 @@ class URArm final : public Arm, public Reconfigurable {
 
     void keep_alive();
 
-    void move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
-
     std::string model_type();
+
+    void move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
 
     bool send_trajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time);
 

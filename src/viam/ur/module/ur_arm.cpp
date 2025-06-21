@@ -166,18 +166,6 @@ Model URArm::model(std::string model_name) {
     return {model_family(), std::move(model_name)};
 }
 
-// https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/bff7bf2e2a85c17fa3f88adda241763040596ff1/include/ur_client_library/ur/datatypes.h#L204
-std::string URArm::model_type() {
-    std::string model = model_.to_string();
-    if (model == "viam:universal-robots:ur5e") {
-        return "UR5";
-    }
-    if (model == "viam:universal-robots:ur20e") {
-        return "UR20";
-    }
-    return "UNRECOGNIZED_MODEL_TYPE:" + model;
-}
-
 std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registrations() {
     using namespace std::placeholders;
 
@@ -532,6 +520,18 @@ void URArm::keep_alive() {
         std::this_thread::sleep_for(k_noop_delay);
     }
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
+}
+
+// https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/bff7bf2e2a85c17fa3f88adda241763040596ff1/include/ur_client_library/ur/datatypes.h#L204
+std::string URArm::model_type() {
+    std::string model = model_.to_string();
+    if (model == "viam:universal-robots:ur5e") {
+        return "UR5";
+    }
+    if (model == "viam:universal-robots:ur20e") {
+        return "UR20";
+    }
+    return "UNRECOGNIZED_MODEL_TYPE:" + model;
 }
 
 void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
