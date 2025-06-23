@@ -725,6 +725,7 @@ std::string URArm::status_to_string(UrDriverStatus status) {
 }
 
 // Define the destructor
+// NOLINT(bugprone-exception-escape) 'may throw' warning
 URArm::~URArm() {
     VIAM_SDK_LOG(warn) << "URArm destructor called";
     current_state_->shutdown.store(true);
