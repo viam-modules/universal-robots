@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <stdexcept>
 #include <thread>
 
 #include <boost/format.hpp>
@@ -101,7 +102,7 @@ auto make_scope_guard(Callable&& cleanup) {
        private:
         std::function<void()> cleanup_;
     };
-    return guard{std::move(cleanup)};
+    return guard{std::forward<Callable>(cleanup)};
 }
 
 }  // namespace
@@ -344,14 +345,14 @@ void URArm::startup_(const Dependencies&, const ResourceConfig& cfg) {
     current_state_->driver.reset(new UrDriver(ur_cfg));
 
     // define callback function to be called by UR client library when trajectory state changes
-    current_state_->driver->registerTrajectoryDoneCallback(std::bind(&URArm::trajectory_done_cb, this, std::placeholders::_1));
+    current_state_->driver->registerTrajectoryDoneCallback(std::bind(&URArm::trajectory_done_cb_, this, std::placeholders::_1));
 
     // Once RTDE communication is started, we have to make sure to read from the interface buffer,
     // as otherwise we will get pipeline overflows. Therefore, do this directly before starting your
     // main loop
     current_state_->driver->startRTDECommunication();
     int retry_count = 100;
-    while (read_joint_keep_alive(false) != UrDriverStatus::NORMAL) {
+    while (read_joint_keep_alive_(false) != UrDriverStatus::NORMAL) {
         if (retry_count <= 0) {
             throw std::runtime_error("couldn't get joint positions; unable to establish communication with the arm");
         }
@@ -361,13 +362,21 @@ void URArm::startup_(const Dependencies&, const ResourceConfig& cfg) {
 
     // start background thread to continuously send no-ops and keep socket connection alive
     VIAM_SDK_LOG(info) << "starting background_thread";
-    current_state_->keep_alive_thread = std::thread(&URArm::keep_alive, this);
+    current_state_->keep_alive_thread = std::thread(&URArm::keep_alive_, this);
 
     VIAM_SDK_LOG(info) << "URArm startup complete";
     failure_handler.deactivate();
 }
 
-void URArm::trajectory_done_cb(const control::TrajectoryResult state) {
+void URArm::check_configured_() {
+    if (!current_state_) {
+        std::ostringstream buffer;
+        buffer << "Arm is not currently configured; reconfiguration likely failed";
+        throw std::runtime_error(buffer.str());
+    }
+}
+
+void URArm::trajectory_done_cb_(const control::TrajectoryResult state) {
     std::string report;
     switch (state) {
         case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
@@ -395,11 +404,12 @@ void URArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
 }
 
 std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
+    check_configured_();
     if (current_state_->local_disconnect.load()) {
         throw std::runtime_error("arm is currently in local mode");
     }
     const std::lock_guard<std::mutex> guard{current_state_->mu};
-    if (read_joint_keep_alive(true) == UrDriverStatus::READ_FAILURE) {
+    if (read_joint_keep_alive_(true) == UrDriverStatus::READ_FAILURE) {
         throw std::runtime_error("failed to read from arm");
     };
     std::vector<double> to_ret;
@@ -443,6 +453,8 @@ std::string URArm::get_output_csv_dir_path() {
 }
 
 void URArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
+    check_configured_();
+
     if (current_state_->local_disconnect.load()) {
         throw std::runtime_error("arm is currently in local mode");
     }
@@ -460,12 +472,14 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     write_waypoints_to_csv(filename, waypoints);
 
     // move will throw if an error occurs
-    move(waypoints, unix_time_ms);
+    move_(waypoints, unix_time_ms);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
                                          const MoveOptions&,
                                          const viam::sdk::ProtoStruct&) {
+    check_configured_();
+
     if (current_state_->local_disconnect.load()) {
         throw std::runtime_error("arm is currently in local mode");
     }
@@ -486,11 +500,13 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         write_waypoints_to_csv(filename, waypoints);
 
         // move will throw if an error occurs
-        move(waypoints, unix_time_ms);
+        move_(waypoints, unix_time_ms);
     }
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {
+    check_configured_();
+
     if (current_state_->local_disconnect.load()) {
         throw std::runtime_error("arm is currently in local mode");
     }
@@ -508,10 +524,13 @@ pose URArm::get_end_position(const ProtoStruct&) {
 }
 
 bool URArm::is_moving() {
+    check_configured_();
     return current_state_->trajectory_status.load() == TrajectoryStatus::k_running;
 }
 
 URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
+    check_configured_();
+
     // The `Model` class absurdly lacks accessors
     const std::string model_string = [&] {
         if (model_ == model("ur5e")) {
@@ -549,6 +568,8 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
 }
 
 void URArm::stop(const ProtoStruct&) {
+    check_configured_();
+
     if (current_state_->trajectory_status.load() == TrajectoryStatus::k_running) {
         const bool ok = current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
@@ -560,6 +581,8 @@ void URArm::stop(const ProtoStruct&) {
 }
 
 ProtoStruct URArm::do_command(const ProtoStruct& command) {
+    check_configured_();
+
     ProtoStruct resp = ProtoStruct{};
 
     constexpr char k_acc_key[] = "set_acc";
@@ -581,7 +604,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 }
 
 // Send no-ops and keep socket connection alive
-void URArm::keep_alive() {
+void URArm::keep_alive_() {
     VIAM_SDK_LOG(info) << "keep_alive thread started";
     while (true) {
         if (current_state_->shutdown.load()) {
@@ -590,7 +613,7 @@ void URArm::keep_alive() {
         {
             const std::lock_guard<std::mutex> guard{current_state_->mu};
             try {
-                read_joint_keep_alive(true);
+                read_joint_keep_alive_(true);
             } catch (const std::exception& ex) {
                 VIAM_SDK_LOG(error) << "keep_alive failed Exception: " << std::string(ex.what());
             }
@@ -600,7 +623,7 @@ void URArm::keep_alive() {
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
 
-void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
+void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
     VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size();
 
     // get current joint position and add that as starting pose to waypoints
@@ -697,7 +720,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         {
             UrDriverStatus status;
             for (unsigned i = 0; i < 5; i++) {
-                status = read_joint_keep_alive(true);
+                status = read_joint_keep_alive_(true);
                 if (status == UrDriverStatus::NORMAL) {
                     break;
                 }
@@ -706,7 +729,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
                 throw std::runtime_error("unable to get arm state before send_trajectory");
             }
         }
-        if (!send_trajectory(p, v, time)) {
+        if (!send_trajectory_(p, v, time)) {
             throw std::runtime_error("send_trajectory failed");
         };
 
@@ -719,7 +742,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         UrDriverStatus status;
         while ((current_state_->trajectory_status.load() == TrajectoryStatus::k_running) && !current_state_->shutdown.load()) {
             const auto now = unix_now_ms().count();
-            status = read_joint_keep_alive(true);
+            status = read_joint_keep_alive_(true);
             if (status != UrDriverStatus::NORMAL) {
                 break;
             }
@@ -750,7 +773,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
     }
 }
 
-std::string URArm::status_to_string(UrDriverStatus status) {
+std::string URArm::status_to_string_(UrDriverStatus status) {
     switch (status) {
         case UrDriverStatus::ESTOPPED:
             return "ESTOPPED";
@@ -806,7 +829,7 @@ void URArm::shutdown_() noexcept {
 }
 
 // helper function to send time-indexed position, velocity, acceleration setpoints to the UR driver
-bool URArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time) {
+bool URArm::send_trajectory_(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time) {
     VIAM_SDK_LOG(info) << "URArm::send_trajectory start";
     if (p_p.size() != time.size() || p_v.size() != time.size()) {
         VIAM_SDK_LOG(error) << "URArm::send_trajectory p_p.size() != time.size() || p_v.size() != time.size(): not executing";
@@ -833,7 +856,7 @@ bool URArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vecto
 }
 
 // helper function to read a data packet and send a noop message
-URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
+URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
     // check to see if an estop has occurred.
     std::string status;
     try {
