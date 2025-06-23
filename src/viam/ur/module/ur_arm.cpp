@@ -199,7 +199,7 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
             return "UR20";
         } else {
             std::ostringstream buffer;
-            buffer << "invalid model type: `" << cmodel << "`";
+            buffer << "unsupported model type: `" << cmodel << "`";
             throw std::invalid_argument(buffer.str());
         }
     }();
