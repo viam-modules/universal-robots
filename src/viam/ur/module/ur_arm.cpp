@@ -49,8 +49,9 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     return pose{position, orientation, theta};
 }
 
-void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
-    of << unix_now_ms << "," << attempt << ",";
+void write_joint_data(
+    const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::chrono::milliseconds unix_time_ms, unsigned attempt) {
+    of << unix_time_ms.count() << "," << attempt << ",";
     for (const double joint_pos : jp) {
         of << joint_pos << ",";
     }
@@ -369,27 +370,22 @@ std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
     return to_ret;
 }
 
-std::chrono::milliseconds unix_now_ms() {
-    namespace chrono = std::chrono;
-    return chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
-}
-
-std::string waypoints_filename(const std::string& path, unsigned long long unix_time_ms) {
+std::string waypoints_filename(const std::string& path, const std::chrono::milliseconds unix_time_ms) {
     constexpr char kWaypointsCsvNameTemplate[] = "/%1%_waypoints.csv";
     auto fmt = boost::format(path + kWaypointsCsvNameTemplate);
-    return (fmt % std::to_string(unix_time_ms)).str();
+    return (fmt % std::to_string(unix_time_ms.count())).str();
 }
 
-std::string trajectory_filename(const std::string& path, unsigned long long unix_time_ms) {
+std::string trajectory_filename(const std::string& path, const std::chrono::milliseconds unix_time_ms) {
     constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_trajectory.csv";
     auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
-    return (fmt % std::to_string(unix_time_ms)).str();
+    return (fmt % std::to_string(unix_time_ms.count())).str();
 }
 
-std::string arm_joint_positions_filename(const std::string& path, unsigned long long unix_time_ms) {
+std::string arm_joint_positions_filename(const std::string& path, const std::chrono::milliseconds unix_time_ms) {
     constexpr char kArmJointPositionsCsvNameTemplate[] = "/%1%_arm_joint_positions.csv";
     auto fmt = boost::format(path + kArmJointPositionsCsvNameTemplate);
-    return (fmt % std::to_string(unix_time_ms)).str();
+    return (fmt % std::to_string(unix_time_ms.count())).str();
 }
 
 std::string URArm::get_output_csv_dir_path() {
@@ -414,8 +410,9 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     const Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size()));
     const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
     waypoints.push_back(next_waypoint_rad);
-    const std::chrono::milliseconds unix_time_ms = unix_now_ms();
-    auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms.count());
+    const auto unix_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+
+    auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms);
     write_waypoints_to_csv(filename, waypoints);
 
     // move will throw if an error occurs
@@ -440,8 +437,11 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
             const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
             waypoints.push_back(next_waypoint_rad);
         }
-        const std::chrono::milliseconds unix_time_ms = unix_now_ms();
-        auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms.count());
+
+        const auto unix_time_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+
+        auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms);
         write_waypoints_to_csv(filename, waypoints);
 
         // move will throw if an error occurs
@@ -649,7 +649,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
                        << " time " << time.size();
 
     const std::string path = get_output_csv_dir_path();
-    write_trajectory_to_file(trajectory_filename(path, unix_time_ms.count()), p, v, time);
+    write_trajectory_to_file(trajectory_filename(path, unix_time_ms), p, v, time);
     {  // note the open brace which introduces a new variable scope
         // construct a lock_guard: locks the mutex on construction and unlocks on destruction
         const std::lock_guard<std::mutex> guard{current_state_->mu};
@@ -669,7 +669,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             throw std::runtime_error("send_trajectory failed");
         };
 
-        std::ofstream of(arm_joint_positions_filename(path, unix_time_ms.count()));
+        std::ofstream of(arm_joint_positions_filename(path, unix_time_ms));
 
         of << "time_ms,read_attempt,"
               "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
@@ -677,12 +677,13 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         unsigned attempt = 0;
         UrDriverStatus status;
         while ((current_state_->trajectory_status.load() == TrajectoryStatus::k_running) && !current_state_->shutdown.load()) {
-            const auto now = unix_now_ms().count();
+            const auto unix_time_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
             status = read_joint_keep_alive(true);
             if (status != UrDriverStatus::NORMAL) {
                 break;
             }
-            write_joint_data(current_state_->joints_position, current_state_->joints_velocity, of, now, attempt++);
+            write_joint_data(current_state_->joints_position, current_state_->joints_velocity, of, unix_time_ms, attempt++);
         };
         if (current_state_->shutdown.load()) {
             of.close();
