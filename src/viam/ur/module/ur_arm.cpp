@@ -493,11 +493,11 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
 
     // Determine the file size
     sva_file.seekg(0, std::ios::end);
-    const std::streamsize fileSize = sva_file.tellg();
+    const auto fileSize = sva_file.tellg();
     sva_file.seekg(0, std::ios::beg);
 
-    // Create a buffer to hold the file contents
-    std::vector<unsigned char> kinematics_bytes(fileSize);
+    // Create a buffer to hold the file contents, int long fits in unsigned long
+    std::vector<unsigned char> kinematics_bytes((unsigned long)fileSize);
 
     // Read the file contents into the buffer
     if (!sva_file.read(reinterpret_cast<char*>(kinematics_bytes.data()), fileSize)) {
