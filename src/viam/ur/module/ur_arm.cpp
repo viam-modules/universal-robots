@@ -620,7 +620,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             throw std::runtime_error(buffer.str());
         }
 
-        const double duration = static_cast<double>(trajectory.getDuration());
+        const double duration = trajectory.getDuration();
         if (std::isinf(duration)) {
             throw std::runtime_error("trajectory.getDuration() was infinite");
         }
