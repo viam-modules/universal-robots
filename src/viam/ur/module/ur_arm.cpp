@@ -91,7 +91,7 @@ T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute)
     return *val;
 }
 
-enum class TrajectoryStatus { k_running = 1, k_cancelled = 2, k_stopped = 3 };
+enum class TrajectoryStatus : std::uint8_t { k_running = 1, k_cancelled = 2, k_stopped = 3 };
 
 }  // namespace
 
