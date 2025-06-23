@@ -11,6 +11,10 @@ build:
 test: build/universal-robots
 	./build/universal-robots-test
 
+tidy: build/universal-robots
+	clang-check-19 -p build ./src/viam/ur/module/*.[h,c]pp
+	clang-tidy-19 --config-file ./.clang-tidy -p build ./src/viam/ur/module/*.[h,c]pp
+
 build/universal-robots: build
 	cmake -S . -B build -G Ninja
 	cmake --build build --target all -- -j4
