@@ -190,16 +190,16 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
     // check model type is valid, map to ur_client data type
     // https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/bff7bf2e2a85c17fa3f88adda241763040596ff1/include/ur_client_library/ur/datatypes.h#L204
     const std::string configured_model_type = [&] {
-        const std::string cmodel = model_.to_string();
-        if (cmodel == "viam:universal-robots:ur3e") {
+        const std::string cfg_model = model_.to_string();
+        if (cfg_model == "viam:universal-robots:ur3e") {
             return "UR3";
-        } else if (cmodel == "viam:universal-robots:ur5e") {
+        } else if (cfg_model == "viam:universal-robots:ur5e") {
             return "UR5";
-        } else if (cmodel == "viam:universal-robots:ur20e") {
+        } else if (cfg_model == "viam:universal-robots:ur20e") {
             return "UR20";
         } else {
             std::ostringstream buffer;
-            buffer << "unsupported model type: `" << cmodel << "`";
+            buffer << "unsupported model type: `" << cfg_model << "`";
             throw std::invalid_argument(buffer.str());
         }
     }();
