@@ -216,17 +216,16 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
     }
 
     // verify that the connected arm is the same model as the configured module
-    {
-        std::string conn_model_type{};
-        if (!current_state_->dashboard->commandGetRobotModel(conn_model_type)) {
-            throw std::runtime_error("failed to get model info of connected arm");
-        }
+    std::string connected_model_type{};
+    if (!current_state_->dashboard->commandGetRobotModel(connected_model_type)) {
+        throw std::runtime_error("failed to get model info of connected arm");
+    }
 
-        std::string cfg_model_type = model_type();
-        if (cfg_model_type != conn_model_type) {
-            const auto err = "configured model type `" + cfg_model_type + "` does not match connected arm `" + conn_model_type + "`";
-            throw std::runtime_error(err);
-        }
+    std::string configured_model_type = model_type();
+    if (configured_model_type != connected_model_type) {
+        std::ostringstream buffer;
+        buffer << "configured model type `" + configured_model_type + "` does not match connected arm `" + connected_model_type + "`";
+        throw std::runtime_error(buffer.str());
     }
 
     // stop program, if there is one running
