@@ -620,18 +620,18 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             throw std::runtime_error(buffer.str());
         }
 
-        const float duration = static_cast<float>(trajectory.getDuration());
+        const double duration = static_cast<double>(trajectory.getDuration());
         if (std::isinf(duration)) {
             throw std::runtime_error("trajectory.getDuration() was infinite");
         }
-        float t = 0.0;
-        constexpr float k_timestep = 0.2F;  // seconds
+        double t = 0.0;
+        constexpr double k_timestep = 0.2;  // seconds
         while (t < duration) {
             Eigen::VectorXd position = trajectory.getPosition(t);
             Eigen::VectorXd velocity = trajectory.getVelocity(t);
             p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
             v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-            time.push_back(k_timestep);
+            time.push_back((float)k_timestep);
             t += k_timestep;
         }
 
@@ -639,11 +639,11 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         Eigen::VectorXd velocity = trajectory.getVelocity(duration);
         p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-        const float t2 = duration - (t - k_timestep);
+        const double t2 = duration - (t - k_timestep);
         if (std::isinf(t2)) {
             throw std::runtime_error("duration - (t - k_timestep) was infinite");
         }
-        time.push_back(t2);
+        time.push_back((float)t2);
     }
     VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
                        << " time " << time.size();
