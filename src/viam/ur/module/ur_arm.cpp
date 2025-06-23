@@ -642,8 +642,9 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
 
         std::ofstream of(arm_joint_positions_filename(path, unix_time_ms.count()));
 
-        of << "time_ms,read_attempt,joint_0_rad,joint_1_rad,joint_2_rad,joint_3_rad,joint_4_rad,joint_5_rad,joint_0_v,joint_1_v,joint_2_v,"
-              "joint_3_v,joint_4_v,joint_5_v\n";
+        of << "time_ms,read_attempt,"
+              "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
+              "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
         unsigned attempt = 0;
         UrDriverStatus status;
         while ((current_state_->trajectory_status.load() == TrajectoryStatus::k_running) && !current_state_->shutdown.load()) {
