@@ -49,6 +49,24 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     return pose{position, orientation, theta};
 }
 
+void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
+    of << unix_now_ms << "," << attempt << ",";
+    for (const double joint_pos : jp) {
+        of << joint_pos << ",";
+    }
+
+    unsigned i = 0;
+    for (const double joint_velocity : jv) {
+        i++;
+        if (i == jv.size()) {
+            of << joint_velocity;
+        } else {
+            of << joint_velocity << ",";
+        }
+    }
+    of << "\n";
+}
+
 // helper function to extract an attribute value from its key within a ResourceConfig
 template <class T>
 T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute) {
@@ -126,7 +144,11 @@ struct URArm::state_ {
     std::mutex mu;
     std::unique_ptr<UrDriver> driver;
     std::unique_ptr<DashboardClient> dashboard;
-    vector6d_t joint_state, tcp_state;
+
+    // data from received robot
+    vector6d_t joints_position;
+    vector6d_t joints_velocity;
+    vector6d_t tcp_state;
 
     std::atomic<bool> shutdown{false};
     std::atomic<TrajectoryStatus> trajectory_status{TrajectoryStatus::k_stopped};
@@ -311,7 +333,7 @@ std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
         throw std::runtime_error("failed to read from arm");
     };
     std::vector<double> to_ret;
-    for (const double joint_pos_rad : current_state_->joint_state) {
+    for (const double joint_pos_rad : current_state_->joints_position) {
         const double joint_pos_deg = 180.0 / M_PI * joint_pos_rad;
         to_ret.push_back(joint_pos_deg);
     }
@@ -602,12 +624,9 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
     {  // note the open brace which introduces a new variable scope
         // construct a lock_guard: locks the mutex on construction and unlocks on destruction
         const std::lock_guard<std::mutex> guard{current_state_->mu};
-        std::stringstream pre_trajectory_state;
         {
             UrDriverStatus status;
-            unsigned long long now = 0;
             for (unsigned i = 0; i < 5; i++) {
-                now = unix_now_ms().count();
                 status = read_joint_keep_alive(true);
                 if (status == UrDriverStatus::NORMAL) {
                     break;
@@ -616,7 +635,6 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             if (status != UrDriverStatus::NORMAL) {
                 throw std::runtime_error("unable to get arm state before send_trajectory");
             }
-            write_joint_pos_rad(current_state_->joint_state, pre_trajectory_state, now, 0);
         }
         if (!send_trajectory(p, v, time)) {
             throw std::runtime_error("send_trajectory failed");
@@ -624,19 +642,18 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
 
         std::ofstream of(arm_joint_positions_filename(path, unix_time_ms.count()));
 
-        of << "time_ms,read_attempt,joint_0_rad,joint_1_rad,joint_2_rad,joint_3_rad,joint_4_rad,joint_5_rad\n";
-        of << pre_trajectory_state.str();
-        unsigned attempt = 1;
-        unsigned long long now = 0;
+        of << "time_ms,read_attempt,"
+              "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
+              "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
+        unsigned attempt = 0;
         UrDriverStatus status;
         while ((current_state_->trajectory_status.load() == TrajectoryStatus::k_running) && !current_state_->shutdown.load()) {
-            now = unix_now_ms().count();
+            const auto now = unix_now_ms().count();
             status = read_joint_keep_alive(true);
             if (status != UrDriverStatus::NORMAL) {
                 break;
             }
-            write_joint_pos_rad(current_state_->joint_state, of, now, attempt);
-            attempt++;
+            write_joint_data(current_state_->joints_position, current_state_->joints_velocity, of, now, attempt++);
         };
         if (current_state_->shutdown.load()) {
             of.close();
@@ -719,20 +736,6 @@ bool URArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vecto
 
     VIAM_SDK_LOG(info) << "URArm::send_trajectory end";
     return true;
-}
-
-void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
-    of << unix_now_ms << "," << attempt << ",";
-    unsigned i = 0;
-    for (const double joint_pos_rad : js) {
-        i++;
-        if (i == js.size()) {
-            of << joint_pos_rad;
-        } else {
-            of << joint_pos_rad << ",";
-        }
-    }
-    of << "\n";
 }
 
 // helper function to read a data packet and send a noop message
@@ -876,12 +879,26 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
     }
 
     // read current joint positions from robot data
-    if (!data_pkg->getData("actual_q", current_state_->joint_state)) {
+    vector6d_t joints_position{};
+    if (!data_pkg->getData("actual_q", joints_position)) {
         if (log) {
             VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
         }
         return UrDriverStatus::READ_FAILURE;
     }
+
+    // read current joint velocities from robot data
+    vector6d_t joints_velocity{};
+    if (!data_pkg->getData("actual_qd", joints_velocity)) {
+        if (log) {
+            VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_qd\") returned false";
+        }
+        return UrDriverStatus::READ_FAILURE;
+    }
+
+    // for consistency, update cached data only after all getData calls succeed
+    current_state_->joints_position = std::move(joints_position);
+    current_state_->joints_velocity = std::move(joints_velocity);
 
     // send a noop to keep the connection alive
     if (!current_state_->driver->writeTrajectoryControlMessage(
