@@ -35,6 +35,12 @@ constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
 constexpr auto k_noop_delay = std::chrono::milliseconds(2);     // 2 millisecond, 500 Hz
 constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
 
+// define callback function to be called by UR client library when program state changes
+static void reportRobotProgramState(bool program_running) {
+    // Print the text in green so we see it better
+    VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
+}
+
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = sqrt((vec[3] * vec[3]) + (vec[4] * vec[4]) + (vec[5] * vec[5]));
     void* q = quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm);
@@ -132,12 +138,6 @@ void write_waypoints_to_csv(const std::string& filepath, const std::vector<Eigen
         of << "\n";
     }
     of.close();
-}
-
-// define callback function to be called by UR client library when program state changes
-void reportRobotProgramState(bool program_running) {
-    // Print the text in green so we see it better
-    VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
 }
 
 // private variables to maintain connection and state
