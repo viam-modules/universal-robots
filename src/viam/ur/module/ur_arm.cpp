@@ -36,7 +36,7 @@ constexpr auto k_noop_delay = std::chrono::milliseconds(2);     // 2 millisecond
 constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
 
 // define callback function to be called by UR client library when program state changes
-static void reportRobotProgramState(bool program_running) {
+void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
     VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
 }
