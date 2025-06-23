@@ -493,7 +493,7 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
 
     // Determine the file size
     sva_file.seekg(0, std::ios::end);
-    const auto fileSize = sva_file.tellg();
+    const std::streamsize fileSize = sva_file.tellg();
     sva_file.seekg(0, std::ios::beg);
 
     // Create a buffer to hold the file contents, int long fits in unsigned long
