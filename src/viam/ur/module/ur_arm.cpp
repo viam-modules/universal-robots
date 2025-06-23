@@ -208,6 +208,23 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
     VIAM_SDK_LOG(info) << "URArm constructor start (model: " << model_.to_string() << ")";
+
+    // check model type is valid, map to ur_client data type
+    // https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/bff7bf2e2a85c17fa3f88adda241763040596ff1/include/ur_client_library/ur/datatypes.h#L204
+    const std::string configured_model_type = [&] {
+        if (model_ == URArm::model("ur3e")) {
+            return "UR3";
+        } else if (model_ == URArm::model("ur5e")) {
+            return "UR5";
+        } else if (model_ == URArm::model("ur20e")) {
+            return "UR20";
+        } else {
+            std::ostringstream buffer;
+            buffer << "unsupported model type: `" << model_.to_string() << "`";
+            throw std::invalid_argument(buffer.str());
+        }
+    }();
+
     current_state_ = std::make_unique<state_>();
     this->reconfigure(deps, cfg);
 
@@ -235,6 +252,18 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
     current_state_->dashboard.reset(new DashboardClient(current_state_->host));
     if (!current_state_->dashboard->connect()) {
         throw std::runtime_error("couldn't connect to dashboard");
+    }
+
+    // verify that the connected arm is the same model as the configured module
+    std::string actual_model_type{};
+    if (!current_state_->dashboard->commandGetRobotModel(actual_model_type)) {
+        throw std::runtime_error("failed to get model info of connected arm");
+    }
+
+    if (configured_model_type != actual_model_type) {
+        std::ostringstream buffer;
+        buffer << "configured model type `" << configured_model_type << "` does not match connected arm `" << actual_model_type << "`";
+        throw std::runtime_error(buffer.str());
     }
 
     // stop program, if there is one running
