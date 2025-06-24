@@ -476,7 +476,7 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     write_waypoints_to_csv(filename, waypoints);
 
     // move will throw if an error occurs
-    move(waypoints, unix_time);
+    move_(waypoints, unix_time);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -505,7 +505,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         write_waypoints_to_csv(filename, waypoints);
 
         // move will throw if an error occurs
-        move(waypoints, unix_time);
+        move_(waypoints, unix_time);
     }
 }
 
@@ -622,9 +622,8 @@ void URArm::keep_alive_() {
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
 
-void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time) {
+void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time) {
     VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time.count() << " waypoints size " << waypoints.size();
-
 
     // get current joint position and add that as starting pose to waypoints
     VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time.count();
@@ -742,7 +741,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         UrDriverStatus status;
         while ((current_state_->trajectory_status.load() == TrajectoryStatus::k_running) && !current_state_->shutdown.load()) {
             const auto unix_time = unix_now_ms();
-            status = read_joint_keep_alive(true);
+            status = read_joint_keep_alive_(true);
             if (status != UrDriverStatus::NORMAL) {
                 break;
             }
