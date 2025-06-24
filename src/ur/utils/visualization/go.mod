@@ -5,9 +5,11 @@ go 1.23.8
 toolchain go1.23.9
 
 require (
+	github.com/mitchellh/go-homedir v1.1.0
 	github.com/rocketlaunchr/dataframe-go v0.0.0-20211025052708-a1030444159b
 	github.com/wcharczuk/go-chart v2.0.1+incompatible
 	go.viam.com/rdk v0.77.0
+	go.viam.com/test v1.2.4
 )
 
 require (
@@ -19,6 +21,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0 // indirect
 	github.com/desertbit/timer v0.0.0-20180107155436-c41aec40b27f // indirect
+	github.com/dgottlieb/smarty-assertions v1.2.6 // indirect
 	github.com/edaniels/golog v0.0.0-20230215213219-28954395e8d0 // indirect
 	github.com/erikstmartin/go-testdb v0.0.0-20160219214506-8d10e4a1bae5 // indirect
 	github.com/go-gl/mathgl v1.0.0 // indirect
