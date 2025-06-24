@@ -17,7 +17,7 @@
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/resource.hpp>
 
-#include "../../../third_party/trajectories/Trajectory.h"
+#include <third_party/trajectories/Trajectory.h>
 
 // this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
 extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
@@ -36,6 +36,18 @@ constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
 constexpr auto k_noop_delay = std::chrono::milliseconds(2);     // 2 millisecond, 500 Hz
 constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
 
+// define callback function to be called by UR client library when program state changes
+void reportRobotProgramState(bool program_running) {
+    // Print the text in green so we see it better
+    // TODO(RSDK-11048): verify side-effects on logstream, rm direct coloring
+    VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
+}
+
+std::chrono::milliseconds unix_now_ms() {
+    namespace chrono = std::chrono;
+    return chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
+}
+
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = sqrt((vec[3] * vec[3]) + (vec[4] * vec[4]) + (vec[5] * vec[5]));
     void* q = quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm);
@@ -50,8 +62,9 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     return pose{position, orientation, theta};
 }
 
-void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
-    of << unix_now_ms << "," << attempt << ",";
+void write_joint_data(
+    const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::chrono::milliseconds unix_time, unsigned attempt) {
+    of << unix_time.count() << "," << attempt << ",";
     for (const double joint_pos : jp) {
         of << joint_pos << ",";
     }
@@ -85,6 +98,7 @@ T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute)
     return *val;
 }
 
+// NOLINTNEXTLINE(performance-enum-size)
 enum class TrajectoryStatus { k_running = 1, k_cancelled = 2, k_stopped = 3 };
 
 template <typename Callable>
@@ -150,12 +164,6 @@ void write_waypoints_to_csv(const std::string& filepath, const std::vector<Eigen
         of << "\n";
     }
     of.close();
-}
-
-// define callback function to be called by UR client library when program state changes
-void reportRobotProgramState(bool program_running) {
-    // Print the text in green so we see it better
-    VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
 }
 
 // private variables to maintain connection and state
@@ -420,27 +428,22 @@ std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
     return to_ret;
 }
 
-std::chrono::milliseconds unix_now_ms() {
-    namespace chrono = std::chrono;
-    return chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
-}
-
-std::string waypoints_filename(const std::string& path, unsigned long long unix_time_ms) {
+std::string waypoints_filename(const std::string& path, const std::chrono::milliseconds unix_time) {
     constexpr char kWaypointsCsvNameTemplate[] = "/%1%_waypoints.csv";
     auto fmt = boost::format(path + kWaypointsCsvNameTemplate);
-    return (fmt % std::to_string(unix_time_ms)).str();
+    return (fmt % std::to_string(unix_time.count())).str();
 }
 
-std::string trajectory_filename(const std::string& path, unsigned long long unix_time_ms) {
+std::string trajectory_filename(const std::string& path, const std::chrono::milliseconds unix_time) {
     constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_trajectory.csv";
     auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
-    return (fmt % std::to_string(unix_time_ms)).str();
+    return (fmt % std::to_string(unix_time.count())).str();
 }
 
-std::string arm_joint_positions_filename(const std::string& path, unsigned long long unix_time_ms) {
+std::string arm_joint_positions_filename(const std::string& path, const std::chrono::milliseconds unix_time) {
     constexpr char kArmJointPositionsCsvNameTemplate[] = "/%1%_arm_joint_positions.csv";
     auto fmt = boost::format(path + kArmJointPositionsCsvNameTemplate);
-    return (fmt % std::to_string(unix_time_ms)).str();
+    return (fmt % std::to_string(unix_time.count())).str();
 }
 
 std::string URArm::get_output_csv_dir_path() {
@@ -467,12 +470,13 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     const Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size()));
     const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
     waypoints.push_back(next_waypoint_rad);
-    const std::chrono::milliseconds unix_time_ms = unix_now_ms();
-    auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms.count());
+
+    const auto unix_time = unix_now_ms();
+    const auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time);
     write_waypoints_to_csv(filename, waypoints);
 
     // move will throw if an error occurs
-    move_(waypoints, unix_time_ms);
+    move_(waypoints, unix_time);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -495,12 +499,13 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
             const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
             waypoints.push_back(next_waypoint_rad);
         }
-        const std::chrono::milliseconds unix_time_ms = unix_now_ms();
-        auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms.count());
+
+        const auto unix_time = unix_now_ms();
+        const auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time);
         write_waypoints_to_csv(filename, waypoints);
 
         // move will throw if an error occurs
-        move_(waypoints, unix_time_ms);
+        move_(waypoints, unix_time);
     }
 }
 
@@ -551,20 +556,14 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         throw std::runtime_error(str(boost::format("unable to open kinematics file '%1'") % sva_file_path));
     }
 
-    // Determine the file size
-    sva_file.seekg(0, std::ios::end);
-    const std::streamsize fileSize = sva_file.tellg();
-    sva_file.seekg(0, std::ios::beg);
-
-    // Create a buffer to hold the file contents
-    std::vector<unsigned char> kinematics_bytes(fileSize);
-
-    // Read the file contents into the buffer
-    if (!sva_file.read(reinterpret_cast<char*>(kinematics_bytes.data()), fileSize)) {
-        throw std::runtime_error("Error reading file");
+    // Read the entire file into a vector without computing size ahead of time
+    std::vector<char> temp_bytes(std::istreambuf_iterator<char>(sva_file), {});
+    if (sva_file.bad()) {
+        throw std::runtime_error(str(boost::format("error reading kinematics file '%1'") % sva_file_path));
     }
 
-    return KinematicsDataSVA(std::move(kinematics_bytes));
+    // Convert to unsigned char vector
+    return KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
 }
 
 void URArm::stop(const ProtoStruct&) {
@@ -623,15 +622,15 @@ void URArm::keep_alive_() {
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
 
-void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
-    VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size();
+void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time) {
+    VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time.count() << " waypoints size " << waypoints.size();
 
     // get current joint position and add that as starting pose to waypoints
-    VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time_ms.count();
+    VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time.count();
     std::vector<double> curr_joint_pos = get_joint_positions(ProtoStruct{});
-    VIAM_SDK_LOG(info) << "move: get_joint_positions end" << unix_time_ms.count();
+    VIAM_SDK_LOG(info) << "move: get_joint_positions end" << unix_time.count();
 
-    VIAM_SDK_LOG(info) << "move: compute_trajectory start " << unix_time_ms.count();
+    VIAM_SDK_LOG(info) << "move: compute_trajectory start " << unix_time.count();
     const Eigen::VectorXd curr_waypoint_deg =
         Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
     const Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI / 180.0);
@@ -684,18 +683,18 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
             throw std::runtime_error(buffer.str());
         }
 
-        const float duration = static_cast<float>(trajectory.getDuration());
+        const double duration = trajectory.getDuration();
         if (std::isinf(duration)) {
             throw std::runtime_error("trajectory.getDuration() was infinite");
         }
-        float t = 0.0;
-        constexpr float k_timestep = 0.2F;  // seconds
+        double t = 0.0;
+        constexpr double k_timestep = 0.2;  // seconds
         while (t < duration) {
             Eigen::VectorXd position = trajectory.getPosition(t);
             Eigen::VectorXd velocity = trajectory.getVelocity(t);
             p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
             v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-            time.push_back(k_timestep);
+            time.push_back(boost::numeric_cast<float>(k_timestep));
             t += k_timestep;
         }
 
@@ -703,17 +702,17 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         Eigen::VectorXd velocity = trajectory.getVelocity(duration);
         p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-        const float t2 = duration - (t - k_timestep);
+        const double t2 = duration - (t - k_timestep);
         if (std::isinf(t2)) {
             throw std::runtime_error("duration - (t - k_timestep) was infinite");
         }
-        time.push_back(t2);
+        time.push_back(boost::numeric_cast<float>(t2));
     }
-    VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
-                       << " time " << time.size();
+    VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time.count() << " p.count() " << p.size() << " v " << v.size() << " time "
+                       << time.size();
 
     const std::string path = get_output_csv_dir_path();
-    write_trajectory_to_file(trajectory_filename(path, unix_time_ms.count()), p, v, time);
+    write_trajectory_to_file(trajectory_filename(path, unix_time), p, v, time);
     {  // note the open brace which introduces a new variable scope
         // construct a lock_guard: locks the mutex on construction and unlocks on destruction
         const std::lock_guard<std::mutex> guard{current_state_->mu};
@@ -733,7 +732,7 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
             throw std::runtime_error("send_trajectory failed");
         };
 
-        std::ofstream of(arm_joint_positions_filename(path, unix_time_ms.count()));
+        std::ofstream of(arm_joint_positions_filename(path, unix_time));
 
         of << "time_ms,read_attempt,"
               "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
@@ -741,12 +740,12 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         unsigned attempt = 0;
         UrDriverStatus status;
         while ((current_state_->trajectory_status.load() == TrajectoryStatus::k_running) && !current_state_->shutdown.load()) {
-            const auto now = unix_now_ms().count();
+            const auto unix_time = unix_now_ms();
             status = read_joint_keep_alive_(true);
             if (status != UrDriverStatus::NORMAL) {
                 break;
             }
-            write_joint_data(current_state_->joints_position, current_state_->joints_velocity, of, now, attempt++);
+            write_joint_data(current_state_->joints_position, current_state_->joints_velocity, of, unix_time, attempt++);
         };
         if (current_state_->shutdown.load()) {
             of.close();
@@ -754,7 +753,7 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         }
 
         of.close();
-        VIAM_SDK_LOG(info) << "move: end unix_time_ms " << unix_time_ms.count();
+        VIAM_SDK_LOG(info) << "move: end unix_time " << unix_time.count();
 
         if (current_state_->trajectory_status.load() == TrajectoryStatus::k_cancelled) {
             throw std::runtime_error("arm's current trajectory cancelled by code");

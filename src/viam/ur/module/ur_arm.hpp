@@ -8,7 +8,7 @@
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/reconfigurable.hpp>
 
-#include "../../../third_party/trajectories/Path.h"
+#include <third_party/trajectories/Path.h>
 
 using namespace viam::sdk;
 using namespace urcl;
@@ -18,9 +18,9 @@ void write_trajectory_to_file(const std::string& filepath,
                               const std::vector<vector6d_t>& p_v,
                               const std::vector<float>& time);
 void write_waypoints_to_csv(const std::string& filepath, const std::vector<Eigen::VectorXd>& waypoints);
-std::string waypoints_filename(const std::string& path, unsigned long long unix_time_ms);
-std::string trajectory_filename(const std::string& path, unsigned long long unix_time_ms);
-std::string arm_joint_positions_filename(const std::string& path, unsigned long long unix_time_ms);
+std::string waypoints_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
+std::string trajectory_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
+std::string arm_joint_positions_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
 
 class URArm final : public Arm, public Reconfigurable {
    public:
