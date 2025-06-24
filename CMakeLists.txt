@@ -135,7 +135,8 @@ if (VIAM_UR_USE_WALL_WERROR)
       -Wenum-conversion
       -Wnull-dereference
       -Wunused
-      -Wno-enum-constexpr-conversion
+      # TODO: rm after upgrading boost https://github.com/boostorg/mpl/issues/69
+      -Wno-enum-constexpr-conversion 
     )
   elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(viam-ur PRIVATE /W4 /WX)
