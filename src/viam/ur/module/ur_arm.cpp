@@ -242,7 +242,7 @@ void URArm::startup_(const Dependencies&, const ResourceConfig& cfg) {
             return "UR3";
         } else if (model_ == URArm::model("ur5e")) {
             return "UR5";
-        } else if (model_ == URArm::model("ur20e")) {
+        } else if (model_ == URArm::model("ur20")) {
             return "UR20";
         } else {
             std::ostringstream buffer;
