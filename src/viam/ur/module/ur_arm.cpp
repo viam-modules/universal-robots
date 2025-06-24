@@ -91,7 +91,7 @@ T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute)
     return *val;
 }
 
-enum class TrajectoryStatus : std::uint8_t { k_running = 1, k_cancelled = 2, k_stopped = 3 };
+enum class TrajectoryStatus { k_running = 1, k_cancelled = 2, k_stopped = 3 }; // NOLINT
 
 }  // namespace
 
@@ -725,8 +725,7 @@ std::string URArm::status_to_string(UrDriverStatus status) {
 }
 
 // Define the destructor
-// NOLINT(bugprone-exception-escape) 'may throw' warning
-URArm::~URArm() {
+URArm::~URArm() { // NOLINT
     VIAM_SDK_LOG(warn) << "URArm destructor called";
     current_state_->shutdown.store(true);
     // stop the robot
