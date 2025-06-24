@@ -59,7 +59,7 @@ BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
         {10.1, 2, 3, 4, 5, 6},
     };
     // the time vector is provided in relative time
-    const std::vector<float> time = {1.2, 0.8, 1, 1};
+    const std::vector<float> time = {1.2F, 0.8F, 1, 1};
 
     const auto* const expected =
         "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n"
