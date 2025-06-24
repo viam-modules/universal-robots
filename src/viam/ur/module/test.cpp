@@ -76,18 +76,20 @@ BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
     BOOST_CHECK_EQUAL(buf.str(), expected);
 }
 
+using namespace std::chrono_literals;
+
 BOOST_AUTO_TEST_CASE(test_waypoints_filename) {
-    auto x = waypoints_filename("/home/user", std::chrono::milliseconds(1747161493357));
+    auto x = waypoints_filename("/home/user", 1747161493357us);
     BOOST_CHECK_EQUAL(x, "/home/user/1747161493357_waypoints.csv");
 }
 
 BOOST_AUTO_TEST_CASE(test_trajectory_filename) {
-    auto x = trajectory_filename("/home/user", std::chrono::milliseconds(1747161493357));
+    auto x = trajectory_filename("/home/user", 1747161493357us);
     BOOST_CHECK_EQUAL(x, "/home/user/1747161493357_trajectory.csv");
 }
 
 BOOST_AUTO_TEST_CASE(test_arm_joint_positions_filename) {
-    auto x = arm_joint_positions_filename("/home/user", std::chrono::milliseconds(1747161493357));
+    auto x = arm_joint_positions_filename("/home/user", 1747161493357us);
     BOOST_CHECK_EQUAL(x, "/home/user/1747161493357_arm_joint_positions.csv");
 }
 
