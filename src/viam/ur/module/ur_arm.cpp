@@ -91,7 +91,7 @@ T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute)
     return *val;
 }
 
-enum class TrajectoryStatus { k_running = 1, k_cancelled = 2, k_stopped = 3 }; // NOLINT
+enum class TrajectoryStatus { k_running = 1, k_cancelled = 2, k_stopped = 3 };  // NOLINT
 
 }  // namespace
 
@@ -497,7 +497,7 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     sva_file.seekg(0, std::ios::beg);
 
     // Create a buffer to hold the file contents, int long fits in unsigned long
-    std::vector<unsigned char> kinematics_bytes((unsigned long)fileSize);
+    std::vector<unsigned char> kinematics_bytes(static_cast<unsigned long>(fileSize));
 
     // Read the file contents into the buffer
     if (!sva_file.read(reinterpret_cast<char*>(kinematics_bytes.data()), fileSize)) {
@@ -631,7 +631,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             Eigen::VectorXd velocity = trajectory.getVelocity(t);
             p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
             v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-            time.push_back((float)k_timestep);
+            time.push_back(boost::numeric_cast<float>(k_timestep));
             t += k_timestep;
         }
 
@@ -643,7 +643,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         if (std::isinf(t2)) {
             throw std::runtime_error("duration - (t - k_timestep) was infinite");
         }
-        time.push_back((float)t2);
+        time.push_back(boost::numeric_cast<float>(t2));
     }
     VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
                        << " time " << time.size();
@@ -725,7 +725,7 @@ std::string URArm::status_to_string(UrDriverStatus status) {
 }
 
 // Define the destructor
-URArm::~URArm() { // NOLINT
+URArm::~URArm() {  // NOLINT
     VIAM_SDK_LOG(warn) << "URArm destructor called";
     current_state_->shutdown.store(true);
     // stop the robot
