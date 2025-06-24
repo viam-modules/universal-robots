@@ -495,23 +495,14 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         throw std::runtime_error(str(boost::format("unable to open kinematics file '%1'") % sva_file_path));
     }
 
-    // Determine the file size
-    sva_file.seekg(0, std::ios::end);
-    const std::streamsize fileSize = sva_file.tellg();
-    if (fileSize < 0) {
-        throw std::runtime_error(str(boost::format("failed to get fileSize of kinematics file '%1'") % sva_file_path));
-    }
-    sva_file.seekg(0, std::ios::beg);
-
-    // Create a buffer to hold the file contents
-    std::vector<unsigned char> kinematics_bytes(static_cast<unsigned long>(fileSize));
-
-    // Read the file contents into the buffer
-    if (!sva_file.read(reinterpret_cast<char*>(kinematics_bytes.data()), fileSize)) {
-        throw std::runtime_error("Error reading file");
+    // Read the entire file into a vector without computing size ahead of time
+    std::vector<char> temp_bytes(std::istreambuf_iterator<char>(sva_file), {});
+    if (sva_file.bad()) {
+        throw std::runtime_error(str(boost::format("error reading kinematics file '%1'") % sva_file_path));
     }
 
-    return KinematicsDataSVA(std::move(kinematics_bytes));
+    // Convert to unsigned char vector
+    return KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
 }
 
 void URArm::stop(const ProtoStruct&) {
