@@ -38,6 +38,7 @@ constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 milliseco
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
+    // TODO(RSDK-11048): rm coloring, verify side-effects on logstream
     VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
 }
 
