@@ -91,6 +91,11 @@ target_sources(trajectories
     src/third_party/trajectories/Trajectory.cpp
     src/third_party/trajectories/Path.cpp
 )
+target_include_directories(trajectories
+  INTERFACE
+    src
+)
+
 target_link_libraries(trajectories
   PUBLIC
     Eigen3::Eigen
@@ -120,7 +125,7 @@ install(
 if (VIAM_UR_USE_WALL_WERROR)
   set(GNULIKE_COMPILERS "Clang" "AppleClang" "GNU")
   if (CMAKE_CXX_COMPILER_ID IN_LIST GNULIKE_COMPILERS)
-    target_compile_options(viam-ur PRIVATE
+    target_compile_options(viam-ur PUBLIC
       -Wall
       -Werror
       -Wextra
@@ -130,6 +135,7 @@ if (VIAM_UR_USE_WALL_WERROR)
       -Wenum-conversion
       -Wnull-dereference
       -Wunused
+      -Wno-enum-constexpr-conversion
     )
   elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(viam-ur PRIVATE /W4 /WX)

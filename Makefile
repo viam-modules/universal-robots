@@ -12,10 +12,10 @@ test: build/universal-robots
 	./build/universal-robots-test
 
 run-clang-tidy:
-	clang-tidy-19 --config-file ./.clang-tidy -p build ./src/viam/ur/module/*.[h,c]pp
+	clang-tidy-19 --config-file ./.clang-tidy -p build ./src/viam/ur/module/*.cpp --header-filter=".*/viam/ur/module/.*"
 
 run-clang-check:
-	clang-check-19 -p build ./src/viam/ur/module/*.[h,c]pp
+	clang-check-19 -p build ./src/viam/ur/module/*.cpp
 
 build/universal-robots: build
 	cmake -S . -B build -G Ninja
