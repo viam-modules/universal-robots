@@ -756,6 +756,7 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         VIAM_SDK_LOG(info) << "move: end unix_time " << unix_time.count();
 
         // TODO: renable this once zero velocity errors are resolved
+        // https://viam.atlassian.net/browse/RSDK-11063
         // if (current_state_->trajectory_status.load() == TrajectoryStatus::k_cancelled) {
         //     throw std::runtime_error("arm's current trajectory cancelled by code");
         // }
