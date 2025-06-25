@@ -97,6 +97,9 @@ build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh: build
 	cd build && \
 	cmake -G Ninja  ..  || true
 
+ur3e-sim: build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh
+	build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh -m ur3e 5.9.4 -p tests/resources/dockerursim/programs/e-serieuniversal_robots_client_library-srcs
+
 ur5e-sim: build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh
 	build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh -m ur5e 5.9.4 -p tests/resources/dockerursim/programs/e-serieuniversal_robots_client_library-srcs
 
