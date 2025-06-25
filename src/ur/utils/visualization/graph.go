@@ -16,6 +16,8 @@ import (
 	chart "github.com/wcharczuk/go-chart"
 )
 
+const jointCount = 6
+
 type config struct {
 	TrajectoryCSV     string `json:"trajectory_csv"`
 	WaypointsCSV      string `json:"waypoints_csv"`
@@ -73,7 +75,8 @@ func readCSVintoDataframe(path string, headers []string) (*dataframe.DataFrame, 
 	return df, err
 }
 
-func parseCSVandAddPoses(df *dataframe.DataFrame, model referenceframe.Model) (*dataframe.DataFrame, error) {
+func parseAndAddPoses(df *dataframe.DataFrame, model referenceframe.Model) (*dataframe.DataFrame, error) {
+	// we need to create series for poses which is a 7 dimensional
 	xSeries := dataframe.NewSeriesFloat64("x", nil)
 	ySeries := dataframe.NewSeriesFloat64("y", nil)
 	zSeries := dataframe.NewSeriesFloat64("z", nil)
@@ -84,18 +87,24 @@ func parseCSVandAddPoses(df *dataframe.DataFrame, model referenceframe.Model) (*
 
 	for i := 0; i < df.NRows(); i++ {
 		row := df.Row(i, false)
+
+		// iterate through the row and construct the joint positions which are 6 dimensional
 		rowInputs := []float64{}
-		for j := 0; j < 6; j++ {
+		for j := 0; j < jointCount; j++ {
 			inputValue, ok := row["j"+strconv.Itoa(j)].(float64)
 			if !ok {
 				return nil, fmt.Errorf("j%d not found in row", j)
 			}
 			rowInputs = append(rowInputs, inputValue)
 		}
+
+		// perform FK to get the pose
 		pose, err := model.Transform(referenceframe.FloatsToInputs(rowInputs))
 		if err != nil {
 			return nil, err
 		}
+
+		// add the pose to the series
 		xSeries.Append(pose.Point().X)
 		ySeries.Append(pose.Point().Y)
 		zSeries.Append(pose.Point().Z)
@@ -105,6 +114,7 @@ func parseCSVandAddPoses(df *dataframe.DataFrame, model referenceframe.Model) (*
 		thetaSeries.Append(pose.Orientation().OrientationVectorDegrees().Theta)
 	}
 
+	// add the series to the dataframe
 	df.AddSeries(xSeries, nil)
 	df.AddSeries(ySeries, nil)
 	df.AddSeries(zSeries, nil)
@@ -129,10 +139,6 @@ func extractFloatSeries(df *dataframe.DataFrame, colName string) ([]float64, err
 	values := make([]float64, col.NRows())
 	for i := 0; i < col.NRows(); i++ {
 		val := col.Value(i)
-		if val == nil {
-			values[i] = 0
-			continue
-		}
 		f, ok := val.(float64)
 		if !ok {
 			return nil, fmt.Errorf("column %s: value at index %d is not float64", colName, i)
@@ -171,68 +177,84 @@ func saveChartPNG(name, yLabel string, x1, y1, x2, y2 []float64) error {
 	return graph.Render(chart.PNG, f)
 }
 
-func plotCharts(prefix, yLabelFormat string, trajT []float64, traj [][]float64, wayT []float64, way [][]float64, isPos bool) error {
-	if len(traj) != len(way) {
+func plotCharts(prefix, yLabelFormat string, trajTime []float64, trajData [][]float64, wayTime []float64, waypointData [][]float64, isPos bool) error {
+	if len(trajData) != len(waypointData) {
 		return fmt.Errorf("series count mismatch")
 	}
 	suffix := []string{"X", "Y", "Z"}
-	for i := range traj {
+	for i := range trajData {
 		name := fmt.Sprintf("%s%d_comparison.png", prefix, i)
 		if isPos {
 			name = fmt.Sprintf("%s%s_comparison.png", prefix, suffix[i])
 		}
 		yLabel := fmt.Sprintf(yLabelFormat, i)
-		if err := saveChartPNG(name, yLabel, trajT, traj[i], wayT, way[i]); err != nil {
+		if err := saveChartPNG(name, yLabel, trajTime, trajData[i], wayTime, waypointData[i]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func plotJointComparisonFromDataframes(trajDf, waypointDf *dataframe.DataFrame) error {
-	jointCount := 6
-	trajT, err := extractFloatSeries(trajDf, "t(s)")
+func plotJointAndPoseComparisonFromDataframes(trajDf, waypointDf *dataframe.DataFrame) error {
+	// get the time values which will determine the spacing of trajectory and waypoint data
+	trajTime, err := extractFloatSeries(trajDf, "t(s)")
 	if err != nil {
 		return err
 	}
-	totalTime := trajT[len(trajT)-1]
-	wayT := evenlySpacedTimes(trajT[0], totalTime, waypointDf.NRows())
+	startTime := trajTime[0]
+	totalTime := trajTime[len(trajTime)-1]
+	waypointTime := evenlySpacedTimes(startTime, totalTime, waypointDf.NRows())
 
-	traj := make([][]float64, jointCount)
-	way := make([][]float64, jointCount)
-	for j := 0; j < jointCount; j++ {
-		tn, err := extractFloatSeries(trajDf, fmt.Sprintf("j%d", j))
+	// get the joint positions data
+	allTrajectoryJointValues := make([][]float64, jointCount)
+	allWaypointJointValues := make([][]float64, jointCount)
+	for i := range jointCount {
+		trajJointValues, err := extractFloatSeries(trajDf, fmt.Sprintf("j%d", i))
 		if err != nil {
 			return err
 		}
-		wn, err := extractFloatSeries(waypointDf, fmt.Sprintf("j%d", j))
+		waypointJointValues, err := extractFloatSeries(waypointDf, fmt.Sprintf("j%d", i))
 		if err != nil {
 			return err
 		}
-		traj[j] = tn
-		way[j] = wn
+		allTrajectoryJointValues[i] = trajJointValues
+		allWaypointJointValues[i] = waypointJointValues
 	}
-	return plotCharts("joint", "Joint %d Angle (rad)", trajT, traj, wayT, way, false)
-}
 
-func plotPoseComparisonFromDataframes(trajDf, waypointDf *dataframe.DataFrame) error {
-	trajT, err := extractFloatSeries(trajDf, "t(s)")
+	// get the pose data
+	tx, err := extractFloatSeries(trajDf, "x")
 	if err != nil {
 		return err
 	}
-	start, end := trajT[0], trajT[len(trajT)-1]
-	wayT := evenlySpacedTimes(start, end, waypointDf.NRows())
-
-	tx, _ := extractFloatSeries(trajDf, "x")
-	ty, _ := extractFloatSeries(trajDf, "y")
-	tz, _ := extractFloatSeries(trajDf, "z")
-	wx, _ := extractFloatSeries(waypointDf, "x")
-	wy, _ := extractFloatSeries(waypointDf, "y")
-	wz, _ := extractFloatSeries(waypointDf, "z")
-
+	ty, err := extractFloatSeries(trajDf, "y")
+	if err != nil {
+		return err
+	}
+	tz, err := extractFloatSeries(trajDf, "z")
+	if err != nil {
+		return err
+	}
+	wx, err := extractFloatSeries(waypointDf, "x")
+	if err != nil {
+		return err
+	}
+	wy, err := extractFloatSeries(waypointDf, "y")
+	if err != nil {
+		return err
+	}
+	wz, err := extractFloatSeries(waypointDf, "z")
+	if err != nil {
+		return err
+	}
 	traj := [][]float64{tx, ty, tz}
 	way := [][]float64{wx, wy, wz}
-	return plotCharts("position_", "Position %c (mm)", trajT, traj, wayT, way, true)
+
+	// plot joint positions data
+	if err := plotCharts("joint", "Joint %d Angle (rad)", trajTime, allTrajectoryJointValues, waypointTime, allWaypointJointValues, false); err != nil {
+		return err
+	}
+	// plot pose data
+	return plotCharts("position_", "Position %c (mm)", trajTime, traj, waypointTime, way, true)
 }
 
 func main() {
@@ -252,7 +274,7 @@ func realmain(trajectoryPath, waypointPath, armKinematicsPath string) error {
 	if err != nil {
 		return err
 	}
-
+	// get the data frame
 	trajDf, err := readCSVintoDataframe(trajectoryPath, nil)
 	if err != nil {
 		return err
@@ -261,21 +283,15 @@ func realmain(trajectoryPath, waypointPath, armKinematicsPath string) error {
 	if err != nil {
 		return err
 	}
-
-	trajDf, err = parseCSVandAddPoses(trajDf, model)
+	// parse and perform FK to get poses for each set of joint positions
+	trajDf, err = parseAndAddPoses(trajDf, model)
 	if err != nil {
 		return err
 	}
-	wayDf, err = parseCSVandAddPoses(wayDf, model)
+	wayDf, err = parseAndAddPoses(wayDf, model)
 	if err != nil {
 		return err
 	}
-
-	if err := plotJointComparisonFromDataframes(trajDf, wayDf); err != nil {
-		return err
-	}
-	if err := plotPoseComparisonFromDataframes(trajDf, wayDf); err != nil {
-		return err
-	}
-	return nil
+	// plot joint positions and poses as .png files
+	return plotJointAndPoseComparisonFromDataframes(trajDf, wayDf)
 }

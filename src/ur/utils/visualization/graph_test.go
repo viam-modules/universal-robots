@@ -92,7 +92,7 @@ func TestSaveChartPNG(t *testing.T) {
 	defer os.Remove(name)
 }
 
-func TestParseCSVandAddPoses_EmptyModel(t *testing.T) {
+func TestParseAndAddPoses(t *testing.T) {
 	csvContent := "t(s),j0,j1,j2,j3,j4,j5\n0.0,0,0,0,0,0,0"
 	fileName, cleanup := writeTempCSV(t, csvContent)
 	defer cleanup()
@@ -101,6 +101,6 @@ func TestParseCSVandAddPoses_EmptyModel(t *testing.T) {
 	test.That(t, err, test.ShouldBeNil)
 
 	model := referenceframe.NewSimpleModel("")
-	_, err = parseCSVandAddPoses(df, model)
+	_, err = parseAndAddPoses(df, model)
 	test.That(t, err, test.ShouldNotBeNil)
 }
