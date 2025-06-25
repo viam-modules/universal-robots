@@ -2,8 +2,8 @@
 on:
     push:
     release:
-      types: [released]
-  
+      types: [published]
+
 jobs:
     publish:
         runs-on: ${{matrix.runner}}
@@ -27,11 +27,11 @@ jobs:
                 make appimage-${{ matrix.arch }}
                 ARCH=${{ matrix.arch2 }} make module.tar.gz
             - uses: viamrobotics/upload-module@v1
-              # if: github.event_name == 'release' # <-- once the action is working, uncomment this so you only upload on release
               with:
                 module-path: module.tar.gz
                 platform: linux/${{ matrix.arch }}
                 version: ${{ github.ref_name }}
                 key-id: ${{ secrets.viam_key_id }}
                 key-value: ${{ secrets.viam_key_value }}
+                do-update: ${{ github.event_name == 'release' }}
                 do-upload: ${{ github.event_name == 'release' }}

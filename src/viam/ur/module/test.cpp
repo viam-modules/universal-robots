@@ -1,6 +1,6 @@
 #define BOOST_TEST_MODULE test module test_ur5e
 
-#include "src/ur_arm.hpp"
+#include "ur_arm.hpp"
 
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/test/included/unit_test.hpp>
@@ -59,7 +59,7 @@ BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
         {10.1, 2, 3, 4, 5, 6},
     };
     // the time vector is provided in relative time
-    const std::vector<float> time = {1.2, 0.8, 1, 1};
+    const std::vector<float> time = {1.2F, 0.8F, 1, 1};
 
     const auto* const expected =
         "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n"
@@ -76,18 +76,20 @@ BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
     BOOST_CHECK_EQUAL(buf.str(), expected);
 }
 
+using namespace std::chrono_literals;
+
 BOOST_AUTO_TEST_CASE(test_waypoints_filename) {
-    auto x = waypoints_filename("/home/user", 1747161493357);
+    auto x = waypoints_filename("/home/user", 1747161493357ms);
     BOOST_CHECK_EQUAL(x, "/home/user/1747161493357_waypoints.csv");
 }
 
 BOOST_AUTO_TEST_CASE(test_trajectory_filename) {
-    auto x = trajectory_filename("/home/user", 1747161493357);
+    auto x = trajectory_filename("/home/user", 1747161493357ms);
     BOOST_CHECK_EQUAL(x, "/home/user/1747161493357_trajectory.csv");
 }
 
 BOOST_AUTO_TEST_CASE(test_arm_joint_positions_filename) {
-    auto x = arm_joint_positions_filename("/home/user", 1747161493357);
+    auto x = arm_joint_positions_filename("/home/user", 1747161493357ms);
     BOOST_CHECK_EQUAL(x, "/home/user/1747161493357_arm_joint_positions.csv");
 }
 

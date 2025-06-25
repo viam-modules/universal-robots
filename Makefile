@@ -1,15 +1,21 @@
-.PHONY: module.tar.gz ur5e-sim format test clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci
+.PHONY: module.tar.gz ur5e-sim format test run-clang-tidy run-clang-check clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci
 default: build/universal-robots
 
 # format the source code
 format:
-	ls src/*.*pp main.cpp | xargs clang-format-15 -i --style=file
+	ls src/viam/ur/module/*.*pp | xargs clang-format-19 -i --style=file
 
 build:
 	mkdir build
 
 test: build/universal-robots
 	./build/universal-robots-test
+
+run-clang-tidy:
+	clang-tidy-19 --config-file ./.clang-tidy -p build ./src/viam/ur/module/*.cpp --header-filter=".*/viam/ur/module/.*"
+
+run-clang-check:
+	clang-check-19 -p build ./src/viam/ur/module/*.cpp
 
 build/universal-robots: build
 	cmake -S . -B build -G Ninja
@@ -90,6 +96,9 @@ build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh: build
 	# is all we need to run the sim.
 	cd build && \
 	cmake -G Ninja  ..  || true
+
+ur3e-sim: build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh
+	build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh -m ur3e 5.9.4 -p tests/resources/dockerursim/programs/e-serieuniversal_robots_client_library-srcs
 
 ur5e-sim: build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh
 	build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh -m ur5e 5.9.4 -p tests/resources/dockerursim/programs/e-serieuniversal_robots_client_library-srcs

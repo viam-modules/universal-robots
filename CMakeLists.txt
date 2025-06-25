@@ -88,9 +88,14 @@ add_library(trajectories)
 set_target_properties(trajectories PROPERTIES SYSTEM TRUE)
 target_sources(trajectories
   PRIVATE
-    trajectories/Trajectory.cpp
-    trajectories/Path.cpp
+    src/third_party/trajectories/Trajectory.cpp
+    src/third_party/trajectories/Path.cpp
 )
+target_include_directories(trajectories
+  INTERFACE
+    src
+)
+
 target_link_libraries(trajectories
   PUBLIC
     Eigen3::Eigen
@@ -103,7 +108,7 @@ install(
 add_library(viam-ur)
 target_sources(viam-ur
   PRIVATE
-    src/ur_arm.cpp
+    src/viam/ur/module/ur_arm.cpp
 )
 target_link_libraries(viam-ur
   PUBLIC
@@ -120,7 +125,7 @@ install(
 if (VIAM_UR_USE_WALL_WERROR)
   set(GNULIKE_COMPILERS "Clang" "AppleClang" "GNU")
   if (CMAKE_CXX_COMPILER_ID IN_LIST GNULIKE_COMPILERS)
-    target_compile_options(viam-ur PRIVATE
+    target_compile_options(viam-ur PUBLIC
       -Wall
       -Werror
       -Wextra
@@ -130,6 +135,8 @@ if (VIAM_UR_USE_WALL_WERROR)
       -Wenum-conversion
       -Wnull-dereference
       -Wunused
+      # TODO: rm after upgrading boost https://github.com/boostorg/mpl/issues/69
+      -Wno-enum-constexpr-conversion 
     )
   elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(viam-ur PRIVATE /W4 /WX)
@@ -142,7 +149,7 @@ endif()
 add_executable(universal-robots)
 target_sources(universal-robots
   PRIVATE
-    main.cpp
+    src/viam/ur/module/main.cpp
 )
 target_link_libraries(universal-robots
   PRIVATE
@@ -156,7 +163,7 @@ install(
 add_executable(universal-robots-test)
 target_sources(universal-robots-test
   PRIVATE
-    test.cpp
+    src/viam/ur/module/test.cpp
 )
 target_link_libraries(universal-robots-test
   PRIVATE

@@ -1,0 +1,402 @@
+{
+    "name": "ur3e",
+    "kinematic_param_type": "SVA",
+    "links": [
+      {
+        "id": "shoulder_link",
+        "translation": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "orientation": {
+          "type": "euler_angles",
+          "value": {
+            "pitch": 0,
+            "roll": 1.570796327,
+            "yaw": 0
+          }
+        },
+        "geometry": {
+          "type": "capsule",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "r": 60,
+          "l": 250,
+          "translation": {
+            "X": 0,
+            "Y": 0,
+            "Z": -50
+          },
+          "orientation": {
+            "type": "quaternion",
+            "value": {
+              "W": 0,
+              "X": 0,
+              "Y": 0,
+              "Z": 1
+            }
+          },
+          "Label": ""
+        },
+        "parent": "shoulder_pan_joint"
+      },
+      {
+        "id": "upper_arm_link",
+        "translation": {
+          "X": -243.55,
+          "Y": 0,
+          "Z": 0
+        },
+        "orientation": {
+          "type": "euler_angles",
+          "value": {
+            "pitch": 0,
+            "roll": 0,
+            "yaw": 0
+          }
+        },
+        "geometry": {
+            "type": "capsule",
+            "x": 0,
+            "y": 0,
+            "z": 0,
+            "r": 60,
+            "l": 340,
+          "translation": {
+            "X": -120,
+            "Y": 0,
+            "Z": 120
+          },
+          "orientation": {
+            "type": "quaternion",
+            "value": {
+              "W": 0.5,
+              "X": 0.5,
+              "Y": -0.5,
+              "Z": -0.5
+            }
+          },
+          "Label": ""
+        },
+        "parent": "shoulder_lift_joint"
+      },
+      {
+        "id": "forearm_link",
+        "translation": {
+          "X": -213.2,
+          "Y": 0,
+          "Z": 131.05
+        },
+        "orientation": {
+          "type": "euler_angles",
+          "value": {
+            "pitch": 0,
+            "roll": 0,
+            "yaw": 0
+          }
+        },
+        "geometry": {
+          "type": "capsule",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "r": 45,
+          "l": 280,
+          "translation": {
+            "X": -110,
+            "Y": 0,
+            "Z": 27
+          },
+          "orientation": {
+            "type": "quaternion",
+            "value": {
+              "W": 0.5,
+              "X": 0.5,
+              "Y": -0.5,
+              "Z": -0.5
+            }
+          },
+          "Label": ""
+        },
+        "parent": "elbow_joint"
+      },
+      {
+        "id": "wrist_1_link",
+        "translation": {
+          "X": 0,
+          "Y": -85.35,
+          "Z": 0
+        },
+        "orientation": {
+          "type": "euler_angles",
+          "value": {
+            "pitch": 0,
+            "roll": 1.570796327,
+            "yaw": 0
+          }
+        },
+        "geometry": {
+          "type": "capsule",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "r": 33,
+          "l": 180,
+          "translation": {
+            "X": 0,
+            "Y": 0,
+            "Z": -55
+          },
+          "orientation": {
+            "type": "quaternion",
+            "value": {
+              "w": 0.7071067811865476,
+              "Z": 0.7071067811865475,
+              "Y": 0,
+              "X": 0
+            }
+          },
+          "Label": ""
+        },
+        "parent": "wrist_1_joint"
+      },
+      {
+        "id": "wrist_2_link",
+        "translation": {
+          "X": 0,
+          "Y": 92.1,
+          "Z": 0
+        },
+        "orientation": {
+          "type": "euler_angles",
+          "value": {
+            "pitch": 3.141592653589793,
+            "roll": 1.570796326589793,
+            "yaw": 3.141592653589793
+          }
+        },
+        "geometry": {
+          "type": "capsule",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "r": 33,
+          "l": 170,
+          "translation": {
+            "X": 0,
+            "Y": 0,
+            "Z": -50
+          },
+          "orientation": {
+            "type": "quaternion",
+            "value": {
+              "W": 1,
+              "X": 0,
+              "Y": 0,
+              "Z": 0
+            }
+          },
+          "Label": ""
+        },
+        "parent": "wrist_2_joint"
+      },
+      {
+        "id": "wrist_3_link",
+        "translation": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "orientation": null,
+        "geometry": {
+          "type": "capsule",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "r": 35,
+          "l": 150,
+          "translation": {
+            "X": 0,
+            "Y": 0,
+            "Z": -65
+          },
+          "orientation": {
+            "type": "quaternion",
+            "value": {
+              "W": 0.7071067811865476,
+              "Z": 0.7071067811865475,
+              "Y": 0,
+              "X": 0
+            }
+          },
+          "Label": ""
+        },
+        "parent": "wrist_3_joint"
+      },
+      {
+        "id": "base_link-base_link_inertia",
+        "translation": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "orientation": {
+          "type": "euler_angles",
+          "value": {
+            "pitch": 0,
+            "roll": 0,
+            "yaw": 3.141592653589793
+          }
+        },
+        "parent": "base_link"
+      },
+      {
+        "id": "base_link",
+        "translation": {
+          "X": 0,
+          "Y": 0,
+          "Z": 0
+        },
+        "orientation": null,
+        "geometry": {
+          "type": "box",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "r": 0,
+          "l": 0,
+          "translation": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "orientation": {
+            "type": "quaternion",
+            "value": {
+              "W": 0,
+              "X": 0,
+              "Y": 0,
+              "Z": 1
+            }
+          },
+          "Label": ""
+        }
+      },
+      {
+        "id": "base_link_inertia",
+        "translation": {
+          "X": 0,
+          "Y": 0,
+          "Z": 151.85
+        },
+        "orientation": {
+          "type": "euler_angles",
+          "value": {
+            "pitch": 0,
+            "roll": 0,
+            "yaw": 0
+          }
+        },
+        "geometry": {
+          "type": "box",
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "r": 0,
+          "l": 0,
+          "translation": {
+            "X": 0,
+            "Y": 0,
+            "Z": 0
+          },
+          "orientation": {
+            "type": "quaternion",
+            "value": {
+              "W": 0,
+              "X": 0,
+              "Y": 0,
+              "Z": 1
+            }
+          },
+          "Label": ""
+        },
+        "parent": "base_link-base_link_inertia"
+      }
+    ],
+    "joints": [
+      {
+        "id": "shoulder_pan_joint",
+        "type": "revolute",
+        "parent": "base_link_inertia",
+        "axis": {
+          "X": 0,
+          "Y": 0,
+          "Z": 1
+        },
+        "max": 360,
+        "min": -360
+      },
+      {
+        "id": "shoulder_lift_joint",
+        "type": "revolute",
+        "parent": "shoulder_link",
+        "axis": {
+          "X": 0,
+          "Y": 0,
+          "Z": 1
+        },
+        "max": 360,
+        "min": -360
+      },
+      {
+        "id": "elbow_joint",
+        "type": "revolute",
+        "parent": "upper_arm_link",
+        "axis": {
+          "X": 0,
+          "Y": 0,
+          "Z": 1
+        },
+        "max": 180,
+        "min": -180
+      },
+      {
+        "id": "wrist_1_joint",
+        "type": "revolute",
+        "parent": "forearm_link",
+        "axis": {
+          "X": 0,
+          "Y": 0,
+          "Z": 1
+        },
+        "max": 360,
+        "min": -360
+      },
+      {
+        "id": "wrist_2_joint",
+        "type": "revolute",
+        "parent": "wrist_1_link",
+        "axis": {
+          "X": 0,
+          "Y": 0,
+          "Z": 1
+        },
+        "max": 360,
+        "min": -360
+      },
+      {
+        "id": "wrist_3_joint",
+        "type": "revolute",
+        "parent": "wrist_2_link",
+        "axis": {
+          "X": 0,
+          "Y": 0,
+          "Z": 1
+        },
+        "max": 360,
+        "min": -360
+      }
+    ]
+}

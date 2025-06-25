@@ -1,19 +1,23 @@
 #include "ur_arm.hpp"
 
-#include <ur_client_library/ur/dashboard_client.h>
-#include <ur_client_library/ur/ur_driver.h>
+#include <chrono>
+#include <cmath>
+#include <stdexcept>
+#include <thread>
 
 #include <boost/format.hpp>
 #include <boost/numeric/conversion/cast.hpp>
-#include <cmath>
-#include <thread>
+
+#include <ur_client_library/ur/dashboard_client.h>
+#include <ur_client_library/ur/ur_driver.h>
+
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/module/module.hpp>
 #include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/resource.hpp>
 
-#include "../trajectories/Trajectory.h"
+#include <third_party/trajectories/Trajectory.h>
 
 // this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
 extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
@@ -25,24 +29,24 @@ extern "C" void free_quaternion_memory(void* q);
 namespace {
 
 // locations of files necessary to build module, specified as relative paths
-constexpr char SVA_FILE_TEMPLATE[] = "%1%/src/kinematics/%2%.json";
-constexpr char SCRIPT_FILE[] = "/src/control/external_control.urscript";
-constexpr char OUTPUT_RECIPE[] = "/src/control/rtde_output_recipe.txt";
-constexpr char INPUT_RECIPE[] = "/src/control/rtde_input_recipe.txt";
-
-// locations of log files that will be written
-constexpr char TRAJECTORY_CSV_NAME_TEMPLATE[] = "/%1%_trajectory.csv";
-constexpr char WAYPOINTS_CSV_NAME_TEMPLATE[] = "/%1%_waypoints.csv";
-constexpr char ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE[] = "/%1%_arm_joint_positions.csv";
+constexpr char k_output_recipe[] = "/src/control/rtde_output_recipe.txt";
+constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
 
 // constants for robot operation
-constexpr float TIMESTEP = 0.2F;     // seconds
-constexpr int NOOP_DELAY = 2000;     // 2 millisecond/500 Hz
-constexpr int ESTOP_DELAY = 100000;  // 100 millisecond/10 Hz
+constexpr auto k_noop_delay = std::chrono::milliseconds(2);     // 2 millisecond, 500 Hz
+constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
 
-// do_command keys
-constexpr char VEL_KEY[] = "set_vel";
-constexpr char ACC_KEY[] = "set_acc";
+// define callback function to be called by UR client library when program state changes
+void reportRobotProgramState(bool program_running) {
+    // Print the text in green so we see it better
+    // TODO(RSDK-11048): verify side-effects on logstream, rm direct coloring
+    VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
+}
+
+std::chrono::milliseconds unix_now_ms() {
+    namespace chrono = std::chrono;
+    return chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
+}
 
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = sqrt((vec[3] * vec[3]) + (vec[4] * vec[4]) + (vec[5] * vec[5]));
@@ -56,6 +60,25 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     free_quaternion_memory(q);
     delete[] components;
     return pose{position, orientation, theta};
+}
+
+void write_joint_data(
+    const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::chrono::milliseconds unix_time, unsigned attempt) {
+    of << unix_time.count() << "," << attempt << ",";
+    for (const double joint_pos : jp) {
+        of << joint_pos << ",";
+    }
+
+    unsigned i = 0;
+    for (const double joint_velocity : jv) {
+        i++;
+        if (i == jv.size()) {
+            of << joint_velocity;
+        } else {
+            of << joint_velocity << ",";
+        }
+    }
+    of << "\n";
 }
 
 // helper function to extract an attribute value from its key within a ResourceConfig
@@ -73,6 +96,27 @@ T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute)
         throw std::invalid_argument(buffer.str());
     }
     return *val;
+}
+
+// NOLINTNEXTLINE(performance-enum-size)
+enum class TrajectoryStatus { k_running = 1, k_cancelled = 2, k_stopped = 3 };
+
+template <typename Callable>
+auto make_scope_guard(Callable&& cleanup) {
+    struct guard {
+       public:
+        explicit guard(Callable&& cleanup) : cleanup_(std::move(cleanup)) {}
+        void deactivate() {
+            cleanup_ = [] {};
+        }
+        ~guard() {
+            cleanup_();
+        }
+
+       private:
+        std::function<void()> cleanup_;
+    };
+    return guard{std::forward<Callable>(cleanup)};
 }
 
 }  // namespace
@@ -122,21 +166,19 @@ void write_waypoints_to_csv(const std::string& filepath, const std::vector<Eigen
     of.close();
 }
 
-// define callback function to be called by UR client library when program state changes
-void reportRobotProgramState(bool program_running) {
-    // Print the text in green so we see it better
-    VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
-}
-
 // private variables to maintain connection and state
 struct URArm::state_ {
     std::mutex mu;
     std::unique_ptr<UrDriver> driver;
     std::unique_ptr<DashboardClient> dashboard;
-    vector6d_t joint_state, tcp_state;
+
+    // data from received robot
+    vector6d_t joints_position;
+    vector6d_t joints_velocity;
+    vector6d_t tcp_state;
 
     std::atomic<bool> shutdown{false};
-    std::atomic<bool> trajectory_running{false};
+    std::atomic<TrajectoryStatus> trajectory_status{TrajectoryStatus::k_stopped};
     std::thread keep_alive_thread;
 
     // specified through APPDIR environment variable
@@ -147,6 +189,7 @@ struct URArm::state_ {
     std::atomic<double> speed{0};
     std::atomic<double> acceleration{0};
     std::atomic<bool> estop{false};
+    std::atomic<bool> local_disconnect{false};
 
     std::mutex output_csv_dir_path_mu;
     // specified through VIAM_MODULE_DATA environment variable
@@ -185,15 +228,58 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
     };
 
     return {
+        registration_factory(URArm::model("ur3e")),
         registration_factory(URArm::model("ur5e")),
         registration_factory(URArm::model("ur20")),
     };
 }
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
-    VIAM_SDK_LOG(info) << "URArm constructor start (model: " << model_.to_string() << ")";
+    VIAM_SDK_LOG(info) << "URArm constructor called (model: " << model_.to_string() << ")";
+    startup_(deps, cfg);
+}
+
+void URArm::startup_(const Dependencies&, const ResourceConfig& cfg) {
+    if (current_state_) {
+        throw std::logic_error("URArm::startup_ was called for an already running instance");
+    }
+
+    // check model type is valid, map to ur_client data type
+    // https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/bff7bf2e2a85c17fa3f88adda241763040596ff1/include/ur_client_library/ur/datatypes.h#L204
+    const std::string configured_model_type = [&] {
+        if (model_ == URArm::model("ur3e")) {
+            return "UR3";
+        } else if (model_ == URArm::model("ur5e")) {
+            return "UR5";
+        } else if (model_ == URArm::model("ur20")) {
+            return "UR20";
+        } else {
+            std::ostringstream buffer;
+            buffer << "unsupported model type: `" << model_.to_string() << "`";
+            throw std::invalid_argument(buffer.str());
+        }
+    }();
+
+    VIAM_SDK_LOG(info) << "URArm starting up";
     current_state_ = std::make_unique<state_>();
-    this->reconfigure(deps, cfg);
+
+    // If we fail to make it through the startup sequence, execute the shutdown code. The
+    // shutdown code must be prepared to be called from any intermediate state that this
+    // function may have constructed due to partial execution.
+    auto failure_handler = make_scope_guard([&] {
+        VIAM_SDK_LOG(warn) << "URArm startup failed - shutting down";
+        shutdown_();
+    });
+
+    // extract relevant attributes from config
+    current_state_->host = find_config_attribute<std::string>(cfg, "host");
+    current_state_->speed.store(find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0));
+    current_state_->acceleration.store(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2") * (M_PI / 180.0));
+    try {
+        const std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
+        current_state_->output_csv_dir_path = find_config_attribute<std::string>(cfg, "csv_output_path");
+    } catch (...) {  // NOLINT: TODO: What should actually happen if the attribute is missing?
+    }
 
     // get the APPDIR environment variable
     auto* tmp = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
@@ -221,6 +307,18 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
         throw std::runtime_error("couldn't connect to dashboard");
     }
 
+    // verify that the connected arm is the same model as the configured module
+    std::string actual_model_type{};
+    if (!current_state_->dashboard->commandGetRobotModel(actual_model_type)) {
+        throw std::runtime_error("failed to get model info of connected arm");
+    }
+
+    if (configured_model_type != actual_model_type) {
+        std::ostringstream buffer;
+        buffer << "configured model type `" << configured_model_type << "` does not match connected arm `" << actual_model_type << "`";
+        throw std::runtime_error(buffer.str());
+    }
+
     // stop program, if there is one running
     if (!current_state_->dashboard->commandStop()) {
         throw std::runtime_error("couldn't stop program running on dashboard");
@@ -243,98 +341,110 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
         throw std::runtime_error("couldn't release the arm brakes");
     }
 
+    constexpr char k_script_file[] = "/src/control/external_control.urscript";
+
     // Now the robot is ready to receive a program
     const urcl::UrDriverConfiguration ur_cfg = {current_state_->host,
-                                                current_state_->appdir + SCRIPT_FILE,
-                                                current_state_->appdir + OUTPUT_RECIPE,
-                                                current_state_->appdir + INPUT_RECIPE,
+                                                current_state_->appdir + k_script_file,
+                                                current_state_->appdir + k_output_recipe,
+                                                current_state_->appdir + k_input_recipe,
                                                 &reportRobotProgramState,
                                                 true,  // headless mode
                                                 nullptr};
     current_state_->driver.reset(new UrDriver(ur_cfg));
 
     // define callback function to be called by UR client library when trajectory state changes
-    current_state_->driver->registerTrajectoryDoneCallback(std::bind(&URArm::trajectory_done_cb, this, std::placeholders::_1));
+    current_state_->driver->registerTrajectoryDoneCallback(std::bind(&URArm::trajectory_done_cb_, this, std::placeholders::_1));
 
     // Once RTDE communication is started, we have to make sure to read from the interface buffer,
     // as otherwise we will get pipeline overflows. Therefore, do this directly before starting your
     // main loop
     current_state_->driver->startRTDECommunication();
     int retry_count = 100;
-    while (read_joint_keep_alive(false) != UrDriverStatus::NORMAL) {
+    while (read_joint_keep_alive_(false) != UrDriverStatus::NORMAL) {
         if (retry_count <= 0) {
             throw std::runtime_error("couldn't get joint positions; unable to establish communication with the arm");
         }
         retry_count--;
-        usleep(NOOP_DELAY);
+        std::this_thread::sleep_for(k_noop_delay);
     }
 
     // start background thread to continuously send no-ops and keep socket connection alive
     VIAM_SDK_LOG(info) << "starting background_thread";
-    current_state_->keep_alive_thread = std::thread(&URArm::keep_alive, this);
-    VIAM_SDK_LOG(info) << "URArm constructor end";
+    current_state_->keep_alive_thread = std::thread(&URArm::keep_alive_, this);
+
+    VIAM_SDK_LOG(info) << "URArm startup complete";
+    failure_handler.deactivate();
 }
 
-void URArm::trajectory_done_cb(const control::TrajectoryResult state) {
-    current_state_->trajectory_running.store(false);
+void URArm::check_configured_() {
+    if (!current_state_) {
+        std::ostringstream buffer;
+        buffer << "Arm is not currently configured; reconfiguration likely failed";
+        throw std::runtime_error(buffer.str());
+    }
+}
+
+void URArm::trajectory_done_cb_(const control::TrajectoryResult state) {
     std::string report;
     switch (state) {
         case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
             report = "success";
+            current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
             break;
         case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED:
             report = "canceled";
+            current_state_->trajectory_status.store(TrajectoryStatus::k_cancelled);
             break;
         case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
         default:
+            current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
             report = "failure";
     }
     VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
 }
 
-void URArm::reconfigure(const Dependencies&, const ResourceConfig& cfg) {
-    // extract relevant attributes from config
-    current_state_->host = find_config_attribute<std::string>(cfg, "host");
-    current_state_->speed.store(find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0));
-    current_state_->acceleration.store(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2") * (M_PI / 180.0));
-    try {
-        const std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
-        current_state_->output_csv_dir_path = find_config_attribute<std::string>(cfg, "csv_output_path");
-    } catch (...) {  // NOLINT: TODO: What should actually happen if the attribute is missing?
-    }
+void URArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
+    VIAM_SDK_LOG(warn) << "Reconfigure called: shutting down current state";
+    shutdown_();
+    VIAM_SDK_LOG(warn) << "Reconfigure: starting up with new state";
+    startup_(deps, cfg);
+    VIAM_SDK_LOG(info) << "Reconfigure completed OK";
 }
 
 std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
+    check_configured_();
+    if (current_state_->local_disconnect.load()) {
+        throw std::runtime_error("arm is currently in local mode");
+    }
     const std::lock_guard<std::mutex> guard{current_state_->mu};
-    if (read_joint_keep_alive(true) == UrDriverStatus::READ_FAILURE) {
+    if (read_joint_keep_alive_(true) == UrDriverStatus::READ_FAILURE) {
         throw std::runtime_error("failed to read from arm");
     };
     std::vector<double> to_ret;
-    for (const double joint_pos_rad : current_state_->joint_state) {
+    for (const double joint_pos_rad : current_state_->joints_position) {
         const double joint_pos_deg = 180.0 / M_PI * joint_pos_rad;
         to_ret.push_back(joint_pos_deg);
     }
     return to_ret;
 }
 
-std::chrono::milliseconds unix_now_ms() {
-    namespace chrono = std::chrono;
-    return chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
+std::string waypoints_filename(const std::string& path, const std::chrono::milliseconds unix_time) {
+    constexpr char kWaypointsCsvNameTemplate[] = "/%1%_waypoints.csv";
+    auto fmt = boost::format(path + kWaypointsCsvNameTemplate);
+    return (fmt % std::to_string(unix_time.count())).str();
 }
 
-std::string waypoints_filename(const std::string& path, unsigned long long unix_time_ms) {
-    auto fmt = boost::format(path + WAYPOINTS_CSV_NAME_TEMPLATE);
-    return (fmt % std::to_string(unix_time_ms)).str();
+std::string trajectory_filename(const std::string& path, const std::chrono::milliseconds unix_time) {
+    constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_trajectory.csv";
+    auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
+    return (fmt % std::to_string(unix_time.count())).str();
 }
 
-std::string trajectory_filename(const std::string& path, unsigned long long unix_time_ms) {
-    auto fmt = boost::format(path + TRAJECTORY_CSV_NAME_TEMPLATE);
-    return (fmt % std::to_string(unix_time_ms)).str();
-}
-
-std::string arm_joint_positions_filename(const std::string& path, unsigned long long unix_time_ms) {
-    auto fmt = boost::format(path + ARM_JOINT_POSITIONS_CSV_NAME_TEMPLATE);
-    return (fmt % std::to_string(unix_time_ms)).str();
+std::string arm_joint_positions_filename(const std::string& path, const std::chrono::milliseconds unix_time) {
+    constexpr char kArmJointPositionsCsvNameTemplate[] = "/%1%_arm_joint_positions.csv";
+    auto fmt = boost::format(path + kArmJointPositionsCsvNameTemplate);
+    return (fmt % std::to_string(unix_time.count())).str();
 }
 
 std::string URArm::get_output_csv_dir_path() {
@@ -347,6 +457,12 @@ std::string URArm::get_output_csv_dir_path() {
 }
 
 void URArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
+    check_configured_();
+
+    if (current_state_->local_disconnect.load()) {
+        throw std::runtime_error("arm is currently in local mode");
+    }
+
     if (current_state_->estop.load()) {
         throw std::runtime_error("move_to_joint_positions cancelled -> emergency stop is currently active");
     }
@@ -355,17 +471,23 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     const Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size()));
     const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
     waypoints.push_back(next_waypoint_rad);
-    const std::chrono::milliseconds unix_time_ms = unix_now_ms();
-    auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms.count());
+
+    const auto unix_time = unix_now_ms();
+    const auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time);
     write_waypoints_to_csv(filename, waypoints);
 
     // move will throw if an error occurs
-    move(waypoints, unix_time_ms);
+    move_(waypoints, unix_time);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
                                          const MoveOptions&,
                                          const viam::sdk::ProtoStruct&) {
+    check_configured_();
+
+    if (current_state_->local_disconnect.load()) {
+        throw std::runtime_error("arm is currently in local mode");
+    }
     if (current_state_->estop.load()) {
         throw std::runtime_error("move_through_joint_positions cancelled -> emergency stop is currently active");
     }
@@ -378,16 +500,22 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
             const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
             waypoints.push_back(next_waypoint_rad);
         }
-        const std::chrono::milliseconds unix_time_ms = unix_now_ms();
-        auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time_ms.count());
+
+        const auto unix_time = unix_now_ms();
+        const auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time);
         write_waypoints_to_csv(filename, waypoints);
 
         // move will throw if an error occurs
-        move(waypoints, unix_time_ms);
+        move_(waypoints, unix_time);
     }
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {
+    check_configured_();
+
+    if (current_state_->local_disconnect.load()) {
+        throw std::runtime_error("arm is currently in local mode");
+    }
     const std::lock_guard<std::mutex> guard{current_state_->mu};
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = current_state_->driver->getDataPackage();
     if (data_pkg == nullptr) {
@@ -402,13 +530,18 @@ pose URArm::get_end_position(const ProtoStruct&) {
 }
 
 bool URArm::is_moving() {
-    return current_state_->trajectory_running.load();
+    check_configured_();
+    return current_state_->trajectory_status.load() == TrajectoryStatus::k_running;
 }
 
 URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
+    check_configured_();
+
     // The `Model` class absurdly lacks accessors
     const std::string model_string = [&] {
-        if (model_ == model("ur5e")) {
+        if (model_ == model("ur3e")) {
+            return "ur3e";
+        } else if (model_ == model("ur5e")) {
             return "ur5e";
         } else if (model_ == model("ur20")) {
             return "ur20";
@@ -416,7 +549,9 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         throw std::runtime_error(str(boost::format("no kinematics file known for model '%1'") % model_.to_string()));
     }();
 
-    const auto sva_file_path = str(boost::format(SVA_FILE_TEMPLATE) % current_state_->appdir % model_string);
+    constexpr char kSvaFileTemplate[] = "%1%/src/kinematics/%2%.json";
+
+    const auto sva_file_path = str(boost::format(kSvaFileTemplate) % current_state_->appdir % model_string);
 
     // Open the file in binary mode
     std::ifstream sva_file(sva_file_path, std::ios::binary);
@@ -424,47 +559,46 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         throw std::runtime_error(str(boost::format("unable to open kinematics file '%1'") % sva_file_path));
     }
 
-    // Determine the file size
-    sva_file.seekg(0, std::ios::end);
-    const std::streamsize fileSize = sva_file.tellg();
-    sva_file.seekg(0, std::ios::beg);
-
-    // Create a buffer to hold the file contents
-    std::vector<unsigned char> kinematics_bytes(fileSize);
-
-    // Read the file contents into the buffer
-    if (!sva_file.read(reinterpret_cast<char*>(kinematics_bytes.data()), fileSize)) {
-        throw std::runtime_error("Error reading file");
+    // Read the entire file into a vector without computing size ahead of time
+    std::vector<char> temp_bytes(std::istreambuf_iterator<char>(sva_file), {});
+    if (sva_file.bad()) {
+        throw std::runtime_error(str(boost::format("error reading kinematics file '%1'") % sva_file_path));
     }
 
-    return KinematicsDataSVA(std::move(kinematics_bytes));
+    // Convert to unsigned char vector
+    return KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
 }
 
 void URArm::stop(const ProtoStruct&) {
-    if (current_state_->trajectory_running.load()) {
+    check_configured_();
+
+    if (current_state_->trajectory_status.load() == TrajectoryStatus::k_running) {
         const bool ok = current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
         if (!ok) {
             VIAM_SDK_LOG(warn) << "URArm::stop driver->writeTrajectoryControlMessage returned false";
-            return;
+            throw std::runtime_error("failed to write trajectory control cancel message to URArm");
         }
-        current_state_->trajectory_running.store(false);
     }
 }
 
 ProtoStruct URArm::do_command(const ProtoStruct& command) {
+    check_configured_();
+
     ProtoStruct resp = ProtoStruct{};
 
+    constexpr char k_acc_key[] = "set_acc";
+    constexpr char k_vel_key[] = "set_vel";
     for (auto kv : command) {
-        if (kv.first == VEL_KEY) {
+        if (kv.first == k_vel_key) {
             const double val = *kv.second.get<double>();
             current_state_->speed.store(val * (M_PI / 180.0));
-            resp.emplace(VEL_KEY, val);
+            resp.emplace(k_vel_key, val);
         }
-        if (kv.first == ACC_KEY) {
+        if (kv.first == k_acc_key) {
             const double val = *kv.second.get<double>();
             current_state_->acceleration.store(val * (M_PI / 180.0));
-            resp.emplace(ACC_KEY, val);
+            resp.emplace(k_acc_key, val);
         }
     }
 
@@ -472,7 +606,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 }
 
 // Send no-ops and keep socket connection alive
-void URArm::keep_alive() {
+void URArm::keep_alive_() {
     VIAM_SDK_LOG(info) << "keep_alive thread started";
     while (true) {
         if (current_state_->shutdown.load()) {
@@ -481,25 +615,25 @@ void URArm::keep_alive() {
         {
             const std::lock_guard<std::mutex> guard{current_state_->mu};
             try {
-                read_joint_keep_alive(true);
+                read_joint_keep_alive_(true);
             } catch (const std::exception& ex) {
                 VIAM_SDK_LOG(error) << "keep_alive failed Exception: " << std::string(ex.what());
             }
         }
-        usleep(NOOP_DELAY);
+        std::this_thread::sleep_for(k_noop_delay);
     }
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
 
-void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
-    VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size();
+void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time) {
+    VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time.count() << " waypoints size " << waypoints.size();
 
     // get current joint position and add that as starting pose to waypoints
-    VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time_ms.count();
+    VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time.count();
     std::vector<double> curr_joint_pos = get_joint_positions(ProtoStruct{});
-    VIAM_SDK_LOG(info) << "move: get_joint_positions end" << unix_time_ms.count();
+    VIAM_SDK_LOG(info) << "move: get_joint_positions end" << unix_time.count();
 
-    VIAM_SDK_LOG(info) << "move: compute_trajectory start " << unix_time_ms.count();
+    VIAM_SDK_LOG(info) << "move: compute_trajectory start " << unix_time.count();
     const Eigen::VectorXd curr_waypoint_deg =
         Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
     const Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI / 180.0);
@@ -552,45 +686,43 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             throw std::runtime_error(buffer.str());
         }
 
-        const float duration = static_cast<float>(trajectory.getDuration());
+        const double duration = trajectory.getDuration();
         if (std::isinf(duration)) {
             throw std::runtime_error("trajectory.getDuration() was infinite");
         }
-        float t = 0.0;
+        double t = 0.0;
+        constexpr double k_timestep = 0.2;  // seconds
         while (t < duration) {
             Eigen::VectorXd position = trajectory.getPosition(t);
             Eigen::VectorXd velocity = trajectory.getVelocity(t);
             p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
             v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-            time.push_back(TIMESTEP);
-            t += TIMESTEP;
+            time.push_back(boost::numeric_cast<float>(k_timestep));
+            t += k_timestep;
         }
 
         Eigen::VectorXd position = trajectory.getPosition(duration);
         Eigen::VectorXd velocity = trajectory.getVelocity(duration);
         p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-        const float t2 = duration - (t - TIMESTEP);
+        const double t2 = duration - (t - k_timestep);
         if (std::isinf(t2)) {
-            throw std::runtime_error("duration - (t - TIMESTEP) was infinite");
+            throw std::runtime_error("duration - (t - k_timestep) was infinite");
         }
-        time.push_back(t2);
+        time.push_back(boost::numeric_cast<float>(t2));
     }
-    VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time_ms.count() << " p.count() " << p.size() << " v " << v.size()
-                       << " time " << time.size();
+    VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time.count() << " p.count() " << p.size() << " v " << v.size() << " time "
+                       << time.size();
 
     const std::string path = get_output_csv_dir_path();
-    write_trajectory_to_file(trajectory_filename(path, unix_time_ms.count()), p, v, time);
+    write_trajectory_to_file(trajectory_filename(path, unix_time), p, v, time);
     {  // note the open brace which introduces a new variable scope
         // construct a lock_guard: locks the mutex on construction and unlocks on destruction
         const std::lock_guard<std::mutex> guard{current_state_->mu};
-        std::stringstream pre_trajectory_state;
         {
             UrDriverStatus status;
-            unsigned long long now = 0;
             for (unsigned i = 0; i < 5; i++) {
-                now = unix_now_ms().count();
-                status = read_joint_keep_alive(true);
+                status = read_joint_keep_alive_(true);
                 if (status == UrDriverStatus::NORMAL) {
                     break;
                 }
@@ -598,28 +730,25 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             if (status != UrDriverStatus::NORMAL) {
                 throw std::runtime_error("unable to get arm state before send_trajectory");
             }
-            write_joint_pos_rad(current_state_->joint_state, pre_trajectory_state, now, 0);
         }
-        if (!send_trajectory(p, v, time)) {
+        if (!send_trajectory_(p, v, time)) {
             throw std::runtime_error("send_trajectory failed");
         };
 
-        std::ofstream of(arm_joint_positions_filename(path, unix_time_ms.count()));
+        std::ofstream of(arm_joint_positions_filename(path, unix_time));
 
-        of << "time_ms,read_attempt,joint_0_rad,joint_1_rad,joint_2_rad,joint_3_rad,joint_4_rad,joint_5_rad\n";
-        of << pre_trajectory_state.str();
-        unsigned attempt = 1;
-        unsigned long long now = 0;
+        of << "time_ms,read_attempt,"
+              "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
+              "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
+        unsigned attempt = 0;
         UrDriverStatus status;
-        while (current_state_->trajectory_running.load() && !current_state_->shutdown.load()) {
-            now = unix_now_ms().count();
-            status = read_joint_keep_alive(true);
+        while ((current_state_->trajectory_status.load() == TrajectoryStatus::k_running) && !current_state_->shutdown.load()) {
+            const auto unix_time = unix_now_ms();
+            status = read_joint_keep_alive_(true);
             if (status != UrDriverStatus::NORMAL) {
-                current_state_->trajectory_running.store(false);
                 break;
             }
-            write_joint_pos_rad(current_state_->joint_state, of, now, attempt);
-            attempt++;
+            write_joint_data(current_state_->joints_position, current_state_->joints_velocity, of, unix_time, attempt++);
         };
         if (current_state_->shutdown.load()) {
             of.close();
@@ -627,7 +756,11 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         }
 
         of.close();
-        VIAM_SDK_LOG(info) << "move: end unix_time_ms " << unix_time_ms.count();
+        VIAM_SDK_LOG(info) << "move: end unix_time " << unix_time.count();
+
+        if (current_state_->trajectory_status.load() == TrajectoryStatus::k_cancelled) {
+            throw std::runtime_error("arm's current trajectory cancelled by code");
+        }
 
         switch (status) {
             case UrDriverStatus::ESTOPPED:
@@ -642,7 +775,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
     }
 }
 
-std::string URArm::status_to_string(UrDriverStatus status) {
+std::string URArm::status_to_string_(UrDriverStatus status) {
     switch (status) {
         case UrDriverStatus::ESTOPPED:
             return "ESTOPPED";
@@ -658,23 +791,47 @@ std::string URArm::status_to_string(UrDriverStatus status) {
 
 // Define the destructor
 URArm::~URArm() {
-    VIAM_SDK_LOG(warn) << "URArm destructor called";
-    current_state_->shutdown.store(true);
-    // stop the robot
-    VIAM_SDK_LOG(info) << "URArm destructor calling stop";
-    stop(ProtoStruct{});
-    // disconnect from the dashboard
-    if (current_state_->dashboard) {
-        VIAM_SDK_LOG(info) << "URArm destructor calling dashboard->disconnect()";
-        current_state_->dashboard->disconnect();
+    VIAM_SDK_LOG(warn) << "URArm destructor called, shutting down";
+    shutdown_();
+    VIAM_SDK_LOG(warn) << "URArm destroyed";
+}
+
+void URArm::shutdown_() noexcept {
+    try {
+        VIAM_SDK_LOG(warn) << "URArm shutdown called";
+        if (current_state_) {
+            const auto destroy_state = make_scope_guard([&] { current_state_.reset(); });
+
+            current_state_->shutdown.store(true);
+            // stop the robot
+            VIAM_SDK_LOG(info) << "URArm shutdown calling stop";
+            stop(ProtoStruct{});
+            // disconnect from the dashboard
+            if (current_state_->dashboard) {
+                VIAM_SDK_LOG(info) << "URArm shutdown calling dashboard->disconnect()";
+                current_state_->dashboard->disconnect();
+            }
+            if (current_state_->keep_alive_thread.joinable()) {
+                VIAM_SDK_LOG(info) << "URArm shutdown waiting for keep_alive thread to terminate";
+                current_state_->keep_alive_thread.join();
+                VIAM_SDK_LOG(info) << "keep_alive thread terminated";
+            }
+            VIAM_SDK_LOG(info) << "URArm shutdown complete";
+        }
+    } catch (...) {
+        const auto unconditional_abort = make_scope_guard([] { std::abort(); });
+        try {
+            throw;
+        } catch (const std::exception& ex) {
+            VIAM_SDK_LOG(error) << "URArm shutdown failed with a std::exception - module service will terminate: " << ex.what();
+        } catch (...) {
+            VIAM_SDK_LOG(error) << "URArm shutdown failed with an unknown exception - module service will terminate";
+        }
     }
-    VIAM_SDK_LOG(info) << "URArm destructor waiting for keep_alive thread to terminate";
-    current_state_->keep_alive_thread.join();
-    VIAM_SDK_LOG(info) << "keep_alive thread terminated";
 }
 
 // helper function to send time-indexed position, velocity, acceleration setpoints to the UR driver
-bool URArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time) {
+bool URArm::send_trajectory_(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time) {
     VIAM_SDK_LOG(info) << "URArm::send_trajectory start";
     if (p_p.size() != time.size() || p_v.size() != time.size()) {
         VIAM_SDK_LOG(error) << "URArm::send_trajectory p_p.size() != time.size() || p_v.size() != time.size(): not executing";
@@ -687,7 +844,7 @@ bool URArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vecto
         return false;
     };
 
-    current_state_->trajectory_running.store(true);
+    current_state_->trajectory_status.store(TrajectoryStatus::k_running);
     VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << p_p.size() << " cubic writeTrajectorySplinePoint/3";
     for (size_t i = 0; i < p_p.size(); i++) {
         if (!current_state_->driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i])) {
@@ -700,32 +857,63 @@ bool URArm::send_trajectory(const std::vector<vector6d_t>& p_p, const std::vecto
     return true;
 }
 
-void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt) {
-    of << unix_now_ms << "," << attempt << ",";
-    unsigned i = 0;
-    for (const double joint_pos_rad : js) {
-        i++;
-        if (i == js.size()) {
-            of << joint_pos_rad;
-        } else {
-            of << joint_pos_rad << ",";
-        }
-    }
-    of << "\n";
-}
-
 // helper function to read a data packet and send a noop message
-URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
+URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
     // check to see if an estop has occurred.
     std::string status;
-
     try {
+        if (current_state_->local_disconnect.load()) {
+            // sleep just so we don't spam
+            // this may be unnecessary
+            std::this_thread::sleep_for(k_estop_delay);
+
+            if (!current_state_->dashboard->commandIsInRemoteControl()) {
+                return UrDriverStatus::DASHBOARD_FAILURE;
+            }
+
+            // reconnect to the tablet. We have to do this, otherwise the client will assume that the arm is still in local mode.
+            // yes, even though the client can already recognize that we are in remote control mode
+            current_state_->dashboard->disconnect();
+            if (!current_state_->dashboard->connect()) {
+                return UrDriverStatus::DASHBOARD_FAILURE;
+            }
+
+            // reset the primary client so the driver is aware the arm is back in remote mode
+            // this has to happen, otherwise when an estop is triggered the arm will return error code C210A0
+            current_state_->driver->stopPrimaryClientCommunication();
+            current_state_->driver->startPrimaryClientCommunication();
+
+            // turn communication with the RTDE client back on so we can receive data from the arm
+            current_state_->driver->startRTDECommunication();
+
+            // reset the flag and return to the "happy" path
+            current_state_->local_disconnect.store(false);
+            VIAM_SDK_LOG(debug) << "recovered from local mode";
+
+            return UrDriverStatus::NORMAL;
+        }
         if (!current_state_->dashboard->commandSafetyStatus(status)) {
-            // we currently do not attempt to reconnect to the dashboard client. hopefully this error resolves itself.
+            // We should not end up in here, as commandSafetyStatus will probably throw before returning false
             VIAM_SDK_LOG(error) << "read_joint_keep_alive dashboard->commandSafetyStatus() returned false when retrieving the status";
             return UrDriverStatus::DASHBOARD_FAILURE;
         }
     } catch (const std::exception& ex) {
+        // if we end up here that means we can no longer talk to the arm. store the state so we can try to recover from this.
+        current_state_->local_disconnect.store(true);
+
+        // attempt to reconnect to the arm. Even if we reconnect, we will have to check that the tablet is not in local mode.
+        // we reconnect in the catch to attempt to limit the amount of times we connect to the arm to avoid a "no controller" error
+        // https://forum.universal-robots.com/t/no-controller-error-on-real-robot/3127
+        current_state_->dashboard->disconnect();
+        if (!current_state_->dashboard->connect()) {
+            // we failed to reconnect to the tablet, so we might not even be able to talk to it.
+            // return an error so we can attempt to reconnect again
+            return UrDriverStatus::DASHBOARD_FAILURE;
+        }
+
+        // reset the driver client so we stop trying to ask for more data
+        current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
+
         VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
         return UrDriverStatus::DASHBOARD_FAILURE;
     }
@@ -735,12 +923,12 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
         current_state_->estop.store(true);
 
         // clear any currently running trajectory.
-        current_state_->trajectory_running.store(false);
+        current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
 
         // TODO: further investigate the need for this delay
         // sleep longer to prevent buffer error
         // Removing this will cause the RTDE client to move into an unrecoverable state
-        usleep(ESTOP_DELAY);
+        std::this_thread::sleep_for(k_estop_delay);
 
     } else {
         // the arm is in a normal state.
@@ -749,7 +937,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
             // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
             try {
                 VIAM_SDK_LOG(info) << "recovering from e-stop";
-                current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
+                current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
 
                 VIAM_SDK_LOG(info) << "restarting arm";
                 if (!current_state_->dashboard->commandPowerOff()) {
@@ -794,7 +982,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
             VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage() returned nullptr. resetting RTDE client connection";
         }
         try {
-            current_state_->driver->resetRTDEClient(current_state_->appdir + OUTPUT_RECIPE, current_state_->appdir + INPUT_RECIPE);
+            current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
         } catch (const std::exception& ex) {
             if (log) {
                 VIAM_SDK_LOG(error) << "read_joint_keep_alive driver RTDEClient failed to restart: " << std::string(ex.what());
@@ -810,12 +998,26 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive(bool log) {
     }
 
     // read current joint positions from robot data
-    if (!data_pkg->getData("actual_q", current_state_->joint_state)) {
+    vector6d_t joints_position{};
+    if (!data_pkg->getData("actual_q", joints_position)) {
         if (log) {
             VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_q\") returned false";
         }
         return UrDriverStatus::READ_FAILURE;
     }
+
+    // read current joint velocities from robot data
+    vector6d_t joints_velocity{};
+    if (!data_pkg->getData("actual_qd", joints_velocity)) {
+        if (log) {
+            VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->getDataPackage()->data_pkg->getData(\"actual_qd\") returned false";
+        }
+        return UrDriverStatus::READ_FAILURE;
+    }
+
+    // for consistency, update cached data only after all getData calls succeed
+    current_state_->joints_position = std::move(joints_position);
+    current_state_->joints_velocity = std::move(joints_velocity);
 
     // send a noop to keep the connection alive
     if (!current_state_->driver->writeTrajectoryControlMessage(
