@@ -115,13 +115,27 @@ func parseAndAddPoses(df *dataframe.DataFrame, model referenceframe.Model) (*dat
 	}
 
 	// add the series to the dataframe
-	df.AddSeries(xSeries, nil)
-	df.AddSeries(ySeries, nil)
-	df.AddSeries(zSeries, nil)
-	df.AddSeries(oxSeries, nil)
-	df.AddSeries(oySeries, nil)
-	df.AddSeries(ozSeries, nil)
-	df.AddSeries(thetaSeries, nil)
+	if err := df.AddSeries(xSeries, nil); err != nil {
+		return nil, err
+	}
+	if err := df.AddSeries(ySeries, nil); err != nil {
+		return nil, err
+	}
+	if err := df.AddSeries(zSeries, nil); err != nil {
+		return nil, err
+	}
+	if err := df.AddSeries(oxSeries, nil); err != nil {
+		return nil, err
+	}
+	if err := df.AddSeries(oySeries, nil); err != nil {
+		return nil, err
+	}
+	if err := df.AddSeries(ozSeries, nil); err != nil {
+		return nil, err
+	}
+	if err := df.AddSeries(thetaSeries, nil); err != nil {
+		return nil, err
+	}
 	return df, nil
 }
 
