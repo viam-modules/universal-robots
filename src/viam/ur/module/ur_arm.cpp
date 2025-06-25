@@ -755,9 +755,10 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         of.close();
         VIAM_SDK_LOG(info) << "move: end unix_time " << unix_time.count();
 
-        if (current_state_->trajectory_status.load() == TrajectoryStatus::k_cancelled) {
-            throw std::runtime_error("arm's current trajectory cancelled by code");
-        }
+        // TODO: renable this once zero velocity errors are resolved
+        // if (current_state_->trajectory_status.load() == TrajectoryStatus::k_cancelled) {
+        //     throw std::runtime_error("arm's current trajectory cancelled by code");
+        // }
 
         switch (status) {
             case UrDriverStatus::ESTOPPED:
