@@ -384,10 +384,15 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
     // TODO: use options
     if (!positions.empty()) {
         std::vector<Eigen::VectorXd> waypoints;
+
         for (auto position : positions) {
             const Eigen::VectorXd next_waypoint_deg =
                 Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
             const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
+            if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back()))) {
+                VIAM_SDK_LOG(info) << "yo dupe move_through_joint_positions: " << rando_counter << "  ";
+                continue;
+            }
             waypoints.push_back(next_waypoint_rad);
         }
         const std::chrono::milliseconds unix_time_ms = unix_now_ms();
@@ -512,7 +517,7 @@ bool is_same_position(const Eigen::VectorXd vec_a, const Eigen::VectorXd vec_b) 
     VIAM_SDK_LOG(info) << "a:  " << vec_a << "\t b:  " << vec_b;
     return false;
 }
-void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
+void URArm::move(const std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
     VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size();
 
     // get current joint position and add that as starting pose to waypoints
@@ -524,19 +529,26 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
     const Eigen::VectorXd curr_waypoint_deg =
         Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
     const Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI / 180.0);
-    // if (!curr_waypoint_rad.isApprox(waypoints.front(), 0.0001)) {
-    //     VIAM_SDK_LOG(info) << "yo no dupe " << rando_counter << "  " << unix_time_ms.count();
-    waypoints.insert(waypoints.begin(), curr_waypoint_rad);
-    // } else {
-    //     VIAM_SDK_LOG(info) << "yo dupe " << rando_counter << "  " << unix_time_ms.count();
-    // }
+    std::vector<Eigen::VectorXd> waypoints_clean = {};
+    if (!curr_waypoint_rad.isApprox(waypoints.front(), 0.0001)) {
+        VIAM_SDK_LOG(info) << "yo no dupe " << rando_counter << "  " << unix_time_ms.count();
+        waypoints_clean.push_back(curr_waypoint_rad);
+        // waypoints.insert(waypoints.begin(), curr_waypoint_rad);
+    } else {
+        VIAM_SDK_LOG(info) << "yo dupe " << rando_counter << "  " << unix_time_ms.count();
+    }
+    for (size_t i = 1; i < waypoints.size(); i++) {
+        if (!waypoints[i].isApprox(waypoints[i - 1])) {
+            waypoints_clean.push_back(waypoints[i]);
+        }
+    }
 
     // calculate dot products and identify any consecutive segments with dot product == -1
     std::vector<size_t> segments;
     segments.push_back(0);
-    for (size_t i = 2; i < waypoints.size(); i++) {
-        Eigen::VectorXd segment_AB = (waypoints[i - 1] - waypoints[i - 2]);
-        Eigen::VectorXd segment_BC = (waypoints[i] - waypoints[i - 1]);
+    for (size_t i = 2; i < waypoints_clean.size(); i++) {
+        Eigen::VectorXd segment_AB = (waypoints_clean[i - 1] - waypoints_clean[i - 2]);
+        Eigen::VectorXd segment_BC = (waypoints_clean[i] - waypoints_clean[i - 1]);
         segment_AB.normalize();
         segment_BC.normalize();
         const double dot = segment_BC.dot(segment_AB);
@@ -544,7 +556,7 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             segments.push_back(i - 1);
         }
     }
-    segments.push_back(waypoints.size() - 1);
+    segments.push_back(waypoints_clean.size() - 1);
 
     // set velocity/acceleration constraints
     const double move_speed = current_state_->speed.load();
@@ -562,13 +574,13 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
     VIAM_SDK_LOG(info) << "yo segments size:  " << segments.size() << "  " << unix_time_ms.count();
 
     for (size_t i = 0; i < segments.size() - 1; i++) {
-        const auto start = boost::numeric_cast<decltype(waypoints)::difference_type>(segments[i]);
+        const auto start = boost::numeric_cast<decltype(waypoints_clean)::difference_type>(segments[i]);
         // VIAM_SDK_LOG(info) << "yo start " << start << "  " << unix_time_ms.count();
 
-        const auto end = boost::numeric_cast<decltype(waypoints)::difference_type>(segments[i + 1] + 1);
+        const auto end = boost::numeric_cast<decltype(waypoints_clean)::difference_type>(segments[i + 1] + 1);
         // VIAM_SDK_LOG(info) << "yo end " << end << "  " << unix_time_ms.count();
 
-        const std::list<Eigen::VectorXd> positions_subset(waypoints.begin() + start, waypoints.begin() + end);
+        const std::list<Eigen::VectorXd> positions_subset(waypoints_clean.begin() + start, waypoints_clean.begin() + end);
         VIAM_SDK_LOG(info) << "yo subset " << rando_counter << "  " << unix_time_ms.count();
 
         const Trajectory trajectory(Path(positions_subset, 0.1), max_velocity, max_acceleration);
