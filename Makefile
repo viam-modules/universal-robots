@@ -1,4 +1,4 @@
-.PHONY: module.tar.gz ur5e-sim format format-check test run-clang-tidy run-clang-check clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci
+.PHONY: module.tar.gz ur5e-sim format format-check generate-config-db test run-clang-tidy run-clang-check clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci
 default: build
 
 # format the source code
