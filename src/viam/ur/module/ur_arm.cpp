@@ -709,7 +709,8 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         }
         double t = 0.0;
         constexpr double k_timestep = 0.2;  // seconds
-        while (t < duration) {
+        // sample at 5Hz until we reach the final full timestep
+        while (t < duration - k_timestep) {
             Eigen::VectorXd position = trajectory.getPosition(t);
             Eigen::VectorXd velocity = trajectory.getVelocity(t);
             p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
@@ -718,10 +719,10 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
             t += k_timestep;
         }
 
-        const double t2 = duration - (t - k_timestep);
-        if (t2 < k_min_timestep_sec) {  // if the final timestep is too small, skip it to avoid the arm throwing an error
-            continue;
-        }
+        // add the final timestep as well as any remaining time from duration
+        // this will result in t2 being 0.2 to 0.4 seconds long
+        const double t2 = duration - t + k_timestep;
+
         Eigen::VectorXd position = trajectory.getPosition(duration);
         Eigen::VectorXd velocity = trajectory.getVelocity(duration);
         p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
