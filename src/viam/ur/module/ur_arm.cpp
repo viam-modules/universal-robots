@@ -517,7 +517,7 @@ bool is_same_position(const Eigen::VectorXd vec_a, const Eigen::VectorXd vec_b) 
     VIAM_SDK_LOG(info) << "a:  " << vec_a << "\t b:  " << vec_b;
     return false;
 }
-void URArm::move(const std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
+void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
     VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size();
 
     // get current joint position and add that as starting pose to waypoints
@@ -532,6 +532,9 @@ void URArm::move(const std::vector<Eigen::VectorXd> waypoints, std::chrono::mill
     if (!curr_waypoint_rad.isApprox(waypoints.front(), 0.0001)) {
         VIAM_SDK_LOG(info) << "yo no dupe " << rando_counter << "  " << unix_time_ms.count();
         waypoints.insert(waypoints.begin(), curr_waypoint_rad);
+    } else if (waypoints.size() < 2) {  // this tells us if we are already at the goal
+        VIAM_SDK_LOG(info) << "yo dupe and at goal" << rando_counter << "  " << unix_time_ms.count();
+        return;
     } else {
         VIAM_SDK_LOG(info) << "yo dupe " << rando_counter << "  " << unix_time_ms.count();
     }
@@ -565,6 +568,7 @@ void URArm::move(const std::vector<Eigen::VectorXd> waypoints, std::chrono::mill
     std::vector<float> time;
 
     VIAM_SDK_LOG(info) << "yo segments size:  " << segments.size() << "  " << unix_time_ms.count();
+    VIAM_SDK_LOG(info) << "yo len waypoints:  " << waypoints.size() << "  " << unix_time_ms.count();
 
     for (size_t i = 0; i < segments.size() - 1; i++) {
         const auto start = boost::numeric_cast<decltype(waypoints)::difference_type>(segments[i]);
@@ -599,6 +603,12 @@ void URArm::move(const std::vector<Eigen::VectorXd> waypoints, std::chrono::mill
         const float duration = static_cast<float>(trajectory.getDuration());
         if (std::isinf(duration)) {
             throw std::runtime_error("trajectory.getDuration() was infinite");
+        }
+        if (std::isnan(duration)) {
+            throw std::runtime_error("trajectory.getDuration() was nan");
+        }
+        if (duration > 600) {  // if the duration is longer than 10 minutes
+            throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
         }
         VIAM_SDK_LOG(info) << "yo duration " << duration << "  " << unix_time_ms.count();
 
