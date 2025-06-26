@@ -36,6 +36,8 @@ constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
 constexpr auto k_noop_delay = std::chrono::milliseconds(2);     // 2 millisecond, 500 Hz
 constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
 
+constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
+
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
     // Print the text in green so we see it better
@@ -498,7 +500,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
             const Eigen::VectorXd next_waypoint_deg =
                 Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
             const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
-            if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), 0.0001))) {
+            if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), k_waypoint_equivalancy_epsilon_rad))) {
                 continue;
             }
             waypoints.push_back(next_waypoint_rad);
@@ -640,9 +642,10 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
     const Eigen::VectorXd curr_waypoint_deg =
         Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
     const Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI / 180.0);
-    if (!curr_waypoint_rad.isApprox(waypoints.front(), 0.0001)) {
+    if (!curr_waypoint_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
         waypoints.insert(waypoints.begin(), curr_waypoint_rad);
-    } else if (waypoints.size() < 2) {  // this tells us if we are already at the goal
+    } 
+    if (waypoints.size() == 1) {  // this tells us if we are already at the goal
         VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
         return;
     }
@@ -696,12 +699,12 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         }
 
         const double duration = trajectory.getDuration();
-        if (std::isinf(duration)) {
-            throw std::runtime_error("trajectory.getDuration() was infinite");
+        if (!std::isfinite(duration)) {
+            throw std::runtime_error("trajectory.getDuration() was not a finite number");
         }
-        if (std::isnan(duration)) {
-            throw std::runtime_error("trajectory.getDuration() was nan");
-        }
+
+        //TODO(RSDK-11069): Make this configurable
+        //https://viam.atlassian.net/browse/RSDK-11069
         if (duration > 600) {  // if the duration is longer than 10 minutes
             throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
         }
