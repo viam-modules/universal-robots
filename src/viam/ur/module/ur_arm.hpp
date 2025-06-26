@@ -8,7 +8,7 @@
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/reconfigurable.hpp>
 
-#include "../../../third_party/trajectories/Path.h"
+#include <third_party/trajectories/Path.h>
 
 using namespace viam::sdk;
 using namespace urcl;
@@ -18,10 +18,9 @@ void write_trajectory_to_file(const std::string& filepath,
                               const std::vector<vector6d_t>& p_v,
                               const std::vector<float>& time);
 void write_waypoints_to_csv(const std::string& filepath, const std::vector<Eigen::VectorXd>& waypoints);
-void write_joint_pos_rad(vector6d_t js, std::ostream& of, unsigned long long unix_now_ms, unsigned attempt);
-std::string waypoints_filename(const std::string& path, unsigned long long unix_time_ms);
-std::string trajectory_filename(const std::string& path, unsigned long long unix_time_ms);
-std::string arm_joint_positions_filename(const std::string& path, unsigned long long unix_time_ms);
+std::string waypoints_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
+std::string trajectory_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
+std::string arm_joint_positions_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
 
 class URArm final : public Arm, public Reconfigurable {
    public:
@@ -97,17 +96,24 @@ class URArm final : public Arm, public Reconfigurable {
     struct state_;
 
     enum class UrDriverStatus : int8_t;  // Only available on 3.10/5.4
-    static std::string status_to_string(UrDriverStatus status);
 
-    void keep_alive();
+    static std::string status_to_string_(UrDriverStatus status);
 
-    void move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
+    void startup_(const Dependencies& deps, const ResourceConfig& cfg);
 
-    bool send_trajectory(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time);
+    void check_configured_();
 
-    void trajectory_done_cb(control::TrajectoryResult);
+    void shutdown_() noexcept;
 
-    URArm::UrDriverStatus read_joint_keep_alive(bool log);
+    void keep_alive_();
+
+    void move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
+
+    bool send_trajectory_(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time);
+
+    void trajectory_done_cb_(control::TrajectoryResult);
+
+    URArm::UrDriverStatus read_joint_keep_alive_(bool log);
 
     const Model model_;
     std::unique_ptr<state_> current_state_;
