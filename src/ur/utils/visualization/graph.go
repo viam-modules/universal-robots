@@ -60,7 +60,7 @@ func readCSVintoDataframe(path string, headers []string) (*dataframe.DataFrame, 
 	}
 	defer file.Close()
 
-	df, err := imports.LoadFromCSV(context.Background(), file, imports.CSVLoadOptions{
+	return imports.LoadFromCSV(context.Background(), file, imports.CSVLoadOptions{
 		Headers: headers,
 		DictateDataType: map[string]interface{}{
 			"t(s)": float64(0),
@@ -72,7 +72,6 @@ func readCSVintoDataframe(path string, headers []string) (*dataframe.DataFrame, 
 			"j5":   float64(0),
 		},
 	})
-	return df, err
 }
 
 func parseAndAddPoses(df *dataframe.DataFrame, model referenceframe.Model) (*dataframe.DataFrame, error) {
@@ -85,25 +84,18 @@ func parseAndAddPoses(df *dataframe.DataFrame, model referenceframe.Model) (*dat
 	ozSeries := dataframe.NewSeriesFloat64("oz", nil)
 	thetaSeries := dataframe.NewSeriesFloat64("theta", nil)
 
-	for i := 0; i < df.NRows(); i++ {
+	for i := range df.NRows() {
 		row := df.Row(i, false)
-
 		// iterate through the row and construct the joint positions which are 6 dimensional
-		rowInputs := []float64{}
-		for j := 0; j < jointCount; j++ {
-			inputValue, ok := row["j"+strconv.Itoa(j)].(float64)
-			if !ok {
-				return nil, fmt.Errorf("j%d not found in row", j)
-			}
-			rowInputs = append(rowInputs, inputValue)
+		rowInputs := dataframe.NewSeriesFloat64("joints", &dataframe.SeriesInit{})
+		for j := range jointCount {
+			rowInputs.Append(row["j"+strconv.Itoa(j)])
 		}
-
 		// perform FK to get the pose
-		pose, err := model.Transform(referenceframe.FloatsToInputs(rowInputs))
+		pose, err := model.Transform(referenceframe.FloatsToInputs(rowInputs.Values))
 		if err != nil {
 			return nil, err
 		}
-
 		// add the pose to the series
 		xSeries.Append(pose.Point().X)
 		ySeries.Append(pose.Point().Y)
@@ -140,26 +132,15 @@ func parseAndAddPoses(df *dataframe.DataFrame, model referenceframe.Model) (*dat
 }
 
 func extractFloatSeries(df *dataframe.DataFrame, colName string) ([]float64, error) {
-	var col dataframe.Series
 	for _, s := range df.Series {
 		if s.Name() == colName {
-			col = s
-			break
+			if floatSeries, ok := s.(*dataframe.SeriesFloat64); ok {
+				return floatSeries.Values, nil
+			}
+			return nil, fmt.Errorf("column %s is not SeriesFloat64", colName)
 		}
 	}
-	if col == nil {
-		return nil, fmt.Errorf("column %s not found", colName)
-	}
-	values := make([]float64, col.NRows())
-	for i := 0; i < col.NRows(); i++ {
-		val := col.Value(i)
-		f, ok := val.(float64)
-		if !ok {
-			return nil, fmt.Errorf("column %s: value at index %d is not float64", colName, i)
-		}
-		values[i] = f
-	}
-	return values, nil
+	return nil, fmt.Errorf("column %s not found", colName)
 }
 
 func evenlySpacedTimes(start, end float64, count int) []float64 {
@@ -191,17 +172,18 @@ func saveChartPNG(name, yLabel string, x1, y1, x2, y2 []float64) error {
 	return graph.Render(chart.PNG, f)
 }
 
-func plotCharts(prefix, yLabelFormat string, trajTime []float64, trajData [][]float64, wayTime []float64, waypointData [][]float64, isPos bool) error {
+func plotCharts(
+	prefix, yLabelFormat string,
+	trajTime, wayTime []float64,
+	trajData, waypointData [][]float64,
+	labelFunc func(int) string,
+) error {
 	if len(trajData) != len(waypointData) {
 		return fmt.Errorf("series count mismatch")
 	}
-	suffix := []string{"X", "Y", "Z"}
 	for i := range trajData {
-		name := fmt.Sprintf("%s%d_comparison.png", prefix, i)
-		if isPos {
-			name = fmt.Sprintf("%s%s_comparison.png", prefix, suffix[i])
-		}
-		yLabel := fmt.Sprintf(yLabelFormat, i)
+		name := fmt.Sprintf("%s%s_comparison.png", prefix, labelFunc(i))
+		yLabel := fmt.Sprintf(yLabelFormat, labelFunc(i))
 		if err := saveChartPNG(name, yLabel, trajTime, trajData[i], wayTime, waypointData[i]); err != nil {
 			return err
 		}
@@ -260,15 +242,25 @@ func plotJointAndPoseComparisonFromDataframes(trajDf, waypointDf *dataframe.Data
 	if err != nil {
 		return err
 	}
-	traj := [][]float64{tx, ty, tz}
-	way := [][]float64{wx, wy, wz}
+	trajectoryPoses := [][]float64{tx, ty, tz}
+	waypointPoses := [][]float64{wx, wy, wz}
 
-	// plot joint positions data
-	if err := plotCharts("joint", "Joint %d Angle (rad)", trajTime, allTrajectoryJointValues, waypointTime, allWaypointJointValues, false); err != nil {
+	// For joints, just use the index number as string
+	if err := plotCharts("joint", "Joint %s Angle (rad)", trajTime, waypointTime, allTrajectoryJointValues, allWaypointJointValues, func(i int) string {
+		return strconv.Itoa(i)
+	}); err != nil {
 		return err
 	}
-	// plot pose data
-	return plotCharts("position_", "Position %c (mm)", trajTime, traj, waypointTime, way, true)
+
+	// For positions, use letters X, Y, Z
+	suffix := []string{"X", "Y", "Z"}
+	if err := plotCharts("position_", "Position %s (mm)", trajTime, waypointTime, trajectoryPoses, waypointPoses, func(i int) string {
+		return suffix[i]
+	}); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func main() {
@@ -307,5 +299,8 @@ func realmain(trajectoryPath, waypointPath, armKinematicsPath string) error {
 		return err
 	}
 	// plot joint positions and poses as .png files
-	return plotJointAndPoseComparisonFromDataframes(trajDf, wayDf)
+	if err := plotJointAndPoseComparisonFromDataframes(trajDf, wayDf); err != nil {
+		return err
+	}
+	return nil
 }

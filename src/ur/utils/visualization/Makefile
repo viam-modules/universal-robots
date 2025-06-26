@@ -4,7 +4,7 @@ graphs:
 remove-graphs:
 	rm *.png
 
-create-config:
+create-example-config:
 	echo '{' > config.json && \
 	echo '  "trajectory_csv": "~/.viam/module-data/[part-id]/viam_universal-robots/[timestamp]_trajectory.csv",' >> config.json && \
 	echo '  "waypoints_csv": "~/.viam/module-data/[part-id]/viam_universal-robots/[timestamp]_waypoints.csv",' >> config.json && \
