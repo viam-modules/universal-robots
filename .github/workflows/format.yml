@@ -6,9 +6,10 @@ on:
   push:
     branches: ["main"]
   workflow_dispatch:
+  workflow_call:
 
 jobs:
-  build:
+  checks:
     if: github.repository_owner == 'viam-modules'
     runs-on: ubuntu-latest
     container: ghcr.io/viam-modules/universal-robots:amd64
