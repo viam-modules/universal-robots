@@ -270,6 +270,7 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
     current_state_->keep_alive_thread = std::thread(&URArm::keep_alive, this);
     VIAM_SDK_LOG(info) << "URArm constructor end";
 }
+
 void URArm::trajectory_done_cb(const control::TrajectoryResult state) {
     std::string report;
     switch (state) {
