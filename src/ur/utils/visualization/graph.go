@@ -28,12 +28,12 @@ func loadConfig(path string) (config, error) {
 	var cfg config
 	file, err := os.Open(path)
 	if err != nil {
-		return cfg, err
+		return config{}, err
 	}
 	defer file.Close()
 	decoder := json.NewDecoder(file)
 	if err := decoder.Decode(&cfg); err != nil {
-		return cfg, err
+		return config{}, err
 	}
 	return cfg, nil
 }
