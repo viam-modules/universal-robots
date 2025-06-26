@@ -17,8 +17,6 @@ jobs:
           fetch-depth: 0
       - name: Format Check
         run: make format-check
-      - name: Generate Config Database
-        run: make generate-config-db
       - name: Run clang-check
         run: make run-clang-check
       - name: Run clang-tidy
