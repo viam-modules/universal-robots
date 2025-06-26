@@ -706,8 +706,8 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
             throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
         }
 
-        float t = 0.0;
-        constexpr float k_timestep = 0.2F;  // seconds
+        double t = 0.0;
+        constexpr double k_timestep = 0.2F;  // seconds
         while (t < duration) {
             Eigen::VectorXd position = trajectory.getPosition(t);
             Eigen::VectorXd velocity = trajectory.getVelocity(t);
