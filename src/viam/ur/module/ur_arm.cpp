@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <iterator>
 #include <stdexcept>
 #include <thread>
 
@@ -51,6 +52,16 @@ std::chrono::milliseconds unix_now_ms() {
     return chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
 }
 
+template <typename T>
+[[nodiscard]] constexpr decltype(auto) degrees_to_radians(T&& degrees) {
+    return std::forward<T>(degrees) * (M_PI / 180.0);
+}
+
+template <typename T>
+[[nodiscard]] constexpr decltype(auto) radians_to_degrees(T&& radians) {
+    return std::forward<T>(radians) * (180.0 / M_PI);
+}
+
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = sqrt((vec[3] * vec[3]) + (vec[4] * vec[4]) + (vec[5] * vec[5]));
     void* q = quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm);
@@ -58,7 +69,7 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     double* components = orientation_vector_get_components(ov);  // returned as ox, oy, oz, theta
     auto position = coordinates{1000 * vec[0], 1000 * vec[1], 1000 * vec[2]};
     auto orientation = pose_orientation{components[0], components[1], components[2]};
-    auto theta = components[3] * 180 / M_PI;
+    auto theta = radians_to_degrees(components[3]);
     free_orientation_vector_memory(ov);
     free_quaternion_memory(q);
     delete[] components;
@@ -151,10 +162,10 @@ void write_trajectory_to_file(const std::string& filepath,
     of.close();
 }
 
-void write_waypoints_to_csv(const std::string& filepath, const std::vector<Eigen::VectorXd>& waypoints) {
+void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::VectorXd>& waypoints) {
     unsigned i;
     std::ofstream of(filepath);
-    for (const Eigen::VectorXd& vec : waypoints) {
+    for (const auto& vec : waypoints) {
         i = 0;
         for (const auto& n : vec) {
             i++;
@@ -276,8 +287,8 @@ void URArm::startup_(const Dependencies&, const ResourceConfig& cfg) {
 
     // extract relevant attributes from config
     current_state_->host = find_config_attribute<std::string>(cfg, "host");
-    current_state_->speed.store(find_config_attribute<double>(cfg, "speed_degs_per_sec") * (M_PI / 180.0));
-    current_state_->acceleration.store(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2") * (M_PI / 180.0));
+    current_state_->speed.store(degrees_to_radians(find_config_attribute<double>(cfg, "speed_degs_per_sec")));
+    current_state_->acceleration.store(degrees_to_radians(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2")));
     try {
         const std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
         current_state_->output_csv_dir_path = find_config_attribute<std::string>(cfg, "csv_output_path");
@@ -426,7 +437,7 @@ std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
     };
     std::vector<double> to_ret;
     for (const double joint_pos_rad : current_state_->joints_position) {
-        const double joint_pos_deg = 180.0 / M_PI * joint_pos_rad;
+        const double joint_pos_deg = radians_to_degrees(joint_pos_rad);
         to_ret.push_back(joint_pos_deg);
     }
     return to_ret;
@@ -470,17 +481,17 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
         throw std::runtime_error("move_to_joint_positions cancelled -> emergency stop is currently active");
     }
 
-    std::vector<Eigen::VectorXd> waypoints;
-    const Eigen::VectorXd next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size()));
-    const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
-    waypoints.push_back(next_waypoint_rad);
+    auto next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size()));
+    auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg));
+    std::list<Eigen::VectorXd> waypoints;
+    waypoints.emplace_back(std::move(next_waypoint_rad));
 
     const auto unix_time = unix_now_ms();
     const auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time);
     write_waypoints_to_csv(filename, waypoints);
 
     // move will throw if an error occurs
-    move_(waypoints, unix_time);
+    move_(std::move(waypoints), unix_time);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -496,15 +507,14 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
     }
     // TODO: use options
     if (!positions.empty()) {
-        std::vector<Eigen::VectorXd> waypoints;
-        for (auto position : positions) {
-            const Eigen::VectorXd next_waypoint_deg =
-                Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
-            const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
+        std::list<Eigen::VectorXd> waypoints;
+        for (const auto& position : positions) {
+            auto next_waypoint_deg = Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
+            auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg)).eval();
             if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), k_waypoint_equivalancy_epsilon_rad))) {
                 continue;
             }
-            waypoints.push_back(next_waypoint_rad);
+            waypoints.emplace_back(std::move(next_waypoint_rad));
         }
 
         const auto unix_time = unix_now_ms();
@@ -512,7 +522,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         write_waypoints_to_csv(filename, waypoints);
 
         // move will throw if an error occurs
-        move_(waypoints, unix_time);
+        move_(std::move(waypoints), unix_time);
     }
 }
 
@@ -595,15 +605,15 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 
     constexpr char k_acc_key[] = "set_acc";
     constexpr char k_vel_key[] = "set_vel";
-    for (auto kv : command) {
+    for (const auto& kv : command) {
         if (kv.first == k_vel_key) {
             const double val = *kv.second.get<double>();
-            current_state_->speed.store(val * (M_PI / 180.0));
+            current_state_->speed.store(degrees_to_radians(val));
             resp.emplace(k_vel_key, val);
         }
         if (kv.first == k_acc_key) {
             const double val = *kv.second.get<double>();
-            current_state_->acceleration.store(val * (M_PI / 180.0));
+            current_state_->acceleration.store(degrees_to_radians(val));
             resp.emplace(k_acc_key, val);
         }
     }
@@ -631,7 +641,7 @@ void URArm::keep_alive_() {
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
 
-void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time) {
+void URArm::move_(std::list<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time) {
     VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time.count() << " waypoints size " << waypoints.size();
 
     // get current joint position and add that as starting pose to waypoints
@@ -640,51 +650,62 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
     VIAM_SDK_LOG(info) << "move: get_joint_positions end" << unix_time.count();
 
     VIAM_SDK_LOG(info) << "move: compute_trajectory start " << unix_time.count();
-    const Eigen::VectorXd curr_waypoint_deg =
-        Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
-    const Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI / 180.0);
+    auto curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
+    auto curr_waypoint_rad = degrees_to_radians(std::move(curr_waypoint_deg)).eval();
     if (!curr_waypoint_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
-        waypoints.insert(waypoints.begin(), curr_waypoint_rad);
+        waypoints.emplace_front(std::move(curr_waypoint_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
         VIAM_SDK_LOG(info) << "arm is already at the desired joint positions";
         return;
     }
 
-    // calculate dot products and identify any consecutive segments with dot product == -1
-    std::vector<size_t> segments;
-    segments.push_back(0);
-    for (size_t i = 2; i < waypoints.size(); i++) {
-        Eigen::VectorXd segment_AB = (waypoints[i - 1] - waypoints[i - 2]);
-        Eigen::VectorXd segment_BC = (waypoints[i] - waypoints[i - 1]);
-        segment_AB.normalize();
-        segment_BC.normalize();
-        const double dot = segment_BC.dot(segment_AB);
+    // Walk all interior points of the waypoints list, if any. If the
+    // point of current interest is the cusp of a direction reversal
+    // w.r.t. the points immediately before and after it, then splice
+    // all waypoints up to and including the cusp point into a new
+    // segment, and then begin accumulating a new segment starting at
+    // the cusp point. The cusp point is duplicated, forming both the
+    // end of one segment and the beginning of the next segment. After
+    // exiting the loop, any remaining waypoints form the last (and if
+    // no cusps were identified the only) segment. If one or more cusp
+    // points were identified, the waypoints list will always have at
+    // least two residual waypoints, since the last waypoint is never
+    // examined, and the splice call never removes the waypoint being
+    // visited.
+    //
+    // NOTE: This assumes waypoints have been de-duplicated to avoid
+    // zero-length segments that would cause numerical issues in
+    // normalized() calculations.
+    std::vector<decltype(waypoints)> segments;
+    for (auto where = next(begin(waypoints)); where != prev(end(waypoints)); ++where) {
+        const auto segment_ab = *where - *prev(where);
+        const auto segment_bc = *next(where) - *where;
+        const auto dot = segment_ab.normalized().dot(segment_bc.normalized());
         if (std::fabs(dot + 1.0) < 1e-3) {
-            segments.push_back(i - 1);
+            segments.emplace_back();
+            segments.back().splice(segments.back().begin(), waypoints, waypoints.begin(), where);
+            segments.back().push_back(*where);
         }
     }
-    segments.push_back(waypoints.size() - 1);
+    segments.push_back(std::move(waypoints));
 
     // set velocity/acceleration constraints
     const auto max_velocity = Eigen::VectorXd::Constant(6, current_state_->speed.load());
     const auto max_acceleration = Eigen::VectorXd::Constant(6, current_state_->acceleration.load());
-    VIAM_SDK_LOG(info) << "generating trajectory with max speed: " << max_velocity[0] * (180.0 / M_PI);
+    VIAM_SDK_LOG(info) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity[0]);
 
     std::vector<vector6d_t> p;
     std::vector<vector6d_t> v;
     std::vector<float> time;
 
-    for (size_t i = 0; i < segments.size() - 1; i++) {
-        const auto start = boost::numeric_cast<decltype(waypoints)::difference_type>(segments[i]);
-        const auto end = boost::numeric_cast<decltype(waypoints)::difference_type>(segments[i + 1] + 1);
-        const std::list<Eigen::VectorXd> positions_subset(waypoints.begin() + start, waypoints.begin() + end);
-        const Trajectory trajectory(Path(positions_subset, 0.1), max_velocity, max_acceleration);
+    for (const auto& segment : segments) {
+        const Trajectory trajectory(Path(segment, 0.1), max_velocity, max_acceleration);
         trajectory.outputPhasePlaneTrajectory();
         if (!trajectory.isValid()) {
             std::stringstream buffer;
             buffer << "trajectory generation failed for path:";
-            for (auto position : positions_subset) {
+            for (const auto& position : segment) {
                 buffer << "{";
                 for (Eigen::Index j = 0; j < 6; j++) {
                     buffer << position[j] << " ";
@@ -706,8 +727,8 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         double t = 0.0;
         constexpr double k_timestep = 0.2;  // seconds
         while (t < duration) {
-            Eigen::VectorXd position = trajectory.getPosition(t);
-            Eigen::VectorXd velocity = trajectory.getVelocity(t);
+            const auto position = trajectory.getPosition(t);
+            const auto velocity = trajectory.getVelocity(t);
             p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
             v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
             time.push_back(boost::numeric_cast<float>(k_timestep));
@@ -718,8 +739,8 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         if (t2 < k_min_timestep_sec) {  // if the final timestep is too small, skip it to avoid the arm throwing an error
             continue;
         }
-        Eigen::VectorXd position = trajectory.getPosition(duration);
-        Eigen::VectorXd velocity = trajectory.getVelocity(duration);
+        const auto position = trajectory.getPosition(duration);
+        const auto velocity = trajectory.getVelocity(duration);
         p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
         time.push_back(boost::numeric_cast<float>(t2));
