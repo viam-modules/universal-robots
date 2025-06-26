@@ -1,0 +1,26 @@
+name: Universal Robots CI Pipeline
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    branches: ['main']
+  push:
+    branches:
+      - '**'
+    tags:
+      - "v*"
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  format:
+    name: Check code formatting
+    uses: ./.github/workflows/format.yml
+
+  test:
+    name: Run CI Tests
+    needs: [format]
+    uses: ./.github/workflows/test.yml

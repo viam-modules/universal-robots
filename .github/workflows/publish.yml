@@ -1,4 +1,6 @@
 # see https://github.com/viamrobotics/upload-module for help
+name: Publish Module
+
 on:
     push:
     release:
