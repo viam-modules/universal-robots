@@ -270,10 +270,8 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
     current_state_->keep_alive_thread = std::thread(&URArm::keep_alive, this);
     VIAM_SDK_LOG(info) << "URArm constructor end";
 }
-int rando_counter = 0;
 void URArm::trajectory_done_cb(const control::TrajectoryResult state) {
     std::string report;
-    rando_counter++;
     switch (state) {
         case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS:
             report = "success";
@@ -288,7 +286,7 @@ void URArm::trajectory_done_cb(const control::TrajectoryResult state) {
             current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
             report = "failure";
     }
-    VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m   " << rando_counter;
+    VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
 }
 
 void URArm::reconfigure(const Dependencies&, const ResourceConfig& cfg) {
@@ -384,12 +382,11 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
     // TODO: use options
     if (!positions.empty()) {
         std::vector<Eigen::VectorXd> waypoints;
-
         for (auto position : positions) {
             const Eigen::VectorXd next_waypoint_deg =
                 Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
             const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
-            if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back()))) {
+            if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), 0.0001))) {
                 continue;
             }
             waypoints.push_back(next_waypoint_rad);
@@ -512,10 +509,7 @@ void URArm::keep_alive() {
     }
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
-bool is_same_position(const Eigen::VectorXd vec_a, const Eigen::VectorXd vec_b) {
-    VIAM_SDK_LOG(info) << "a:  " << vec_a << "\t b:  " << vec_b;
-    return false;
-}
+
 void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms) {
     VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time_ms.count() << " waypoints size " << waypoints.size();
 
@@ -565,13 +559,9 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
 
     for (size_t i = 0; i < segments.size() - 1; i++) {
         const auto start = boost::numeric_cast<decltype(waypoints)::difference_type>(segments[i]);
-
         const auto end = boost::numeric_cast<decltype(waypoints)::difference_type>(segments[i + 1] + 1);
-
         const std::list<Eigen::VectorXd> positions_subset(waypoints.begin() + start, waypoints.begin() + end);
-
         const Trajectory trajectory(Path(positions_subset, 0.1), max_velocity, max_acceleration);
-
         trajectory.outputPhasePlaneTrajectory();
 
         if (!trajectory.isValid()) {
@@ -600,7 +590,6 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
 
         float t = 0.0;
         constexpr float k_timestep = 0.2F;  // seconds
-
         while (t < duration) {
             Eigen::VectorXd position = trajectory.getPosition(t);
             Eigen::VectorXd velocity = trajectory.getVelocity(t);
