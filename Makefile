@@ -1,4 +1,4 @@
-.PHONY: module.tar.gz ur5e-sim format format-check generate-config-db test run-clang-tidy run-clang-check clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci
+.PHONY: module.tar.gz ur5e-sim format format-check test run-clang-tidy run-clang-check clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci
 default: build
 
 # format the source code
@@ -18,11 +18,11 @@ build: generate-config-db
 test: build
 	./build/universal-robots-test
 
-run-clang-tidy: generate-config-db
+run-clang-tidy:
 	clang-tidy-19 --config-file ./.clang-tidy -p build \
 	./src/viam/ur/module/*.cpp --header-filter=".*/viam/ur/module/.*"
 
-run-clang-check: generate-config-db
+run-clang-check:
 	clang-check-19 -p build ./src/viam/ur/module/*.cpp
 
 clean:
