@@ -390,7 +390,6 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
                 Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
             const Eigen::VectorXd next_waypoint_rad = next_waypoint_deg * (M_PI / 180.0);  // convert from radians to degrees
             if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back()))) {
-                VIAM_SDK_LOG(info) << "yo dupe move_through_joint_positions: " << rando_counter << "  ";
                 continue;
             }
             waypoints.push_back(next_waypoint_rad);
@@ -530,13 +529,10 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
     const Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI / 180.0);
     if (!curr_waypoint_rad.isApprox(waypoints.front(), 0.0001)) {
-        VIAM_SDK_LOG(info) << "yo no dupe " << rando_counter << "  " << unix_time_ms.count();
         waypoints.insert(waypoints.begin(), curr_waypoint_rad);
     } else if (waypoints.size() < 2) {  // this tells us if we are already at the goal
-        VIAM_SDK_LOG(info) << "yo dupe and at goal" << rando_counter << "  " << unix_time_ms.count();
+        VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
         return;
-    } else {
-        VIAM_SDK_LOG(info) << "yo dupe " << rando_counter << "  " << unix_time_ms.count();
     }
 
     // calculate dot products and identify any consecutive segments with dot product == -1
@@ -567,24 +563,16 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
     std::vector<vector6d_t> v;
     std::vector<float> time;
 
-    VIAM_SDK_LOG(info) << "yo segments size:  " << segments.size() << "  " << unix_time_ms.count();
-    VIAM_SDK_LOG(info) << "yo len waypoints:  " << waypoints.size() << "  " << unix_time_ms.count();
-
     for (size_t i = 0; i < segments.size() - 1; i++) {
         const auto start = boost::numeric_cast<decltype(waypoints)::difference_type>(segments[i]);
-        // VIAM_SDK_LOG(info) << "yo start " << start << "  " << unix_time_ms.count();
 
         const auto end = boost::numeric_cast<decltype(waypoints)::difference_type>(segments[i + 1] + 1);
-        // VIAM_SDK_LOG(info) << "yo end " << end << "  " << unix_time_ms.count();
 
         const std::list<Eigen::VectorXd> positions_subset(waypoints.begin() + start, waypoints.begin() + end);
-        VIAM_SDK_LOG(info) << "yo subset " << rando_counter << "  " << unix_time_ms.count();
 
         const Trajectory trajectory(Path(positions_subset, 0.1), max_velocity, max_acceleration);
-        VIAM_SDK_LOG(info) << "yo traj init " << rando_counter << "  " << unix_time_ms.count();
 
         trajectory.outputPhasePlaneTrajectory();
-        VIAM_SDK_LOG(info) << "yo is valid" << rando_counter << "  " << unix_time_ms.count();
 
         if (!trajectory.isValid()) {
             std::stringstream buffer;
@@ -598,7 +586,6 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             }
             throw std::runtime_error(buffer.str());
         }
-        VIAM_SDK_LOG(info) << "yo get duration " << rando_counter << "  " << unix_time_ms.count();
 
         const float duration = static_cast<float>(trajectory.getDuration());
         if (std::isinf(duration)) {
@@ -610,11 +597,9 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
         if (duration > 600) {  // if the duration is longer than 10 minutes
             throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
         }
-        VIAM_SDK_LOG(info) << "yo duration " << duration << "  " << unix_time_ms.count();
 
         float t = 0.0;
         constexpr float k_timestep = 0.2F;  // seconds
-        VIAM_SDK_LOG(info) << "yo sample trajectory" << rando_counter << "  " << unix_time_ms.count();
 
         while (t < duration) {
             Eigen::VectorXd position = trajectory.getPosition(t);
@@ -625,15 +610,11 @@ void URArm::move(std::vector<Eigen::VectorXd> waypoints, std::chrono::millisecon
             t += k_timestep;
         }
 
-        VIAM_SDK_LOG(info) << "yo final pos before " << rando_counter << "  " << unix_time_ms.count();
-
         Eigen::VectorXd position = trajectory.getPosition(duration);
         Eigen::VectorXd velocity = trajectory.getVelocity(duration);
-        VIAM_SDK_LOG(info) << "yo final pos actual " << rando_counter << "  " << unix_time_ms.count();
         p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
         const float t2 = duration - (t - k_timestep);
-        VIAM_SDK_LOG(info) << "yo final time " << t2 << "  " << unix_time_ms.count();
         if (std::isinf(t2)) {
             throw std::runtime_error("duration - (t - k_timestep) was infinite");
         }
