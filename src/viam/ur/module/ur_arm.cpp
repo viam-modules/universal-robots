@@ -644,7 +644,7 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
     const Eigen::VectorXd curr_waypoint_rad = curr_waypoint_deg * (M_PI / 180.0);
     if (!curr_waypoint_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
         waypoints.insert(waypoints.begin(), curr_waypoint_rad);
-    } 
+    }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
         VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
         return;
@@ -684,7 +684,6 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         const std::list<Eigen::VectorXd> positions_subset(waypoints.begin() + start, waypoints.begin() + end);
         const Trajectory trajectory(Path(positions_subset, 0.1), max_velocity, max_acceleration);
         trajectory.outputPhasePlaneTrajectory();
-
         if (!trajectory.isValid()) {
             std::stringstream buffer;
             buffer << "trajectory generation failed for path:";
@@ -702,13 +701,11 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         if (!std::isfinite(duration)) {
             throw std::runtime_error("trajectory.getDuration() was not a finite number");
         }
-
-        //TODO(RSDK-11069): Make this configurable
-        //https://viam.atlassian.net/browse/RSDK-11069
+        // TODO(RSDK-11069): Make this configurable
+        // https://viam.atlassian.net/browse/RSDK-11069
         if (duration > 600) {  // if the duration is longer than 10 minutes
             throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
         }
-
         double t = 0.0;
         constexpr double k_timestep = 0.2F;  // seconds
         while (t < duration) {
