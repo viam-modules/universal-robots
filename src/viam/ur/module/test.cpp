@@ -16,7 +16,7 @@ Eigen::VectorXd makeVector(std::vector<double> data) {
 }  // namespace
 
 BOOST_AUTO_TEST_CASE(test_write_waypoints_to_csv) {
-    const std::vector<Eigen::VectorXd> waypoints = {
+    const std::list<Eigen::VectorXd> waypoints = {
         makeVector({10.1, 0, 0, 0, 0, 0}),
         makeVector({20.2, 0, 0, 0, 0, 0}),
         makeVector({30.3, 0, 0, 0, 0, 0}),

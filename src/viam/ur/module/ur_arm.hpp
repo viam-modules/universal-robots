@@ -17,7 +17,7 @@ void write_trajectory_to_file(const std::string& filepath,
                               const std::vector<vector6d_t>& p_p,
                               const std::vector<vector6d_t>& p_v,
                               const std::vector<float>& time);
-void write_waypoints_to_csv(const std::string& filepath, const std::vector<Eigen::VectorXd>& waypoints);
+void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::VectorXd>& waypoints);
 std::string waypoints_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
 std::string trajectory_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
 std::string arm_joint_positions_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
@@ -107,7 +107,7 @@ class URArm final : public Arm, public Reconfigurable {
 
     void keep_alive_();
 
-    void move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
+    void move_(std::list<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
 
     bool send_trajectory_(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time);
 
