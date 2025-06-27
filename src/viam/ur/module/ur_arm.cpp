@@ -37,6 +37,7 @@ constexpr auto k_noop_delay = std::chrono::milliseconds(2);     // 2 millisecond
 constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
 
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
+constexpr double k_min_timestep_sec = 1e-4;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
@@ -646,7 +647,7 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         waypoints.insert(waypoints.begin(), curr_waypoint_rad);
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
-        VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
+        VIAM_SDK_LOG(info) << "arm is already at the desired joint positions";
         return;
     }
 
@@ -717,14 +718,14 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
             t += k_timestep;
         }
 
+        const double t2 = duration - (t - k_timestep);
+        if (t2 < k_min_timestep_sec) {  // if the final timestep is too small, skip it to avoid the arm throwing an error
+            continue;
+        }
         Eigen::VectorXd position = trajectory.getPosition(duration);
         Eigen::VectorXd velocity = trajectory.getVelocity(duration);
         p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
         v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-        const double t2 = duration - (t - k_timestep);
-        if (std::isinf(t2)) {
-            throw std::runtime_error("duration - (t - k_timestep) was infinite");
-        }
         time.push_back(boost::numeric_cast<float>(t2));
     }
     VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time.count() << " p.count() " << p.size() << " v " << v.size() << " time "
@@ -774,11 +775,9 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         of.close();
         VIAM_SDK_LOG(info) << "move: end unix_time " << unix_time.count();
 
-        // TODO(RSDK-11063): renable this once zero velocity errors are resolved
-        // https://viam.atlassian.net/browse/RSDK-11063
-        // if (current_state_->trajectory_status.load() == TrajectoryStatus::k_cancelled) {
-        //     throw std::runtime_error("arm's current trajectory cancelled by code");
-        // }
+        if (current_state_->trajectory_status.load() == TrajectoryStatus::k_cancelled) {
+            throw std::runtime_error("arm's current trajectory cancelled by code");
+        }
 
         switch (status) {
             case UrDriverStatus::ESTOPPED:
@@ -906,7 +905,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
 
             // reset the flag and return to the "happy" path
             current_state_->local_disconnect.store(false);
-            VIAM_SDK_LOG(debug) << "recovered from local mode";
+            VIAM_SDK_LOG(info) << "recovered from local mode";
 
             return UrDriverStatus::NORMAL;
         }
