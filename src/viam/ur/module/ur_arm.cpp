@@ -37,7 +37,7 @@ constexpr auto k_noop_delay = std::chrono::milliseconds(2);     // 2 millisecond
 constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
 
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
-constexpr double k_min_timestep_sec = 1e-4;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
+constexpr double k_min_timestep_sec = 2e-3;  // matches k_noop_delay
 
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
