@@ -13,6 +13,8 @@ import (
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/rocketlaunchr/dataframe-go"
 	"github.com/rocketlaunchr/dataframe-go/imports"
+
+	// dfmath "github.com/rocketlaunchr/dataframe-go/math"
 	chart "github.com/wcharczuk/go-chart"
 )
 
@@ -44,11 +46,11 @@ func getPath(trajectoryPath, waypointPath string) (string, string, error) {
 	}
 	trajPath, err := homedir.Expand(trajectoryPath)
 	if err != nil {
-		return "", "", nil
+		return "", "", err
 	}
 	wpPath, err := homedir.Expand(waypointPath)
 	if err != nil {
-		return "", "", nil
+		return "", "", err
 	}
 	return trajPath, wpPath, nil
 }
@@ -90,6 +92,12 @@ func parseAndAddPoses(df *dataframe.DataFrame, model referenceframe.Model) (*dat
 		rowInputs := dataframe.NewSeriesFloat64("joints", &dataframe.SeriesInit{})
 		for j := range jointCount {
 			rowInputs.Append(row["j"+strconv.Itoa(j)])
+		}
+		// sanitize Nans
+		for i, v := range rowInputs.Values {
+			if !dataframe.IsValidFloat64(v) {
+				rowInputs.Values[i] = 0.
+			}
 		}
 		// perform FK to get the pose
 		pose, err := model.Transform(referenceframe.FloatsToInputs(rowInputs.Values))
