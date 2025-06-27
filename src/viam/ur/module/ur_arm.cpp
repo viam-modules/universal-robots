@@ -667,13 +667,9 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
     segments.push_back(waypoints.size() - 1);
 
     // set velocity/acceleration constraints
-    const double move_speed = current_state_->speed.load();
-    const double move_acceleration = current_state_->acceleration.load();
-    VIAM_SDK_LOG(info) << "generating trajectory with max speed: " << move_speed * (180.0 / M_PI);
-    Eigen::VectorXd max_acceleration(6);
-    Eigen::VectorXd max_velocity(6);
-    max_acceleration << move_acceleration, move_acceleration, move_acceleration, move_acceleration, move_acceleration, move_acceleration;
-    max_velocity << move_speed, move_speed, move_speed, move_speed, move_speed, move_speed;
+    const auto max_velocity = Eigen::VectorXd::Constant(6, current_state_->speed.load());
+    const auto max_acceleration = Eigen::VectorXd::Constant(6, current_state_->acceleration.load());
+    VIAM_SDK_LOG(info) << "generating trajectory with max speed: " << max_velocity[0] * (180.0 / M_PI);
 
     std::vector<vector6d_t> p;
     std::vector<vector6d_t> v;
