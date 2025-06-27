@@ -180,7 +180,7 @@ func TestParseAndAddPoses(t *testing.T) {
 		model, err := referenceframe.ParseModelJSONFile("../../../kinematics/ur5e.json", "")
 		test.That(t, err, test.ShouldBeNil)
 		_, err = parseAndAddPoses(df, model)
-		test.That(t, err, test.ShouldBeNil)
+		test.That(t, err, test.ShouldNotBeNil)
 	})
 
 }

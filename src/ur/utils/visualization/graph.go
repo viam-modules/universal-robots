@@ -94,9 +94,9 @@ func parseAndAddPoses(df *dataframe.DataFrame, model referenceframe.Model) (*dat
 			rowInputs.Append(row["j"+strconv.Itoa(j)])
 		}
 		// sanitize Nans
-		for i, v := range rowInputs.Values {
+		for _, v := range rowInputs.Values {
 			if !dataframe.IsValidFloat64(v) {
-				rowInputs.Values[i] = 0.
+				return nil, fmt.Errorf("rowInputs values contained a NaN")
 			}
 		}
 		// perform FK to get the pose
