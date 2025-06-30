@@ -19,8 +19,12 @@ test: build
 	./build/universal-robots-test
 
 run-clang-tidy:
-	clang-tidy-19 --config-file ./.clang-tidy -p build \
-	./src/viam/ur/module/*.cpp --header-filter=".*/viam/ur/module/.*"
+	clang-tidy-19 \
+        -p build \
+        --config-file ./.clang-tidy \
+        --header-filter=".*/viam/ur/module/.*" \
+	./src/viam/ur/module/*.cpp
+
 
 run-clang-check:
 	clang-check-19 -p build ./src/viam/ur/module/*.cpp
