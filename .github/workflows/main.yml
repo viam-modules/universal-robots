@@ -39,6 +39,8 @@ jobs:
         run: make run-clang-check
       - name: Check Tidy
         run: make run-clang-tidy
+      - name: Build
+        run: make build
       - name: Test
         run: make test
 
