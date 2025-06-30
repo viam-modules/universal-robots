@@ -32,6 +32,7 @@ jobs:
       - name: Check Tidy
         run: make run-clang-tidy
   test:
+    needs: [checks]
     runs-on: ${{ matrix.runner }}
     container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
     strategy:
