@@ -12,11 +12,19 @@ on:
       - "v*"
 
 jobs:
-  checks:
+  main:
     name: Run UniversalRobots CI
     if: github.repository_owner == 'viam-modules'
-    runs-on: ubuntu-latest
-    container: ghcr.io/viam-modules/universal-robots:amd64
+    runs-on: ${{ matrix.runner }}
+    container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          runner: ubuntu-latest
+        - arch: arm64
+          runner: buildjet-4vcpu-ubuntu-2204-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,32 +39,12 @@ jobs:
         run: make run-clang-check
       - name: Check Tidy
         run: make run-clang-tidy
-  test:
-    needs: [checks]
-    runs-on: ${{ matrix.runner }}
-    container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-        - arch: amd64
-          runner: ubuntu-latest
-        - arch: arm64
-          runner: buildjet-4vcpu-ubuntu-2204-arm
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          submodules: true
-          fetch-depth: 0
-      - name: build
-        run: make build
-      - name: test
+      - name: Test
         run: make test
 
   publish:
     name: Publish
-    needs: [checks,test]
+    needs: [main]
     if: startsWith(github.ref, 'refs/tags/v') && (github.repository_owner == 'viam-modules')
     runs-on: ${{matrix.runner}}
     container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
