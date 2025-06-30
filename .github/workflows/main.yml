@@ -56,8 +56,6 @@ jobs:
   publish:
     name: Publish
     needs: [format,test]
-
-    uses: ./.github/workflows/publish.yml
     if: startsWith(github.ref, 'refs/tags/v') && (github.repository_owner == 'viam-modules')
     runs-on: ${{matrix.runner}}
     container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
