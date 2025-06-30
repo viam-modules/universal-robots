@@ -10,23 +10,81 @@ on:
       - '**'
     tags:
       - "v*"
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 jobs:
-
-  format:
-    name: Check code formatting
-    uses: ./.github/workflows/format.yml
-
+  checks:
+    name: Run UniversalRobots CI
+    if: github.repository_owner == 'viam-modules'
+    runs-on: ubuntu-latest
+    container: ghcr.io/viam-modules/universal-robots:amd64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Configure
+        run: make configure
+      - name: Format
+        run: make format-check
+      - name: Check Check
+        run: make run-clang-check
+      - name: Check Tidy
+        run: make run-clang-tidy
   test:
-    name: Run CI Tests
-    needs: [format]
-    uses: ./.github/workflows/test.yml
+    runs-on: ${{ matrix.runner }}
+    container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          runner: ubuntu-latest
+        - arch: arm64
+          runner: buildjet-4vcpu-ubuntu-2204-arm
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: build
+        run: make build
+      - name: test
+        run: make test
 
   publish:
     name: Publish
     needs: [format,test]
-    if: startsWith(github.ref, 'refs/tags/v')
+
     uses: ./.github/workflows/publish.yml
+    if: startsWith(github.ref, 'refs/tags/v') && (github.repository_owner == 'viam-modules')
+    runs-on: ${{matrix.runner}}
+    container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
+    strategy:
+        matrix:
+          include:
+          - arch: amd64
+            runner: ubuntu-latest
+            arch2: x86_64
+          - arch: arm64
+            runner: buildjet-4vcpu-ubuntu-2204-arm
+            arch2: aarch64
+          arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: build
+        run: |
+          make appimage-${{ matrix.arch }}
+          ARCH=${{ matrix.arch2 }} make module.tar.gz
+      - uses: viamrobotics/upload-module@v1
+        with:
+          module-path: module.tar.gz
+          platform: linux/${{ matrix.arch }}
+          version: ${{ github.ref_name }}
+          key-id: ${{ secrets.viam_key_id }}
+          key-value: ${{ secrets.viam_key_value }}
+          do-update: ${{ github.event_name == 'release' }}
+          do-upload: ${{ github.event_name == 'release' }}

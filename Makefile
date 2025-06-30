@@ -8,10 +8,10 @@ format:
 format-check:
 	ls src/viam/ur/module/*.*pp | xargs clang-format-19 -i --style=file --dry-run --Werror
 
-generate-config-db:
+configure:
 	cmake -S . -B build -G Ninja
 
-build: generate-config-db
+build: configure
 	cmake --build build --target all -- -j4
 	cmake --install build --prefix build/install/usr
 
