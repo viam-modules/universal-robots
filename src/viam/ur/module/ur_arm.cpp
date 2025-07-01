@@ -734,7 +734,6 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         }
 
         sampling_func(samples, duration, 5, [trajectory](const double t, const double step) {
-            // trajectory_sample_point point = {};
             auto p_eigen = trajectory.getPosition(t);
             auto v_eigen = trajectory.getVelocity(t);
             return trajectory_sample_point{vector6d_t{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
