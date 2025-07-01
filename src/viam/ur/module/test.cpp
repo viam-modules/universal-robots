@@ -46,6 +46,7 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
         BOOST_CHECK_EQUAL(test_samples[1].v[0], test_duration_sec * test_duration_sec);
         BOOST_CHECK_EQUAL(test_samples[1].timestep, boost::numeric_cast<float>(test_duration_sec));
     }
+    // test invalid input
     {
         std::vector<trajectory_sample_point> test_samples = {};
         const double test_duration_sec = 0;
