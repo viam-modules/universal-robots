@@ -46,20 +46,6 @@ BOOST_AUTO_TEST_CASE(test_write_waypoints_to_csv) {
 }
 
 BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
-    // const std::vector<vector6d_t> p_p = {
-    //     {1.1, 2, 3, 4, 5, 6},
-    //     {3.1, 2, 3, 4, 5, 6},
-    //     {6.1, 2, 3, 4, 5, 6},
-    //     {9.1, 2, 3, 4, 5, 6},
-    // };
-    // const std::vector<vector6d_t> p_v = {
-    //     {1.2, 2, 3, 4, 5, 6},
-    //     {4.2, 2, 3, 4, 5, 6},
-    //     {7.1, 2, 3, 4, 5, 6},
-    //     {10.1, 2, 3, 4, 5, 6},
-    // };
-    // // the time vector is provided in relative time
-    // const std::vector<float> time = {1.2F, 0.8F, 1, 1};
     const std::vector<trajectory_sample_point> samples = {{vector6d_t{1.1, 2, 3, 4, 5, 6}, vector6d_t{1.2, 2, 3, 4, 5, 6}, 1.2F},
                                                           {vector6d_t{3.1, 2, 3, 4, 5, 6}, vector6d_t{4.2, 2, 3, 4, 5, 6}, 0.8F},
                                                           {vector6d_t{6.1, 2, 3, 4, 5, 6}, vector6d_t{7.1, 2, 3, 4, 5, 6}, 1},

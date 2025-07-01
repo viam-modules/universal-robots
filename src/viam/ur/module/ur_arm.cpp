@@ -734,17 +734,16 @@ void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseco
         }
 
         sampling_func(samples, duration, 5, [trajectory](const double t, const double step) {
-            trajectory_sample_point point = {};
+            // trajectory_sample_point point = {};
             auto p_eigen = trajectory.getPosition(t);
             auto v_eigen = trajectory.getVelocity(t);
-            point.p = vector6d_t{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]};
-            point.v = vector6d_t{v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]};
-            point.timestep = boost::numeric_cast<float>(step);
-            return point;
+            return trajectory_sample_point{vector6d_t{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                           vector6d_t{v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+                                           boost::numeric_cast<float>(step)};
         });
     }
-    VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time.count() << " samples.size() " << samples.size()
-                       << " segments " << segments.size()-1;
+    VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time.count() << " samples.size() " << samples.size() << " segments "
+                       << segments.size() - 1;
 
     const std::string path = get_output_csv_dir_path();
     write_trajectory_to_file(trajectory_filename(path, unix_time), samples);
