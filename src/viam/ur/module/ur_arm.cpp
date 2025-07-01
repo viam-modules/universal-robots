@@ -38,7 +38,7 @@ constexpr auto k_noop_delay = std::chrono::milliseconds(2);     // 2 millisecond
 constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
 
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
-constexpr double k_min_timestep_sec = 1e-4;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
+constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
@@ -134,7 +134,7 @@ auto make_scope_guard(Callable&& cleanup) {
 }
 
 template <typename Func>
-void sampling_func(std::vector<trajectory_sample_point>& samples, double duration, double sampling_frequency, Func f) {
+void sampling_func(std::vector<trajectory_sample_point>& samples, double duration, double sampling_frequency, const Func& f) {
     if (duration <= 0.0 || sampling_frequency <= 0.0) {
         throw std::runtime_error("cannot sample trajectory, invalid duration or frequency");
     }
@@ -161,8 +161,6 @@ void sampling_func(std::vector<trajectory_sample_point>& samples, double duratio
 
     // Ensure the last sample uses exactly the duration
     samples.push_back(f(duration, step));
-
-    return;
 }
 }  // namespace
 
@@ -718,9 +716,6 @@ void URArm::move_(std::list<Eigen::VectorXd> waypoints, std::chrono::millisecond
     const auto max_acceleration = Eigen::VectorXd::Constant(6, current_state_->acceleration.load());
     VIAM_SDK_LOG(info) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity[0]);
 
-    std::vector<vector6d_t> p;
-    std::vector<vector6d_t> v;
-    std::vector<float> time;
     std::vector<trajectory_sample_point> samples;
 
     for (const auto& segment : segments) {
@@ -747,6 +742,10 @@ void URArm::move_(std::list<Eigen::VectorXd> waypoints, std::chrono::millisecond
         // https://viam.atlassian.net/browse/RSDK-11069
         if (duration > 600) {  // if the duration is longer than 10 minutes
             throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
+        }
+        if (duration < k_min_timestep_sec){
+            VIAM_SDK_LOG(info) << "duration of move is too small, assuming arm is at goal";
+            return;
         }
 
         sampling_func(samples, duration, 5, [trajectory](const double t, const double step) {
