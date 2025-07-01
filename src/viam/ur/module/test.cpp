@@ -37,8 +37,7 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
         const double test_freq_hz = 0.5;  // 1 sample every 2 seconds
 
         sampling_func(test_samples, test_duration_sec, test_freq_hz, [](const double t, const double step) {
-            return trajectory_sample_point{
-                vector6d_t{t, 0, 0, 0, 0, 0}, vector6d_t{t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
+            return trajectory_sample_point{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
         });
         BOOST_CHECK_EQUAL(test_samples.size(), 2);
         BOOST_CHECK_EQUAL(test_samples[0].p[0], 0);
@@ -47,6 +46,21 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
         BOOST_CHECK_EQUAL(test_samples[1].p[0], test_duration_sec);
         BOOST_CHECK_EQUAL(test_samples[1].v[0], test_duration_sec * test_duration_sec);
         BOOST_CHECK_EQUAL(test_samples[1].timestep, boost::numeric_cast<float>(test_duration_sec));
+    }
+    {
+        std::vector<trajectory_sample_point> test_samples = {};
+        const double test_duration_sec = 0;
+        const double test_freq_hz = 0.5;  // 1 sample every 2 seconds
+
+        BOOST_CHECK_THROW(sampling_func(test_samples,
+                                        test_duration_sec,
+                                        test_freq_hz,
+                                        [](const double t, const double step) {
+                                            return trajectory_sample_point{vector6d_t{t, 0, 0, 0, 0, 0},
+                                                                           vector6d_t{t * step, 0, 0, 0, 0, 0},
+                                                                           boost::numeric_cast<float>(step)};
+                                        }),
+                          std::invalid_argument);
     }
 }
 
