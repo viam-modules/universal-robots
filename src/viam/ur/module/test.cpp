@@ -17,7 +17,6 @@ Eigen::VectorXd makeVector(std::vector<double> data) {
 }  // namespace
 
 BOOST_AUTO_TEST_CASE(test_sampling_func) {
-    std::vector<trajectory_sample_point> test_samples = {};
     // test a random set of samples
     {
         std::vector<trajectory_sample_point> test_samples = {};
