@@ -132,36 +132,6 @@ auto make_scope_guard(Callable&& cleanup) {
     };
     return guard{std::forward<Callable>(cleanup)};
 }
-
-template <typename Func>
-void sampling_func(std::vector<trajectory_sample_point>& samples, double duration, double sampling_frequency, const Func& f) {
-    if (duration <= 0.0 || sampling_frequency <= 0.0) {
-        throw std::runtime_error("cannot sample trajectory, invalid duration or frequency");
-    }
-
-    // Calculate the number of samples needed. this will always be at least 1.
-    const auto num_samples = static_cast<std::size_t>(std::ceil(duration * sampling_frequency));
-
-    // Handle edge case of single sample
-    if (num_samples == 1) {
-        samples.push_back(f(0.0, duration));
-        return;
-    }
-
-    // std::vector<trajectory_sample_point> samples;
-    samples.reserve(num_samples);
-
-    // Calculate the actual step size
-    const double step = duration / static_cast<double>((num_samples - 1));
-
-    // Generate samples by evaluating f at each time point
-    for (std::size_t i = 0; i < num_samples - 1; ++i) {
-        samples.push_back(f(static_cast<double>(i) * step, step));
-    }
-
-    // Ensure the last sample uses exactly the duration
-    samples.push_back(f(duration, step));
-}
 }  // namespace
 
 void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples) {
@@ -743,16 +713,18 @@ void URArm::move_(std::list<Eigen::VectorXd> waypoints, std::chrono::millisecond
         if (duration > 600) {  // if the duration is longer than 10 minutes
             throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
         }
-        if (duration < k_min_timestep_sec){
+        if (duration < k_min_timestep_sec) {
             VIAM_SDK_LOG(info) << "duration of move is too small, assuming arm is at goal";
             return;
         }
 
-        sampling_func(samples, duration, 5, [trajectory](const double t, const double step) {
+        const constexpr double k_sampling_freq_hz =
+            5;  // desired sampling frequency. if the duration is small we will oversample but that should be fine.
+        sampling_func(samples, duration, k_sampling_freq_hz, [&](const double t, const double step) {
             auto p_eigen = trajectory.getPosition(t);
             auto v_eigen = trajectory.getVelocity(t);
-            return trajectory_sample_point{vector6d_t{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
-                                           vector6d_t{v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+            return trajectory_sample_point{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                           {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
                                            boost::numeric_cast<float>(step)};
         });
     }
