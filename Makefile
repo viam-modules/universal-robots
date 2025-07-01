@@ -1,26 +1,33 @@
-.PHONY: module.tar.gz ur5e-sim format test run-clang-tidy run-clang-check clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci
-default: build/universal-robots
+.PHONY: module.tar.gz ur5e-sim format format-check test run-clang-tidy run-clang-check clean clean-all docker docker-build docker-amd64 docker-upload appimages docker-arm64-ci docker-amd64-ci
+default: build
 
 # format the source code
 format:
 	ls src/viam/ur/module/*.*pp | xargs clang-format-19 -i --style=file
 
-build:
-	mkdir build
+format-check:
+	ls src/viam/ur/module/*.*pp | xargs clang-format-19 -i --style=file --dry-run --Werror
 
-test: build/universal-robots
+configure:
+	cmake -S . -B build -G Ninja
+
+build: configure
+	cmake --build build --target all -- -j4
+	cmake --install build --prefix build/install/usr
+
+test: build
 	./build/universal-robots-test
 
 run-clang-tidy:
-	clang-tidy-19 --config-file ./.clang-tidy -p build ./src/viam/ur/module/*.cpp --header-filter=".*/viam/ur/module/.*"
+	clang-tidy-19 \
+        -p build \
+        --config-file ./.clang-tidy \
+        --header-filter=".*/viam/ur/module/.*" \
+	./src/viam/ur/module/*.cpp
+
 
 run-clang-check:
 	clang-check-19 -p build ./src/viam/ur/module/*.cpp
-
-build/universal-robots: build
-	cmake -S . -B build -G Ninja
-	cmake --build build --target all -- -j4
-	cmake --install build --prefix build/install/usr
 
 clean:
 	rm -rf build
@@ -72,13 +79,13 @@ endef
 # Targets for building AppImages
 appimage-arm64: export OUTPUT_NAME = universal-robots
 appimage-arm64: export ARCH = aarch64
-appimage-arm64: format build/universal-robots
+appimage-arm64: format build
 	$(call BUILD_APPIMAGE,$(OUTPUT_NAME),$(ARCH))
 	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
 
 appimage-amd64: export OUTPUT_NAME = universal-robots
 appimage-amd64: export ARCH = x86_64
-appimage-amd64: format build/universal-robots
+appimage-amd64: format build
 	$(call BUILD_APPIMAGE,$(OUTPUT_NAME),$(ARCH))
 	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
 
