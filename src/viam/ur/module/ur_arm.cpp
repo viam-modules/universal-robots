@@ -122,6 +122,37 @@ auto make_scope_guard(Callable&& cleanup) {
     return guard{std::forward<Callable>(cleanup)};
 }
 
+template <typename Func>
+void sampling_func(std::vector<trajectory_sample_point>& samples, double duration, double sampling_frequency, Func f) {
+    if (duration <= 0.0 || sampling_frequency <= 0.0) {
+        throw std::runtime_error("cannot sample trajectory, invalid duration or frequency");
+    }
+
+    // Calculate the number of samples needed. this will always be at least 1.
+    const auto num_samples = static_cast<std::size_t>(std::ceil(duration * sampling_frequency));
+
+    // Handle edge case of single sample
+    if (num_samples == 1) {
+        samples.push_back(f(0.0, duration));
+        return;
+    }
+
+    // std::vector<trajectory_sample_point> samples;
+    samples.reserve(num_samples);
+
+    // Calculate the actual step size
+    const double step = duration / static_cast<double>((num_samples - 1));
+
+    // Generate samples by evaluating f at each time point
+    for (std::size_t i = 0; i < num_samples - 1; ++i) {
+        samples.push_back(f(static_cast<double>(i) * step, step));
+    }
+
+    // Ensure the last sample uses exactly the duration
+    samples.push_back(f(duration, step));
+
+    return;
+}
 }  // namespace
 
 void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples) {
@@ -621,38 +652,6 @@ void URArm::keep_alive_() {
         std::this_thread::sleep_for(k_noop_delay);
     }
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
-}
-
-template <typename Func>
-void sampling_func(std::vector<trajectory_sample_point>& samples, double duration, double sampling_frequency, Func f) {
-    if (duration <= 0.0 || sampling_frequency <= 0.0) {
-        throw std::runtime_error("cannot sample trajectory, invalid duration or frequency");
-    }
-
-    // Calculate the number of samples needed. this will always be at least 1.
-    const auto num_samples = static_cast<std::size_t>(std::ceil(duration * sampling_frequency));
-
-    // Handle edge case of single sample
-    if (num_samples == 1) {
-        samples.push_back(f(0.0, duration));
-        return;
-    }
-
-    // std::vector<trajectory_sample_point> samples;
-    samples.reserve(num_samples);
-
-    // Calculate the actual step size
-    const double step = duration / static_cast<double>((num_samples - 1));
-
-    // Generate samples by evaluating f at each time point
-    for (std::size_t i = 0; i < num_samples - 1; ++i) {
-        samples.push_back(f(static_cast<double>(i) * step, step));
-    }
-
-    // Ensure the last sample uses exactly the duration
-    samples.push_back(f(duration, step));
-
-    return;
 }
 
 void URArm::move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time) {
