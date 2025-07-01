@@ -46,20 +46,24 @@ BOOST_AUTO_TEST_CASE(test_write_waypoints_to_csv) {
 }
 
 BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
-    const std::vector<vector6d_t> p_p = {
-        {1.1, 2, 3, 4, 5, 6},
-        {3.1, 2, 3, 4, 5, 6},
-        {6.1, 2, 3, 4, 5, 6},
-        {9.1, 2, 3, 4, 5, 6},
-    };
-    const std::vector<vector6d_t> p_v = {
-        {1.2, 2, 3, 4, 5, 6},
-        {4.2, 2, 3, 4, 5, 6},
-        {7.1, 2, 3, 4, 5, 6},
-        {10.1, 2, 3, 4, 5, 6},
-    };
-    // the time vector is provided in relative time
-    const std::vector<float> time = {1.2F, 0.8F, 1, 1};
+    // const std::vector<vector6d_t> p_p = {
+    //     {1.1, 2, 3, 4, 5, 6},
+    //     {3.1, 2, 3, 4, 5, 6},
+    //     {6.1, 2, 3, 4, 5, 6},
+    //     {9.1, 2, 3, 4, 5, 6},
+    // };
+    // const std::vector<vector6d_t> p_v = {
+    //     {1.2, 2, 3, 4, 5, 6},
+    //     {4.2, 2, 3, 4, 5, 6},
+    //     {7.1, 2, 3, 4, 5, 6},
+    //     {10.1, 2, 3, 4, 5, 6},
+    // };
+    // // the time vector is provided in relative time
+    // const std::vector<float> time = {1.2F, 0.8F, 1, 1};
+    const std::vector<trajectory_sample_point> samples = {{vector6d_t{1.1, 2, 3, 4, 5, 6}, vector6d_t{1.2, 2, 3, 4, 5, 6}, 1.2F},
+                                                          {vector6d_t{3.1, 2, 3, 4, 5, 6}, vector6d_t{4.2, 2, 3, 4, 5, 6}, 0.8F},
+                                                          {vector6d_t{6.1, 2, 3, 4, 5, 6}, vector6d_t{7.1, 2, 3, 4, 5, 6}, 1},
+                                                          {vector6d_t{9.1, 2, 3, 4, 5, 6}, vector6d_t{10.1, 2, 3, 4, 5, 6}, 1}};
 
     const auto* const expected =
         "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n"
@@ -68,7 +72,7 @@ BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
         "3,6.1,2,3,4,5,6,7.1,2,3,4,5,6\n"
         "4,9.1,2,3,4,5,6,10.1,2,3,4,5,6\n";
 
-    write_trajectory_to_file("./write_trajectory_to_file_test.csv", p_p, p_v, time);
+    write_trajectory_to_file("./write_trajectory_to_file_test.csv", samples);
     const std::ifstream csv("./write_trajectory_to_file_test.csv");
     std::stringstream buf;
     buf << csv.rdbuf();

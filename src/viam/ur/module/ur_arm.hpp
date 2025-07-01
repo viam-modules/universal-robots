@@ -13,10 +13,13 @@
 using namespace viam::sdk;
 using namespace urcl;
 
-void write_trajectory_to_file(const std::string& filepath,
-                              const std::vector<vector6d_t>& p_p,
-                              const std::vector<vector6d_t>& p_v,
-                              const std::vector<float>& time);
+struct trajectory_sample_point {
+    vector6d_t p;
+    vector6d_t v;
+    float timestep;
+};
+
+void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples);
 void write_waypoints_to_csv(const std::string& filepath, const std::vector<Eigen::VectorXd>& waypoints);
 std::string waypoints_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
 std::string trajectory_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
@@ -109,7 +112,7 @@ class URArm final : public Arm, public Reconfigurable {
 
     void move_(std::vector<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
 
-    bool send_trajectory_(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time);
+    bool send_trajectory_(const std::vector<trajectory_sample_point>& samples);
 
     void trajectory_done_cb_(control::TrajectoryResult);
 
