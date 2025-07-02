@@ -38,7 +38,7 @@ constexpr auto k_noop_delay = std::chrono::milliseconds(2);     // 2 millisecond
 constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
 
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
-constexpr double k_min_timestep_sec = 1e-4;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
+constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 
 // define callback function to be called by UR client library when program state changes
 void reportRobotProgramState(bool program_running) {
@@ -132,29 +132,20 @@ auto make_scope_guard(Callable&& cleanup) {
     };
     return guard{std::forward<Callable>(cleanup)};
 }
-
 }  // namespace
 
-void write_trajectory_to_file(const std::string& filepath,
-                              const std::vector<vector6d_t>& p_p,
-                              const std::vector<vector6d_t>& p_v,
-                              const std::vector<float>& time) {
-    const bool valid = p_p.size() == p_v.size() && p_p.size() == time.size();
-    if (!valid) {
-        VIAM_SDK_LOG(info) << "write_trajectory_to_file called with invalid parameters";
-        return;
-    }
+void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples) {
     std::ofstream of(filepath);
     of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n";
     float time_traj = 0;
-    for (size_t i = 0; i < p_p.size(); i++) {
-        time_traj += time[i];
+    for (size_t i = 0; i < samples.size(); i++) {
+        time_traj += samples[i].timestep;
         of << time_traj;
         for (size_t j = 0; j < 6; j++) {
-            of << "," << p_p[i][j];
+            of << "," << samples[i].p[j];
         }
         for (size_t j = 0; j < 6; j++) {
-            of << "," << p_v[i][j];
+            of << "," << samples[i].v[j];
         }
         of << "\n";
     }
@@ -695,9 +686,7 @@ void URArm::move_(std::list<Eigen::VectorXd> waypoints, std::chrono::millisecond
     const auto max_acceleration = Eigen::VectorXd::Constant(6, current_state_->acceleration.load());
     VIAM_SDK_LOG(info) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity[0]);
 
-    std::vector<vector6d_t> p;
-    std::vector<vector6d_t> v;
-    std::vector<float> time;
+    std::vector<trajectory_sample_point> samples;
 
     for (const auto& segment : segments) {
         const Trajectory trajectory(Path(segment, 0.1), max_velocity, max_acceleration);
@@ -724,32 +713,26 @@ void URArm::move_(std::list<Eigen::VectorXd> waypoints, std::chrono::millisecond
         if (duration > 600) {  // if the duration is longer than 10 minutes
             throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
         }
-        double t = 0.0;
-        constexpr double k_timestep = 0.2;  // seconds
-        while (t < duration) {
-            const auto position = trajectory.getPosition(t);
-            const auto velocity = trajectory.getVelocity(t);
-            p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
-            v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-            time.push_back(boost::numeric_cast<float>(k_timestep));
-            t += k_timestep;
+        if (duration < k_min_timestep_sec) {
+            VIAM_SDK_LOG(info) << "duration of move is too small, assuming arm is at goal";
+            return;
         }
 
-        const double t2 = duration - (t - k_timestep);
-        if (t2 < k_min_timestep_sec) {  // if the final timestep is too small, skip it to avoid the arm throwing an error
-            continue;
-        }
-        const auto position = trajectory.getPosition(duration);
-        const auto velocity = trajectory.getVelocity(duration);
-        p.push_back(vector6d_t{position[0], position[1], position[2], position[3], position[4], position[5]});
-        v.push_back(vector6d_t{velocity[0], velocity[1], velocity[2], velocity[3], velocity[4], velocity[5]});
-        time.push_back(boost::numeric_cast<float>(t2));
+        // desired sampling frequency. if the duration is small we will oversample but that should be fine.
+        constexpr double k_sampling_freq_hz = 5;
+        sampling_func(samples, duration, k_sampling_freq_hz, [&](const double t, const double step) {
+            auto p_eigen = trajectory.getPosition(t);
+            auto v_eigen = trajectory.getVelocity(t);
+            return trajectory_sample_point{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                           {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+                                           boost::numeric_cast<float>(step)};
+        });
     }
-    VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time.count() << " p.count() " << p.size() << " v " << v.size() << " time "
-                       << time.size();
+    VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time.count() << " samples.size() " << samples.size() << " segments "
+                       << segments.size() - 1;
 
     const std::string path = get_output_csv_dir_path();
-    write_trajectory_to_file(trajectory_filename(path, unix_time), p, v, time);
+    write_trajectory_to_file(trajectory_filename(path, unix_time), samples);
     {  // note the open brace which introduces a new variable scope
         // construct a lock_guard: locks the mutex on construction and unlocks on destruction
         const std::lock_guard<std::mutex> guard{current_state_->mu};
@@ -765,7 +748,7 @@ void URArm::move_(std::list<Eigen::VectorXd> waypoints, std::chrono::millisecond
                 throw std::runtime_error("unable to get arm state before send_trajectory");
             }
         }
-        if (!send_trajectory_(p, v, time)) {
+        if (!send_trajectory_(samples)) {
             throw std::runtime_error("send_trajectory failed");
         };
 
@@ -865,13 +848,9 @@ void URArm::shutdown_() noexcept {
 }
 
 // helper function to send time-indexed position, velocity, acceleration setpoints to the UR driver
-bool URArm::send_trajectory_(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time) {
+bool URArm::send_trajectory_(const std::vector<trajectory_sample_point>& samples) {
     VIAM_SDK_LOG(info) << "URArm::send_trajectory start";
-    if (p_p.size() != time.size() || p_v.size() != time.size()) {
-        VIAM_SDK_LOG(error) << "URArm::send_trajectory p_p.size() != time.size() || p_v.size() != time.size(): not executing";
-        return false;
-    };
-    auto point_number = static_cast<int>(p_p.size());
+    auto point_number = static_cast<int>(samples.size());
     if (!current_state_->driver->writeTrajectoryControlMessage(
             urcl::control::TrajectoryControlMessage::TRAJECTORY_START, point_number, RobotReceiveTimeout::off())) {
         VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
@@ -879,9 +858,9 @@ bool URArm::send_trajectory_(const std::vector<vector6d_t>& p_p, const std::vect
     };
 
     current_state_->trajectory_status.store(TrajectoryStatus::k_running);
-    VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << p_p.size() << " cubic writeTrajectorySplinePoint/3";
-    for (size_t i = 0; i < p_p.size(); i++) {
-        if (!current_state_->driver->writeTrajectorySplinePoint(p_p[i], p_v[i], time[i])) {
+    VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << samples.size() << " cubic writeTrajectorySplinePoint/3";
+    for (size_t i = 0; i < samples.size(); i++) {
+        if (!current_state_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
             VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
             return false;
         };

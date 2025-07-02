@@ -13,10 +13,39 @@
 using namespace viam::sdk;
 using namespace urcl;
 
-void write_trajectory_to_file(const std::string& filepath,
-                              const std::vector<vector6d_t>& p_p,
-                              const std::vector<vector6d_t>& p_v,
-                              const std::vector<float>& time);
+struct trajectory_sample_point {
+    vector6d_t p;
+    vector6d_t v;
+    float timestep;
+};
+
+template <typename Func>
+void sampling_func(std::vector<trajectory_sample_point>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
+    if (duration_sec <= 0.0 || sampling_frequency_hz <= 0.0) {
+        throw std::invalid_argument("duration_sec and sampling_frequency_hz are not both positive");
+    }
+    static constexpr std::size_t k_max_samples = 1000000;
+    const auto putative_samples = duration_sec * sampling_frequency_hz;
+    if (!std::isfinite(putative_samples) || putative_samples > k_max_samples) {
+        throw std::invalid_argument("duration_sec and sampling_frequency_hz exceed the maximum allowable samples");
+    }
+
+    // Calculate the number of samples needed. this will always be at least 2.
+    const auto num_samples = static_cast<std::size_t>(std::ceil(putative_samples) + 1);
+
+    // Calculate the actual step size
+    const double step = duration_sec / static_cast<double>((num_samples - 1));
+
+    // Generate samples by evaluating f at each time point
+    for (std::size_t i = 1; i < num_samples - 1; ++i) {
+        samples.push_back(f(static_cast<double>(i) * step, step));
+    }
+
+    // Ensure the last sample uses exactly the duration_sec
+    samples.push_back(f(duration_sec, step));
+}
+
+void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples);
 void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::VectorXd>& waypoints);
 std::string waypoints_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
 std::string trajectory_filename(const std::string& path, std::chrono::milliseconds unix_time_ms);
@@ -109,7 +138,7 @@ class URArm final : public Arm, public Reconfigurable {
 
     void move_(std::list<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
 
-    bool send_trajectory_(const std::vector<vector6d_t>& p_p, const std::vector<vector6d_t>& p_v, const std::vector<float>& time);
+    bool send_trajectory_(const std::vector<trajectory_sample_point>& samples);
 
     void trajectory_done_cb_(control::TrajectoryResult);
 
