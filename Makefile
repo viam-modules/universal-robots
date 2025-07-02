@@ -95,12 +95,13 @@ module.tar.gz: meta.json
 	cp ./packaging/appimages/deploy/universal-robots-latest-$(ARCH).AppImage universal-robots.AppImage
 	tar czf $@ $^ universal-robots.AppImage
 
-build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh: build
+build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh:
 	# we need to ignore `cmake -G Ninja  ..` failing as the this project's CMakeLists.txt
 	# assumes that the viam sdk is available as a system package (which won't be true on most
 	# development machines).
 	# However even though it fails, it will still download theuniversal-robots SDK repo which
 	# is all we need to run the sim.
+	mkdir -p build
 	cd build && \
 	cmake -G Ninja  ..  || true
 
