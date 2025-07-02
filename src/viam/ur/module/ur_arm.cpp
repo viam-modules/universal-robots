@@ -954,9 +954,16 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
         VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
     }
 
+    // check if the arm status is normal or not empty. the status will be empty if the arm is disconnected or when the arm is first switched
+    // into local mode
     if ((status.find(urcl::safetyStatusString(urcl::SafetyStatus::NORMAL)) == std::string::npos) && !status.empty()) {
-        // the arm is currently estopped. save this state.
-        current_state_->estop.store(true);
+        VIAM_SDK_LOG(info) << "read_joint_keep_alive dashboard->commandSafetyStatus() arm status : " << status;
+        // the arm is currently estopped. if the user is not in local mode, save this state.
+        // if the user is in local mode, then we assume that they opted into this state.
+        // the UR20 will always return a stop while in manual mode, unless the three position enabling button is held down
+        if (!current_state_->local_disconnect.load()) {
+            current_state_->estop.store(true);
+        }
 
         // clear any currently running trajectory.
         current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
