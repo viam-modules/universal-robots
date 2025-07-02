@@ -918,7 +918,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
 
                 // reset the flag and return to the "happy" path
                 current_state_->local_disconnect.store(false);
-                VIAM_SDK_LOG(debug) << "recovered from local mode";
+                VIAM_SDK_LOG(info) << "recovered from local mode";
                 return UrDriverStatus::NORMAL;
             }
             VIAM_SDK_LOG(error) << "arm is still in local mode";
