@@ -26,7 +26,7 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
         sampling_func(test_samples, test_duration_sec, test_freq_hz, [](const double t, const double step) {
             return trajectory_sample_point{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
         });
-        BOOST_CHECK_EQUAL(test_samples.size(), static_cast<std::size_t>(std::ceil(test_duration_sec*test_freq_hz ) + 1));
+        BOOST_CHECK_EQUAL(test_samples.size(), static_cast<std::size_t>(std::ceil(test_duration_sec * test_freq_hz)));
     }
     // check for durations smaller than the sampling frequency
     {
@@ -37,13 +37,10 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
         sampling_func(test_samples, test_duration_sec, test_freq_hz, [](const double t, const double step) {
             return trajectory_sample_point{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
         });
-        BOOST_CHECK_EQUAL(test_samples.size(), 2);
-        BOOST_CHECK_EQUAL(test_samples[0].p[0], 0);
-        BOOST_CHECK_EQUAL(test_samples[0].v[0], 0);
+        BOOST_CHECK_EQUAL(test_samples.size(), 1);
+        BOOST_CHECK_EQUAL(test_samples[0].p[0], test_duration_sec);
+        BOOST_CHECK_EQUAL(test_samples[0].v[0], test_duration_sec * test_duration_sec);
         BOOST_CHECK_EQUAL(test_samples[0].timestep, boost::numeric_cast<float>(test_duration_sec));
-        BOOST_CHECK_EQUAL(test_samples[1].p[0], test_duration_sec);
-        BOOST_CHECK_EQUAL(test_samples[1].v[0], test_duration_sec * test_duration_sec);
-        BOOST_CHECK_EQUAL(test_samples[1].timestep, boost::numeric_cast<float>(test_duration_sec));
     }
     // test invalid input
     {

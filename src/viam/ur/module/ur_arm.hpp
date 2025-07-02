@@ -37,7 +37,7 @@ void sampling_func(std::vector<trajectory_sample_point>& samples, double duratio
     const double step = duration_sec / static_cast<double>((num_samples - 1));
 
     // Generate samples by evaluating f at each time point
-    for (std::size_t i = 0; i < num_samples - 1; ++i) {
+    for (std::size_t i = 1; i < num_samples - 1; ++i) {
         samples.push_back(f(static_cast<double>(i) * step, step));
     }
 

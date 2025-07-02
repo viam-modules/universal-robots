@@ -718,8 +718,8 @@ void URArm::move_(std::list<Eigen::VectorXd> waypoints, std::chrono::millisecond
             return;
         }
 
-        constexpr double k_sampling_freq_hz =
-            5;  // desired sampling frequency. if the duration is small we will oversample but that should be fine.
+        // desired sampling frequency. if the duration is small we will oversample but that should be fine.
+        constexpr double k_sampling_freq_hz = 5;
         sampling_func(samples, duration, k_sampling_freq_hz, [&](const double t, const double step) {
             auto p_eigen = trajectory.getPosition(t);
             auto v_eigen = trajectory.getVelocity(t);
