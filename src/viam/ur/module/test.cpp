@@ -13,7 +13,6 @@ Eigen::VectorXd makeVector(std::vector<double> data) {
     return Eigen::Map<Eigen::VectorXd>(data.data(), boost::numeric_cast<Eigen::Index>(data.size()));
 }
 
-// trajectory_sample_point
 }  // namespace
 
 BOOST_AUTO_TEST_CASE(test_sampling_func) {
@@ -27,7 +26,7 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
         sampling_func(test_samples, test_duration_sec, test_freq_hz, [](const double t, const double step) {
             return trajectory_sample_point{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
         });
-        BOOST_CHECK_EQUAL(test_samples.size(), 26);
+        BOOST_CHECK_EQUAL(test_samples.size(), static_cast<std::size_t>(std::ceil(test_duration_sec*test_freq_hz ) + 1));
     }
     // check for durations smaller than the sampling frequency
     {
@@ -56,9 +55,9 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
                                         test_duration_sec,
                                         test_freq_hz,
                                         [](const double t, const double step) {
-                                            return trajectory_sample_point{vector6d_t{t, 0, 0, 0, 0, 0},
-                                                                           vector6d_t{t * step, 0, 0, 0, 0, 0},
-                                                                           boost::numeric_cast<float>(step)};
+                                            BOOST_FAIL("we should never reach this");
+                                            return trajectory_sample_point{
+                                                {t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
                                         }),
                           std::invalid_argument);
     }
