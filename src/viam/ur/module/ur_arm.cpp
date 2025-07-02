@@ -428,9 +428,6 @@ void URArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
 
 std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
     check_configured_();
-    // if (current_state_->local_disconnect.load()) {
-    //     throw std::runtime_error("arm is currently in local mode");
-    // }
     const std::lock_guard<std::mutex> guard{current_state_->mu};
     if (read_joint_keep_alive_(true) == UrDriverStatus::READ_FAILURE) {
         throw std::runtime_error("failed to read from arm");
@@ -528,10 +525,6 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
 
 pose URArm::get_end_position(const ProtoStruct&) {
     check_configured_();
-
-    // if (current_state_->local_disconnect.load()) {
-    //     throw std::runtime_error("arm is currently in local mode");
-    // }
     const std::lock_guard<std::mutex> guard{current_state_->mu};
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = current_state_->driver->getDataPackage();
     if (data_pkg == nullptr) {
@@ -897,10 +890,6 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
     std::string status;
     try {
         if (current_state_->local_disconnect.load()) {
-            // sleep just so we don't spam
-            // this may be unnecessary
-            // std::this_thread::sleep_for(k_estop_delay);
-
             if (current_state_->dashboard->commandIsInRemoteControl()) {
                 // reconnect to the tablet. We have to do this, otherwise the client will assume that the arm is still in local mode.
                 // yes, even though the client can already recognize that we are in remote control mode
@@ -908,7 +897,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
                 if (!current_state_->dashboard->connect()) {
                     return UrDriverStatus::DASHBOARD_FAILURE;
                 }
-                // reset the driver client so we stop trying to ask for more data
+                // reset the driver client so we are not asking for data
                 current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
                 // reset the primary client so the driver is aware the arm is back in remote mode
                 // this has to happen, otherwise when an estop is triggered the arm will return error code C210A0
@@ -955,10 +944,14 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
 
         // reset the driver client so we stop trying to ask for more data
         current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
+
+        // delay so we don't spam the dashboard client if disconnected
+        std::this_thread::sleep_for(k_estop_delay);
+
+        // start capturing data from the arm driver again
         current_state_->driver->startRTDECommunication();
 
         VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
-        // return UrDriverStatus::DASHBOARD_FAILURE;
     }
 
     if ((status.find(urcl::safetyStatusString(urcl::SafetyStatus::NORMAL)) == std::string::npos) && !status.empty()) {
