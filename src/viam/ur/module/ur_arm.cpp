@@ -22,10 +22,13 @@
 
 // this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
 extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
-extern "C" void* orientation_vector_from_quaternion(void* q);
-extern "C" double* orientation_vector_get_components(void* ov);
-extern "C" void free_orientation_vector_memory(void* ov);
 extern "C" void free_quaternion_memory(void* q);
+
+extern "C" void* orientation_vector_from_quaternion(void* q);
+extern "C" void free_orientation_vector_memory(void* ov);
+
+extern "C" double* orientation_vector_get_components(void* ov);
+extern "C" void free_orientation_vector_components(double* ds);
 
 namespace {
 
@@ -63,17 +66,25 @@ template <typename T>
 }
 
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
-    const double norm = sqrt((vec[3] * vec[3]) + (vec[4] * vec[4]) + (vec[5] * vec[5]));
-    void* q = quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm);
-    void* ov = orientation_vector_from_quaternion(q);
-    double* components = orientation_vector_get_components(ov);  // returned as ox, oy, oz, theta
+    const double norm = std::hypot(vec[3], vec[4], vec[5]);
+    if (std::isnan(norm) || (norm == 0)) {
+        throw std::invalid_argument("Cannot normalize with NaN or zero norm");
+    }
+
+    auto q = std::unique_ptr<void, decltype(&free_quaternion_memory)>(
+        quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm), &free_quaternion_memory);
+
+    auto ov = std::unique_ptr<void, decltype(&free_orientation_vector_memory)>(orientation_vector_from_quaternion(q.get()),
+                                                                               &free_orientation_vector_memory);
+
+    auto components = std::unique_ptr<double[], decltype(&free_orientation_vector_components)>(orientation_vector_get_components(ov.get()),
+                                                                                               &free_orientation_vector_components);
+
     auto position = coordinates{1000 * vec[0], 1000 * vec[1], 1000 * vec[2]};
     auto orientation = pose_orientation{components[0], components[1], components[2]};
     auto theta = radians_to_degrees(components[3]);
-    free_orientation_vector_memory(ov);
-    free_quaternion_memory(q);
-    delete[] components;
-    return pose{position, orientation, theta};
+
+    return {position, orientation, theta};
 }
 
 void write_joint_data(
