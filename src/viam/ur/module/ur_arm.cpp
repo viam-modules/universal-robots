@@ -8,6 +8,7 @@
 
 #include <boost/format.hpp>
 #include <boost/numeric/conversion/cast.hpp>
+#include <boost/range/adaptor/transformed.hpp>
 
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
@@ -235,32 +236,32 @@ Model URArm::model(std::string model_name) {
 }
 
 std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registrations() {
-    using namespace std::placeholders;
-
-    constexpr auto arm_factory = [](Model model, const Dependencies& deps, const ResourceConfig& config) {
-        return std::make_unique<URArm>(std::move(model), deps, config);
+    const auto model_strings = {
+        "ur3e",  //
+        "ur5e",  //
+        "ur20"   //
     };
 
     const auto arm = API::get<Arm>();
-    const auto registration_factory = [&](const Model& model) {
-        return std::make_shared<ModelRegistration>(arm, model, std::bind(arm_factory, model, _1, _2));
+    const auto registration_factory = [&](auto m) {
+        const auto model = URArm::model(m);
+        return std::make_shared<ModelRegistration>(
+            arm, model, [model](auto deps, auto config) { return std::make_unique<URArm>(model, deps, config); });
     };
 
-    return {
-        registration_factory(URArm::model("ur3e")),
-        registration_factory(URArm::model("ur5e")),
-        registration_factory(URArm::model("ur20")),
-    };
+    auto registrations = model_strings | boost::adaptors::transformed(registration_factory);
+    return {std::make_move_iterator(begin(registrations)), std::make_move_iterator(end(registrations))};
 }
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
     VIAM_SDK_LOG(info) << "URArm constructor called (model: " << model_.to_string() << ")";
-    startup_(deps, cfg);
+    const std::unique_lock wlock(config_mutex_);
+    configure_(wlock, deps, cfg);
 }
 
-void URArm::startup_(const Dependencies&, const ResourceConfig& cfg) {
+void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const Dependencies&, const ResourceConfig& cfg) {
     if (current_state_) {
-        throw std::logic_error("URArm::startup_ was called for an already running instance");
+        throw std::logic_error("URArm::configure_ was called for a currently configured instance");
     }
 
     // check model type is valid, map to ur_client data type
@@ -287,7 +288,7 @@ void URArm::startup_(const Dependencies&, const ResourceConfig& cfg) {
     // function may have constructed due to partial execution.
     auto failure_handler = make_scope_guard([&] {
         VIAM_SDK_LOG(warn) << "URArm startup failed - shutting down";
-        shutdown_();
+        shutdown_(lock);
     });
 
     // extract relevant attributes from config
@@ -405,7 +406,8 @@ void URArm::startup_(const Dependencies&, const ResourceConfig& cfg) {
     failure_handler.deactivate();
 }
 
-void URArm::check_configured_() {
+template <template <typename T> typename lock_type>
+void URArm::check_configured_(const lock_type<std::shared_mutex>&) {
     if (!current_state_) {
         std::ostringstream buffer;
         buffer << "Arm is not currently configured; reconfiguration likely failed";
@@ -433,15 +435,19 @@ void URArm::trajectory_done_cb_(const control::TrajectoryResult state) {
 }
 
 void URArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
+    const std::unique_lock wlock{config_mutex_};
+    check_configured_(wlock);
     VIAM_SDK_LOG(warn) << "Reconfigure called: shutting down current state";
-    shutdown_();
-    VIAM_SDK_LOG(warn) << "Reconfigure: starting up with new state";
-    startup_(deps, cfg);
+    shutdown_(wlock);
+    VIAM_SDK_LOG(warn) << "Reconfigure called: configuring new state";
+    configure_(wlock, deps, cfg);
     VIAM_SDK_LOG(info) << "Reconfigure completed OK";
 }
 
 std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
-    check_configured_();
+    const std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
+
     const std::lock_guard<std::mutex> guard{current_state_->mu};
     if (read_joint_keep_alive_(true) == UrDriverStatus::READ_FAILURE) {
         throw std::runtime_error("failed to read from arm");
@@ -482,7 +488,8 @@ std::string URArm::get_output_csv_dir_path() {
 }
 
 void URArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
-    check_configured_();
+    const std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
 
     if (current_state_->local_disconnect.load()) {
         throw std::runtime_error("arm is currently in local mode");
@@ -508,7 +515,8 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
                                          const MoveOptions&,
                                          const viam::sdk::ProtoStruct&) {
-    check_configured_();
+    const std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
 
     if (current_state_->local_disconnect.load()) {
         throw std::runtime_error("arm is currently in local mode");
@@ -538,7 +546,9 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {
-    check_configured_();
+    const std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
+
     const std::lock_guard<std::mutex> guard{current_state_->mu};
     std::unique_ptr<rtde_interface::DataPackage> data_pkg = current_state_->driver->getDataPackage();
     if (data_pkg == nullptr) {
@@ -553,12 +563,14 @@ pose URArm::get_end_position(const ProtoStruct&) {
 }
 
 bool URArm::is_moving() {
-    check_configured_();
+    const std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
     return current_state_->trajectory_status.load() == TrajectoryStatus::k_running;
 }
 
 URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
-    check_configured_();
+    const std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
 
     // The `Model` class absurdly lacks accessors
     const std::string model_string = [&] {
@@ -593,20 +605,14 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
 }
 
 void URArm::stop(const ProtoStruct&) {
-    check_configured_();
-
-    if (current_state_->trajectory_status.load() == TrajectoryStatus::k_running) {
-        const bool ok = current_state_->driver->writeTrajectoryControlMessage(
-            urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
-        if (!ok) {
-            VIAM_SDK_LOG(warn) << "URArm::stop driver->writeTrajectoryControlMessage returned false";
-            throw std::runtime_error("failed to write trajectory control cancel message to URArm");
-        }
-    }
+    const std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
+    stop_(rlock);
 }
 
 ProtoStruct URArm::do_command(const ProtoStruct& command) {
-    check_configured_();
+    const std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
 
     ProtoStruct resp = ProtoStruct{};
 
@@ -825,27 +831,43 @@ std::string URArm::status_to_string_(UrDriverStatus status) {
 // Define the destructor
 URArm::~URArm() {
     VIAM_SDK_LOG(warn) << "URArm destructor called, shutting down";
-    shutdown_();
+    const std::unique_lock wlock{config_mutex_};
+    shutdown_(wlock);
     VIAM_SDK_LOG(warn) << "URArm destroyed";
 }
 
-void URArm::shutdown_() noexcept {
+template <template <typename T> typename lock_type>
+void URArm::stop_(const lock_type<std::shared_mutex>&) {
+    // XXX ACM TODO
+
+    if (current_state_->trajectory_status.load() == TrajectoryStatus::k_running) {
+        const bool ok = current_state_->driver->writeTrajectoryControlMessage(
+            urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
+        if (!ok) {
+            VIAM_SDK_LOG(warn) << "URArm::stop driver->writeTrajectoryControlMessage returned false";
+            throw std::runtime_error("failed to write trajectory control cancel message to URArm");
+        }
+    }
+}
+
+void URArm::shutdown_(const std::unique_lock<std::shared_mutex>& lock) noexcept {
     try {
         VIAM_SDK_LOG(warn) << "URArm shutdown called";
         if (current_state_) {
             const auto destroy_state = make_scope_guard([&] { current_state_.reset(); });
 
-            current_state_->shutdown.store(true);
-            // stop the robot
             VIAM_SDK_LOG(info) << "URArm shutdown calling stop";
-            stop(ProtoStruct{});
+            stop_(lock);
+
             // stop the worker thread.
             // Do this first to prevent the worker thread from turning the dashboard client back on when the thread detects the disconnect.
+            current_state_->shutdown.store(true);
             if (current_state_->keep_alive_thread.joinable()) {
                 VIAM_SDK_LOG(info) << "URArm shutdown waiting for keep_alive thread to terminate";
                 current_state_->keep_alive_thread.join();
                 VIAM_SDK_LOG(info) << "keep_alive thread terminated";
             }
+
             // disconnect from the dashboard.
             if (current_state_->dashboard) {
                 VIAM_SDK_LOG(info) << "URArm shutdown calling dashboard->disconnect()";

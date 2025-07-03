@@ -1,5 +1,7 @@
 #pragma once
 
+#include <shared_mutex>
+
 #include <ur_client_library/control/trajectory_point_interface.h>
 #include <ur_client_library/types.h>
 
@@ -128,11 +130,12 @@ class URArm final : public Arm, public Reconfigurable {
 
     static std::string status_to_string_(UrDriverStatus status);
 
-    void startup_(const Dependencies& deps, const ResourceConfig& cfg);
+    void configure_(const std::unique_lock<std::shared_mutex>& lock, const Dependencies& deps, const ResourceConfig& cfg);
 
-    void check_configured_();
+    template <template <typename> typename lock_type>
+    void check_configured_(const lock_type<std::shared_mutex>&);
 
-    void shutdown_() noexcept;
+    void shutdown_(const std::unique_lock<std::shared_mutex>& lock) noexcept;
 
     void keep_alive_();
 
@@ -144,6 +147,12 @@ class URArm final : public Arm, public Reconfigurable {
 
     URArm::UrDriverStatus read_joint_keep_alive_(bool log);
 
+    template <template <typename T> typename lock_type>
+    void stop_(const lock_type<std::shared_mutex>&);
+
     const Model model_;
+
+    std::shared_mutex config_mutex_;
+    std::size_t config_epoch_;
     std::unique_ptr<state_> current_state_;
 };

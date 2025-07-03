@@ -109,6 +109,7 @@ add_library(viam-ur)
 target_sources(viam-ur
   PRIVATE
     src/viam/ur/module/ur_arm.cpp
+    src/viam/ur/module/model_arm.cpp
 )
 target_link_libraries(viam-ur
   PUBLIC
@@ -136,7 +137,7 @@ if (VIAM_UR_USE_WALL_WERROR)
       -Wnull-dereference
       -Wunused
       # TODO: rm after upgrading boost https://github.com/boostorg/mpl/issues/69
-      -Wno-enum-constexpr-conversion 
+      -Wno-enum-constexpr-conversion
     )
   elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     target_compile_options(viam-ur PRIVATE /W4 /WX)
