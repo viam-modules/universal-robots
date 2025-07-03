@@ -116,8 +116,6 @@ class URArm final : public Arm, public Reconfigurable {
         throw std::runtime_error("unimplemented");
     }
 
-    std::string get_output_csv_dir_path();
-
     // the arm server within RDK will reconstruct the geometries from the kinematics and joint positions if left unimplemented
     std::vector<GeometryConfig> get_geometries(const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");

@@ -211,7 +211,6 @@ struct URArm::state_ {
     // variables derived from arm state on configuration
     bool is_sim;
 
-    std::mutex output_csv_dir_path_mu;
     // specified through VIAM_MODULE_DATA environment variable
     std::string output_csv_dir_path;
 };
@@ -296,7 +295,6 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     current_state_->speed.store(degrees_to_radians(find_config_attribute<double>(cfg, "speed_degs_per_sec")));
     current_state_->acceleration.store(degrees_to_radians(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2")));
     try {
-        const std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
         current_state_->output_csv_dir_path = find_config_attribute<std::string>(cfg, "csv_output_path");
     } catch (...) {  // NOLINT: TODO: What should actually happen if the attribute is missing?
     }
@@ -309,16 +307,13 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     current_state_->appdir = std::string(tmp);
     VIAM_SDK_LOG(info) << "appdir" << current_state_->appdir;
 
-    {
-        const std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
-        if (current_state_->output_csv_dir_path.empty()) {
-            tmp = std::getenv("VIAM_MODULE_DATA");  // NOLINT: Yes, we know getenv isn't thread safe
-            if (!tmp) {
-                throw std::runtime_error("required environment variable VIAM_MODULE_DATA unset");
-            }
-            current_state_->output_csv_dir_path = std::string(tmp);
-            VIAM_SDK_LOG(info) << "VIAM_MODULE_DATA" << current_state_->output_csv_dir_path;
+    if (current_state_->output_csv_dir_path.empty()) {
+        tmp = std::getenv("VIAM_MODULE_DATA");  // NOLINT: Yes, we know getenv isn't thread safe
+        if (!tmp) {
+            throw std::runtime_error("required environment variable VIAM_MODULE_DATA unset");
         }
+        current_state_->output_csv_dir_path = std::string(tmp);
+        VIAM_SDK_LOG(info) << "VIAM_MODULE_DATA" << current_state_->output_csv_dir_path;
     }
 
     // connect to the robot dashboard
@@ -478,15 +473,6 @@ std::string arm_joint_positions_filename(const std::string& path, const std::chr
     return (fmt % std::to_string(unix_time.count())).str();
 }
 
-std::string URArm::get_output_csv_dir_path() {
-    std::string path;
-    {
-        const std::lock_guard<std::mutex> guard{current_state_->output_csv_dir_path_mu};
-        path = current_state_->output_csv_dir_path;
-    }
-    return path;
-}
-
 void URArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
@@ -505,7 +491,7 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     waypoints.emplace_back(std::move(next_waypoint_rad));
 
     const auto unix_time = unix_now_ms();
-    const auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time);
+    const auto filename = waypoints_filename(current_state_->output_csv_dir_path, unix_time);
     write_waypoints_to_csv(filename, waypoints);
 
     // move will throw if an error occurs
@@ -537,7 +523,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         }
 
         const auto unix_time = unix_now_ms();
-        const auto filename = waypoints_filename(get_output_csv_dir_path(), unix_time);
+        const auto filename = waypoints_filename(current_state_->output_csv_dir_path, unix_time);
         write_waypoints_to_csv(filename, waypoints);
 
         // move will throw if an error occurs
@@ -753,7 +739,7 @@ void URArm::move_(std::list<Eigen::VectorXd> waypoints, std::chrono::millisecond
     VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time.count() << " samples.size() " << samples.size() << " segments "
                        << segments.size() - 1;
 
-    const std::string path = get_output_csv_dir_path();
+    const std::string& path = current_state_->output_csv_dir_path;
     write_trajectory_to_file(trajectory_filename(path, unix_time), samples);
     {  // note the open brace which introduces a new variable scope
         // construct a lock_guard: locks the mutex on construction and unlocks on destruction
