@@ -211,11 +211,16 @@ struct URArm::state_ {
     std::atomic<TrajectoryStatus> trajectory_status{TrajectoryStatus::k_stopped};
     std::thread keep_alive_thread;
 
+    struct move_cancellation_request {
+        std::promise<void> promise;
+        std::shared_future<void> future;
+        bool issued{false};
+    };
+
     struct move_request {
         std::vector<trajectory_sample_point> samples;
         std::promise<void> completion;
-        std::optional<std::promise<void>> cancelation_request;
-        std::shared_future<void> cancellation_result;
+        std::optional<move_cancellation_request> cancellation_request;
     };
     std::optional<move_request> move_request;
 
@@ -434,8 +439,8 @@ void URArm::trajectory_done_cb_(const control::TrajectoryResult state) {
             // need an error.
             if (current_state_->move_request) {
                 current_state_->move_request->completion.set_value();
-                if (current_state_->move_request->cancelation_request) {
-                    current_state_->move_request->cancelation_request->set_value();
+                if (current_state_->move_request->cancellation_request) {
+                    current_state_->move_request->cancellation_request->promise.set_value();
                 }
             }
             current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
@@ -448,8 +453,8 @@ void URArm::trajectory_done_cb_(const control::TrajectoryResult state) {
             if (current_state_->move_request) {
                 current_state_->move_request->completion.set_exception(
                     std::make_exception_ptr(std::runtime_error("arm's current trajectory cancelled")));
-                if (current_state_->move_request->cancelation_request) {
-                    current_state_->move_request->cancelation_request->set_value();
+                if (current_state_->move_request->cancellation_request) {
+                    current_state_->move_request->cancellation_request->promise.set_value();
                 }
             }
             current_state_->trajectory_status.store(TrajectoryStatus::k_cancelled);
@@ -461,8 +466,8 @@ void URArm::trajectory_done_cb_(const control::TrajectoryResult state) {
             if (current_state_->move_request) {
                 current_state_->move_request->completion.set_exception(
                     std::make_exception_ptr(std::runtime_error("arm's current trajectory failed")));
-                if (current_state_->move_request->cancelation_request) {
-                    current_state_->move_request->cancelation_request->set_value();
+                if (current_state_->move_request->cancellation_request) {
+                    current_state_->move_request->cancellation_request->promise.set_value();
                 }
             }
             current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
@@ -900,16 +905,16 @@ URArm::~URArm() {
     VIAM_SDK_LOG(warn) << "URArm destroyed";
 }
 
-template <template <typename T> typename lock_type>
+template <template <typename> typename lock_type>
 void URArm::stop_(const lock_type<std::shared_mutex>&) {
     auto cancel_future = [&] {
         const std::lock_guard guard{current_state_->state_mutex};
         if (current_state_->move_request) {
-            if (!current_state_->move_request->cancelation_request) {
-                auto& promise = current_state_->move_request->cancelation_request.emplace();
-                current_state_->move_request->cancellation_result = promise.get_future().share();
+            if (!current_state_->move_request->cancellation_request) {
+                auto& cancellation_request = current_state_->move_request->cancellation_request.emplace();
+                current_state_->move_request->cancellation_request->future = cancellation_request.promise.get_future().share();
             }
-            return std::make_optional(current_state_->move_request->cancellation_result);
+            return std::make_optional(current_state_->move_request->cancellation_request->future);
         }
         return std::optional<std::shared_future<void>>{};
     }();
@@ -1198,21 +1203,20 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_inner_(bool log) {
     current_state_->tcp_state = std::move(tcp_state);
 
     if (current_state_->move_request && (current_state_->move_request->samples.size() != 0) &&
-        !current_state_->move_request->cancelation_request) {
+        !current_state_->move_request->cancellation_request) {
         // We have a move request, it has samples, and there is no pending cancel for that move. Issue the move.
         auto samples = std::move(current_state_->move_request->samples);
         if (!send_trajectory_(samples)) {
             current_state_->move_request->completion.set_exception(std::make_exception_ptr(std::runtime_error("send_trajectory failed")));
         };
     } else if (current_state_->move_request && (current_state_->move_request->samples.size() == 0) &&
-               current_state_->move_request->cancelation_request) {
+               current_state_->move_request->cancellation_request && !current_state_->move_request->cancellation_request->issued) {
         // We have a move request, the samples have been forwarded,
-        // and cancellation is requested. Issue a cancel.
-        //
-        // XXX TODO ACM: We are spamming this multiple times. How can we avoid that?
+        // and cancellation is requested but has not yet been issued. Issue a cancel.
+        current_state_->move_request->cancellation_request->issued = true;
         if (!current_state_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
-            current_state_->move_request->cancelation_request->set_exception(
+            current_state_->move_request->cancellation_request->promise.set_exception(
                 std::make_exception_ptr(std::runtime_error("failed to write trajectory control cancel message to URArm")));
         }
     } else {
@@ -1220,10 +1224,10 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_inner_(bool log) {
         // we haven't issued but a cancel is already pending. Don't
         // issue it, just cancel it.
         if (current_state_->move_request && (current_state_->move_request->samples.size() != 0) &&
-            current_state_->move_request->cancelation_request) {
+            current_state_->move_request->cancellation_request) {
             current_state_->move_request->completion.set_exception(
                 std::make_exception_ptr(std::runtime_error("arm's current trajectory cancelled by code")));
-            current_state_->move_request->cancelation_request->set_value();
+            current_state_->move_request->cancellation_request->promise.set_value();
             current_state_->move_request.reset();
         }
 
