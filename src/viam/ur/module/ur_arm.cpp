@@ -10,6 +10,7 @@
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/range/adaptor/transformed.hpp>
 
+#include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
 
@@ -183,16 +184,26 @@ void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::
     of.close();
 }
 
+enum class URArm::UrDriverStatus : int8_t  // Only available on 3.10/5.4
+{
+    UNKNOWN = 0,
+    NORMAL = 1,
+    ESTOPPED = 2,
+    READ_FAILURE = 3,
+    DASHBOARD_FAILURE = 4
+};
+
 // private variables to maintain connection and state
 struct URArm::state_ {
-    std::mutex mu;
+    std::mutex state_mutex;
     std::unique_ptr<UrDriver> driver;
     std::unique_ptr<DashboardClient> dashboard;
 
     // data from received robot
-    vector6d_t joints_position;
-    vector6d_t joints_velocity;
-    vector6d_t tcp_state;
+    UrDriverStatus last_driver_status{UrDriverStatus::UNKNOWN};
+    std::optional<vector6d_t> joints_position;
+    std::optional<vector6d_t> joints_velocity;
+    std::optional<vector6d_t> tcp_state;
 
     std::atomic<bool> shutdown{false};
     std::atomic<TrajectoryStatus> trajectory_status{TrajectoryStatus::k_stopped};
@@ -213,14 +224,6 @@ struct URArm::state_ {
 
     // specified through VIAM_MODULE_DATA environment variable
     std::string output_csv_dir_path;
-};
-
-enum class URArm::UrDriverStatus : int8_t  // Only available on 3.10/5.4
-{
-    NORMAL = 1,
-    ESTOPPED = 2,
-    READ_FAILURE = 3,
-    DASHBOARD_FAILURE = 4
 };
 
 const ModelFamily& URArm::model_family() {
@@ -443,12 +446,20 @@ std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
-    const std::lock_guard<std::mutex> guard{current_state_->mu};
-    if (read_joint_keep_alive_(true) == UrDriverStatus::READ_FAILURE) {
-        throw std::runtime_error("failed to read from arm");
-    };
+    const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
+    if (current_state_->last_driver_status != UrDriverStatus::NORMAL) {
+        // TODO: provide more context
+        throw std::runtime_error("get_joint_positions: failed to read from arm");
+    }
+
+    if (!current_state_->joints_position || !current_state_->joints_velocity) {
+        // TODO: provide more context
+        // TODO: when might this happen?
+        throw std::runtime_error("get_joint_positions: joint data are not currently known");
+    }
+
     std::vector<double> to_ret;
-    for (const double joint_pos_rad : current_state_->joints_position) {
+    for (const double joint_pos_rad : *current_state_->joints_position) {
         const double joint_pos_deg = radians_to_degrees(joint_pos_rad);
         to_ret.push_back(joint_pos_deg);
     }
@@ -474,7 +485,7 @@ std::string arm_joint_positions_filename(const std::string& path, const std::chr
 }
 
 void URArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
-    const std::shared_lock rlock{config_mutex_};
+    std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
     if (current_state_->local_disconnect.load()) {
@@ -495,13 +506,13 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     write_waypoints_to_csv(filename, waypoints);
 
     // move will throw if an error occurs
-    move_(std::move(waypoints), unix_time);
+    move_(std::move(rlock), std::move(waypoints), unix_time);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
                                          const MoveOptions&,
                                          const viam::sdk::ProtoStruct&) {
-    const std::shared_lock rlock{config_mutex_};
+    std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
     if (current_state_->local_disconnect.load()) {
@@ -527,7 +538,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         write_waypoints_to_csv(filename, waypoints);
 
         // move will throw if an error occurs
-        move_(std::move(waypoints), unix_time);
+        move_(std::move(rlock), std::move(waypoints), unix_time);
     }
 }
 
@@ -535,17 +546,19 @@ pose URArm::get_end_position(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
-    const std::lock_guard<std::mutex> guard{current_state_->mu};
-    std::unique_ptr<rtde_interface::DataPackage> data_pkg = current_state_->driver->getDataPackage();
-    if (data_pkg == nullptr) {
-        VIAM_SDK_LOG(warn) << "URArm::get_end_position got nullptr from driver->getDataPackage()";
-        return pose();
+    const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
+    if (current_state_->last_driver_status != UrDriverStatus::NORMAL) {
+        // TODO: provide more context
+        throw std::runtime_error("get_end_position: failed to read from arm");
     }
-    if (!data_pkg->getData("actual_TCP_pose", current_state_->tcp_state)) {
-        VIAM_SDK_LOG(warn) << "URArm::get_end_position driver->getDataPackage().getData(\"actual_TCP_pos\") returned false";
-        return pose();
+
+    if (!current_state_->tcp_state) {
+        // TODO: provide more context
+        // TODO: when might this happen?
+        throw std::runtime_error("get_end_position: end position data are not currently known");
     }
-    return ur_vector_to_pose(current_state_->tcp_state);
+
+    return ur_vector_to_pose(*current_state_->tcp_state);
 }
 
 bool URArm::is_moving() {
@@ -628,7 +641,7 @@ void URArm::keep_alive_() {
             break;
         }
         {
-            const std::lock_guard<std::mutex> guard{current_state_->mu};
+            const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
             try {
                 read_joint_keep_alive_(true);
             } catch (const std::exception& ex) {
@@ -640,7 +653,11 @@ void URArm::keep_alive_() {
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
 
-void URArm::move_(std::list<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time) {
+void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock,
+                  std::list<Eigen::VectorXd> waypoints,
+                  std::chrono::milliseconds unix_time) {
+    auto our_config_rlock = std::move(config_rlock);
+
     VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time.count() << " waypoints size " << waypoints.size();
 
     // get current joint position and add that as starting pose to waypoints
@@ -743,7 +760,7 @@ void URArm::move_(std::list<Eigen::VectorXd> waypoints, std::chrono::millisecond
     write_trajectory_to_file(trajectory_filename(path, unix_time), samples);
     {  // note the open brace which introduces a new variable scope
         // construct a lock_guard: locks the mutex on construction and unlocks on destruction
-        const std::lock_guard<std::mutex> guard{current_state_->mu};
+        const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
         {
             UrDriverStatus status;
             for (unsigned i = 0; i < 5; i++) {
@@ -773,7 +790,7 @@ void URArm::move_(std::list<Eigen::VectorXd> waypoints, std::chrono::millisecond
             if (status != UrDriverStatus::NORMAL) {
                 break;
             }
-            write_joint_data(current_state_->joints_position, current_state_->joints_velocity, of, unix_time, attempt++);
+            write_joint_data(*current_state_->joints_position, *current_state_->joints_velocity, of, unix_time, attempt++);
         };
         if (current_state_->shutdown.load()) {
             of.close();
@@ -897,8 +914,15 @@ bool URArm::send_trajectory_(const std::vector<trajectory_sample_point>& samples
     return true;
 }
 
-// helper function to read a data packet and send a noop message
 URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
+    current_state_->joints_position.reset();
+    current_state_->joints_velocity.reset();
+    current_state_->tcp_state.reset();
+    return current_state_->last_driver_status = read_joint_keep_alive_inner_(log);
+}
+
+// helper function to read a data packet and send a noop message
+URArm::UrDriverStatus URArm::read_joint_keep_alive_inner_(bool log) {
     // check to see if an estop has occurred.
     std::string status;
     try {
@@ -1096,9 +1120,16 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
         return UrDriverStatus::READ_FAILURE;
     }
 
+    vector6d_t tcp_state{};
+    if (!data_pkg->getData("actual_TCP_pose", tcp_state)) {
+        VIAM_SDK_LOG(warn) << "read_joint_keep_alive driver->getDataPackage().getData(\"actual_TCP_pos\") returned false";
+        return UrDriverStatus::READ_FAILURE;
+    }
+
     // for consistency, update cached data only after all getData calls succeed
     current_state_->joints_position = std::move(joints_position);
     current_state_->joints_velocity = std::move(joints_velocity);
+    current_state_->tcp_state = std::move(tcp_state);
 
     // send a noop to keep the connection alive
     if (!current_state_->driver->writeTrajectoryControlMessage(
