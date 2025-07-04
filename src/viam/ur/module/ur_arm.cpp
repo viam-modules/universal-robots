@@ -186,7 +186,6 @@ void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::
 
 enum class URArm::UrDriverStatus : int8_t  // Only available on 3.10/5.4
 {
-    UNKNOWN = 0,
     NORMAL = 1,
     ESTOPPED = 2,
     READ_FAILURE = 3,
@@ -200,7 +199,7 @@ struct URArm::state_ {
     std::unique_ptr<DashboardClient> dashboard;
 
     // data from received robot
-    UrDriverStatus last_driver_status{UrDriverStatus::UNKNOWN};
+    UrDriverStatus last_driver_status{UrDriverStatus::READ_FAILURE};
     std::optional<vector6d_t> joints_position;
     std::optional<vector6d_t> joints_velocity;
     std::optional<vector6d_t> tcp_state;
