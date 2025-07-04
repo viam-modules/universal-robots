@@ -137,6 +137,8 @@ class URArm final : public Arm, public Reconfigurable {
 
     void keep_alive_();
 
+    std::vector<double> get_joint_positions_(const std::shared_lock<std::shared_mutex>&);
+
     void move_(std::shared_lock<std::shared_mutex> config_rlock,
                std::list<Eigen::VectorXd> waypoints,
                std::chrono::milliseconds unix_time_ms);
