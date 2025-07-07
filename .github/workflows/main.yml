@@ -8,8 +8,8 @@ on:
   push:
     branches:
       - '**'
-    tags:
-      - "v*"
+    release:
+      types: [published]
 
 jobs:
   main:
@@ -75,5 +75,5 @@ jobs:
           version: ${{ github.ref_name }}
           key-id: ${{ secrets.viam_key_id }}
           key-value: ${{ secrets.viam_key_value }}
-          do-update: ${{ github.event_name == 'release' }}
+          do-update: ${{ github.event_name == 'release' && !github.event.release.prerelease }}
           do-upload: ${{ github.event_name == 'release' }}
