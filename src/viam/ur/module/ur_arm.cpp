@@ -218,6 +218,52 @@ struct URArm::state_ {
     };
 
     struct move_request {
+       public:
+        explicit move_request(std::vector<trajectory_sample_point>&& samples) : samples(std::move(samples)) {
+            if (this->samples.empty()) {
+                throw std::invalid_argument("no trajectory samples provided to move request");
+            }
+        }
+
+        auto get_completion_future() {
+            return completion.get_future();
+        }
+
+        auto cancel() {
+            if (!cancellation_request) {
+                auto& cr = cancellation_request.emplace();
+                cr.future = cr.promise.get_future().share();
+            }
+            return cancellation_request->future;
+        }
+
+        void complete_success() {
+            // Mark the move_request as completed. If there
+            // was a cancel request, it raced and lost, but it doesn't
+            // need an error.
+            completion.set_value();
+            if (cancellation_request) {
+                cancellation_request->promise.set_value();
+            }
+        }
+
+        void complete_cancelled() {
+            complete_error("arm's current trajectory cancelled");
+        }
+
+        void complete_failure() {
+            complete_error("arm's current trajectory failed");
+        }
+
+        void complete_error(std::string_view message) {
+            // The trajectory is being completed with an error of some sort. Set the completion result to an error,
+            // and unblock any cancellation request.
+            completion.set_exception(std::make_exception_ptr(std::runtime_error{std::string{message}}));
+            if (cancellation_request) {
+                cancellation_request->promise.set_value();
+            }
+        }
+
         std::vector<trajectory_sample_point> samples;
         std::promise<void> completion;
         std::optional<move_cancellation_request> cancellation_request;
@@ -431,31 +477,27 @@ void URArm::check_configured_(const lock_type<std::shared_mutex>&) {
 void URArm::trajectory_done_cb_(const control::TrajectoryResult state) {
     const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
     std::string report;
+
+    // Take ownership of any move request so we open the slot for the next one.
+    //
+    // TODO: Could we move the completions out of the critical section?
+    //
+    // TODO: Do we still need `trajectory_status`
+    auto move_request = std::exchange(current_state_->move_request, {});
+
     switch (state) {
         case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS: {
             report = "success";
-            // All done! Mark the move_request as completed. If there
-            // was a cancel request, it raced and lost, but it doesn't
-            // need an error.
-            if (current_state_->move_request) {
-                current_state_->move_request->completion.set_value();
-                if (current_state_->move_request->cancellation_request) {
-                    current_state_->move_request->cancellation_request->promise.set_value();
-                }
+            if (move_request) {
+                move_request->complete_success();
             }
             current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
             break;
         }
         case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED: {
             report = "canceled";
-            // The trajectory got killed. Mark the move requests completion
-            // as an exception, and mark the cancel as completed.
-            if (current_state_->move_request) {
-                current_state_->move_request->completion.set_exception(
-                    std::make_exception_ptr(std::runtime_error("arm's current trajectory cancelled")));
-                if (current_state_->move_request->cancellation_request) {
-                    current_state_->move_request->cancellation_request->promise.set_value();
-                }
+            if (move_request) {
+                move_request->complete_cancelled();
             }
             current_state_->trajectory_status.store(TrajectoryStatus::k_cancelled);
             break;
@@ -463,18 +505,14 @@ void URArm::trajectory_done_cb_(const control::TrajectoryResult state) {
         case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
         default: {
             report = "failure";
-            if (current_state_->move_request) {
-                current_state_->move_request->completion.set_exception(
-                    std::make_exception_ptr(std::runtime_error("arm's current trajectory failed")));
-                if (current_state_->move_request->cancellation_request) {
-                    current_state_->move_request->cancellation_request->promise.set_value();
-                }
+            if (move_request) {
+                move_request->complete_failure();
             }
             current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
             break;
         }
     }
-    current_state_->move_request.reset();
+
     VIAM_SDK_LOG(info) << "\033[1;32mtrajectory report: " << report << "\033[0m";
 }
 
@@ -808,17 +846,16 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock,
     const std::string& path = current_state_->output_csv_dir_path;
     write_trajectory_to_file(trajectory_filename(path, unix_time), samples);
 
-    auto trajectory_future = [&, config_rlock = std::move(our_config_rlock)] {
+    auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock)] {
         const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
         if (current_state_->move_request) {
             throw std::runtime_error("An actuation is already in progress");
         }
-        struct state_::move_request move_request{std::move(samples)};
-        current_state_->move_request.emplace(std::move(move_request));
-        return current_state_->move_request->completion.get_future();
+        return current_state_->move_request.emplace(std::move(samples)).get_completion_future();
     }();
 
-    trajectory_future.get();
+    // XXX ACM TODO: Note that access to current_state is disallowed here and forward
+    trajectory_completion_future.get();
 
     // XXX ACM TODO: Need to get the position logging back in
     // XXX ACM TODO: Need to get the ESTOPPED type errors propagated back
@@ -907,16 +944,12 @@ URArm::~URArm() {
 
 template <template <typename> typename lock_type>
 void URArm::stop_(const lock_type<std::shared_mutex>&) {
-    auto cancel_future = [&] {
+    auto cancel_future = [&]() -> std::optional<std::shared_future<void>> {
         const std::lock_guard guard{current_state_->state_mutex};
         if (current_state_->move_request) {
-            if (!current_state_->move_request->cancellation_request) {
-                auto& cancellation_request = current_state_->move_request->cancellation_request.emplace();
-                current_state_->move_request->cancellation_request->future = cancellation_request.promise.get_future().share();
-            }
-            return std::make_optional(current_state_->move_request->cancellation_request->future);
+            return std::make_optional(current_state_->move_request->cancel());
         }
-        return std::optional<std::shared_future<void>>{};
+        return {};
     }();
 
     if (cancel_future) {
@@ -1207,7 +1240,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_inner_(bool log) {
         // We have a move request, it has samples, and there is no pending cancel for that move. Issue the move.
         auto samples = std::move(current_state_->move_request->samples);
         if (!send_trajectory_(samples)) {
-            current_state_->move_request->completion.set_exception(std::make_exception_ptr(std::runtime_error("send_trajectory failed")));
+            std::exchange(current_state_->move_request, {})->complete_error("failed to send trajectory to arm");
         };
     } else if (current_state_->move_request && (current_state_->move_request->samples.size() == 0) &&
                current_state_->move_request->cancellation_request && !current_state_->move_request->cancellation_request->issued) {
@@ -1216,8 +1249,8 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_inner_(bool log) {
         current_state_->move_request->cancellation_request->issued = true;
         if (!current_state_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
-            current_state_->move_request->cancellation_request->promise.set_exception(
-                std::make_exception_ptr(std::runtime_error("failed to write trajectory control cancel message to URArm")));
+            std::exchange(current_state_->move_request, {})->complete_error(
+                                                 "failed to write trajectory control cancel message to URArm");
         }
     } else {
         // Either we didn't have a move request, or, we had one that
@@ -1225,10 +1258,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_inner_(bool log) {
         // issue it, just cancel it.
         if (current_state_->move_request && (current_state_->move_request->samples.size() != 0) &&
             current_state_->move_request->cancellation_request) {
-            current_state_->move_request->completion.set_exception(
-                std::make_exception_ptr(std::runtime_error("arm's current trajectory cancelled by code")));
-            current_state_->move_request->cancellation_request->promise.set_value();
-            current_state_->move_request.reset();
+            std::exchange(current_state_->move_request, {})->complete_cancelled();
         }
 
         // send a noop to keep the connection alive
