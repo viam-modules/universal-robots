@@ -265,6 +265,11 @@ struct URArm::state_ {
             }
         }
 
+        void cancel_error(std::string_view message) {
+            std::exchange(cancellation_request, {})
+                ->promise.set_exception(std::make_exception_ptr(std::runtime_error{std::string{message}}));
+        }
+
         void write_joint_data(vector6d_t& position, vector6d_t& velocity) {
             ::write_joint_data(position, velocity, arm_joint_positions_stream, unix_now_ms(), arm_joint_positions_sample++);
         }
@@ -1054,9 +1059,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
                 current_state_->move_request->cancellation_request->issued = true;
                 if (!current_state_->driver->writeTrajectoryControlMessage(
                         urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
-                    // TODO: XXX ACM should this be completing differently?
-                    std::exchange(current_state_->move_request, {})
-                        ->complete_error("failed to write trajectory control cancel message to URArm");
+                    current_state_->move_request->cancel_error("failed to write trajectory control cancel message to URArm");
                 }
             } else if ((current_state_->move_request->samples.size() != 0) && current_state_->move_request->cancellation_request) {
                 // We have a move request that we haven't issued but a
