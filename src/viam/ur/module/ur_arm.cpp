@@ -93,7 +93,7 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
 }
 
 void write_joint_data(
-    const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::chrono::milliseconds unix_time, unsigned attempt) {
+    const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::chrono::milliseconds unix_time, std::size_t attempt) {
     of << unix_time.count() << "," << attempt << ",";
     for (const double joint_pos : jp) {
         of << joint_pos << ",";

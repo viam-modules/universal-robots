@@ -156,6 +156,5 @@ class URArm final : public Arm, public Reconfigurable {
     const Model model_;
 
     std::shared_mutex config_mutex_;
-    std::size_t config_epoch_;
     std::unique_ptr<state_> current_state_;
 };
