@@ -109,7 +109,6 @@ add_library(viam-ur)
 target_sources(viam-ur
   PRIVATE
     src/viam/ur/module/ur_arm.cpp
-    src/viam/ur/module/model_arm.cpp
 )
 target_link_libraries(viam-ur
   PUBLIC
