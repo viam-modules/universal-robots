@@ -867,7 +867,8 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock,
         return current_state_->move_request.emplace(std::move(samples), std::move(ajp_of)).get_completion_future();
     }();
 
-    // XXX ACM TODO: Note that access to current_state is disallowed here and forward
+    // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
+    // with the current state other than to wait on the result of this future.
     trajectory_completion_future.get();
 
     // XXX ACM TODO: Need to get the position logging back in
