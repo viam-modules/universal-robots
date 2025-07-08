@@ -8,8 +8,8 @@ on:
   push:
     branches:
       - '**'
-    release:
-      types: [published]
+  release:
+    types: [published]
 
 jobs:
   main:
