@@ -219,7 +219,8 @@ struct URArm::state_ {
 
     struct move_request {
        public:
-        explicit move_request(std::vector<trajectory_sample_point>&& samples) : samples(std::move(samples)) {
+        explicit move_request(std::vector<trajectory_sample_point>&& samples, std::ofstream arm_joint_positions_stream)
+            : samples(std::move(samples)), arm_joint_positions_stream(std::move(arm_joint_positions_stream)) {
             if (this->samples.empty()) {
                 throw std::invalid_argument("no trajectory samples provided to move request");
             }
@@ -264,7 +265,13 @@ struct URArm::state_ {
             }
         }
 
+        void write_joint_data(vector6d_t& position, vector6d_t& velocity) {
+            ::write_joint_data(position, velocity, arm_joint_positions_stream, unix_now_ms(), arm_joint_positions_sample++);
+        }
+
         std::vector<trajectory_sample_point> samples;
+        std::ofstream arm_joint_positions_stream;
+        std::size_t arm_joint_positions_sample{0};
         std::promise<void> completion;
         std::optional<move_cancellation_request> cancellation_request;
     };
@@ -746,6 +753,7 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock,
     auto our_config_rlock = std::move(config_rlock);
 
     VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time.count() << " waypoints size " << waypoints.size();
+    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move: end unix_time " << unix_time.count(); });
 
     // get current joint position and add that as starting pose to waypoints
     VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time.count();
@@ -846,12 +854,17 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock,
     const std::string& path = current_state_->output_csv_dir_path;
     write_trajectory_to_file(trajectory_filename(path, unix_time), samples);
 
-    auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock)] {
+    std::ofstream ajp_of(arm_joint_positions_filename(path, unix_time));
+    ajp_of << "time_ms,read_attempt,"
+              "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
+              "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
+
+    auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
         const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
         if (current_state_->move_request) {
             throw std::runtime_error("An actuation is already in progress");
         }
-        return current_state_->move_request.emplace(std::move(samples)).get_completion_future();
+        return current_state_->move_request.emplace(std::move(samples), std::move(ajp_of)).get_completion_future();
     }();
 
     // XXX ACM TODO: Note that access to current_state is disallowed here and forward
@@ -1048,6 +1061,8 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
                 // We have a move request that we haven't issued but a
                 // cancel is already pending. Don't issue it, just cancel it.
                 std::exchange(current_state_->move_request, {})->complete_cancelled();
+            } else {
+                current_state_->move_request->write_joint_data(*current_state_->joints_position, *current_state_->joints_velocity);
             }
         } else {
             // We have entered an abnormal state. Complete the move request with an error.
