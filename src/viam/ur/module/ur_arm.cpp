@@ -211,16 +211,6 @@ struct URArm::state_ {
     std::atomic<TrajectoryStatus> trajectory_status{TrajectoryStatus::k_stopped};
     std::thread keep_alive_thread;
 
-    struct move_cancellation_request {
-        // This constructor needs to be written this way for
-        // std::optional::emplace with no arguments to work.
-        move_cancellation_request() {}
-
-        std::promise<void> promise;
-        std::shared_future<void> future;
-        bool issued{false};
-    };
-
     struct move_request {
        public:
         explicit move_request(std::vector<trajectory_sample_point>&& samples, std::ofstream arm_joint_positions_stream)
@@ -282,7 +272,18 @@ struct URArm::state_ {
         std::ofstream arm_joint_positions_stream;
         std::size_t arm_joint_positions_sample{0};
         std::promise<void> completion;
-        std::optional<move_cancellation_request> cancellation_request;
+
+        struct cancellation_request {
+            // This constructor needs to be written this way for
+            // std::optional::emplace with no arguments to work.
+            cancellation_request() {}
+
+            std::promise<void> promise;
+            std::shared_future<void> future;
+            bool issued{false};
+        };
+
+        std::optional<cancellation_request> cancellation_request;
     };
     std::optional<move_request> move_request;
 
