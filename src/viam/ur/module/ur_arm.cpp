@@ -1022,7 +1022,51 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
     current_state_->joints_position.reset();
     current_state_->joints_velocity.reset();
     current_state_->tcp_state.reset();
-    return current_state_->last_driver_status = read_joint_keep_alive_inner_(log);
+    current_state_->last_driver_status = read_joint_keep_alive_inner_(log);
+
+    if (current_state_->move_request) {
+        if (current_state_->last_driver_status == UrDriverStatus::NORMAL) {
+            // If we are in a normal state, deal with issuing and canceling trajectories
+            if ((current_state_->move_request->samples.size() != 0) && !current_state_->move_request->cancellation_request) {
+                // We have a move request, it has samples, and there is no pending cancel for that move. Issue the move.
+                auto samples = std::move(current_state_->move_request->samples);
+                if (!send_trajectory_(samples)) {
+                    std::exchange(current_state_->move_request, {})->complete_error("failed to send trajectory to arm");
+                };
+            } else if ((current_state_->move_request->samples.size() == 0) && current_state_->move_request->cancellation_request &&
+                       !current_state_->move_request->cancellation_request->issued) {
+                // We have a move request, the samples have been forwarded,
+                // and cancellation is requested but has not yet been issued. Issue a cancel.
+                current_state_->move_request->cancellation_request->issued = true;
+                if (!current_state_->driver->writeTrajectoryControlMessage(
+                        urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
+                    // TODO: XXX ACM should this be completing differently?
+                    std::exchange(current_state_->move_request, {})
+                        ->complete_error("failed to write trajectory control cancel message to URArm");
+                }
+            } else if ((current_state_->move_request->samples.size() != 0) && current_state_->move_request->cancellation_request) {
+                // We have a move request that we haven't issued but a
+                // cancel is already pending. Don't issue it, just cancel it.
+                std::exchange(current_state_->move_request, {})->complete_cancelled();
+            }
+        } else {
+            // We have entered an abnormal state. Complete the move request with an error.
+            std::exchange(current_state_->move_request, {})->complete_error([&] {
+                switch (current_state_->last_driver_status) {
+                    case UrDriverStatus::ESTOPPED:
+                        return "arm is estopped";
+                    case UrDriverStatus::READ_FAILURE:
+                        return "arm failed to retrieve current state";
+                    case UrDriverStatus::DASHBOARD_FAILURE:
+                        return "arm dashboard is disconnected";
+                    default:
+                        abort();  // impossible
+                }
+            }());
+        }
+    }
+
+    return current_state_->last_driver_status;
 }
 
 // helper function to read a data packet and send a noop message
@@ -1235,46 +1279,10 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_inner_(bool log) {
     current_state_->joints_velocity = std::move(joints_velocity);
     current_state_->tcp_state = std::move(tcp_state);
 
-    if (current_state_->move_request && (current_state_->move_request->samples.size() != 0) &&
-        !current_state_->move_request->cancellation_request) {
-        // We have a move request, it has samples, and there is no pending cancel for that move. Issue the move.
-        auto samples = std::move(current_state_->move_request->samples);
-        if (!send_trajectory_(samples)) {
-            std::exchange(current_state_->move_request, {})->complete_error("failed to send trajectory to arm");
-        };
-    } else if (current_state_->move_request && (current_state_->move_request->samples.size() == 0) &&
-               current_state_->move_request->cancellation_request && !current_state_->move_request->cancellation_request->issued) {
-        // We have a move request, the samples have been forwarded,
-        // and cancellation is requested but has not yet been issued. Issue a cancel.
-        current_state_->move_request->cancellation_request->issued = true;
-        if (!current_state_->driver->writeTrajectoryControlMessage(
-                urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
-            std::exchange(current_state_->move_request, {})->complete_error(
-                                                 "failed to write trajectory control cancel message to URArm");
-        }
-    } else {
-        // Either we didn't have a move request, or, we had one that
-        // we haven't issued but a cancel is already pending. Don't
-        // issue it, just cancel it.
-        if (current_state_->move_request && (current_state_->move_request->samples.size() != 0) &&
-            current_state_->move_request->cancellation_request) {
-            std::exchange(current_state_->move_request, {})->complete_cancelled();
-        }
-
-        // send a noop to keep the connection alive
-        if (!current_state_->driver->writeTrajectoryControlMessage(
-                control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-            if (log) {
-                VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
-            }
-            // technically this should be driver error but I am gonna be lazy until we do the refactor here.
-            return UrDriverStatus::DASHBOARD_FAILURE;
-        }
-    }
-
     // check if we detect an estop. while estopped we could still retrieve data from the arm
     if (current_state_->estop.load()) {
         return UrDriverStatus::ESTOPPED;
     }
+
     return UrDriverStatus::NORMAL;
 }
