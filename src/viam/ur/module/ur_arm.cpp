@@ -882,13 +882,10 @@ bool URArm::send_trajectory_(const std::vector<trajectory_sample_point>& samples
     return true;
 }
 
-int random_cnt = 0;
 // helper function to read a data packet and send a noop message
 URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
     // check to see if an estop has occurred.
     std::string status;
-    random_cnt++;
-    // VIAM_SDK_LOG(error) << "yo is local : " << !current_state_->dashboard->commandIsInRemoteControl() << "\t" << random_cnt;
     try {
         if (current_state_->local_disconnect.load()) {
             // check if the arm was in local mode or if we
