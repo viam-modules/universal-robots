@@ -207,6 +207,9 @@ struct URArm::state_ {
     std::atomic<bool> estop{false};
     std::atomic<bool> local_disconnect{false};
 
+    // variables derived from arm state on configuration
+    bool is_sim;
+
     std::mutex output_csv_dir_path_mu;
     // specified through VIAM_MODULE_DATA environment variable
     std::string output_csv_dir_path;
@@ -319,7 +322,7 @@ void URArm::startup_(const Dependencies&, const ResourceConfig& cfg) {
 
     // connect to the robot dashboard
     current_state_->dashboard.reset(new DashboardClient(current_state_->host));
-    if (!current_state_->dashboard->connect()) {
+    if (!current_state_->dashboard->connect(1)) {
         throw std::runtime_error("couldn't connect to dashboard");
     }
 
@@ -357,16 +360,22 @@ void URArm::startup_(const Dependencies&, const ResourceConfig& cfg) {
         throw std::runtime_error("couldn't release the arm brakes");
     }
 
+    // sim always reports that it is in local mode, but during local mode we cannot turn the arm off/on like we just did.
+    // so if the arm thinks its local mode then we should be in sim.
+    current_state_->is_sim = !current_state_->dashboard->commandIsInRemoteControl();
+
     constexpr char k_script_file[] = "/src/control/external_control.urscript";
 
     // Now the robot is ready to receive a program
-    const urcl::UrDriverConfiguration ur_cfg = {current_state_->host,
-                                                current_state_->appdir + k_script_file,
-                                                current_state_->appdir + k_output_recipe,
-                                                current_state_->appdir + k_input_recipe,
-                                                &reportRobotProgramState,
-                                                true,  // headless mode
-                                                nullptr};
+    urcl::UrDriverConfiguration ur_cfg = {current_state_->host,
+                                          current_state_->appdir + k_script_file,
+                                          current_state_->appdir + k_output_recipe,
+                                          current_state_->appdir + k_input_recipe,
+                                          &reportRobotProgramState,
+                                          true,  // headless mode
+                                          nullptr};
+    ur_cfg.socket_reconnect_attempts = 1;
+
     current_state_->driver.reset(new UrDriver(ur_cfg));
 
     // define callback function to be called by UR client library when trajectory state changes
@@ -827,15 +836,14 @@ void URArm::shutdown_() noexcept {
             // stop the robot
             VIAM_SDK_LOG(info) << "URArm shutdown calling stop";
             stop(ProtoStruct{});
-            // disconnect from the dashboard
-            if (current_state_->dashboard) {
-                VIAM_SDK_LOG(info) << "URArm shutdown calling dashboard->disconnect()";
-                current_state_->dashboard->disconnect();
-            }
             if (current_state_->keep_alive_thread.joinable()) {
                 VIAM_SDK_LOG(info) << "URArm shutdown waiting for keep_alive thread to terminate";
                 current_state_->keep_alive_thread.join();
                 VIAM_SDK_LOG(info) << "keep_alive thread terminated";
+            }
+            // disconnect from the dashboard
+            if (current_state_->dashboard) {
+                current_state_->dashboard->disconnect();
             }
             VIAM_SDK_LOG(info) << "URArm shutdown complete";
         }
@@ -874,17 +882,22 @@ bool URArm::send_trajectory_(const std::vector<trajectory_sample_point>& samples
     return true;
 }
 
+int random_cnt = 0;
 // helper function to read a data packet and send a noop message
 URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
     // check to see if an estop has occurred.
     std::string status;
+    random_cnt++;
+    // VIAM_SDK_LOG(error) << "yo is local : " << !current_state_->dashboard->commandIsInRemoteControl() << "\t" << random_cnt;
     try {
         if (current_state_->local_disconnect.load()) {
-            if (current_state_->dashboard->commandIsInRemoteControl()) {
+            // check if the arm was in local mode or if we
+            if (current_state_->dashboard->commandIsInRemoteControl() || current_state_->is_sim) {
                 // reconnect to the tablet. We have to do this, otherwise the client will assume that the arm is still in local mode.
                 // yes, even though the client can already recognize that we are in remote control mode
                 current_state_->dashboard->disconnect();
-                if (!current_state_->dashboard->connect()) {
+
+                if (!current_state_->dashboard->connect(1)) {
                     return UrDriverStatus::DASHBOARD_FAILURE;
                 }
                 // reset the driver client so we are not asking for data
@@ -893,6 +906,18 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
                 // this has to happen, otherwise when an estop is triggered the arm will return error code C210A0
                 current_state_->driver->stopPrimaryClientCommunication();
                 current_state_->driver->startPrimaryClientCommunication();
+
+                std::string robot_mode;
+                if (!current_state_->dashboard->commandRobotMode(robot_mode)) {
+                    throw std::runtime_error("read_joint_keep_alive dashboard->commandRobotMode() failed to retrieve robot mode");
+                }
+
+                // if the robot is not running, we want to restart the arm fully to make sure we are ready
+                // we will cheat by going into the estop code
+                if (robot_mode.find(urcl::robotModeString(urcl::RobotMode::RUNNING)) == std::string::npos) {
+                    // we are not ready to run, go into the estop code to try to be ready
+                    current_state_->estop.store(true);
+                }
 
                 // check if we can still send trajectories. if not we need to send the robot program again.
                 if (!current_state_->driver->isReverseInterfaceConnected() || !current_state_->driver->isTrajectoryInterfaceConnected()) {
@@ -919,29 +944,45 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
             return UrDriverStatus::DASHBOARD_FAILURE;
         }
     } catch (const std::exception& ex) {
+        if (current_state_->local_disconnect.load()) {
+            // we still cannot connect to the arm, add a large delay to further reduce spam
+            std::this_thread::sleep_for(10 * k_estop_delay);
+        }
         // if we end up here that means we can no longer talk to the arm. store the state so we can try to recover from this.
         current_state_->local_disconnect.store(true);
 
         // attempt to reconnect to the arm. Even if we reconnect, we will have to check that the tablet is not in local mode.
         // we reconnect in the catch to attempt to limit the amount of times we connect to the arm to avoid a "no controller" error
         // https://forum.universal-robots.com/t/no-controller-error-on-real-robot/3127
-        current_state_->dashboard->disconnect();
-        if (!current_state_->dashboard->connect()) {
-            // we failed to reconnect to the tablet, so we might not even be able to talk to it.
-            // return an error so we can attempt to reconnect again
+        try {
+            // check if we have a tcp connection to the arm, if we do, restart the connection
+            if (current_state_->dashboard->getState() == urcl::comm::SocketState::Connected) {
+                current_state_->dashboard->disconnect();
+            }
+
+            // if we think we are connected to the arm, try resetting the connection
+            if (current_state_->driver->isReverseInterfaceConnected()) {
+                current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
+            }
+
+            // delay so we don't spam the dashboard client if disconnected
+            std::this_thread::sleep_for(k_estop_delay);
+
+            // connecting to the dashboard can hang when calling an arm that is off, which will cause issues on shutdown.
+            if (!current_state_->dashboard->connect(1)) {
+                // we failed to reconnect to the tablet, so we might not even be able to talk to it.
+                // return an error so we can attempt to reconnect again
+                return UrDriverStatus::DASHBOARD_FAILURE;
+            }
+
+            // start capturing data from the arm driver again
+            current_state_->driver->startRTDECommunication();
+
+            VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
+        } catch (const std::exception& exDisconnect) {
+            VIAM_SDK_LOG(error) << "cannot talk to the arm, is the arm disconnected? : " << std::string(exDisconnect.what());
             return UrDriverStatus::DASHBOARD_FAILURE;
         }
-
-        // reset the driver client so we stop trying to ask for more data
-        current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
-
-        // delay so we don't spam the dashboard client if disconnected
-        std::this_thread::sleep_for(k_estop_delay);
-
-        // start capturing data from the arm driver again
-        current_state_->driver->startRTDECommunication();
-
-        VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
     }
 
     // check if the arm status is normal or not empty. the status will be empty if the arm is disconnected or when the arm is first switched
