@@ -875,68 +875,6 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock,
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
     // with the current state other than to wait on the result of this future.
     trajectory_completion_future.get();
-
-    // XXX ACM TODO: Need to get the position logging back in
-    // XXX ACM TODO: Need to get the ESTOPPED type errors propagated back
-#if 0
-    {  // note the open brace which introduces a new variable scope
-        // construct a lock_guard: locks the mutex on construction and unlocks on destruction
-        const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
-        {
-            UrDriverStatus status;
-            for (unsigned i = 0; i < 5; i++) {
-                status = read_joint_keep_alive_(true);
-                if (status == UrDriverStatus::NORMAL) {
-                    break;
-                }
-            }
-            if (status != UrDriverStatus::NORMAL) {
-                throw std::runtime_error("unable to get arm state before send_trajectory");
-            }
-        }
-        if (!send_trajectory_(samples)) {
-            throw std::runtime_error("send_trajectory failed");
-        };
-
-        std::ofstream of(arm_joint_positions_filename(path, unix_time));
-
-        of << "time_ms,read_attempt,"
-              "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
-              "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
-        unsigned attempt = 0;
-        UrDriverStatus status;
-        while ((current_state_->trajectory_status.load() == TrajectoryStatus::k_running) && !current_state_->shutdown.load()) {
-            const auto unix_time = unix_now_ms();
-            status = read_joint_keep_alive_(true);
-            if (status != UrDriverStatus::NORMAL) {
-                break;
-            }
-            write_joint_data(*current_state_->joints_position, *current_state_->joints_velocity, of, unix_time, attempt++);
-        };
-        if (current_state_->shutdown.load()) {
-            of.close();
-            throw std::runtime_error("interrupted by shutdown");
-        }
-
-        of.close();
-        VIAM_SDK_LOG(info) << "move: end unix_time " << unix_time.count();
-
-        if (current_state_->trajectory_status.load() == TrajectoryStatus::k_cancelled) {
-            throw std::runtime_error("arm's current trajectory cancelled by code");
-        }
-
-        switch (status) {
-            case UrDriverStatus::ESTOPPED:
-                throw std::runtime_error("arm is estopped");
-            case UrDriverStatus::READ_FAILURE:
-                throw std::runtime_error("arm failed to retrieve data packet");
-            case UrDriverStatus::DASHBOARD_FAILURE:
-                throw std::runtime_error("arm dashboard is disconnected");
-            case UrDriverStatus::NORMAL:
-                return;
-        }
-    }
-#endif
 }
 
 std::string URArm::status_to_string_(UrDriverStatus status) {
