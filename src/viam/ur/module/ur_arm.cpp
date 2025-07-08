@@ -212,6 +212,10 @@ struct URArm::state_ {
     std::thread keep_alive_thread;
 
     struct move_cancellation_request {
+        // This constructor needs to be written this way for
+        // std::optional::emplace with no arguments to work.
+        move_cancellation_request() {}
+
         std::promise<void> promise;
         std::shared_future<void> future;
         bool issued{false};
@@ -321,7 +325,10 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
     const auto registration_factory = [&](auto m) {
         const auto model = URArm::model(m);
         return std::make_shared<ModelRegistration>(
-            arm, model, [model](auto deps, auto config) { return std::make_unique<URArm>(model, deps, config); });
+            arm,
+            model,
+            // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is fixed by ModelRegistration.
+            [model](auto deps, auto config) { return std::make_unique<URArm>(model, deps, config); });
     };
 
     auto registrations = model_strings | boost::adaptors::transformed(registration_factory);
@@ -984,13 +991,13 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
     if (current_state_->move_request) {
         if (current_state_->last_driver_status == UrDriverStatus::NORMAL) {
             // If we are in a normal state, deal with issuing and canceling trajectories
-            if ((current_state_->move_request->samples.size() != 0) && !current_state_->move_request->cancellation_request) {
+            if (!current_state_->move_request->samples.empty() && !current_state_->move_request->cancellation_request) {
                 // We have a move request, it has samples, and there is no pending cancel for that move. Issue the move.
                 auto samples = std::move(current_state_->move_request->samples);
                 if (!send_trajectory_(samples)) {
                     std::exchange(current_state_->move_request, {})->complete_error("failed to send trajectory to arm");
                 };
-            } else if ((current_state_->move_request->samples.size() == 0) && current_state_->move_request->cancellation_request &&
+            } else if (current_state_->move_request->samples.empty() && current_state_->move_request->cancellation_request &&
                        !current_state_->move_request->cancellation_request->issued) {
                 // We have a move request, the samples have been forwarded,
                 // and cancellation is requested but has not yet been issued. Issue a cancel.
@@ -999,7 +1006,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
                         urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
                     current_state_->move_request->cancel_error("failed to write trajectory control cancel message to URArm");
                 }
-            } else if ((current_state_->move_request->samples.size() != 0) && current_state_->move_request->cancellation_request) {
+            } else if (!current_state_->move_request->samples.empty() && current_state_->move_request->cancellation_request) {
                 // We have a move request that we haven't issued but a
                 // cancel is already pending. Don't issue it, just cancel it.
                 std::exchange(current_state_->move_request, {})->complete_cancelled();
