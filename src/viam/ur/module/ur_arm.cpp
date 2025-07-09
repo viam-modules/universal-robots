@@ -495,7 +495,7 @@ void URArm::check_configured_(const lock_type<std::shared_mutex>&) {
 }
 
 void URArm::trajectory_done_cb_(const control::TrajectoryResult state) {
-    const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
+    const std::lock_guard guard{current_state_->state_mutex};
     std::string report;
 
     // Take ownership of any move request so we open the slot for the next one.
@@ -553,7 +553,7 @@ std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
 }
 
 std::vector<double> URArm::get_joint_positions_(const std::shared_lock<std::shared_mutex>&) {
-    const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
+    const std::lock_guard guard{current_state_->state_mutex};
     if (current_state_->last_driver_status != UrDriverStatus::NORMAL) {
         // TODO: provide more context
         throw std::runtime_error("get_joint_positions: failed to read from arm");
@@ -653,7 +653,7 @@ pose URArm::get_end_position(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
-    const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
+    const std::lock_guard guard{current_state_->state_mutex};
     if (current_state_->last_driver_status != UrDriverStatus::NORMAL) {
         // TODO: provide more context
         throw std::runtime_error("get_end_position: failed to read from arm");
@@ -748,7 +748,7 @@ void URArm::keep_alive_() {
             break;
         }
         {
-            const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
+            const std::lock_guard guard{current_state_->state_mutex};
             try {
                 read_joint_keep_alive_(true);
             } catch (const std::exception& ex) {
@@ -873,7 +873,7 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock,
               "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
-        const std::lock_guard<std::mutex> guard{current_state_->state_mutex};
+        const std::lock_guard guard{current_state_->state_mutex};
         if (current_state_->move_request) {
             throw std::runtime_error("An actuation is already in progress");
         }
