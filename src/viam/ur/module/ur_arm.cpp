@@ -888,12 +888,11 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
     std::string status;
     try {
         if (current_state_->local_disconnect.load()) {
-            // check if the arm was in local mode or if we
+            // check if the arm is in remote mode. Sim arms will always report in local mode
             if (current_state_->dashboard->commandIsInRemoteControl() || current_state_->is_sim) {
                 // reconnect to the tablet. We have to do this, otherwise the client will assume that the arm is still in local mode.
                 // yes, even though the client can already recognize that we are in remote control mode
                 current_state_->dashboard->disconnect();
-
                 if (!current_state_->dashboard->connect(1)) {
                     return UrDriverStatus::DASHBOARD_FAILURE;
                 }
