@@ -485,7 +485,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     failure_handler.deactivate();
 }
 
-template <template <typename T> typename lock_type>
+template <template <typename> typename lock_type>
 void URArm::check_configured_(const lock_type<std::shared_mutex>&) {
     if (!current_state_) {
         std::ostringstream buffer;
