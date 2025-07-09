@@ -150,7 +150,7 @@ class URArm final : public Arm, public Reconfigurable {
     URArm::UrDriverStatus read_joint_keep_alive_(bool log);
     URArm::UrDriverStatus read_joint_keep_alive_inner_(bool log);
 
-    template <template <typename T> typename lock_type>
+    template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
 
     const Model model_;
