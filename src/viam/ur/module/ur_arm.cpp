@@ -950,35 +950,30 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
         // attempt to reconnect to the arm. Even if we reconnect, we will have to check that the tablet is not in local mode.
         // we reconnect in the catch to attempt to limit the amount of times we connect to the arm to avoid a "no controller" error
         // https://forum.universal-robots.com/t/no-controller-error-on-real-robot/3127
-        try {
-            // check if we have a tcp connection to the arm, if we do, restart the connection
-            if (current_state_->dashboard->getState() == urcl::comm::SocketState::Connected) {
-                current_state_->dashboard->disconnect();
-            }
+        // check if we have a tcp connection to the arm, if we do, restart the connection
+        if (current_state_->dashboard->getState() == urcl::comm::SocketState::Connected) {
+            current_state_->dashboard->disconnect();
+        }
 
-            // if we think we are connected to the arm, try resetting the connection
-            if (current_state_->driver->isReverseInterfaceConnected()) {
-                current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
-            }
+        // if we think we are connected to the arm, try resetting the connection
+        if (current_state_->driver->isReverseInterfaceConnected()) {
+            current_state_->driver->resetRTDEClient(current_state_->appdir + k_output_recipe, current_state_->appdir + k_input_recipe);
+        }
 
-            // delay so we don't spam the dashboard client if disconnected
-            std::this_thread::sleep_for(k_estop_delay);
+        // delay so we don't spam the dashboard client if disconnected
+        std::this_thread::sleep_for(k_estop_delay);
 
-            // connecting to the dashboard can hang when calling an arm that is off, which will cause issues on shutdown.
-            if (!current_state_->dashboard->connect(1)) {
-                // we failed to reconnect to the tablet, so we might not even be able to talk to it.
-                // return an error so we can attempt to reconnect again
-                return UrDriverStatus::DASHBOARD_FAILURE;
-            }
-
-            // start capturing data from the arm driver again
-            current_state_->driver->startRTDECommunication();
-
-            VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
-        } catch (const std::exception& exDisconnect) {
-            VIAM_SDK_LOG(error) << "cannot talk to the arm, is the arm disconnected? : " << std::string(exDisconnect.what());
+        // connecting to the dashboard can hang when calling an arm that is off, which will cause issues on shutdown.
+        if (!current_state_->dashboard->connect(1)) {
+            // we failed to reconnect to the tablet, so we might not even be able to talk to it.
+            // return an error so we can attempt to reconnect again
             return UrDriverStatus::DASHBOARD_FAILURE;
         }
+
+        // start capturing data from the arm driver again
+        current_state_->driver->startRTDECommunication();
+
+        VIAM_SDK_LOG(error) << "failed to talk to the arm, is the tablet in local mode? : " << std::string(ex.what());
     }
 
     // check if the arm status is normal or not empty. the status will be empty if the arm is disconnected or when the arm is first switched
