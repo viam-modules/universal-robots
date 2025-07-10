@@ -220,6 +220,9 @@ struct URArm::state_ {
             }
         }
 
+        // TODO: Since the `get_future` here should really only be called once,
+        // it might be better later to have `state` have a function to enqueue
+        // a move request and return the associated future.
         auto get_completion_future() {
             return completion.get_future();
         }
@@ -554,7 +557,7 @@ std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
 
 std::vector<double> URArm::get_joint_positions_(const std::shared_lock<std::shared_mutex>&) {
     const std::lock_guard guard{current_state_->state_mutex};
-    if (current_state_->last_driver_status != UrDriverStatus::NORMAL) {
+    if (current_state_->last_driver_status == UrDriverStatus::READ_FAILURE) {
         // TODO: provide more context
         throw std::runtime_error("get_joint_positions: failed to read from arm");
     }
@@ -654,7 +657,7 @@ pose URArm::get_end_position(const ProtoStruct&) {
     check_configured_(rlock);
 
     const std::lock_guard guard{current_state_->state_mutex};
-    if (current_state_->last_driver_status != UrDriverStatus::NORMAL) {
+    if (current_state_->last_driver_status == UrDriverStatus::READ_FAILURE) {
         // TODO: provide more context
         throw std::runtime_error("get_end_position: failed to read from arm");
     }
@@ -877,6 +880,12 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock,
         if (current_state_->move_request) {
             throw std::runtime_error("An actuation is already in progress");
         }
+        // TODO: There is a race here, where if we planned, then
+        // another move started and completed, and then we execute,
+        // that the starting position we used is stale. See
+        // https://github.com/viam-modules/universal-robots/pull/79/files#r2195721629
+        // for more discussion. Some mechanism to prevent that case
+        // should be implemented.
         return current_state_->move_request.emplace(std::move(samples), std::move(ajp_of)).get_completion_future();
     }();
 
