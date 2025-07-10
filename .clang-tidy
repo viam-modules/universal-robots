@@ -2,13 +2,15 @@
 #
 # bugprone-easily-swappable-parameters: This warning is loud with no clear advice on how to fix the potential problem
 # bugprone-macro-parentheses: Can break with boost macros
+# bugprone-unchecked-optional-access: Seems to have many false positives, at least with clang 19
+# misc-include-cleaner: TODO(RSDK-5479) this is overly finnicky, add IWYU support and fix.
+# readability-else-after-return: No, this causes code complexification
+# readability-function-cognitive-complexity: No, complexity is subjective and sometimes necessary.
 # readability-identifier-length: This complains about identifiers with length < 3 which is often not useful.
-# readability-named-parameter: Useful to fix lints about unused parameters
 # readability-implicit-bool-conversion: We have decided that !ptr-type is cleaner than ptr-type==nullptr
 # readability-magic-numbers: This encourages useless variables and extra lint lines
-# misc-include-cleaner: TODO(RSDK-5479) this is overly finnicky, add IWYU support and fix.
-# readability-function-cognitive-complexity: No, complexity is subjective and sometimes necessary.
-# readability-else-after-return: No, this causes code complexification
+# readability-named-parameter: Useful to fix lints about unused parameters
+
 Checks: >
   -*,
   bugprone-*,
@@ -21,13 +23,14 @@ Checks: >
   readability-*,
   -bugprone-easily-swappable-parameters,
   -bugprone-macro-parentheses,
+  -bugprone-unchecked-optional-access,
+  -misc-include-cleaner,
+  -readability-else-after-return,
+  -readability-function-cognitive-complexity,
   -readability-identifier-length,
-  -readability-named-parameter,
   -readability-implicit-bool-conversion,
   -readability-magic-numbers,
-  -misc-include-cleaner,
-  -readability-function-cognitive-complexity,
-  -readability-else-after-return,
+  -readability-named-parameter,
 WarningsAsErrors: '*'
 FormatStyle: file
 CheckOptions:

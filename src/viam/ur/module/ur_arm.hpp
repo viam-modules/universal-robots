@@ -1,5 +1,7 @@
 #pragma once
 
+#include <shared_mutex>
+
 #include <ur_client_library/control/trajectory_point_interface.h>
 #include <ur_client_library/types.h>
 
@@ -114,8 +116,6 @@ class URArm final : public Arm, public Reconfigurable {
         throw std::runtime_error("unimplemented");
     }
 
-    std::string get_output_csv_dir_path();
-
     // the arm server within RDK will reconstruct the geometries from the kinematics and joint positions if left unimplemented
     std::vector<GeometryConfig> get_geometries(const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
@@ -128,22 +128,33 @@ class URArm final : public Arm, public Reconfigurable {
 
     static std::string status_to_string_(UrDriverStatus status);
 
-    void startup_(const Dependencies& deps, const ResourceConfig& cfg);
+    void configure_(const std::unique_lock<std::shared_mutex>& lock, const Dependencies& deps, const ResourceConfig& cfg);
 
-    void check_configured_();
+    template <template <typename> typename lock_type>
+    void check_configured_(const lock_type<std::shared_mutex>&);
 
-    void shutdown_() noexcept;
+    void shutdown_(const std::unique_lock<std::shared_mutex>& lock) noexcept;
 
     void keep_alive_();
 
-    void move_(std::list<Eigen::VectorXd> waypoints, std::chrono::milliseconds unix_time_ms);
+    std::vector<double> get_joint_positions_(const std::shared_lock<std::shared_mutex>&);
+
+    void move_(std::shared_lock<std::shared_mutex> config_rlock,
+               std::list<Eigen::VectorXd> waypoints,
+               std::chrono::milliseconds unix_time_ms);
 
     bool send_trajectory_(const std::vector<trajectory_sample_point>& samples);
 
     void trajectory_done_cb_(control::TrajectoryResult);
 
     URArm::UrDriverStatus read_joint_keep_alive_(bool log);
+    URArm::UrDriverStatus read_joint_keep_alive_inner_(bool log);
+
+    template <template <typename> typename lock_type>
+    void stop_(const lock_type<std::shared_mutex>&);
 
     const Model model_;
+
+    std::shared_mutex config_mutex_;
     std::unique_ptr<state_> current_state_;
 };
