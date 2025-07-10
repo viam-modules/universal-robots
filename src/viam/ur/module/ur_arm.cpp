@@ -260,6 +260,7 @@ struct URArm::state_ {
             if (cancellation_request) {
                 cancellation_request->promise.set_value();
             }
+            VIAM_SDK_LOG(warn) << "A trajectory completed with an error: " << message;
         }
 
         void cancel_error(std::string_view message) {
