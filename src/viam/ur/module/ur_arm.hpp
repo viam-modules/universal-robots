@@ -141,9 +141,7 @@ class URArm final : public Arm, public Reconfigurable {
 
     std::vector<double> get_joint_positions_(const std::shared_lock<std::shared_mutex>&);
 
-    void move_(std::shared_lock<std::shared_mutex> config_rlock,
-               std::list<Eigen::VectorXd> waypoints,
-               std::string unix_time_ms);
+    void move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, std::string unix_time_ms);
 
     bool send_trajectory_(const std::vector<trajectory_sample_point>& samples);
 

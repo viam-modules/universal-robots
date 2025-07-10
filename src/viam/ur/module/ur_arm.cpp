@@ -87,8 +87,7 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     return {position, orientation, theta};
 }
 
-void write_joint_data(
-    const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::string unix_time, std::size_t attempt) {
+void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::string unix_time, std::size_t attempt) {
     of << unix_time << "," << attempt << ",";
     for (const double joint_pos : jp) {
         of << joint_pos << ",";
@@ -264,7 +263,7 @@ struct URArm::state_ {
         }
 
         void write_joint_data(vector6d_t& position, vector6d_t& velocity) {
-            ::write_joint_data(position, velocity, arm_joint_positions_stream, unix_now_ms(), arm_joint_positions_sample++);
+            ::write_joint_data(position, velocity, arm_joint_positions_stream, unix_time_iso8601(), arm_joint_positions_sample++);
         }
 
         std::vector<trajectory_sample_point> samples;
@@ -780,9 +779,7 @@ void URArm::keep_alive_() {
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
 
-void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock,
-                  std::list<Eigen::VectorXd> waypoints,
-                  const std::string unix_time) {
+void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string unix_time) {
     auto our_config_rlock = std::move(config_rlock);
 
     VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
