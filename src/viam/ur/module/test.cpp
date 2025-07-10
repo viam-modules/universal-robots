@@ -48,15 +48,16 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
         const double test_duration_sec = 0;
         const double test_freq_hz = 0.5;  // 1 sample every 2 seconds
 
-        BOOST_CHECK_THROW(sampling_func(test_samples,
-                                        test_duration_sec,
-                                        test_freq_hz,
-                                        [](const double t, const double step) {
-                                            BOOST_FAIL("we should never reach this");
-                                            return trajectory_sample_point{
-                                                {t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
-                                        }),
-                          std::invalid_argument);
+        BOOST_CHECK_THROW(
+            sampling_func(
+                test_samples,
+                test_duration_sec,
+                test_freq_hz,
+                [](const double t, const double step) {
+                    BOOST_FAIL("we should never reach this");
+                    return trajectory_sample_point{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
+                }),
+            std::invalid_argument);
     }
 }
 
@@ -116,23 +117,26 @@ using namespace std::chrono_literals;
 const std::string k_path = "/home/user";
 
 BOOST_AUTO_TEST_CASE(test_waypoints_filename) {
-    auto timestamp = unix_time_iso8601();
+    const auto timestamp = unix_time_iso8601();
+    const auto path = k_path + "/" + timestamp + "_waypoints.csv";
+
     auto x = waypoints_filename(k_path, timestamp);
-    auto path = k_path + "/" + timestamp + "_waypoints.csv";
     BOOST_CHECK_EQUAL(x, path);
 }
 
 BOOST_AUTO_TEST_CASE(test_trajectory_filename) {
-    auto timestamp = unix_time_iso8601();
+    const auto timestamp = unix_time_iso8601();
+    const auto path = k_path + "/" + timestamp + "_trajectory.csv";
+
     auto x = trajectory_filename(k_path, timestamp);
-    auto path = k_path + "/" + timestamp + "_trajectory.csv";
     BOOST_CHECK_EQUAL(x, path);
 }
 
 BOOST_AUTO_TEST_CASE(test_arm_joint_positions_filename) {
-    auto timestamp = unix_time_iso8601();
+    const auto timestamp = unix_time_iso8601();
+    const auto path = k_path + "/" + timestamp + "_arm_joint_positions.csv";
+
     auto x = arm_joint_positions_filename(k_path, timestamp);
-    auto path = k_path + "/" + timestamp + "_arm_joint_positions.csv";
     BOOST_CHECK_EQUAL(x, path);
 }
 
