@@ -57,11 +57,15 @@ std::chrono::milliseconds unix_now_ms() {
 
 std::string to_iso_8601(std::chrono::milliseconds time) {
     std::stringstream stream;
+    struct tm buf;
     auto tp = std::chrono::time_point<std::chrono::system_clock>{} + time;
     auto tt = std::chrono::system_clock::to_time_t(tp);
 
-    struct tm buf;
-    gmtime_r(&tt, &buf);
+    auto ret = gmtime_r(&tt, &buf);
+    if (ret == nullptr) {
+        stream << time.count();
+        return stream.str();
+    }
     stream << std::put_time(&buf, "%FT%T");
 
     auto delta_us = time % 1000000;
