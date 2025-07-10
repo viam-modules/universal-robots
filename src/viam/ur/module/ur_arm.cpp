@@ -55,6 +55,22 @@ std::chrono::milliseconds unix_now_ms() {
     return chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now().time_since_epoch());
 }
 
+std::string to_iso_8601(std::chrono::milliseconds time) {
+    using namespace std::literals::chrono_literals;
+
+    std::stringstream stream;
+    auto tp = std::chrono::time_point<std::chrono::system_clock>{} + time;
+    auto tt = std::chrono::system_clock::to_time_t(tp);
+
+    struct tm buf;
+    gmtime_r(&tt, &buf);
+    stream << std::put_time(&buf, "%FT%T");
+
+    auto delta_us = time % 1000000;
+    stream << "." << std::fixed << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
+    return stream.str();
+}
+
 template <typename T>
 [[nodiscard]] constexpr decltype(auto) degrees_to_radians(T&& degrees) {
     return std::forward<T>(degrees) * (M_PI / 180.0);
@@ -445,19 +461,19 @@ std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
 std::string waypoints_filename(const std::string& path, const std::chrono::milliseconds unix_time) {
     constexpr char kWaypointsCsvNameTemplate[] = "/%1%_waypoints.csv";
     auto fmt = boost::format(path + kWaypointsCsvNameTemplate);
-    return (fmt % std::to_string(unix_time.count())).str();
+    return (fmt % to_iso_8601(unix_time)).str();
 }
 
 std::string trajectory_filename(const std::string& path, const std::chrono::milliseconds unix_time) {
     constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_trajectory.csv";
     auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
-    return (fmt % std::to_string(unix_time.count())).str();
+    return (fmt % to_iso_8601(unix_time)).str();
 }
 
 std::string arm_joint_positions_filename(const std::string& path, const std::chrono::milliseconds unix_time) {
     constexpr char kArmJointPositionsCsvNameTemplate[] = "/%1%_arm_joint_positions.csv";
     auto fmt = boost::format(path + kArmJointPositionsCsvNameTemplate);
-    return (fmt % std::to_string(unix_time.count())).str();
+    return (fmt % to_iso_8601(unix_time)).str();
 }
 
 std::string URArm::get_output_csv_dir_path() {
