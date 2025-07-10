@@ -360,20 +360,23 @@ void URArm::startup_(const Dependencies&, const ResourceConfig& cfg) {
         throw std::runtime_error("couldn't release the arm brakes");
     }
 
-    // sim always reports that it is in local mode, but during local mode we cannot turn the arm off/on like we just did.
-    // so if the arm thinks its local mode then we should be in sim.
+    // If we made it to this part of the code, then the arm is on and we can successfully talk to it.
+    // A physical/real arm can only be controlled this way if the dashboard is in remote mode.
+    // Conversely, a simulation arm will always report that the arm is in local mode.
+    // Using this, we can determine whether the arm is a simulation arm by calling dashboard->commandIsInRemoteControl at this point.
+    // we will capture this state to use within the worker thread.
     current_state_->is_sim = !current_state_->dashboard->commandIsInRemoteControl();
 
     constexpr char k_script_file[] = "/src/control/external_control.urscript";
 
     // Now the robot is ready to receive a program
-    urcl::UrDriverConfiguration ur_cfg = {current_state_->host,
-                                          current_state_->appdir + k_script_file,
-                                          current_state_->appdir + k_output_recipe,
-                                          current_state_->appdir + k_input_recipe,
-                                          &reportRobotProgramState,
-                                          true,  // headless mode
-                                          nullptr};
+    auto ur_cfg = urcl::UrDriverConfiguration{};
+    ur_cfg.robot_ip = current_state_->host;
+    ur_cfg.script_file = current_state_->appdir + k_script_file;
+    ur_cfg.output_recipe_file = current_state_->appdir + k_output_recipe;
+    ur_cfg.input_recipe_file = current_state_->appdir + k_input_recipe;
+    ur_cfg.handle_program_state = &reportRobotProgramState;
+    ur_cfg.headless_mode = true;
     ur_cfg.socket_reconnect_attempts = 1;
 
     current_state_->driver.reset(new UrDriver(ur_cfg));
@@ -836,17 +839,21 @@ void URArm::shutdown_() noexcept {
             // stop the robot
             VIAM_SDK_LOG(info) << "URArm shutdown calling stop";
             stop(ProtoStruct{});
+            // stop the worker thread.
+            // Do this first to prevent the worker thread from turning the dashboard client back on when the thread detects the disconnect.
             if (current_state_->keep_alive_thread.joinable()) {
                 VIAM_SDK_LOG(info) << "URArm shutdown waiting for keep_alive thread to terminate";
                 current_state_->keep_alive_thread.join();
                 VIAM_SDK_LOG(info) << "keep_alive thread terminated";
             }
-            // disconnect from the dashboard
+            // disconnect from the dashboard.
             if (current_state_->dashboard) {
+                VIAM_SDK_LOG(info) << "URArm shutdown calling dashboard->disconnect()";
                 current_state_->dashboard->disconnect();
             }
-            VIAM_SDK_LOG(info) << "URArm shutdown complete";
         }
+        VIAM_SDK_LOG(info) << "URArm shutdown complete";
+
     } catch (...) {
         const auto unconditional_abort = make_scope_guard([] { std::abort(); });
         try {
@@ -888,7 +895,8 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_(bool log) {
     std::string status;
     try {
         if (current_state_->local_disconnect.load()) {
-            // check if the arm is in remote mode. Sim arms will always report in local mode
+            // check if the arm is in remote mode. Sim arms will always report in local mode.
+            // if the arm is disconnected, commandIsInRemoteControl() will throw instead.
             if (current_state_->dashboard->commandIsInRemoteControl() || current_state_->is_sim) {
                 // reconnect to the tablet. We have to do this, otherwise the client will assume that the arm is still in local mode.
                 // yes, even though the client can already recognize that we are in remote control mode
