@@ -48,16 +48,15 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
         const double test_duration_sec = 0;
         const double test_freq_hz = 0.5;  // 1 sample every 2 seconds
 
-        BOOST_CHECK_THROW(
-            sampling_func(
-                test_samples,
-                test_duration_sec,
-                test_freq_hz,
-                [](const double t, const double step) {
-                    BOOST_FAIL("we should never reach this");
-                    return trajectory_sample_point{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
-                }),
-            std::invalid_argument);
+        BOOST_CHECK_THROW(sampling_func(test_samples,
+                                        test_duration_sec,
+                                        test_freq_hz,
+                                        [](const double t, const double step) {
+                                            BOOST_FAIL("we should never reach this");
+                                            return trajectory_sample_point{
+                                                {t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
+                                        }),
+                          std::invalid_argument);
     }
 }
 
