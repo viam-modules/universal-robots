@@ -56,8 +56,6 @@ std::chrono::milliseconds unix_now_ms() {
 }
 
 std::string to_iso_8601(std::chrono::milliseconds time) {
-    using namespace std::literals::chrono_literals;
-
     std::stringstream stream;
     auto tp = std::chrono::time_point<std::chrono::system_clock>{} + time;
     auto tt = std::chrono::system_clock::to_time_t(tp);
@@ -68,6 +66,7 @@ std::string to_iso_8601(std::chrono::milliseconds time) {
 
     auto delta_us = time % 1000000;
     stream << "." << std::fixed << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
+
     return stream.str();
 }
 
