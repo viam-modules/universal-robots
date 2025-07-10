@@ -1254,6 +1254,16 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_inner_(bool log) {
     current_state_->joints_velocity = std::move(joints_velocity);
     current_state_->tcp_state = std::move(tcp_state);
 
+    // send a noop to keep the connection alive
+    if (!current_state_->driver->writeTrajectoryControlMessage(
+            control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
+        if (log) {
+            VIAM_SDK_LOG(error) << "read_joint_keep_alive driver->writeTrajectoryControlMessage returned false";
+        }
+        // technically this should be driver error but I am gonna be lazy until we do the refactor here.
+        return UrDriverStatus::DASHBOARD_FAILURE;
+    }
+
     // check if we detect an estop. while estopped we could still retrieve data from the arm
     if (current_state_->estop.load()) {
         return UrDriverStatus::ESTOPPED;
