@@ -54,10 +54,10 @@ std::string trajectory_filename(const std::string& path, const std::string& unix
 std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
 std::string unix_time_iso8601();
 
-std::atomic<int> reverse_port(50001);
-std::atomic<int> script_sender_port(50002);
-std::atomic<int> trajectory_port(50003);
-std::atomic<int> script_command_port(50004);
+std::atomic<uint32_t> reverse_port(50001);
+std::atomic<uint32_t> script_sender_port(50002);
+std::atomic<uint32_t> trajectory_port(50003);
+std::atomic<uint32_t> script_command_port(50004);
 
 class URArm final : public Arm, public Reconfigurable {
    public:
