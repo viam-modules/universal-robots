@@ -113,7 +113,7 @@ BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
 
 using namespace std::chrono_literals;
 
-const std::string k_path = "/home/user";
+constexpr std::string k_path = "/home/user";
 
 BOOST_AUTO_TEST_CASE(test_waypoints_filename) {
     const auto timestamp = unix_time_iso8601();

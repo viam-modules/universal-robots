@@ -571,19 +571,19 @@ std::vector<double> URArm::get_joint_positions_(const std::shared_lock<std::shar
     return to_ret;
 }
 
-std::string waypoints_filename(const std::string& path, const std::string unix_time) {
+std::string waypoints_filename(const std::string& path, const std::string& unix_time) {
     constexpr char kWaypointsCsvNameTemplate[] = "/%1%_waypoints.csv";
     auto fmt = boost::format(path + kWaypointsCsvNameTemplate);
     return (fmt % unix_time).str();
 }
 
-std::string trajectory_filename(const std::string& path, const std::string unix_time) {
+std::string trajectory_filename(const std::string& path, const std::string& unix_time) {
     constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_trajectory.csv";
     auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
     return (fmt % unix_time).str();
 }
 
-std::string arm_joint_positions_filename(const std::string& path, const std::string unix_time) {
+std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time) {
     constexpr char kArmJointPositionsCsvNameTemplate[] = "/%1%_arm_joint_positions.csv";
     auto fmt = boost::format(path + kArmJointPositionsCsvNameTemplate);
     return (fmt % unix_time).str();

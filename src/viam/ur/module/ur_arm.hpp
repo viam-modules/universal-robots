@@ -49,10 +49,10 @@ void sampling_func(std::vector<trajectory_sample_point>& samples, double duratio
 
 void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples);
 void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::VectorXd>& waypoints);
-std::string waypoints_filename(const std::string& path, std::string unix_time);
-std::string trajectory_filename(const std::string& path, std::string unix_time);
-std::string arm_joint_positions_filename(const std::string& path, std::string unix_time);
-std::string arm_joint_positions_filename(const std::string& path, std::string unix_time);
+std::string waypoints_filename(const std::string& path, const std::string& unix_time);
+std::string trajectory_filename(const std::string& path, const std::string& unix_time);
+std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
+std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
 std::string unix_time_iso8601();
 
 class URArm final : public Arm, public Reconfigurable {
