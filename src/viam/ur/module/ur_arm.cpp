@@ -604,7 +604,7 @@ std::string unix_time_iso8601() {
         throw std::runtime_error("failed to convert time to iso8601");
     }
     stream << std::put_time(&buf, "%FT%T");
-    stream << "." << std::fixed << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
+    stream << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
 
     return stream.str();
 }
