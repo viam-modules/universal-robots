@@ -220,7 +220,7 @@ struct URArm::state_ {
             }
         }
 
-        // TODO: Since the `get_future` here should really only be called once,
+        // TODO(RSDK-11290): Since the `get_future` here should really only be called once,
         // it might be better later to have `state` have a function to enqueue
         // a move request and return the associated future.
         auto get_completion_future() {
@@ -384,7 +384,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     current_state_->acceleration.store(degrees_to_radians(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2")));
     try {
         current_state_->output_csv_dir_path = find_config_attribute<std::string>(cfg, "csv_output_path");
-    } catch (...) {  // NOLINT: TODO: What should actually happen if the attribute is missing?
+    } catch (...) {  // NOLINT: TODO(RSDK-11299): What should actually happen if the attribute is missing?
     }
 
     // get the APPDIR environment variable
@@ -504,9 +504,9 @@ void URArm::trajectory_done_cb_(const control::TrajectoryResult state) {
 
     // Take ownership of any move request so we open the slot for the next one.
     //
-    // TODO: Could we move the completions out of the critical section?
+    // TODO(RSDK-11298): Could we move the completions out of the critical section?
     //
-    // TODO: Do we still need `trajectory_status`
+    // TODO(RSDK-11298): Do we still need `trajectory_status`
     auto move_request = std::exchange(current_state_->move_request, {});
 
     switch (state) {
@@ -559,13 +559,12 @@ std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
 std::vector<double> URArm::get_joint_positions_(const std::shared_lock<std::shared_mutex>&) {
     const std::lock_guard guard{current_state_->state_mutex};
     if (current_state_->last_driver_status == UrDriverStatus::READ_FAILURE) {
-        // TODO: provide more context
+        // TODO(RSDK-11295): provide more context
         throw std::runtime_error("get_joint_positions: failed to read from arm");
     }
 
     if (!current_state_->joints_position) {
-        // TODO: provide more context
-        // TODO: when might this happen?
+        // TODO(RSDK-11295): provide more context, when might this happen?
         throw std::runtime_error("get_joint_positions: joint position is not currently known");
     }
 
@@ -659,13 +658,12 @@ pose URArm::get_end_position(const ProtoStruct&) {
 
     const std::lock_guard guard{current_state_->state_mutex};
     if (current_state_->last_driver_status == UrDriverStatus::READ_FAILURE) {
-        // TODO: provide more context
+        // TODO(RSDK-11295): provide more context
         throw std::runtime_error("get_end_position: failed to read from arm");
     }
 
     if (!current_state_->tcp_state) {
-        // TODO: provide more context
-        // TODO: when might this happen?
+        // TODO(RSDK-11295): provide more context, when might this happen?
         throw std::runtime_error("get_end_position: end position data are not currently known");
     }
 
@@ -881,7 +879,7 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock,
         if (current_state_->move_request) {
             throw std::runtime_error("An actuation is already in progress");
         }
-        // TODO: There is a race here, where if we planned, then
+        // TODO(RSDK-11296): There is a race here, where if we planned, then
         // another move started and completed, and then we execute,
         // that the starting position we used is stale. See
         // https://github.com/viam-modules/universal-robots/pull/79/files#r2195721629
@@ -1153,7 +1151,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_inner_(bool log) {
         // clear any currently running trajectory.
         current_state_->trajectory_status.store(TrajectoryStatus::k_stopped);
 
-        // TODO: further investigate the need for this delay
+        // TODO(RSDK-11297): further investigate the need for this delay
         // sleep longer to prevent buffer error
         // Removing this will cause the RTDE client to move into an unrecoverable state
         std::this_thread::sleep_for(k_estop_delay);

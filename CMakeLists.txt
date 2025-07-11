@@ -135,7 +135,7 @@ if (VIAM_UR_USE_WALL_WERROR)
       -Wenum-conversion
       -Wnull-dereference
       -Wunused
-      # TODO: rm after upgrading boost https://github.com/boostorg/mpl/issues/69
+      # TODO(RSDK-11300): rm after upgrading boost https://github.com/boostorg/mpl/issues/69
       -Wno-enum-constexpr-conversion
     )
   elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
