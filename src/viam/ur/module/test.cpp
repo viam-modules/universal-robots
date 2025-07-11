@@ -113,9 +113,10 @@ BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
 
 using namespace std::chrono_literals;
 
-constexpr std::string k_path = "/home/user";
+
 
 BOOST_AUTO_TEST_CASE(test_waypoints_filename) {
+    const std::string k_path = "/home/user";
     const auto timestamp = unix_time_iso8601();
     const auto path = k_path + "/" + timestamp + "_waypoints.csv";
 
@@ -124,6 +125,7 @@ BOOST_AUTO_TEST_CASE(test_waypoints_filename) {
 }
 
 BOOST_AUTO_TEST_CASE(test_trajectory_filename) {
+    const std::string k_path = "/home/user";
     const auto timestamp = unix_time_iso8601();
     const auto path = k_path + "/" + timestamp + "_trajectory.csv";
 
@@ -132,6 +134,7 @@ BOOST_AUTO_TEST_CASE(test_trajectory_filename) {
 }
 
 BOOST_AUTO_TEST_CASE(test_arm_joint_positions_filename) {
+    const std::string k_path = "/home/user";
     const auto timestamp = unix_time_iso8601();
     const auto path = k_path + "/" + timestamp + "_arm_joint_positions.csv";
 

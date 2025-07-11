@@ -87,7 +87,7 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     return {position, orientation, theta};
 }
 
-void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::string unix_time, std::size_t attempt) {
+void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::string& unix_time, std::size_t attempt) {
     of << unix_time << "," << attempt << ",";
     for (const double joint_pos : jp) {
         of << joint_pos << ",";
@@ -593,15 +593,16 @@ std::string unix_time_iso8601() {
     namespace chrono = std::chrono;
     std::stringstream stream;
 
-    const chrono::time_point<chrono::system_clock> now = chrono::system_clock::now();
-    auto tt = chrono::system_clock::to_time_t(now);
+    const auto now = chrono::system_clock::now();
+    const auto seconds_part = chrono::duration_cast<chrono::seconds>(now.time_since_epoch());
+    const auto tt = chrono::system_clock::to_time_t(chrono::system_clock::time_point{seconds_part});
+    const auto delta_us = chrono::duration_cast<chrono::microseconds>(now.time_since_epoch() - seconds_part);
 
     struct tm buf;
     auto* ret = gmtime_r(&tt, &buf);
     if (ret == nullptr) {
         throw std::runtime_error("failed to convert time to iso8601");
     }
-    auto delta_us = chrono::duration_cast<chrono::microseconds>(now.time_since_epoch()) % 1000000;
     stream << std::put_time(&buf, "%FT%T");
     stream << "." << std::fixed << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
 
@@ -779,7 +780,7 @@ void URArm::keep_alive_() {
     VIAM_SDK_LOG(info) << "keep_alive thread terminating";
 }
 
-void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string unix_time) {
+void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     auto our_config_rlock = std::move(config_rlock);
 
     VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
@@ -788,7 +789,7 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
     // get current joint position and add that as starting pose to waypoints
     VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time;
     std::vector<double> curr_joint_pos = get_joint_positions_(our_config_rlock);
-    VIAM_SDK_LOG(info) << "move: get_joint_positions end" << unix_time;
+    VIAM_SDK_LOG(info) << "move: get_joint_positions end " << unix_time;
 
     VIAM_SDK_LOG(info) << "move: compute_trajectory start " << unix_time;
     auto curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
