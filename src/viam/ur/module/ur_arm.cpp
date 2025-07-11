@@ -327,11 +327,19 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
             arm,
             model,
             // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is fixed by ModelRegistration.
-            [model](auto deps, auto config) { return std::make_unique<URArm>(model, deps, config); });
+            [model](auto deps, auto config) { return std::make_unique<URArm>(model, deps, config); },
+            [](auto config) { return validate_config(config); });
     };
 
     auto registrations = model_strings | boost::adaptors::transformed(registration_factory);
     return {std::make_move_iterator(begin(registrations)), std::make_move_iterator(end(registrations))};
+}
+
+std::vector<std::string> validate_config(const ResourceConfig& cfg) {
+    static_cast<void>(find_config_attribute<std::string>(cfg, "host"));
+    static_cast<void>(find_config_attribute<double>(cfg, "speed_degs_per_sec"));
+    static_cast<void>(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2"));
+    return {};
 }
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {

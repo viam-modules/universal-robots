@@ -47,6 +47,7 @@ void sampling_func(std::vector<trajectory_sample_point>& samples, double duratio
     samples.push_back(f(duration_sec, step));
 }
 
+std::vector<std::string> validate_config(const ResourceConfig& cfg);
 void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples);
 void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::VectorXd>& waypoints);
 std::string waypoints_filename(const std::string& path, const std::string& unix_time);
