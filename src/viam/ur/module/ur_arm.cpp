@@ -457,6 +457,15 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     ur_cfg.headless_mode = true;
     ur_cfg.socket_reconnect_attempts = 1;
 
+    ur_cfg.reverse_port = reverse_port.fetch_add(4);
+    ur_cfg.script_sender_port = script_sender_port.fetch_add(4);
+    ur_cfg.trajectory_port = script_sender_port.fetch_add(4);
+    ur_cfg.script_command_port = script_command_port.fetch_add(4);
+    VIAM_SDK_LOG(debug) << "using reverse_port " << ur_cfg.reverse_port;
+    VIAM_SDK_LOG(debug) << "using script_sender_port " << ur_cfg.script_sender_port;
+    VIAM_SDK_LOG(debug) << "using trajectory_port " << ur_cfg.trajectory_port;
+    VIAM_SDK_LOG(debug) << "using script_command_port " << ur_cfg.script_command_port;
+
     current_state_->driver.reset(new UrDriver(ur_cfg));
 
     // define callback function to be called by UR client library when trajectory state changes
