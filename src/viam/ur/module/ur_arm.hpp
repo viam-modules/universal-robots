@@ -4,6 +4,7 @@
 
 #include <ur_client_library/control/trajectory_point_interface.h>
 #include <ur_client_library/types.h>
+#include <ur_client_library/ur/ur_driver.h>
 
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
@@ -54,10 +55,13 @@ std::string trajectory_filename(const std::string& path, const std::string& unix
 std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
 std::string unix_time_iso8601();
 
-std::atomic<uint32_t> reverse_port(50001);
-std::atomic<uint32_t> script_sender_port(50002);
-std::atomic<uint32_t> trajectory_port(50003);
-std::atomic<uint32_t> script_command_port(50004);
+inline void set_ports(UrDriverConfiguration& ur_cfg) {
+    static std::atomic<uint32_t> port_counter(50001);
+    ur_cfg.reverse_port = port_counter.fetch_add(1);
+    ur_cfg.script_sender_port = port_counter.fetch_add(1);
+    ur_cfg.trajectory_port = port_counter.fetch_add(1);
+    ur_cfg.script_command_port = port_counter.fetch_add(1);
+}
 
 class URArm final : public Arm, public Reconfigurable {
    public:
