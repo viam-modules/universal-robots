@@ -328,7 +328,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
             model,
             // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is fixed by ModelRegistration.
             [model](auto deps, auto config) { return std::make_unique<URArm>(model, deps, config); },
-            [](auto config) { return validate_config(config); });
+            [](auto const& config) { return validate_config(config); });
     };
 
     auto registrations = model_strings | boost::adaptors::transformed(registration_factory);
