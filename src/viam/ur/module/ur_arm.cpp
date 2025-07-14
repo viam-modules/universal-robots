@@ -15,6 +15,7 @@
 
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
+#include <ur_client_library/ur/ur_driver.h>
 
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/module/module.hpp>
@@ -455,7 +456,14 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     ur_cfg.handle_program_state = &reportRobotProgramState;
     ur_cfg.headless_mode = true;
     ur_cfg.socket_reconnect_attempts = 1;
-    set_ports(ur_cfg);
+
+    if (!current_ports_) {
+        current_ports_ = new_ports();
+    }
+    ur_cfg.reverse_port = current_ports_->reverse_port;
+    ur_cfg.script_sender_port = current_ports_->script_sender_port;
+    ur_cfg.trajectory_port = current_ports_->trajectory_port;
+    ur_cfg.script_command_port = current_ports_->script_command_port;
 
     current_state_->driver.reset(new UrDriver(ur_cfg));
 

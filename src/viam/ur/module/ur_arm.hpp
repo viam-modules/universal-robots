@@ -4,7 +4,6 @@
 
 #include <ur_client_library/control/trajectory_point_interface.h>
 #include <ur_client_library/types.h>
-#include <ur_client_library/ur/ur_driver.h>
 
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
@@ -55,12 +54,17 @@ std::string trajectory_filename(const std::string& path, const std::string& unix
 std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
 std::string unix_time_iso8601();
 
-inline void set_ports(UrDriverConfiguration& ur_cfg) {
+struct ports {
+    uint32_t reverse_port;
+    uint32_t script_sender_port;
+    uint32_t trajectory_port;
+    uint32_t script_command_port;
+};
+
+inline ports new_ports() {
     static std::atomic<uint32_t> port_counter(50001);
-    ur_cfg.reverse_port = port_counter.fetch_add(1);
-    ur_cfg.script_sender_port = port_counter.fetch_add(1);
-    ur_cfg.trajectory_port = port_counter.fetch_add(1);
-    ur_cfg.script_command_port = port_counter.fetch_add(1);
+    const uint32_t reverse_port = port_counter.fetch_add(4);
+    return ports{reverse_port, reverse_port + 1, reverse_port + 2, reverse_port + 3};
 }
 
 class URArm final : public Arm, public Reconfigurable {
@@ -165,4 +169,5 @@ class URArm final : public Arm, public Reconfigurable {
 
     std::shared_mutex config_mutex_;
     std::unique_ptr<state_> current_state_;
+    std::optional<ports> current_ports_;
 };
