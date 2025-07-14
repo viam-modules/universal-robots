@@ -122,6 +122,13 @@ T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute)
     return *val;
 }
 
+std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
+    static_cast<void>(find_config_attribute<std::string>(cfg, "host"));
+    static_cast<void>(find_config_attribute<double>(cfg, "speed_degs_per_sec"));
+    static_cast<void>(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2"));
+    return {};
+}
+
 // NOLINTNEXTLINE(performance-enum-size)
 enum class TrajectoryStatus { k_running = 1, k_cancelled = 2, k_stopped = 3 };
 
@@ -333,13 +340,6 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
 
     auto registrations = model_strings | boost::adaptors::transformed(registration_factory);
     return {std::make_move_iterator(begin(registrations)), std::make_move_iterator(end(registrations))};
-}
-
-std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
-    static_cast<void>(find_config_attribute<std::string>(cfg, "host"));
-    static_cast<void>(find_config_attribute<double>(cfg, "speed_degs_per_sec"));
-    static_cast<void>(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2"));
-    return {};
 }
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
