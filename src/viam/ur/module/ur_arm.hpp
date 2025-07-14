@@ -54,6 +54,7 @@ std::string trajectory_filename(const std::string& path, const std::string& unix
 std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
 std::string unix_time_iso8601();
 
+// The ports that are currently in use by the underlying UR driver
 struct ports {
     uint32_t reverse_port;
     uint32_t script_sender_port;
@@ -61,6 +62,8 @@ struct ports {
     uint32_t script_command_port;
 };
 
+// We need to requisition different ports for each independent URArm instance, otherwise they will all try
+// to use the same ports and only one of them will work.
 inline ports new_ports() {
     static std::atomic<uint32_t> port_counter(50001);
     const uint32_t reverse_port = port_counter.fetch_add(4);

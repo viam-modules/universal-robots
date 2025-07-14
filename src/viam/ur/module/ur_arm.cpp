@@ -464,6 +464,10 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     ur_cfg.script_sender_port = current_ports_->script_sender_port;
     ur_cfg.trajectory_port = current_ports_->trajectory_port;
     ur_cfg.script_command_port = current_ports_->script_command_port;
+    VIAM_SDK_LOG(debug) << "using reverse_port " << ur_cfg.reverse_port;
+    VIAM_SDK_LOG(debug) << "using script_sender_port " << ur_cfg.script_sender_port;
+    VIAM_SDK_LOG(debug) << "using trajectory_port " << ur_cfg.trajectory_port;
+    VIAM_SDK_LOG(debug) << "using script_command_port " << ur_cfg.script_command_port;
 
     current_state_->driver.reset(new UrDriver(ur_cfg));
 
