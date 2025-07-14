@@ -131,6 +131,8 @@ class URArm final : public Arm, public Reconfigurable {
 
     void configure_(const std::unique_lock<std::shared_mutex>& lock, const Dependencies& deps, const ResourceConfig& cfg);
 
+    void configure_logger_(const urcl::LogLevel);
+
     template <template <typename> typename lock_type>
     void check_configured_(const lock_type<std::shared_mutex>&);
 

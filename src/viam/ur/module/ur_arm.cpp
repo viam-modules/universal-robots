@@ -16,6 +16,7 @@
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
+#include "ur_client_library/log.h"
 
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/module/module.hpp>
@@ -189,6 +190,33 @@ enum class URArm::UrDriverStatus : int8_t  // Only available on 3.10/5.4
     DASHBOARD_FAILURE = 4
 };
 
+class URArmLogHandler : public urcl::LogHandler {
+   public:
+    URArmLogHandler() = default;
+
+    void log(const char* file, int line, urcl::LogLevel loglevel, const char* log) override {
+        switch (loglevel) {
+            case urcl::LogLevel::INFO:
+                VIAM_SDK_LOG(info) << "URCL - " << file << " " << line << ": " << log;
+                break;
+            case urcl::LogLevel::DEBUG:
+                VIAM_SDK_LOG(debug) << "URCL - " << file << " " << ": " << log;
+                break;
+            case urcl::LogLevel::WARN:
+                VIAM_SDK_LOG(warn) << "URCL - " << file << " " << ": " << log;
+                break;
+            case urcl::LogLevel::ERROR:
+                VIAM_SDK_LOG(error) << "URCL - " << file << " " << ": " << log;
+                break;
+            case urcl::LogLevel::FATAL:
+                VIAM_SDK_LOG(error) << "URCL - " << file << " " << ": " << log;
+                break;
+            default:
+                break;
+        }
+    }
+};
+
 // private variables to maintain connection and state
 struct URArm::state_ {
     std::mutex state_mutex;
@@ -338,6 +366,13 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
     VIAM_SDK_LOG(info) << "URArm constructor called (model: " << model_.to_string() << ")";
     const std::unique_lock wlock(config_mutex_);
     configure_(wlock, deps, cfg);
+    configure_logger_(urcl::LogLevel::WARN);
+}
+
+void URArm::configure_logger_(urcl::LogLevel level) {
+    urcl::setLogLevel(level);
+    std::unique_ptr<URArmLogHandler> log_handler(new URArmLogHandler);
+    urcl::registerLogHandler(std::move(log_handler));
 }
 
 void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const Dependencies&, const ResourceConfig& cfg) {
