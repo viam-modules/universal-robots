@@ -371,8 +371,7 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
 
 void URArm::configure_logger_(const urcl::LogLevel level) {
     urcl::setLogLevel(level);
-    std::unique_ptr<URArmLogHandler> log_handler(new URArmLogHandler);
-    urcl::registerLogHandler(std::move(log_handler));
+    urcl::registerLogHandler(std::make_unique<URArmLogHandler>());
 }
 
 void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const Dependencies&, const ResourceConfig& cfg) {
