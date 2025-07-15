@@ -54,6 +54,22 @@ std::string trajectory_filename(const std::string& path, const std::string& unix
 std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
 std::string unix_time_iso8601();
 
+// The ports that are currently in use by the underlying UR driver
+struct ports {
+    uint32_t reverse_port;
+    uint32_t script_sender_port;
+    uint32_t trajectory_port;
+    uint32_t script_command_port;
+};
+
+// We need to requisition different ports for each independent URArm instance, otherwise they will all try
+// to use the same ports and only one of them will work.
+inline auto new_ports() {
+    static std::atomic<uint32_t> port_counter(50001);
+    const auto reverse_port = port_counter.fetch_add(4);
+    return ports{reverse_port, reverse_port + 1, reverse_port + 2, reverse_port + 3};
+}
+
 class URArm final : public Arm, public Reconfigurable {
    public:
     /// @brief Returns the common ModelFamily for all implementations
@@ -156,4 +172,5 @@ class URArm final : public Arm, public Reconfigurable {
 
     std::shared_mutex config_mutex_;
     std::unique_ptr<state_> current_state_;
+    std::optional<ports> current_ports_;
 };
