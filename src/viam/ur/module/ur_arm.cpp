@@ -369,7 +369,7 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
     configure_logger_(urcl::LogLevel::WARN);
 }
 
-static void URArm::configure_logger_(const urcl::LogLevel level) {
+void URArm::configure_logger_(const urcl::LogLevel level) {
     urcl::setLogLevel(level);
     std::unique_ptr<URArmLogHandler> log_handler(new URArmLogHandler);
     urcl::registerLogHandler(std::move(log_handler));
