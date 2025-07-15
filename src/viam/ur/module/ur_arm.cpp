@@ -200,16 +200,16 @@ class URArmLogHandler : public urcl::LogHandler {
                 VIAM_SDK_LOG(info) << "URCL - " << file << " " << line << ": " << log;
                 break;
             case urcl::LogLevel::DEBUG:
-                VIAM_SDK_LOG(debug) << "URCL - " << file << " " << ": " << log;
+                VIAM_SDK_LOG(debug) << "URCL - " << file << " " << line << ": " << log;
                 break;
             case urcl::LogLevel::WARN:
-                VIAM_SDK_LOG(warn) << "URCL - " << file << " " << ": " << log;
+                VIAM_SDK_LOG(warn) << "URCL - " << file << " " << line << ": " << log;
                 break;
             case urcl::LogLevel::ERROR:
-                VIAM_SDK_LOG(error) << "URCL - " << file << " " << ": " << log;
+                VIAM_SDK_LOG(error) << "URCL - " << file << " " << line << ": " << log;
                 break;
             case urcl::LogLevel::FATAL:
-                VIAM_SDK_LOG(error) << "URCL - " << file << " " << ": " << log;
+                VIAM_SDK_LOG(error) << "URCL - " << file << " " << line << ": " << log;
                 break;
             default:
                 break;
