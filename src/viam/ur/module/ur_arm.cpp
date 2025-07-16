@@ -143,6 +143,60 @@ auto make_scope_guard(Callable&& cleanup) {
     };
     return guard{std::forward<Callable>(cleanup)};
 }
+
+class URArmLogHandler : public urcl::LogHandler {
+   public:
+    URArmLogHandler() = default;
+
+    void log(const char* file, int line, urcl::LogLevel loglevel, const char* log) override {
+        switch (loglevel) {
+            case urcl::LogLevel::INFO:
+                VIAM_SDK_LOG(info) << "URCL - " << file << " " << line << ": " << log;
+                break;
+            case urcl::LogLevel::DEBUG:
+                VIAM_SDK_LOG(debug) << "URCL - " << file << " " << line << ": " << log;
+                break;
+            case urcl::LogLevel::WARN:
+                VIAM_SDK_LOG(warn) << "URCL - " << file << " " << line << ": " << log;
+                break;
+            case urcl::LogLevel::ERROR:
+                VIAM_SDK_LOG(error) << "URCL - " << file << " " << line << ": " << log;
+                break;
+            case urcl::LogLevel::FATAL:
+                VIAM_SDK_LOG(error) << "URCL - " << file << " " << line << ": " << log;
+                break;
+            default:
+                break;
+        }
+    }
+};
+
+void configure_logger(const ResourceConfig& cfg) {
+    std::string level_str{};
+    try {
+        level_str = find_config_attribute<std::string>(cfg, "log_level");
+    } catch (...) {
+        level_str = "debug";
+    }
+    const auto level = [&] {
+        if (level_str == "info") {
+            return urcl::LogLevel::INFO;
+        } else if (level_str == "debug") {
+            return urcl::LogLevel::DEBUG;
+        } else if (level_str == "warn") {
+            return urcl::LogLevel::WARN;
+        } else if (level_str == "error") {
+            return urcl::LogLevel::ERROR;
+        } else if (level_str == "fatal") {
+            return urcl::LogLevel::FATAL;
+        } else {
+            VIAM_SDK_LOG(error) << "invalid log_level: '" << level_str << "' - defaulting to 'debug'";
+            return urcl::LogLevel::DEBUG;
+        }
+    }();
+    urcl::setLogLevel(level);
+    urcl::registerLogHandler(std::make_unique<URArmLogHandler>());
+}
 }  // namespace
 
 void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples) {
@@ -188,33 +242,6 @@ enum class URArm::UrDriverStatus : int8_t  // Only available on 3.10/5.4
     ESTOPPED = 2,
     READ_FAILURE = 3,
     DASHBOARD_FAILURE = 4
-};
-
-class URArmLogHandler : public urcl::LogHandler {
-   public:
-    URArmLogHandler() = default;
-
-    void log(const char* file, int line, urcl::LogLevel loglevel, const char* log) override {
-        switch (loglevel) {
-            case urcl::LogLevel::INFO:
-                VIAM_SDK_LOG(info) << "URCL - " << file << " " << line << ": " << log;
-                break;
-            case urcl::LogLevel::DEBUG:
-                VIAM_SDK_LOG(debug) << "URCL - " << file << " " << line << ": " << log;
-                break;
-            case urcl::LogLevel::WARN:
-                VIAM_SDK_LOG(warn) << "URCL - " << file << " " << line << ": " << log;
-                break;
-            case urcl::LogLevel::ERROR:
-                VIAM_SDK_LOG(error) << "URCL - " << file << " " << line << ": " << log;
-                break;
-            case urcl::LogLevel::FATAL:
-                VIAM_SDK_LOG(error) << "URCL - " << file << " " << line << ": " << log;
-                break;
-            default:
-                break;
-        }
-    }
 };
 
 // private variables to maintain connection and state
@@ -366,12 +393,7 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
     VIAM_SDK_LOG(info) << "URArm constructor called (model: " << model_.to_string() << ")";
     const std::unique_lock wlock(config_mutex_);
     configure_(wlock, deps, cfg);
-    configure_logger_(urcl::LogLevel::WARN);
-}
-
-void URArm::configure_logger_(const urcl::LogLevel level) {
-    urcl::setLogLevel(level);
-    urcl::registerLogHandler(std::make_unique<URArmLogHandler>());
+    configure_logger(cfg);
 }
 
 void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const Dependencies&, const ResourceConfig& cfg) {
