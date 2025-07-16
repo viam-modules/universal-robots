@@ -1,7 +1,8 @@
 #include <ur_client_library/log.h>
 
 #include <viam/sdk/config/resource.hpp>
-#include <viam/sdk/log/logging.hpp>
+
+void configure_logger(const viam::sdk::ResourceConfig& cfg);
 
 // helper function to extract an attribute value from its key within a ResourceConfig
 template <class T>
@@ -49,5 +50,3 @@ class URArmLogHandler : public urcl::LogHandler {
         }
     }
 };
-
-void configure_logger(const viam::sdk::ResourceConfig& cfg);
