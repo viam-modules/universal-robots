@@ -5,7 +5,7 @@
 
 // helper function to extract an attribute value from its key within a ResourceConfig
 template <class T>
-T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute) {
+T find_config_attribute(const viam::sdk::ResourceConfig& cfg, const std::string& attribute) {
     std::ostringstream buffer;
     auto key = cfg.attributes().find(attribute);
     if (key == cfg.attributes().end()) {
@@ -50,7 +50,7 @@ class URArmLogHandler : public urcl::LogHandler {
     }
 };
 
-void configure_logger(const ResourceConfig& cfg) {
+void configure_logger(const viam::sdk::ResourceConfig& cfg) {
     std::string level_str{};
     try {
         level_str = find_config_attribute<std::string>(cfg, "log_level");
