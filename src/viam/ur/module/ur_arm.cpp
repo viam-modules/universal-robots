@@ -1,4 +1,5 @@
 #include "ur_arm.hpp"
+#include "utils.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -24,8 +25,6 @@
 #include <viam/sdk/resource/resource.hpp>
 
 #include <third_party/trajectories/Trajectory.h>
-
-#include "utils.hpp"
 
 // this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
 extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
