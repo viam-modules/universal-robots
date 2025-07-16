@@ -25,7 +25,7 @@ class URArmLogHandler : public urcl::LogHandler {
     URArmLogHandler() = default;
     void log(const char* file, int line, urcl::LogLevel loglevel, const char* log) override {
         std::ostringstream os;
-        os << "URCL - " << log_detail::trim_filename(file).data() << " " << line << ": " << log;
+        os << "URCL - " << file << " " << line << ": " << log;
         const std::string logMsg = os.str();
 
         switch (loglevel) {
