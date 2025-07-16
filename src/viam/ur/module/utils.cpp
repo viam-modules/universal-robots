@@ -10,7 +10,7 @@ void configure_logger(const viam::sdk::ResourceConfig& cfg) {
     try {
         level_str = find_config_attribute<std::string>(cfg, "log_level");
     } catch (...) {
-        level_str = "debug";
+        level_str = "warn";
     }
     const auto level = [&] {
         if (level_str == "info") {
