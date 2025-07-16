@@ -19,6 +19,7 @@
 #include <ur_client_library/ur/ur_driver.h>
 
 #include <viam/sdk/components/component.hpp>
+#include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/module/module.hpp>
 #include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
@@ -147,23 +148,26 @@ auto make_scope_guard(Callable&& cleanup) {
 class URArmLogHandler : public urcl::LogHandler {
    public:
     URArmLogHandler() = default;
-
     void log(const char* file, int line, urcl::LogLevel loglevel, const char* log) override {
+        std::ostringstream os;
+        os << "URCL - " << log_detail::trim_filename(file).data() << " " << line << ": " << log;
+        const std::string logMsg = os.str();
+
         switch (loglevel) {
             case urcl::LogLevel::INFO:
-                VIAM_SDK_LOG(info) << "URCL - " << file << " " << line << ": " << log;
+                VIAM_SDK_LOG(info) << logMsg;
                 break;
             case urcl::LogLevel::DEBUG:
-                VIAM_SDK_LOG(debug) << "URCL - " << file << " " << line << ": " << log;
+                VIAM_SDK_LOG(debug) << logMsg;
                 break;
             case urcl::LogLevel::WARN:
-                VIAM_SDK_LOG(warn) << "URCL - " << file << " " << line << ": " << log;
+                VIAM_SDK_LOG(warn) << logMsg;
                 break;
             case urcl::LogLevel::ERROR:
-                VIAM_SDK_LOG(error) << "URCL - " << file << " " << line << ": " << log;
+                VIAM_SDK_LOG(error) << logMsg;
                 break;
             case urcl::LogLevel::FATAL:
-                VIAM_SDK_LOG(error) << "URCL - " << file << " " << line << ": " << log;
+                VIAM_SDK_LOG(error) << logMsg;
                 break;
             default:
                 break;
