@@ -106,6 +106,13 @@ void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& 
     of << "\n";
 }
 
+std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
+    static_cast<void>(find_config_attribute<std::string>(cfg, "host"));
+    static_cast<void>(find_config_attribute<double>(cfg, "speed_degs_per_sec"));
+    static_cast<void>(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2"));
+    return {};
+}
+
 // NOLINTNEXTLINE(performance-enum-size)
 enum class TrajectoryStatus { k_running = 1, k_cancelled = 2, k_stopped = 3 };
 
@@ -312,7 +319,8 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
             arm,
             model,
             // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is fixed by ModelRegistration.
-            [model](auto deps, auto config) { return std::make_unique<URArm>(model, deps, config); });
+            [model](auto deps, auto config) { return std::make_unique<URArm>(model, deps, config); },
+            [](auto const& config) { return validate_config_(config); });
     };
 
     auto registrations = model_strings | boost::adaptors::transformed(registration_factory);
@@ -442,6 +450,18 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     ur_cfg.handle_program_state = &reportRobotProgramState;
     ur_cfg.headless_mode = true;
     ur_cfg.socket_reconnect_attempts = 1;
+
+    if (!current_ports_) {
+        current_ports_ = new_ports();
+    }
+    ur_cfg.reverse_port = current_ports_->reverse_port;
+    ur_cfg.script_sender_port = current_ports_->script_sender_port;
+    ur_cfg.trajectory_port = current_ports_->trajectory_port;
+    ur_cfg.script_command_port = current_ports_->script_command_port;
+    VIAM_SDK_LOG(debug) << "using reverse_port " << ur_cfg.reverse_port;
+    VIAM_SDK_LOG(debug) << "using script_sender_port " << ur_cfg.script_sender_port;
+    VIAM_SDK_LOG(debug) << "using trajectory_port " << ur_cfg.trajectory_port;
+    VIAM_SDK_LOG(debug) << "using script_command_port " << ur_cfg.script_command_port;
 
     current_state_->driver.reset(new UrDriver(ur_cfg));
 
