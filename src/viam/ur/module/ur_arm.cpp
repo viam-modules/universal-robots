@@ -16,7 +16,7 @@
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
-#include "ur_client_library/log.h"
+#include <ur_client_library/log.h>
 
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/module/module.hpp>
