@@ -12,6 +12,7 @@ void configure_logger(const viam::sdk::ResourceConfig& cfg) {
     } catch (...) {
         level_str = "warn";
     }
+    VIAM_SDK_LOG(debug) << "setting URArm log level to '" << level_str << "'";
     const auto level = [&] {
         if (level_str == "info") {
             return urcl::LogLevel::INFO;
