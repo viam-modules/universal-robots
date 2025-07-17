@@ -1,4 +1,5 @@
 #include "ur_arm.hpp"
+#include "utils.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -103,23 +104,6 @@ void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& 
         }
     }
     of << "\n";
-}
-
-// helper function to extract an attribute value from its key within a ResourceConfig
-template <class T>
-T find_config_attribute(const ResourceConfig& cfg, const std::string& attribute) {
-    std::ostringstream buffer;
-    auto key = cfg.attributes().find(attribute);
-    if (key == cfg.attributes().end()) {
-        buffer << "required attribute `" << attribute << "` not found in configuration";
-        throw std::invalid_argument(buffer.str());
-    }
-    const auto* const val = key->second.get<T>();
-    if (!val) {
-        buffer << "required non-empty attribute `" << attribute << " could not be decoded";
-        throw std::invalid_argument(buffer.str());
-    }
-    return *val;
 }
 
 std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
@@ -346,6 +330,8 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
     VIAM_SDK_LOG(info) << "URArm constructor called (model: " << model_.to_string() << ")";
     const std::unique_lock wlock(config_mutex_);
     configure_(wlock, deps, cfg);
+    // TODO: prevent multiple calls to configure_logger
+    configure_logger(cfg);
 }
 
 void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const Dependencies&, const ResourceConfig& cfg) {
