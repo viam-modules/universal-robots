@@ -24,8 +24,8 @@ void configure_logger(const viam::sdk::ResourceConfig& cfg) {
         } else if (level_str == "fatal") {
             return urcl::LogLevel::FATAL;
         } else {
-            VIAM_SDK_LOG(error) << "invalid log_level: '" << level_str << "' - defaulting to 'debug'";
-            return urcl::LogLevel::DEBUG;
+            VIAM_SDK_LOG(error) << "invalid log_level: '" << level_str << "' - defaulting to 'warn'";
+            return urcl::LogLevel::WARN;
         }
     }();
     urcl::setLogLevel(level);

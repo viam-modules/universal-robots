@@ -1,6 +1,10 @@
+#pragma once
+
 #include <ur_client_library/log.h>
+#include <sstream>
 
 #include <viam/sdk/config/resource.hpp>
+#include <viam/sdk/log/logging.hpp>
 
 void configure_logger(const viam::sdk::ResourceConfig& cfg);
 

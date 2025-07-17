@@ -330,6 +330,7 @@ URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) :
     VIAM_SDK_LOG(info) << "URArm constructor called (model: " << model_.to_string() << ")";
     const std::unique_lock wlock(config_mutex_);
     configure_(wlock, deps, cfg);
+    configure_logger(cfg);
 }
 
 void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const Dependencies&, const ResourceConfig& cfg) {
