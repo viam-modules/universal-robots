@@ -196,6 +196,8 @@ struct URArm::state_ {
     std::atomic<TrajectoryStatus> trajectory_status{TrajectoryStatus::k_stopped};
     std::thread keep_alive_thread;
 
+    std::atomic<std::size_t> move_epoch{0};
+
     struct move_request {
        public:
         explicit move_request(std::vector<trajectory_sample_point>&& samples, std::ofstream arm_joint_positions_stream)
@@ -787,6 +789,10 @@ void URArm::keep_alive_() {
 void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     auto our_config_rlock = std::move(config_rlock);
 
+    // Capture the current movement epoch, so we can later detect if another caller
+    // slipped in while we were planning.
+    auto current_move_epoch = current_state_->move_epoch.load(std::memory_order_acquire);
+
     VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
     const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move: end unix_time " << unix_time; });
 
@@ -896,15 +902,19 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
         const std::lock_guard guard{current_state_->state_mutex};
+
         if (current_state_->move_request) {
             throw std::runtime_error("An actuation is already in progress");
         }
-        // TODO(RSDK-11296): There is a race here, where if we planned, then
-        // another move started and completed, and then we execute,
-        // that the starting position we used is stale. See
-        // https://github.com/viam-modules/universal-robots/pull/79/files#r2195721629
-        // for more discussion. Some mechanism to prevent that case
-        // should be implemented.
+
+        // Use CAS to increment the epoch and detect if another move
+        // operation occurred while we were planning. If so, we have
+        // to fail this operation, since our starting waypoint
+        // information is no longer valid.
+        if (!current_state_->move_epoch.compare_exchange_strong(current_move_epoch, current_move_epoch + 1, std::memory_order_acq_rel)) {
+            throw std::runtime_error("Move operation was superseded by a newer operation");
+        }
+
         return current_state_->move_request.emplace(std::move(samples), std::move(ajp_of)).get_completion_future();
     }();
 
