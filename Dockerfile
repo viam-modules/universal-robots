@@ -68,7 +68,7 @@ RUN apt install -y \
 RUN pip3 install -U pip setuptools urllib3==1.26.12 requests==2.26.0 --break-system-packages
 
 # Install appimage-builder
-RUN pip3 install --break-system-packages git+https://github.com/AppImageCrafters/appimage-builder.git@61c8ddde9ef44b85d7444bbe79d80b44a6a5576d
+RUN pip3 install --break-system-packages git+https://github.com/viamrobotics/appimage-builder.git@viam-2025-07-22
 
 # Install Go
 RUN apt install -y golang-go
