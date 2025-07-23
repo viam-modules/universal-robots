@@ -544,7 +544,6 @@ void URArm::trajectory_done_cb_(const control::TrajectoryResult state) {
 
 void URArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     const std::unique_lock wlock{config_mutex_};
-    check_configured_(wlock);
     VIAM_SDK_LOG(warn) << "Reconfigure called: shutting down current state";
     shutdown_(wlock);
     VIAM_SDK_LOG(warn) << "Reconfigure called: configuring new state";
@@ -1188,7 +1187,7 @@ URArm::UrDriverStatus URArm::read_joint_keep_alive_inner_(bool log) {
 
     } else {
         // the arm is in a normal state.
-        if (current_state_->estop.load()) {
+        if (current_state_->estop.load() && !current_state_->local_disconnect.load()) {
             // if the arm was previously estopped, attempt to recover from the estop.
             // We should not enter this code without the user interacting with the arm in some way(i.e. resetting the estop)
             try {
