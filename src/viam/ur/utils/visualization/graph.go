@@ -166,11 +166,23 @@ func evenlySpacedTimes(start, end float64, count int) []float64 {
 func saveChartPNG(name, yLabel string, x1, y1, x2, y2 []float64) error {
 	traj := chart.ContinuousSeries{Name: "Trajectory", XValues: x1, YValues: y1, Style: chart.Style{Show: true, StrokeColor: chart.ColorBlue}}
 	way := chart.ContinuousSeries{Name: "Waypoints", XValues: x2, YValues: y2, Style: chart.Style{Show: true, StrokeColor: chart.ColorOrange}}
+
+	// Create title with legend information
+	titleWithLegend := fmt.Sprintf("%s (Blue: Trajectory, Orange: Waypoints)", name)
+
 	graph := chart.Chart{
-		XAxis:    chart.XAxis{Name: "Time (s)", NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
-		YAxis:    chart.YAxis{Name: yLabel, NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
-		Series:   []chart.Series{traj, way},
-		Elements: []chart.Renderable{chart.Legend(&chart.Chart{Series: []chart.Series{traj, way}})},
+		Title:  titleWithLegend,
+		XAxis:  chart.XAxis{Name: "Time (s)", NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
+		YAxis:  chart.YAxis{Name: yLabel, NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
+		Series: []chart.Series{traj, way},
+		Height: 600,
+		Elements: []chart.Renderable{chart.Legend(
+			&chart.Chart{Series: []chart.Series{traj, way}},
+			chart.Style{FillColor: chart.ColorTransparent,
+				StrokeColor:     chart.ColorTransparent,
+				TextLineSpacing: 5,
+			}),
+		},
 	}
 	f, err := os.Create(name)
 	if err != nil {
