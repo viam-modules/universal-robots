@@ -372,26 +372,34 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     current_state_->host = find_config_attribute<std::string>(cfg, "host");
     current_state_->speed.store(degrees_to_radians(find_config_attribute<double>(cfg, "speed_degs_per_sec")));
     current_state_->acceleration.store(degrees_to_radians(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2")));
-    try {
-        current_state_->output_csv_dir_path = find_config_attribute<std::string>(cfg, "csv_output_path");
-    } catch (...) {  // NOLINT: TODO(RSDK-11299): What should actually happen if the attribute is missing?
-    }
 
     // get the APPDIR environment variable
-    auto* tmp = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
-    if (!tmp) {
+    auto* const appdir = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
+    if (!appdir) {
         throw std::runtime_error("required environment variable APPDIR unset");
     }
-    current_state_->appdir = std::string(tmp);
+    current_state_->appdir = appdir;
     VIAM_SDK_LOG(info) << "appdir" << current_state_->appdir;
 
-    if (current_state_->output_csv_dir_path.empty()) {
-        tmp = std::getenv("VIAM_MODULE_DATA");  // NOLINT: Yes, we know getenv isn't thread safe
-        if (!tmp) {
+    // If the config contains `csv_output_path`, use that, otherwise,
+    // fall back to `VIAM_MOUDLE_DATA` as the output path, which must
+    // be set.
+    try {
+        current_state_->output_csv_dir_path = find_config_attribute<std::string>(cfg, "csv_output_path");
+    } catch (...) {
+        // If we threw, but we have the attribute, then it failed to
+        // convert and we should report that error, since that is an
+        // actual user error.
+        if (cfg.attributes().count("csv_output_path") != 0) {
+            throw;
+        }
+
+        auto* const viam_module_data = std::getenv("VIAM_MODULE_DATA");  // NOLINT: Yes, we know getenv isn't thread safe
+        if (!viam_module_data) {
             throw std::runtime_error("required environment variable VIAM_MODULE_DATA unset");
         }
-        current_state_->output_csv_dir_path = std::string(tmp);
         VIAM_SDK_LOG(info) << "VIAM_MODULE_DATA" << current_state_->output_csv_dir_path;
+        current_state_->output_csv_dir_path = viam_module_data;
     }
 
     // connect to the robot dashboard
