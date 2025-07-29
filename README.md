@@ -31,7 +31,7 @@ The following attributes are available for `viam:universal-robots` arms:
 | Name | Type | Inclusion | Description |
 | ---- | ---- | --------- | ----------- |
 | `host` | string | **Required** | The IP address of the robot arm on your network. Find this when setting up your UR5e. |
-| `speed_degs_per_sec` | float | **Required** | Set the maximum desired speed of the arm joints in degrees per second. Must be between `3` and `180`. |
+| `speed_degs_per_sec` | float | **Required** | Set the maximum desired speed of the arm joints in degrees per second. |
 | `acceleration_degs_per_sec2` | float | **Required** | Set the maximum desired acceleration of the arm joints. |
 
 ### Example configuration:
