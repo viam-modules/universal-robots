@@ -60,14 +60,6 @@ constexpr auto k_disconnect_delay = std::chrono::seconds(1);
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 
-// define callback function to be called by UR client library when program state changes
-// TODO(acm): Do this.
-void reportRobotProgramState(bool program_running) {
-    // Print the text in green so we see it better
-    // TODO(RSDK-11048): verify side-effects on logstream, rm direct coloring
-    VIAM_SDK_LOG(info) << "\033[1;32mUR program running: " << std::boolalpha << program_running << "\033[0m";
-}
-
 template <typename T>
 [[nodiscard]] constexpr decltype(auto) degrees_to_radians(T&& degrees) {
     return std::forward<T>(degrees) * (M_PI / 180.0);
@@ -497,7 +489,6 @@ class URArm::state_ {
     struct event_local_mode_detected_ {};
     struct event_remote_mode_restored_ {};
 
-    // TODO: Should this propagate the lock proof? Or are we deep enough in the state machine that it doesn't matter.
     template <typename T>
     void emit_event_(T&& event);
 
@@ -813,7 +804,8 @@ std::optional<URArm::state_::event_variant> URArm::state_::state_disconnected_::
     ur_cfg.script_file = state.app_dir_ + k_script_file;
     ur_cfg.output_recipe_file = state.app_dir_ + k_output_recipe;
     ur_cfg.input_recipe_file = state.app_dir_ + k_input_recipe;
-    ur_cfg.handle_program_state = reportRobotProgramState;
+    // TODO: Are we going to need a way to wait on the programming being running?
+    ur_cfg.handle_program_state = [](bool running) { VIAM_SDK_LOG(info) << "UR program is " << (running ? "running" : "not running"); };
     ur_cfg.headless_mode = true;
     ur_cfg.socket_reconnect_attempts = 1;
 
