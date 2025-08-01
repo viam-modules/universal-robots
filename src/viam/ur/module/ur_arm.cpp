@@ -501,15 +501,15 @@ class URArm::state_ {
     template <typename T>
     void emit_event_(T&& event);
 
-    std::chrono::milliseconds get_timeout_(const std::unique_lock<std::mutex>&) const;
+    std::chrono::milliseconds get_timeout_() const;
 
-    void attempt_recovery_(const std::unique_lock<std::mutex>&);
+    void attempt_recovery_();
 
-    void process_incoming_data_(const std::unique_lock<std::mutex>&);
+    void process_incoming_data_();
 
-    void handle_move_request_processing_(const std::unique_lock<std::mutex>&);
+    void handle_move_request_processing_();
 
-    void send_noop_(const std::unique_lock<std::mutex>&);
+    void send_noop_();
 
     void run_();
 
@@ -681,16 +681,16 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     // natural recovery cycle.
     for (size_t i = 0; i != 5; ++i) {
         try {
-            state->attempt_recovery_(lock);
+            state->attempt_recovery_();
             return state;
         } catch (const std::exception& xcp) {
             VIAM_SDK_LOG(warn) << "Failed to establish working connection to arm after " << (i + 1) << " attempts: `" << xcp.what() << "`";
-            const auto timeout = state->get_timeout_(lock);
+            const auto timeout = state->get_timeout_();
             VIAM_SDK_LOG(warn) << "Retrying after " << timeout.count() << " milliseconds";
             std::this_thread::sleep_for(timeout);
         }
     }
-    state->attempt_recovery_(lock);
+    state->attempt_recovery_();
     return state;
 }
 
@@ -842,29 +842,29 @@ void URArm::state_::emit_event_(T&& event) {
     current_state_ = std::visit([&](auto& state) { return state.handle_event(std::forward<T>(event)); }, current_state_);
 }
 
-std::chrono::milliseconds URArm::state_::get_timeout_(const std::unique_lock<std::mutex>&) const {
+std::chrono::milliseconds URArm::state_::get_timeout_() const {
     return std::visit([](auto& state) { return state.get_timeout(); }, current_state_);
 }
 
-void URArm::state_::attempt_recovery_(const std::unique_lock<std::mutex>&) {
+void URArm::state_::attempt_recovery_() {
     if (auto event = std::visit([this](auto& state) { return state.attempt_recovery(*this); }, current_state_)) {
         std::visit([this](auto&& event) { this->emit_event_(std::forward<decltype(event)>(event)); }, *std::move(event));
     }
 }
 
-void URArm::state_::process_incoming_data_(const std::unique_lock<std::mutex>&) {
+void URArm::state_::process_incoming_data_() {
     if (auto event = std::visit([this](auto& state) { return state.process_incoming_data(*this); }, current_state_)) {
         std::visit([this](auto&& event) { this->emit_event_(std::forward<decltype(event)>(event)); }, *std::move(event));
     }
 }
 
-void URArm::state_::handle_move_request_processing_(const std::unique_lock<std::mutex>&) {
+void URArm::state_::handle_move_request_processing_() {
     if (auto event = std::visit([](auto& state) { return state.handle_move_request_processing(); }, current_state_)) {
         std::visit([this](auto&& event) { this->emit_event_(std::forward<decltype(event)>(event)); }, *std::move(event));
     }
 }
 
-void URArm::state_::send_noop_(const std::unique_lock<std::mutex>&) {
+void URArm::state_::send_noop_() {
     if (auto event = std::visit([](auto& state) { return state.send_noop(); }, current_state_)) {
         std::visit([this](auto&& event) { this->emit_event_(std::forward<decltype(event)>(event)); }, *std::move(event));
     }
@@ -874,16 +874,16 @@ void URArm::state_::run_() {
     VIAM_SDK_LOG(info) << "worker thread started";
     while (true) {
         std::unique_lock lock(mutex_);
-        if (worker_wakeup_cv_.wait_for(lock, get_timeout_(lock), [this] { return shutdown_requested_; })) {
+        if (worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] { return shutdown_requested_; })) {
             VIAM_SDK_LOG(info) << "worker thread signaled to terminate";
             break;
         }
 
         try {
-            attempt_recovery_(lock);
-            process_incoming_data_(lock);
-            handle_move_request_processing_(lock);
-            send_noop_(lock);
+            attempt_recovery_();
+            process_incoming_data_();
+            handle_move_request_processing_();
+            send_noop_();
         } catch (const std::exception& ex) {
             VIAM_SDK_LOG(warn) << "XXX xcp in worker thread" << ex.what();
             // Log error, continue loop
