@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"go.viam.com/rdk/logging"
@@ -24,6 +25,8 @@ type config struct {
 	TrajectoryCSV     string `json:"trajectory_csv"`
 	WaypointsCSV      string `json:"waypoints_csv"`
 	ArmKinematicsPath string `json:"arm_kinematics_path"`
+	CachedPlanPath    string `json:"cached_plan_path"`
+	CachedOnly        bool   `json:"cached_only"`
 }
 
 func loadConfig(path string) (config, error) {
@@ -163,7 +166,7 @@ func evenlySpacedTimes(start, end float64, count int) []float64 {
 	return times
 }
 
-func saveChartPNG(name, yLabel string, x1, y1, x2, y2 []float64) error {
+func saveComparisonChartPNG(name, yLabel string, x1, y1, x2, y2 []float64) error {
 	traj := chart.ContinuousSeries{Name: "Trajectory", XValues: x1, YValues: y1, Style: chart.Style{Show: true, StrokeColor: chart.ColorBlue}}
 	way := chart.ContinuousSeries{Name: "Waypoints", XValues: x2, YValues: y2, Style: chart.Style{Show: true, StrokeColor: chart.ColorOrange}}
 
@@ -176,8 +179,35 @@ func saveChartPNG(name, yLabel string, x1, y1, x2, y2 []float64) error {
 		YAxis:  chart.YAxis{Name: yLabel, NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
 		Series: []chart.Series{traj, way},
 		Height: 600,
-		Elements: []chart.Renderable{chart.Legend(
+		Elements: []chart.Renderable{chart.LegendThin(
 			&chart.Chart{Series: []chart.Series{traj, way}},
+			chart.Style{FillColor: chart.ColorTransparent,
+				StrokeColor:     chart.ColorTransparent,
+				TextLineSpacing: 5,
+			}),
+		},
+	}
+	f, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return graph.Render(chart.PNG, f)
+}
+func saveChartPNG(name, yLabel string, x1, y1 []float64) error {
+	way := chart.ContinuousSeries{Name: "Waypoints", XValues: x1, YValues: y1, Style: chart.Style{Show: true, StrokeColor: chart.ColorOrange}}
+
+	// Create title with legend information
+	titleWithLegend := fmt.Sprintf("%s (Orange: Waypoints)", name)
+
+	graph := chart.Chart{
+		Title:  titleWithLegend,
+		XAxis:  chart.XAxis{Name: "Time (s)", NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
+		YAxis:  chart.YAxis{Name: yLabel, NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
+		Series: []chart.Series{way},
+		Height: 600,
+		Elements: []chart.Renderable{chart.LegendThin(
+			&chart.Chart{Series: []chart.Series{way}},
 			chart.Style{FillColor: chart.ColorTransparent,
 				StrokeColor:     chart.ColorTransparent,
 				TextLineSpacing: 5,
@@ -204,7 +234,26 @@ func plotCharts(
 	for i := range trajData {
 		name := fmt.Sprintf("%s%s_comparison.png", prefix, labelFunc(i))
 		yLabel := fmt.Sprintf(yLabelFormat, labelFunc(i))
-		if err := saveChartPNG(name, yLabel, trajTime, trajData[i], wayTime, waypointData[i]); err != nil {
+		if err := saveComparisonChartPNG(name, yLabel, trajTime, trajData[i], wayTime, waypointData[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func plotChartsCachedData(
+	prefix, yLabelFormat string,
+	wayTime []float64,
+	waypointData [][]float64,
+	labelFunc func(int) string,
+) error {
+	fmt.Println("waytime: ", len(wayTime))
+
+	for i := range waypointData {
+		name := fmt.Sprintf("%s%s_cached.png", prefix, labelFunc(i))
+		yLabel := fmt.Sprintf(yLabelFormat, labelFunc(i))
+		fmt.Println(name, ": ", len(waypointData[i]))
+		if err := saveChartPNG(name, yLabel, wayTime, waypointData[i]); err != nil {
 			return err
 		}
 	}
@@ -289,38 +338,56 @@ func main() {
 	if err != nil {
 		logger.Fatal(err)
 	}
-	trajectoryPath, waypointPath, err := getPath(cfg.TrajectoryCSV, cfg.WaypointsCSV)
-	if err := realmain(trajectoryPath, waypointPath, cfg.ArmKinematicsPath); err != nil {
+	if err := realmain(cfg); err != nil {
 		logger.Fatal(err)
 	}
 }
 
-func realmain(trajectoryPath, waypointPath, armKinematicsPath string) error {
-	model, err := referenceframe.ParseModelJSONFile(armKinematicsPath, "")
+func realmain(cfg config) error {
+	model, err := referenceframe.ParseModelJSONFile(cfg.ArmKinematicsPath, "")
 	if err != nil {
 		return err
 	}
-	// get the data frame
-	trajDf, err := readCSVintoDataframe(trajectoryPath, nil)
-	if err != nil {
-		return err
+	if !cfg.CachedOnly {
+		trajectoryPath, waypointPath, err := getPath(cfg.TrajectoryCSV, cfg.WaypointsCSV)
+		if err != nil {
+			return err
+		}
+
+		// get the data frame
+		trajDf, err := readCSVintoDataframe(trajectoryPath, nil)
+		if err != nil {
+			return err
+		}
+		wayDf, err := readCSVintoDataframe(waypointPath, []string{"j0", "j1", "j2", "j3", "j4", "j5"})
+		if err != nil {
+			return err
+		}
+		// parse and perform FK to get poses for each set of joint positions
+		trajDf, err = parseAndAddPoses(trajDf, model)
+		if err != nil {
+			return err
+		}
+		wayDf, err = parseAndAddPoses(wayDf, model)
+		if err != nil {
+			return err
+		}
+		// plot joint positions and poses as .png files
+		if err := plotJointAndPoseComparisonFromDataframes(trajDf, wayDf); err != nil {
+			return err
+		}
 	}
-	wayDf, err := readCSVintoDataframe(waypointPath, []string{"j0", "j1", "j2", "j3", "j4", "j5"})
-	if err != nil {
-		return err
+	cachedPath := filepath.Clean(cfg.CachedPlanPath)
+	if cachedPath != "" {
+		joints, poses, err := parseAndAddPosesCachedPlan(cachedPath, model)
+		if err != nil {
+			return err
+		}
+		err = plotJointsAndPosesCachedPlan(joints, poses)
+		if err != nil {
+			return err
+		}
 	}
-	// parse and perform FK to get poses for each set of joint positions
-	trajDf, err = parseAndAddPoses(trajDf, model)
-	if err != nil {
-		return err
-	}
-	wayDf, err = parseAndAddPoses(wayDf, model)
-	if err != nil {
-		return err
-	}
-	// plot joint positions and poses as .png files
-	if err := plotJointAndPoseComparisonFromDataframes(trajDf, wayDf); err != nil {
-		return err
-	}
+
 	return nil
 }
