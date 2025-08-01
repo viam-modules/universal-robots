@@ -139,7 +139,7 @@ class URArm final : public Arm, public Reconfigurable {
     }
 
    private:
-    struct state_;
+    class state_;
 
     enum class UrDriverStatus : int8_t;  // Only available on 3.10/5.4
 
