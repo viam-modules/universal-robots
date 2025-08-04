@@ -196,7 +196,7 @@ func saveComparisonChartPNG(name, yLabel string, x1, y1, x2, y2 []float64) error
 	return graph.Render(chart.PNG, f)
 }
 func saveChartPNG(name, yLabel string, x1, y1 []float64) error {
-	way := chart.ContinuousSeries{Name: "Waypoints", XValues: x1, YValues: y1, Style: chart.Style{Show: true, StrokeColor: chart.ColorOrange}}
+	way := chart.ContinuousSeries{Name: "Waypoints", XValues: x1, YValues: y1, Style: chart.Style{Show: true, DotWidth: 1, DotColor: chart.ColorOrange}}
 
 	// Create title with legend information
 	titleWithLegend := fmt.Sprintf("%s (Orange: Waypoints)", name)
@@ -209,7 +209,8 @@ func saveChartPNG(name, yLabel string, x1, y1 []float64) error {
 		Height: 600,
 		Elements: []chart.Renderable{chart.LegendThin(
 			&chart.Chart{Series: []chart.Series{way}},
-			chart.Style{FillColor: chart.ColorTransparent,
+			chart.Style{
+				FillColor:       chart.ColorTransparent,
 				StrokeColor:     chart.ColorTransparent,
 				TextLineSpacing: 5,
 			}),
