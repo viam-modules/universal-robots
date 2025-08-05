@@ -10,5 +10,6 @@ create-example-config:
 	echo '  "waypoints_csv": "",' >> config.json && \
 	echo '  "cached_plan_path": "",' >> config.json && \
 	echo '  "cached_only": false,' >> config.json && \
+	echo '  "cached_window": [],' >> config.json && \
 	echo '  "arm_kinematics_path": ""' >> config.json && \
 	echo '}' >> config.json
