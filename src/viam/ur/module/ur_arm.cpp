@@ -375,7 +375,14 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     current_state_->speed.store(degrees_to_radians(find_config_attribute<double>(cfg, "speed_degs_per_sec")));
     current_state_->acceleration.store(degrees_to_radians(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2")));
     try {
-        reject_move_request_threshold_deg.emplace(find_config_attribute<double>(cfg, "reject_move_request_threshold_deg"));
+        auto threshold = find_config_attribute<double>(cfg, "reject_move_request_threshold_deg");
+        if (threshold < 0 || threshold > 360) {
+            VIAM_SDK_LOG(error) << "reject_move_request_threshold_deg should be between 0 and 360, it is : " << threshold
+                                << " -  safety disabled";
+            reject_move_request_threshold_deg.reset();
+        } else {
+            reject_move_request_threshold_deg.emplace(threshold);
+        }
     } catch (...) {
         reject_move_request_threshold_deg.reset();
     }
