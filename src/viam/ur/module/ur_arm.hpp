@@ -173,4 +173,5 @@ class URArm final : public Arm, public Reconfigurable {
     std::shared_mutex config_mutex_;
     std::unique_ptr<state_> current_state_;
     std::optional<ports> current_ports_;
+    std::optional<double> reject_move_request_threshold_deg;
 };

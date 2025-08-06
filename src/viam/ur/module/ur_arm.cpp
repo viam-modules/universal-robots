@@ -1,12 +1,14 @@
 #include "ur_arm.hpp"
 #include "utils.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <exception>
 #include <future>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
 
@@ -372,6 +374,11 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     current_state_->host = find_config_attribute<std::string>(cfg, "host");
     current_state_->speed.store(degrees_to_radians(find_config_attribute<double>(cfg, "speed_degs_per_sec")));
     current_state_->acceleration.store(degrees_to_radians(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2")));
+    try {
+        reject_move_request_threshold_deg.emplace(find_config_attribute<double>(cfg, "reject_move_request_threshold_deg"));
+    } catch (...) {
+        reject_move_request_threshold_deg.reset();
+    }
 
     // get the APPDIR environment variable
     auto* const appdir = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
@@ -795,6 +802,28 @@ void URArm::keep_alive_() {
 
 void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     auto our_config_rlock = std::move(config_rlock);
+
+    if (reject_move_request_threshold_deg) {
+        auto joint_pos = [&]() {
+            auto joint_pos = get_joint_positions_(our_config_rlock);
+            auto vector = Eigen::VectorXd(joint_pos.size());
+            std::transform(std::make_move_iterator(joint_pos.begin()),
+                           std::make_move_iterator(joint_pos.end()),
+                           vector.begin(),
+                           degrees_to_radians<double>);
+            return vector;
+        }();
+
+        auto delta_pos = (waypoints.front() - joint_pos);
+
+        if (radians_to_degrees(delta_pos.lpNorm<Eigen::Infinity>()) > *reject_move_request_threshold_deg) {
+            std::stringstream err_string;
+            err_string << "rejecting move request : difference between starting trajectory position and joint position is above threshold "
+                       << radians_to_degrees(delta_pos.lpNorm<Eigen::Infinity>()) << " > " << *reject_move_request_threshold_deg;
+            VIAM_SDK_LOG(error) << err_string.str();
+            throw std::runtime_error(err_string.str());
+        }
+    }
 
     // Capture the current movement epoch, so we can later detect if another caller
     // slipped in while we were planning.
