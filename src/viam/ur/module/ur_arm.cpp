@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <exception>
+#include <experimental/iterator>
 #include <future>
 #include <iterator>
 #include <optional>
@@ -825,8 +826,19 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
 
         if (radians_to_degrees(delta_pos.lpNorm<Eigen::Infinity>()) > *reject_move_request_threshold_deg) {
             std::stringstream err_string;
-            err_string << "rejecting move request : difference between starting trajectory position and joint position is above threshold "
-                       << radians_to_degrees(delta_pos.lpNorm<Eigen::Infinity>()) << " > " << *reject_move_request_threshold_deg;
+
+            err_string << "rejecting move request : difference between starting trajectory position [(";
+            std::transform(std::make_move_iterator(waypoints.front().begin()),
+                           std::make_move_iterator(waypoints.front().end()),
+                           std::experimental::make_ostream_joiner(err_string, ", "),
+                           radians_to_degrees<double>);
+            err_string << ")] and joint position [(";
+            std::transform(std::make_move_iterator(joint_pos.begin()),
+                           std::make_move_iterator(joint_pos.end()),
+                           std::experimental::make_ostream_joiner(err_string, ", "),
+                           radians_to_degrees<double>);
+            err_string << ")] is above threshold " << radians_to_degrees(delta_pos.lpNorm<Eigen::Infinity>()) << " > "
+                       << *reject_move_request_threshold_deg;
             VIAM_SDK_LOG(error) << err_string.str();
             throw std::runtime_error(err_string.str());
         }
