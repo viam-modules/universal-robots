@@ -811,32 +811,32 @@ void URArm::keep_alive_() {
 void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     auto our_config_rlock = std::move(config_rlock);
 
-    if (reject_move_request_threshold_deg) {
-        auto joint_pos = [&]() {
-            auto joint_pos = get_joint_positions_(our_config_rlock);
-            auto vector = Eigen::VectorXd(joint_pos.size());
-            std::transform(std::make_move_iterator(joint_pos.begin()),
-                           std::make_move_iterator(joint_pos.end()),
-                           vector.begin(),
-                           degrees_to_radians<double>);
-            return vector;
-        }();
+    // get current joint position and add that as starting pose to waypoints
+    VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time;
+    auto curr_joint_pos_deg = get_joint_positions_(our_config_rlock);
+    VIAM_SDK_LOG(info) << "move: get_joint_positions end " << unix_time;
+    auto curr_joint_pos_rad = Eigen::VectorXd(curr_joint_pos_deg.size());
+    std::transform(std::make_move_iterator(curr_joint_pos_deg.begin()),
+                   std::make_move_iterator(curr_joint_pos_deg.end()),
+                   curr_joint_pos_rad.begin(),
+                   degrees_to_radians<double>);
 
-        auto delta_pos = (waypoints.front() - joint_pos);
+    if (reject_move_request_threshold_deg) {
+        auto delta_pos = (waypoints.front() - curr_joint_pos_rad);
 
         if (radians_to_degrees(delta_pos.lpNorm<Eigen::Infinity>()) > *reject_move_request_threshold_deg) {
             std::stringstream err_string;
 
             err_string << "rejecting move request : difference between starting trajectory position [(";
-            std::transform(std::make_move_iterator(waypoints.front().begin()),
-                           std::make_move_iterator(waypoints.front().end()),
+            std::transform(std::make_move_iterator(waypoints.front().cbegin()),
+                           std::make_move_iterator(waypoints.front().cend()),
                            std::experimental::make_ostream_joiner(err_string, ", "),
-                           radians_to_degrees<double>);
+                           radians_to_degrees<const double>);
             err_string << ")] and joint position [(";
-            std::transform(std::make_move_iterator(joint_pos.begin()),
-                           std::make_move_iterator(joint_pos.end()),
+            std::transform(std::make_move_iterator(curr_joint_pos_rad.cbegin()),
+                           std::make_move_iterator(curr_joint_pos_rad.cend()),
                            std::experimental::make_ostream_joiner(err_string, ", "),
-                           radians_to_degrees<double>);
+                           radians_to_degrees<const double>);
             err_string << ")] is above threshold " << radians_to_degrees(delta_pos.lpNorm<Eigen::Infinity>()) << " > "
                        << *reject_move_request_threshold_deg;
             VIAM_SDK_LOG(error) << err_string.str();
@@ -851,16 +851,10 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
     VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
     const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move: end unix_time " << unix_time; });
 
-    // get current joint position and add that as starting pose to waypoints
-    VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time;
-    std::vector<double> curr_joint_pos = get_joint_positions_(our_config_rlock);
-    VIAM_SDK_LOG(info) << "move: get_joint_positions end " << unix_time;
-
     VIAM_SDK_LOG(info) << "move: compute_trajectory start " << unix_time;
-    auto curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
-    auto curr_waypoint_rad = degrees_to_radians(std::move(curr_waypoint_deg)).eval();
-    if (!curr_waypoint_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
-        waypoints.emplace_front(std::move(curr_waypoint_rad));
+
+    if (!curr_joint_pos_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
+        waypoints.emplace_front(std::move(curr_joint_pos_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
         VIAM_SDK_LOG(info) << "arm is already at the desired joint positions";
