@@ -65,8 +65,10 @@ struct ports {
 // We need to requisition different ports for each independent URArm instance, otherwise they will all try
 // to use the same ports and only one of them will work.
 inline auto new_ports() {
-    static std::atomic<uint32_t> port_counter(50001);
-    const auto reverse_port = port_counter.fetch_add(4);
+    uint32_t reverse_port = 50001;
+    // TODO: Don't ship this way.
+    // static std::atomic<uint32_t> port_counter(50001);
+    // const auto reverse_port = port_counter.fetch_add(4);
     return ports{reverse_port, reverse_port + 1, reverse_port + 2, reverse_port + 3};
 }
 
