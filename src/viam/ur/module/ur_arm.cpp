@@ -825,6 +825,13 @@ void URArm::keep_alive_() {
 void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     auto our_config_rlock = std::move(config_rlock);
 
+    // Capture the current movement epoch, so we can later detect if another caller
+    // slipped in while we were planning.
+    auto current_move_epoch = current_state_->move_epoch.load(std::memory_order_acquire);
+
+    VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
+    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move: end unix_time " << unix_time; });
+
     // get current joint position and add that as starting pose to waypoints
     VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time;
     auto curr_joint_pos = get_joint_positions_rad(our_config_rlock);
@@ -853,13 +860,6 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
             throw std::runtime_error(err_string.str());
         }
     }
-
-    // Capture the current movement epoch, so we can later detect if another caller
-    // slipped in while we were planning.
-    auto current_move_epoch = current_state_->move_epoch.load(std::memory_order_acquire);
-
-    VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
-    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move: end unix_time " << unix_time; });
 
     VIAM_SDK_LOG(info) << "move: compute_trajectory start " << unix_time;
 
