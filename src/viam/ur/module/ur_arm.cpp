@@ -827,7 +827,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
 
     auto data_package = arm_conn_->driver->getDataPackage();
 
-    if (data_package) {
+    if (!data_package) {
+        VIAM_SDK_LOG(error) << "Failed to read a data package from the arm: dropping connection";
         return event_connection_lost_{};
     }
 
