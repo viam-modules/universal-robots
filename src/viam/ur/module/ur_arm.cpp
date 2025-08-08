@@ -355,8 +355,6 @@ class URArm::state_ {
 
         template <typename Event>
         state_variant_ handle_event(Event);
-
-        std::unique_ptr<arm_connection_> arm_conn_;
     };
 
     struct state_independent_ : public state_connected_ {
@@ -837,26 +835,27 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     static const std::string k_tcp_key = "actual_TCP_pose";
 
     vector6d_t joint_positions{};
-    if (!arm_conn_->data_package->getData(k_joints_position_key, joint_positions)) {
+    if (!data_package->getData(k_joints_position_key, joint_positions)) {
         VIAM_SDK_LOG(error) << "getData(\"actual_q\") returned false";
         return event_connection_lost_{};
     }
 
     // read current joint velocities from robot data
     vector6d_t joint_velocities{};
-    if (!arm_conn_->data_package->getData(k_joints_velocity_key, joint_velocities)) {
+    if (!data_package->getData(k_joints_velocity_key, joint_velocities)) {
         VIAM_SDK_LOG(error) << "getData(\"actual_qd\") returned false";
         return event_connection_lost_{};
     }
 
     vector6d_t tcp_state{};
-    if (!arm_conn_->data_package->getData(k_tcp_key, tcp_state)) {
+    if (!data_package->getData(k_tcp_key, tcp_state)) {
         VIAM_SDK_LOG(warn) << "getData(\"actual_TCP_pos\") returned false";
         return event_connection_lost_{};
     }
 
-    // for consistency, update cached data only after all getData calls succeed,
-    // and we know we aren't going to be emitting an event that might kick us out of this state.
+    // For consistency, update cached data only after all getData
+    // calls succeed, and we know we aren't going to be emitting an
+    // event that might kick us out of this state.
     arm_conn_->data_package = std::move(data_package);
     state.joint_positions_ = std::move(joint_positions);
     state.joint_velocities_ = std::move(joint_velocities);
@@ -882,6 +881,7 @@ std::chrono::milliseconds URArm::state_::state_controlled_::get_timeout() const 
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::upgrade_downgrade(state_&) {
     // TODO: Examine data packet for bits that tell us about estop or local mode
+    // TODO: What if we detect BOTH local and estop on the same packet?
     return std::nullopt;
 }
 
@@ -895,8 +895,11 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
 
         VIAM_SDK_LOG(info) << "URArm sending trajectory";
 
-        const auto num_samples = state.move_request_->samples.size();
+        // By moving the samples out, we indicate that the trajectory is considered started.
+        auto samples = std::move(state.move_request_->samples);
+        const auto num_samples = samples.size();
 
+        VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
             VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
@@ -904,10 +907,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
             // TODO: Should this be a state transition? We consider sending a noop a failure.
         }
 
-        // By moving the samples out, we indicate that the trajectory is considered started.
-        auto samples = std::move(state.move_request_->samples);
-
-        VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << samples.size() << " cubic writeTrajectorySplinePoint/3";
+        VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << samples.size() << " cubic writeTrajectorySplinePoint";
         for (size_t i = 0; i < samples.size(); i++) {
             if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
                 VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
@@ -919,6 +919,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 // TODO: Should this be a state transition? We consider sending a noop a failure.
             };
         }
+
+        VIAM_SDK_LOG(info) << "URArm trajectory sent";
+
     } else if (state.move_request_->samples.empty() && state.move_request_->cancellation_request &&
                !state.move_request_->cancellation_request->issued) {
         // We have a move request, the samples have been forwarded,
@@ -1151,6 +1154,7 @@ void URArm::state_::move_request::complete_success() {
     // Mark the move_request as completed. If there
     // was a cancel request, it raced and lost, but it doesn't
     // need an error.
+    completion.set_value();
     if (cancellation_request) {
         cancellation_request->promise.set_value();
     }

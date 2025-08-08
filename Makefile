@@ -79,13 +79,13 @@ endef
 # Targets for building AppImages
 appimage-arm64: export OUTPUT_NAME = universal-robots
 appimage-arm64: export ARCH = aarch64
-appimage-arm64: format build
+appimage-arm64: format-check build
 	$(call BUILD_APPIMAGE,$(OUTPUT_NAME),$(ARCH))
 	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
 
 appimage-amd64: export OUTPUT_NAME = universal-robots
 appimage-amd64: export ARCH = x86_64
-appimage-amd64: format build
+appimage-amd64: format-check build
 	$(call BUILD_APPIMAGE,$(OUTPUT_NAME),$(ARCH))
 	mv ./packaging/appimages/$(OUTPUT_NAME)-*-$(ARCH).AppImage* ./packaging/appimages/deploy/
 
