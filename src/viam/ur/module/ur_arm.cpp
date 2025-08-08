@@ -16,6 +16,7 @@
 #include <boost/io/ostream_joiner.hpp>
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/range/adaptor/transformed.hpp>
+#include <boost/range/algorithm.hpp>
 
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
@@ -588,18 +589,12 @@ void URArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
 std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-    auto curr_joint_position_rad = get_joint_positions_rad(rlock);
-    std::vector<double> joint_position_degree;
-    joint_position_degree.reserve(curr_joint_position_rad.size());
-    std::transform(std::make_move_iterator(curr_joint_position_rad.begin()),
-                   std::make_move_iterator(curr_joint_position_rad.end()),
-                   std::back_inserter(joint_position_degree),
-                   radians_to_degrees<double>);
-
-    return joint_position_degree;
+    auto joint_rads = get_joint_positions_rad_(rlock);
+    auto joint_position_degree = joint_rads | boost::adaptors::transformed(radians_to_degrees<const double&>);
+    return {std::begin(joint_position_degree), std::end(joint_position_degree)};
 }
 
-vector6d_t URArm::get_joint_positions_rad(const std::shared_lock<std::shared_mutex>&) {
+vector6d_t URArm::get_joint_positions_rad_(const std::shared_lock<std::shared_mutex>&) {
     const std::lock_guard guard{current_state_->state_mutex};
     if (current_state_->last_driver_status == UrDriverStatus::READ_FAILURE) {
         // TODO(RSDK-11295): provide more context
@@ -834,7 +829,7 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
 
     // get current joint position and add that as starting pose to waypoints
     VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time;
-    auto curr_joint_pos = get_joint_positions_rad(our_config_rlock);
+    auto curr_joint_pos = get_joint_positions_rad_(our_config_rlock);
     VIAM_SDK_LOG(info) << "move: get_joint_positions end " << unix_time;
     auto curr_joint_pos_rad = Eigen::Map<Eigen::VectorXd>(curr_joint_pos.data(), curr_joint_pos.size());
 
@@ -845,15 +840,12 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
             std::stringstream err_string;
 
             err_string << "rejecting move request : difference between starting trajectory position [(";
-            std::transform(std::make_move_iterator(waypoints.front().cbegin()),
-                           std::make_move_iterator(waypoints.front().cend()),
-                           boost::io::make_ostream_joiner(err_string, ", "),
-                           radians_to_degrees<const double>);
+            auto first_waypoint = waypoints.front();
+            boost::copy(first_waypoint | boost::adaptors::transformed(radians_to_degrees<const double&>),
+                        boost::io::make_ostream_joiner(err_string, ", "));
             err_string << ")] and joint position [(";
-            std::transform(std::make_move_iterator(curr_joint_pos_rad.cbegin()),
-                           std::make_move_iterator(curr_joint_pos_rad.cend()),
-                           boost::io::make_ostream_joiner(err_string, ", "),
-                           radians_to_degrees<const double>);
+            boost::copy(curr_joint_pos_rad | boost::adaptors::transformed(radians_to_degrees<const double&>),
+                        boost::io::make_ostream_joiner(err_string, ", "));
             err_string << ")] is above threshold " << radians_to_degrees(delta_pos.lpNorm<Eigen::Infinity>()) << " > "
                        << radians_to_degrees(*current_state_->reject_move_request_threshold_rad);
             VIAM_SDK_LOG(error) << err_string.str();
