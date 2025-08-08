@@ -249,12 +249,10 @@ class URArm::state_ {
         return app_dir_;
     }
 
-    // In RADIANS
-    // TODO(acm): names/comments/units?
     void set_speed(double speed);
-    void set_acceleration(double acceleration);
-
     double get_speed() const;
+
+    void set_acceleration(double acceleration);
     double get_acceleration() const;
 
     size_t get_move_epoch() const;
@@ -307,22 +305,24 @@ class URArm::state_ {
             return k_disconnect_delay;
         }
 
-        std::optional<event_variant_> attempt_recovery(state_& state);
+        std::optional<event_variant_> upgrade_downgrade(state_& state);
 
         std::optional<event_variant_> recv_arm_data(state_&) {
-            return {};
+            return std::nullopt;
         }
 
-        std::optional<event_variant_> handle_move_request_processing(state_& state) {
+        std::optional<event_variant_> handle_move_request(state_& state) {
             if (state.move_request_) {
                 std::exchange(state.move_request_, {})->complete_error("no connection to arm");
             }
-            return {};
+            return std::nullopt;
         }
 
         std::optional<event_variant_> send_noop() {
-            return {};
+            return std::nullopt;
         }
+
+        state_variant_ handle_event(event_connection_established_ event);
 
         template <typename Event>
         state_variant_ handle_event(Event);
@@ -349,33 +349,26 @@ class URArm::state_ {
         std::unique_ptr<rtde_interface::DataPackage> data_package;
     };
 
-    struct state_controlled_ {
-        state_controlled_(std::unique_ptr<arm_connection_> arm_data) : arm_conn_{std::move(arm_data)} {}
+    // A base class
+    struct state_connected_ {
+        explicit state_connected_(std::unique_ptr<arm_connection_> arm_conn) : arm_conn_{std::move(arm_conn)} {}
 
-        static std::string_view name() {
-            using namespace std::literals::string_view_literals;
-            return "controlled"sv;
+        std::optional<event_variant_> send_noop() const {
+            if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                    control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
+                return event_connection_lost_{};
+            }
+            return std::nullopt;
         }
 
-        auto describe() const {
-            return name();
-        }
-
-        std::chrono::milliseconds get_timeout() const {
-            return k_noop_delay;
-        }
-
-        std::optional<event_variant_> attempt_recovery(state_&) {
-            return {};
-        }
-
-        std::optional<event_variant_> recv_arm_data(state_& state) {
+        std::optional<event_variant_> recv_arm_data(state_& state) const {
             state.joint_positions_.reset();
             state.joint_velocities_.reset();
             state.tcp_state_.reset();
 
-            arm_conn_->data_package = arm_conn_->driver->getDataPackage();
-            if (!arm_conn_->data_package) {
+            auto data_package = arm_conn_->driver->getDataPackage();
+
+            if (data_package) {
                 return event_connection_lost_{};
             }
 
@@ -402,19 +395,46 @@ class URArm::state_ {
                 return event_connection_lost_{};
             }
 
-            // for consistency, update cached data only after all getData calls succeed
+            // for consistency, update cached data only after all getData calls succeed,
+            // and we know we aren't going to be emitting an event that might kick us out of this state.
+            arm_conn_->data_package = std::move(data_package);
             state.joint_positions_ = std::move(joint_positions);
             state.joint_velocities_ = std::move(joint_velocities);
             state.tcp_state_ = std::move(tcp_state);
 
-            // TODO: Detect transitions to estop / local here.
-
-            return {};
+            return std::nullopt;
         }
 
-        std::optional<event_variant_> handle_move_request_processing(state_& state) {
+        std::unique_ptr<arm_connection_> arm_conn_;
+    };
+
+    struct state_controlled_ : public state_connected_ {
+        explicit state_controlled_(std::unique_ptr<arm_connection_> arm_conn) : state_connected_(std::move(arm_conn)) {}
+
+        using state_connected_::recv_arm_data;
+        using state_connected_::send_noop;
+
+        static std::string_view name() {
+            using namespace std::literals::string_view_literals;
+            return "controlled"sv;
+        }
+
+        auto describe() const {
+            return name();
+        }
+
+        std::chrono::milliseconds get_timeout() const {
+            return k_noop_delay;
+        }
+
+        std::optional<event_variant_> upgrade_downgrade(state_&) {
+            // TODO: Examine data packet for bits that tell us about estop or local mode
+            return std::nullopt;
+        }
+
+        std::optional<event_variant_> handle_move_request(state_& state) {
             if (!state.move_request_) {
-                return {};
+                return std::nullopt;
             }
 
             if (!state.move_request_->samples.empty() && !state.move_request_->cancellation_request) {
@@ -429,6 +449,7 @@ class URArm::state_ {
                                                                       RobotReceiveTimeout::off())) {
                     VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
                     std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
+                    // TODO: Should this be a state transition? We consider sending a noop a failure.
                 }
 
                 // By moving the samples out, we indicate that the trajectory is considered started.
@@ -443,6 +464,7 @@ class URArm::state_ {
                         // TODO: XXX ACM this is new but makes sense to me.
                         arm_conn_->driver->writeTrajectoryControlMessage(
                             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
+                        // TODO: Should this be a state transition? We consider sending a noop a failure.
                     };
                 }
             } else if (state.move_request_->samples.empty() && state.move_request_->cancellation_request &&
@@ -453,6 +475,7 @@ class URArm::state_ {
                 if (!arm_conn_->driver->writeTrajectoryControlMessage(
                         urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
                     state.move_request_->cancel_error("failed to write trajectory control cancel message to URArm");
+                    // TODO: Should this be a state transition? We consider sending a noop a failure.
                 }
             } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
                 // We have a move request that we haven't issued but a
@@ -463,16 +486,12 @@ class URArm::state_ {
                 state.move_request_->write_joint_data(*state.joint_positions_, *state.joint_velocities_);
             }
 
-            return {};
+            return std::nullopt;
         }
 
-        std::optional<event_variant_> send_noop() {
-            if (!arm_conn_->driver->writeTrajectoryControlMessage(
-                    control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-                return event_connection_lost_{};
-            }
-            return {};
-        }
+        state_variant_ handle_event(event_connection_lost_);
+        state_variant_ handle_event(event_estop_detected_);
+        state_variant_ handle_event(event_local_mode_detected_);
 
         template <typename Event>
         state_variant_ handle_event(Event);
@@ -480,7 +499,15 @@ class URArm::state_ {
         std::unique_ptr<arm_connection_> arm_conn_;
     };
 
-    struct state_independent_ {
+    struct state_independent_ : public state_connected_ {
+        enum class reason { k_estopped, k_local_mode, k_both };
+
+        explicit state_independent_(std::unique_ptr<arm_connection_> arm_conn, reason r)
+            : state_connected_(std::move(arm_conn)), reason_(r) {}
+
+        using state_connected_::recv_arm_data;
+        using state_connected_::send_noop;
+
         static std::string_view name() {
             using namespace std::literals::string_view_literals;
             return "independent"sv;
@@ -511,18 +538,17 @@ class URArm::state_ {
         }
 
         std::chrono::milliseconds get_timeout() const {
-            return k_estop_delay;
+            if (estopped()) {
+                return k_estop_delay;
+            }
+            return k_noop_delay;
         }
 
-        std::optional<event_variant_> attempt_recovery(state_&) {
-            return {};
+        std::optional<event_variant_> upgrade_downgrade(state_&) {
+            return std::nullopt;
         }
 
-        std::optional<event_variant_> recv_arm_data(state_&) {
-            return {};
-        }
-
-        std::optional<event_variant_> handle_move_request_processing(state_& state) {
+        std::optional<event_variant_> handle_move_request(state_& state) {
             if (state.move_request_) {
                 std::exchange(state.move_request_, {})->complete_error([this]() -> std::string {
                     switch (reason_) {
@@ -541,18 +567,26 @@ class URArm::state_ {
                     }
                 }());
             }
-            return {};
+            return std::nullopt;
         }
 
-        std::optional<event_variant_> send_noop() {
-            return {};
+        bool estopped() const {
+            return reason_ != reason::k_local_mode;
         }
+        bool local_mode() const {
+            return reason_ != reason::k_estopped;
+        }
+
+        state_variant_ handle_event(event_connection_lost_);
+        state_variant_ handle_event(event_estop_detected_);
+        state_variant_ handle_event(event_local_mode_detected_);
+        state_variant_ handle_event(event_estop_cleared_);
+        state_variant_ handle_event(event_remote_mode_restored_);
 
         template <typename Event>
         state_variant_ handle_event(Event);
 
-        std::unique_ptr<arm_connection_> arm_data_;
-        enum class reason { k_estopped, k_local_mode, k_both } reason_;
+        reason reason_;
     };
 
     // TODO(acm): XXX - outline implementation?
@@ -577,7 +611,6 @@ class URArm::state_ {
             // Mark the move_request as completed. If there
             // was a cancel request, it raced and lost, but it doesn't
             // need an error.
-            completion.set_value();
             if (cancellation_request) {
                 cancellation_request->promise.set_value();
             }
@@ -702,11 +735,11 @@ class URArm::state_ {
 
     std::chrono::milliseconds get_timeout_() const;
 
-    void attempt_recovery_();
+    void upgrade_downgrade_();
 
     void recv_arm_data_();
 
-    void handle_move_request_processing_();
+    void handle_move_request_();
 
     void send_noop_();
 
@@ -736,88 +769,6 @@ class URArm::state_ {
     std::optional<move_request> move_request_;
 };
 
-// Event handler specializations
-template <>
-inline URArm::state_::state_variant_ URArm::state_::state_disconnected_::handle_event(event_connection_established_ event) {
-    return state_controlled_{std::move(event.payload)};
-}
-
-template <>
-inline URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(event_connection_lost_) {
-    return state_disconnected_{};
-}
-
-template <>
-inline URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(event_estop_detected_) {
-    return state_independent_{std::move(arm_conn_), state_independent_::reason::k_estopped};
-}
-
-template <>
-inline URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(event_local_mode_detected_) {
-    return state_independent_{std::move(arm_conn_), state_independent_::reason::k_local_mode};
-}
-
-template <>
-inline URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_estop_cleared_) {
-    if (reason_ == reason::k_local_mode) {
-        return std::move(*this);
-    } else if (reason_ == reason::k_both) {
-        return state_independent_{std::move(arm_data_), reason::k_local_mode};
-    } else {
-        return state_controlled_{std::move(arm_data_)};
-    }
-}
-
-template <>
-inline URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_remote_mode_restored_) {
-    if (reason_ == reason::k_estopped) {
-        return std::move(*this);
-    } else if (reason_ == reason::k_both) {
-        return state_independent_{std::move(arm_data_), reason::k_estopped};
-    } else {
-        return state_controlled_{std::move(arm_data_)};
-    }
-}
-
-template <>
-inline URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_estop_detected_) {
-    if (reason_ == reason::k_local_mode) {
-        return state_independent_{std::move(arm_data_), reason::k_both};
-    } else {
-        return std::move(*this);
-    }
-}
-
-template <>
-inline URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_local_mode_detected_) {
-    if (reason_ == reason::k_estopped) {
-        return state_independent_{std::move(arm_data_), reason::k_both};
-    } else {
-        return std::move(*this);
-    }
-}
-
-template <>
-inline URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_connection_lost_) {
-    return state_disconnected_{};
-}
-
-// Default handlers - no transition
-// TODO: Are these actually needed?
-template <typename Event>
-inline URArm::state_::state_variant_ URArm::state_::state_disconnected_::handle_event(Event) {
-    return std::move(*this);
-}
-
-template <typename Event>
-inline URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(Event) {
-    return std::move(*this);
-}
-
-template <typename Event>
-inline URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(Event) {
-    return std::move(*this);
-}
 
 URArm::state_::state_(private_, std::string configured_model_type, std::string host, std::string app_dir, std::string csv_output_path)
     : configured_model_type_{std::move(configured_model_type)},
@@ -878,7 +829,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     // natural recovery cycle.
     for (size_t i = 0; i != 5; ++i) {
         try {
-            state->attempt_recovery_();
+            state->upgrade_downgrade_();
             return state;
         } catch (const std::exception& xcp) {
             VIAM_SDK_LOG(warn) << "Failed to establish working connection to arm after " << (i + 1) << " attempts: `" << xcp.what() << "`";
@@ -887,7 +838,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
             std::this_thread::sleep_for(timeout);
         }
     }
-    state->attempt_recovery_();
+    state->upgrade_downgrade_();
     return state;
 }
 
@@ -930,12 +881,12 @@ void URArm::state_::set_speed(double speed) {
     speed_.store(speed);
 }
 
-void URArm::state_::set_acceleration(double acceleration) {
-    acceleration_.store(acceleration);
-}
-
 double URArm::state_::get_speed() const {
     return speed_.load();
+}
+
+void URArm::state_::set_acceleration(double acceleration) {
+    acceleration_.store(acceleration);
 }
 
 double URArm::state_::get_acceleration() const {
@@ -949,20 +900,20 @@ size_t URArm::state_::get_move_epoch() const {
 std::future<void> URArm::state_::enqueue_move_request(size_t current_move_epoch,
                                                       std::vector<trajectory_sample_point>&& samples,
                                                       std::ofstream arm_joint_positions_stream) {
-    const std::lock_guard lock{mutex_};
-
-    if (move_request_) {
-        throw std::runtime_error("An actuation is already in progress");
-    }
-
     // Use CAS to increment the epoch and detect if another move
-    // operation occurred while we were planning. If so, we have
-    // to fail this operation, since our starting waypoint
-    // information is no longer valid.
+    // operation occurred between when we obtained a value with
+    // `get_move_epoch` and when `enqueue_move_request` was called
+    // (presumably, while we were planning). If so, we have to fail
+    // this operation, since our starting waypoint information is no
+    // longer valid.
     if (!move_epoch_.compare_exchange_strong(current_move_epoch, current_move_epoch + 1, std::memory_order_acq_rel)) {
-        throw std::runtime_error("Move operation was superseded by a newer operation");
+        throw std::runtime_error("move operation was superseded by a newer operation");
     }
 
+    const std::lock_guard lock{mutex_};
+    if (move_request_) {
+        throw std::runtime_error("an actuation is already in progress");
+    }
     return move_request_.emplace(std::move(samples), std::move(arm_joint_positions_stream)).completion.get_future();
 }
 
@@ -978,13 +929,13 @@ std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
     const std::lock_guard lock{mutex_};
 
     if (!move_request_) {
-        return {};
+        return std::nullopt;
     }
 
     return std::make_optional(move_request_->cancel());
 }
 
-std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::attempt_recovery(state_& state) {
+std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::upgrade_downgrade(state_& state) {
     VIAM_SDK_LOG(info) << "disconnected: attempting recovery";
     auto arm_connection = std::make_unique<arm_connection_>();
     arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_);
@@ -1043,7 +994,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
     VIAM_SDK_LOG(info) << "disconnected: attempting recovery: instantiating new UrDriver";
     // Now the robot is ready to receive a program
     auto ur_cfg = urcl::UrDriverConfiguration{};
-    VIAM_SDK_LOG(info) << "XXX ACM UR_CFG rtde_initialization_attepmts: " << ur_cfg.rtde_initialization_attempts;
     ur_cfg.robot_ip = state.host_;
     ur_cfg.script_file = state.app_dir_ + k_script_file;
     ur_cfg.output_recipe_file = state.app_dir_ + k_output_recipe;
@@ -1098,6 +1048,77 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
     return event_connection_established_{std::move(arm_connection)};
 }
 
+URArm::state_::state_variant_ URArm::state_::state_disconnected_::handle_event(event_connection_established_ event) {
+    return state_controlled_{std::move(event.payload)};
+}
+
+template <typename Event>
+URArm::state_::state_variant_ URArm::state_::state_disconnected_::handle_event(Event) {
+    return std::move(*this);
+}
+
+URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(event_connection_lost_) {
+    return state_disconnected_{};
+}
+
+URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(event_estop_detected_) {
+    return state_independent_{std::move(arm_conn_), state_independent_::reason::k_estopped};
+}
+
+URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(event_local_mode_detected_) {
+    return state_independent_{std::move(arm_conn_), state_independent_::reason::k_local_mode};
+}
+
+template <typename Event>
+URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(Event) {
+    return std::move(*this);
+}
+
+URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_estop_cleared_) {
+    if (reason_ == reason::k_local_mode) {
+        return std::move(*this);
+    } else if (reason_ == reason::k_both) {
+        return state_independent_{std::move(arm_conn_), reason::k_local_mode};
+    } else {
+        return state_controlled_{std::move(arm_conn_)};
+    }
+}
+
+URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_remote_mode_restored_) {
+    if (reason_ == reason::k_estopped) {
+        return std::move(*this);
+    } else if (reason_ == reason::k_both) {
+        return state_independent_{std::move(arm_conn_), reason::k_estopped};
+    } else {
+        return state_controlled_{std::move(arm_conn_)};
+    }
+}
+
+URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_estop_detected_) {
+    if (reason_ == reason::k_local_mode) {
+        return state_independent_{std::move(arm_conn_), reason::k_both};
+    } else {
+        return std::move(*this);
+    }
+}
+
+URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_local_mode_detected_) {
+    if (reason_ == reason::k_estopped) {
+        return state_independent_{std::move(arm_conn_), reason::k_both};
+    } else {
+        return std::move(*this);
+    }
+}
+
+URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_connection_lost_) {
+    return state_disconnected_{};
+}
+
+template <typename Event>
+URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(Event) {
+    return std::move(*this);
+}
+
 void URArm::state_::emit_event_(event_variant_&& event) {
     std::visit([this](auto&& event) { this->emit_event_(std::forward<decltype(event)>(event)); }, std::move(event));
 }
@@ -1121,8 +1142,8 @@ std::chrono::milliseconds URArm::state_::get_timeout_() const {
     return std::visit([](auto& state) { return state.get_timeout(); }, current_state_);
 }
 
-void URArm::state_::attempt_recovery_() {
-    if (auto event = std::visit([this](auto& state) { return state.attempt_recovery(*this); }, current_state_)) {
+void URArm::state_::upgrade_downgrade_() {
+    if (auto event = std::visit([this](auto& state) { return state.upgrade_downgrade(*this); }, current_state_)) {
         emit_event_(*std::move(event));
     }
 }
@@ -1133,8 +1154,8 @@ void URArm::state_::recv_arm_data_() {
     }
 }
 
-void URArm::state_::handle_move_request_processing_() {
-    if (auto event = std::visit([this](auto& state) { return state.handle_move_request_processing(*this); }, current_state_)) {
+void URArm::state_::handle_move_request_() {
+    if (auto event = std::visit([this](auto& state) { return state.handle_move_request(*this); }, current_state_)) {
         emit_event_(*std::move(event));
     }
 }
@@ -1156,8 +1177,8 @@ void URArm::state_::run_() {
 
         try {
             recv_arm_data_();
-            attempt_recovery_();
-            handle_move_request_processing_();
+            upgrade_downgrade_();
+            handle_move_request_();
             send_noop_();
         } catch (const std::exception& ex) {
             VIAM_SDK_LOG(warn) << "Exception in worker thread: " << ex.what();
