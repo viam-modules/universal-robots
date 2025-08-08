@@ -295,10 +295,12 @@ class URArm::state_ {
         static std::string_view name();
         auto describe() const;
         std::chrono::milliseconds get_timeout() const;
+
         std::optional<event_variant_> upgrade_downgrade(state_& state);
         std::optional<event_variant_> recv_arm_data(state_&);
         std::optional<event_variant_> handle_move_request(state_& state);
         std::optional<event_variant_> send_noop();
+
         state_variant_ handle_event(event_connection_established_ event);
 
         template <typename Event>
@@ -394,13 +396,9 @@ class URArm::state_ {
         std::shared_future<void> cancel();
 
         void complete_success();
-
         void complete_cancelled();
-
         void complete_failure();
-
         void complete_error(std::string_view message);
-
         void cancel_error(std::string_view message);
 
         void write_joint_data(vector6d_t& position, vector6d_t& velocity);
