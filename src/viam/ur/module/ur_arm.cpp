@@ -388,6 +388,37 @@ class URArm::state_ {
         reason reason_;
     };
 
+    struct event_connection_established_ {
+        static std::string_view name();
+        auto describe() const;
+        std::unique_ptr<arm_connection_> payload;
+    };
+
+    struct event_connection_lost_ {
+        static std::string_view name();
+        auto describe() const;
+    };
+
+    struct event_estop_detected_ {
+        static std::string_view name();
+        auto describe() const;
+    };
+
+    struct event_estop_cleared_ {
+        static std::string_view name();
+        auto describe() const;
+    };
+
+    struct event_local_mode_detected_ {
+        static std::string_view name();
+        auto describe() const;
+    };
+
+    struct event_remote_mode_restored_ {
+        static std::string_view name();
+        auto describe() const;
+    };
+
     // TODO(acm): Tighten up as a class?
     struct move_request {
        public:
@@ -421,90 +452,18 @@ class URArm::state_ {
         std::optional<cancellation_request> cancellation_request;
     };
 
-    struct event_connection_established_ {
-        std::unique_ptr<arm_connection_> payload;
-        static std::string_view name() {
-            using namespace std::literals::string_view_literals;
-            return "connection_established"sv;
-        }
-
-        auto describe() const {
-            return name();
-        }
-    };
-
-    struct event_connection_lost_ {
-        static std::string_view name() {
-            using namespace std::literals::string_view_literals;
-            return "connection_lost"sv;
-        }
-
-        auto describe() const {
-            return name();
-        }
-    };
-
-    struct event_estop_detected_ {
-        static std::string_view name() {
-            using namespace std::literals::string_view_literals;
-            return "estop_detected"sv;
-        }
-
-        auto describe() const {
-            return name();
-        }
-    };
-
-    struct event_estop_cleared_ {
-        static std::string_view name() {
-            using namespace std::literals::string_view_literals;
-            return "estop_cleared"sv;
-        }
-
-        auto describe() const {
-            return name();
-        }
-    };
-
-    struct event_local_mode_detected_ {
-        static std::string_view name() {
-            using namespace std::literals::string_view_literals;
-            return "local_mode_detected"sv;
-        }
-
-        auto describe() const {
-            return name();
-        }
-    };
-
-    struct event_remote_mode_restored_ {
-        static std::string_view name() {
-            using namespace std::literals::string_view_literals;
-            return "remote_mode_restored"sv;
-        }
-
-        auto describe() const {
-            return name();
-        }
-    };
-
     void emit_event_(event_variant_&& event);
 
     template <typename T>
     void emit_event_(T&& event);
 
     std::chrono::milliseconds get_timeout_() const;
-
     void upgrade_downgrade_();
-
     void recv_arm_data_();
-
     void handle_move_request_();
-
     void send_noop_();
 
     void run_();
-
     void trajectory_done_callback_(control::TrajectoryResult trajectory_result);
 
     const std::string configured_model_type_;
@@ -693,6 +652,13 @@ std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
 
     return std::make_optional(move_request_->cancel());
 }
+
+// Many of the state machine types get false positive clang-tidy
+// warnings suggesting that they should be made static. They can't
+// really though. Suppress that tidy warning from here until we are
+// done defining the states and events.
+//
+// NOLINTBEGIN(readability-convert-member-functions-to-static)
 
 std::string_view URArm::state_::state_disconnected_::name() {
     using namespace std::literals::string_view_literals;
@@ -1108,6 +1074,62 @@ template <typename Event>
 URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(Event) {
     return std::move(*this);
 }
+
+std::string_view URArm::state_::event_connection_established_::name() {
+    using namespace std::literals::string_view_literals;
+    return "connection_established"sv;
+}
+
+auto URArm::state_::event_connection_established_::describe() const {
+    return name();
+}
+
+std::string_view URArm::state_::event_connection_lost_::name() {
+    using namespace std::literals::string_view_literals;
+    return "connection_lost"sv;
+}
+
+auto URArm::state_::event_connection_lost_::describe() const {
+    return name();
+}
+
+std::string_view URArm::state_::event_estop_detected_::name() {
+    using namespace std::literals::string_view_literals;
+    return "estop_detected"sv;
+}
+
+auto URArm::state_::event_estop_detected_::describe() const {
+    return name();
+}
+
+std::string_view URArm::state_::event_estop_cleared_::name() {
+    using namespace std::literals::string_view_literals;
+    return "estop_cleared"sv;
+}
+
+auto URArm::state_::event_estop_cleared_::describe() const {
+    return name();
+}
+
+std::string_view URArm::state_::event_local_mode_detected_::name() {
+    using namespace std::literals::string_view_literals;
+    return "local_mode_detected"sv;
+}
+
+auto URArm::state_::event_local_mode_detected_::describe() const {
+    return name();
+}
+
+std::string_view URArm::state_::event_remote_mode_restored_::name() {
+    using namespace std::literals::string_view_literals;
+    return "remote_mode_restored"sv;
+}
+
+auto URArm::state_::event_remote_mode_restored_::describe() const {
+    return name();
+}
+
+// NOLINTEND(readability-convert-member-functions-to-static)
 
 URArm::state_::move_request::move_request(std::vector<trajectory_sample_point>&& samples, std::ofstream arm_joint_positions_stream)
     : samples(std::move(samples)), arm_joint_positions_stream(std::move(arm_joint_positions_stream)) {
