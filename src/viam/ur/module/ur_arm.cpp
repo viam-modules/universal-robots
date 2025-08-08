@@ -3,6 +3,7 @@
 
 #include <array>
 #include <atomic>
+#include <bitset>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -26,8 +27,10 @@
 
 #include <ur_client_library/control/trajectory_point_interface.h>
 #include <ur_client_library/rtde/data_package.h>
+#include <ur_client_library/rtde/rtde_client.h>
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
+#include <ur_client_library/ur/datatypes.h>
 #include <ur_client_library/ur/ur_driver.h>
 
 #include <viam/sdk/components/component.hpp>
@@ -326,6 +329,8 @@ class URArm::state_ {
         std::atomic<bool> running_flag{false};
         std::unique_ptr<UrDriver> driver;
         std::unique_ptr<rtde_interface::DataPackage> data_package;
+        std::optional<std::bitset<4>> robot_status_bits;
+        std::optional<std::bitset<11>> safety_status_bits;
     };
 
     struct state_connected_ {
@@ -823,44 +828,71 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     state.joint_velocities_.reset();
     state.tcp_state_.reset();
 
-    auto data_package = arm_conn_->driver->getDataPackage();
+    const auto prior_robot_status_bits = std::exchange(arm_conn_->robot_status_bits, std::nullopt);
+    const auto prior_safety_status_bits = std::exchange(arm_conn_->safety_status_bits, std::nullopt);
 
-    if (!data_package) {
+    arm_conn_->data_package = arm_conn_->driver->getDataPackage();
+    if (!arm_conn_->data_package) {
         VIAM_SDK_LOG(error) << "Failed to read a data package from the arm: dropping connection";
         return event_connection_lost_{};
+    }
+
+    static const std::string k_robot_status_bits_key = "robot_status_bits";
+    std::bitset<4> robot_status_bits;
+    if (!arm_conn_->data_package->getData<std::uint32_t>(k_robot_status_bits_key, robot_status_bits)) {
+        VIAM_SDK_LOG(error) << "Data package did not contain the expected `robot_status_bits` information; dropping connection";
+        return event_connection_lost_{};
+    }
+
+    static const std::string k_safety_status_bits_key = "safety_status_bits";
+    std::bitset<11> safety_status_bits;
+    if (!arm_conn_->data_package->getData<std::uint32_t>(k_safety_status_bits_key, safety_status_bits)) {
+        VIAM_SDK_LOG(error) << "Data package did not contain the expected `safety_status_bits` information; dropping connection";
+        return event_connection_lost_{};
+    }
+
+    arm_conn_->robot_status_bits = std::move(robot_status_bits);
+    arm_conn_->safety_status_bits = std::move(safety_status_bits);
+
+    if (!prior_robot_status_bits || (*prior_robot_status_bits != robot_status_bits)) {
+        VIAM_SDK_LOG(info) << "Updated robot status bits: `" << robot_status_bits << "`";
+    }
+
+    if (!prior_safety_status_bits || (*prior_safety_status_bits != safety_status_bits)) {
+        VIAM_SDK_LOG(info) << "Updated safety status bits: `" << safety_status_bits << "`";
     }
 
     static const std::string k_joints_position_key = "actual_q";
     static const std::string k_joints_velocity_key = "actual_qd";
     static const std::string k_tcp_key = "actual_TCP_pose";
 
+    bool data_good = true;
     vector6d_t joint_positions{};
-    if (!data_package->getData(k_joints_position_key, joint_positions)) {
-        VIAM_SDK_LOG(error) << "getData(\"actual_q\") returned false";
-        return event_connection_lost_{};
+    if (!arm_conn_->data_package->getData(k_joints_position_key, joint_positions)) {
+        VIAM_SDK_LOG(error) << "getData(\"actual_q\") returned false - joint positions will not be available";
+        data_good = false;
     }
 
     // read current joint velocities from robot data
     vector6d_t joint_velocities{};
-    if (!data_package->getData(k_joints_velocity_key, joint_velocities)) {
-        VIAM_SDK_LOG(error) << "getData(\"actual_qd\") returned false";
-        return event_connection_lost_{};
+    if (!arm_conn_->data_package->getData(k_joints_velocity_key, joint_velocities)) {
+        VIAM_SDK_LOG(error) << "getData(\"actual_qd\") returned false - joint velocities will not be available";
+        data_good = false;
     }
 
     vector6d_t tcp_state{};
-    if (!data_package->getData(k_tcp_key, tcp_state)) {
-        VIAM_SDK_LOG(warn) << "getData(\"actual_TCP_pos\") returned false";
-        return event_connection_lost_{};
+    if (!arm_conn_->data_package->getData(k_tcp_key, tcp_state)) {
+        VIAM_SDK_LOG(warn) << "getData(\"actual_TCP_pos\") returned false - end effector pose will not be available";
+        data_good = false;
     }
 
     // For consistency, update cached data only after all getData
-    // calls succeed, and we know we aren't going to be emitting an
-    // event that might kick us out of this state.
-    arm_conn_->data_package = std::move(data_package);
-    state.joint_positions_ = std::move(joint_positions);
-    state.joint_velocities_ = std::move(joint_velocities);
-    state.tcp_state_ = std::move(tcp_state);
-
+    // calls succeed.
+    if (data_good) {
+        state.joint_positions_ = std::move(joint_positions);
+        state.joint_velocities_ = std::move(joint_velocities);
+        state.tcp_state_ = std::move(tcp_state);
+    }
     return std::nullopt;
 }
 
@@ -880,8 +912,27 @@ std::chrono::milliseconds URArm::state_::state_controlled_::get_timeout() const 
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::upgrade_downgrade(state_&) {
-    // TODO: Examine data packet for bits that tell us about estop or local mode
     // TODO: What if we detect BOTH local and estop on the same packet?
+
+    namespace urtde = urcl::rtde_interface;
+
+    if (!arm_conn_->safety_status_bits || !arm_conn_->robot_status_bits) {
+        VIAM_SDK_LOG(warn) << "While in controlled state, robot and safety status bits were not available; disconnecting";
+        return event_connection_lost_{};
+    }
+
+    if (!arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
+        return event_estop_detected_{};
+    }
+
+    constexpr auto power_on_bit = 1ULL << static_cast<int>(urtde::UrRtdeRobotStatusBits::IS_POWER_ON);
+    constexpr auto program_running_bit = 1ULL << static_cast<int>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING);
+    constexpr std::bitset<4> k_power_on_and_running{power_on_bit | program_running_bit};
+
+    if (*(arm_conn_->robot_status_bits) != k_power_on_and_running) {
+        return event_local_mode_detected_{};
+    }
+
     return std::nullopt;
 }
 
@@ -1001,6 +1052,19 @@ std::chrono::milliseconds URArm::state_::state_independent_::get_timeout() const
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::upgrade_downgrade(state_&) {
+    namespace urtde = urcl::rtde_interface;
+
+    if (!arm_conn_->safety_status_bits || !arm_conn_->robot_status_bits) {
+        VIAM_SDK_LOG(warn) << "While in independent state, robot and safety status bits were not available; disconnecting";
+        return event_connection_lost_{};
+    }
+
+    if (estopped() && arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
+        return event_estop_cleared_{};
+    }
+
+    // TODO: escape local mode
+
     return std::nullopt;
 }
 
