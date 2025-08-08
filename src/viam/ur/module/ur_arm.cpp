@@ -292,36 +292,13 @@ class URArm::state_ {
                                         event_remote_mode_restored_>;
 
     struct state_disconnected_ {
-        static std::string_view name() {
-            using namespace std::literals::string_view_literals;
-            return "disconnected"sv;
-        }
-
-        auto describe() const {
-            return name();
-        }
-
-        std::chrono::milliseconds get_timeout() const {
-            return k_disconnect_delay;
-        }
-
+        static std::string_view name();
+        auto describe() const;
+        std::chrono::milliseconds get_timeout() const;
         std::optional<event_variant_> upgrade_downgrade(state_& state);
-
-        std::optional<event_variant_> recv_arm_data(state_&) {
-            return std::nullopt;
-        }
-
-        std::optional<event_variant_> handle_move_request(state_& state) {
-            if (state.move_request_) {
-                std::exchange(state.move_request_, {})->complete_error("no connection to arm");
-            }
-            return std::nullopt;
-        }
-
-        std::optional<event_variant_> send_noop() {
-            return std::nullopt;
-        }
-
+        std::optional<event_variant_> recv_arm_data(state_&);
+        std::optional<event_variant_> handle_move_request(state_& state);
+        std::optional<event_variant_> send_noop();
         state_variant_ handle_event(event_connection_established_ event);
 
         template <typename Event>
@@ -349,145 +326,26 @@ class URArm::state_ {
         std::unique_ptr<rtde_interface::DataPackage> data_package;
     };
 
-    // A base class
     struct state_connected_ {
-        explicit state_connected_(std::unique_ptr<arm_connection_> arm_conn) : arm_conn_{std::move(arm_conn)} {}
+        explicit state_connected_(std::unique_ptr<arm_connection_> arm_conn);
 
-        std::optional<event_variant_> send_noop() const {
-            if (!arm_conn_->driver->writeTrajectoryControlMessage(
-                    control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-                return event_connection_lost_{};
-            }
-            return std::nullopt;
-        }
-
-        std::optional<event_variant_> recv_arm_data(state_& state) const {
-            state.joint_positions_.reset();
-            state.joint_velocities_.reset();
-            state.tcp_state_.reset();
-
-            auto data_package = arm_conn_->driver->getDataPackage();
-
-            if (data_package) {
-                return event_connection_lost_{};
-            }
-
-            static const std::string k_joints_position_key = "actual_q";
-            static const std::string k_joints_velocity_key = "actual_qd";
-            static const std::string k_tcp_key = "actual_TCP_pose";
-
-            vector6d_t joint_positions{};
-            if (!arm_conn_->data_package->getData(k_joints_position_key, joint_positions)) {
-                VIAM_SDK_LOG(error) << "getData(\"actual_q\") returned false";
-                return event_connection_lost_{};
-            }
-
-            // read current joint velocities from robot data
-            vector6d_t joint_velocities{};
-            if (!arm_conn_->data_package->getData(k_joints_velocity_key, joint_velocities)) {
-                VIAM_SDK_LOG(error) << "getData(\"actual_qd\") returned false";
-                return event_connection_lost_{};
-            }
-
-            vector6d_t tcp_state{};
-            if (!arm_conn_->data_package->getData(k_tcp_key, tcp_state)) {
-                VIAM_SDK_LOG(warn) << "getData(\"actual_TCP_pos\") returned false";
-                return event_connection_lost_{};
-            }
-
-            // for consistency, update cached data only after all getData calls succeed,
-            // and we know we aren't going to be emitting an event that might kick us out of this state.
-            arm_conn_->data_package = std::move(data_package);
-            state.joint_positions_ = std::move(joint_positions);
-            state.joint_velocities_ = std::move(joint_velocities);
-            state.tcp_state_ = std::move(tcp_state);
-
-            return std::nullopt;
-        }
+        std::optional<event_variant_> send_noop() const;
+        std::optional<event_variant_> recv_arm_data(state_& state) const;
 
         std::unique_ptr<arm_connection_> arm_conn_;
     };
 
     struct state_controlled_ : public state_connected_ {
-        explicit state_controlled_(std::unique_ptr<arm_connection_> arm_conn) : state_connected_(std::move(arm_conn)) {}
+        explicit state_controlled_(std::unique_ptr<arm_connection_> arm_conn);
+
+        static std::string_view name();
+        auto describe() const;
+        std::chrono::milliseconds get_timeout() const;
 
         using state_connected_::recv_arm_data;
+        std::optional<event_variant_> upgrade_downgrade(state_&);
+        std::optional<event_variant_> handle_move_request(state_& state);
         using state_connected_::send_noop;
-
-        static std::string_view name() {
-            using namespace std::literals::string_view_literals;
-            return "controlled"sv;
-        }
-
-        auto describe() const {
-            return name();
-        }
-
-        std::chrono::milliseconds get_timeout() const {
-            return k_noop_delay;
-        }
-
-        std::optional<event_variant_> upgrade_downgrade(state_&) {
-            // TODO: Examine data packet for bits that tell us about estop or local mode
-            return std::nullopt;
-        }
-
-        std::optional<event_variant_> handle_move_request(state_& state) {
-            if (!state.move_request_) {
-                return std::nullopt;
-            }
-
-            if (!state.move_request_->samples.empty() && !state.move_request_->cancellation_request) {
-                // We have a move request, it has samples, and there is no pending cancel for that move. Issue the move.
-
-                VIAM_SDK_LOG(info) << "URArm sending trajectory";
-
-                const auto num_samples = state.move_request_->samples.size();
-
-                if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
-                                                                      static_cast<int>(num_samples),
-                                                                      RobotReceiveTimeout::off())) {
-                    VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
-                    std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
-                    // TODO: Should this be a state transition? We consider sending a noop a failure.
-                }
-
-                // By moving the samples out, we indicate that the trajectory is considered started.
-                auto samples = std::move(state.move_request_->samples);
-
-                VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << samples.size() << " cubic writeTrajectorySplinePoint/3";
-                for (size_t i = 0; i < samples.size(); i++) {
-                    if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
-                        VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
-                        std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
-
-                        // TODO: XXX ACM this is new but makes sense to me.
-                        arm_conn_->driver->writeTrajectoryControlMessage(
-                            urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
-                        // TODO: Should this be a state transition? We consider sending a noop a failure.
-                    };
-                }
-            } else if (state.move_request_->samples.empty() && state.move_request_->cancellation_request &&
-                       !state.move_request_->cancellation_request->issued) {
-                // We have a move request, the samples have been forwarded,
-                // and cancellation is requested but has not yet been issued. Issue a cancel.
-                state.move_request_->cancellation_request->issued = true;
-                if (!arm_conn_->driver->writeTrajectoryControlMessage(
-                        urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
-                    state.move_request_->cancel_error("failed to write trajectory control cancel message to URArm");
-                    // TODO: Should this be a state transition? We consider sending a noop a failure.
-                }
-            } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
-                // We have a move request that we haven't issued but a
-                // cancel is already pending. Don't issue it, just cancel it.
-                std::exchange(state.move_request_, {})->complete_cancelled();
-            } else {
-                // TODO: is it assured that we have positions/velocities here?
-                state.move_request_->write_joint_data(*state.joint_positions_, *state.joint_velocities_);
-            }
-
-            return std::nullopt;
-        }
 
         state_variant_ handle_event(event_connection_lost_);
         state_variant_ handle_event(event_estop_detected_);
@@ -502,80 +360,19 @@ class URArm::state_ {
     struct state_independent_ : public state_connected_ {
         enum class reason { k_estopped, k_local_mode, k_both };
 
-        explicit state_independent_(std::unique_ptr<arm_connection_> arm_conn, reason r)
-            : state_connected_(std::move(arm_conn)), reason_(r) {}
+        explicit state_independent_(std::unique_ptr<arm_connection_> arm_conn, reason r);
+
+        static std::string_view name();
+        std::string describe() const;
+        std::chrono::milliseconds get_timeout() const;
 
         using state_connected_::recv_arm_data;
+        std::optional<event_variant_> upgrade_downgrade(state_&);
+        std::optional<event_variant_> handle_move_request(state_& state);
         using state_connected_::send_noop;
 
-        static std::string_view name() {
-            using namespace std::literals::string_view_literals;
-            return "independent"sv;
-        }
-
-        std::string describe() const {
-            std::ostringstream buffer;
-            buffer << name() << "(";
-            switch (reason_) {
-                case reason::k_estopped: {
-                    buffer << "estop)";
-                    break;
-                }
-                case reason::k_local_mode: {
-                    buffer << "local)";
-                    break;
-                }
-                case reason::k_both: {
-                    buffer << "estop|local)";
-                    break;
-                }
-                default: {
-                    buffer << "unknown)";
-                    break;
-                }
-            }
-            return buffer.str();
-        }
-
-        std::chrono::milliseconds get_timeout() const {
-            if (estopped()) {
-                return k_estop_delay;
-            }
-            return k_noop_delay;
-        }
-
-        std::optional<event_variant_> upgrade_downgrade(state_&) {
-            return std::nullopt;
-        }
-
-        std::optional<event_variant_> handle_move_request(state_& state) {
-            if (state.move_request_) {
-                std::exchange(state.move_request_, {})->complete_error([this]() -> std::string {
-                    switch (reason_) {
-                        case reason::k_estopped: {
-                            return "arm is estopped";
-                        }
-                        case reason::k_local_mode: {
-                            return "arm is in local mode";
-                        }
-                        case reason::k_both: {
-                            return "arm is in local mode and estopped";
-                        }
-                        default: {
-                            return "arm is in an unknown and uncontrolled state";
-                        }
-                    }
-                }());
-            }
-            return std::nullopt;
-        }
-
-        bool estopped() const {
-            return reason_ != reason::k_local_mode;
-        }
-        bool local_mode() const {
-            return reason_ != reason::k_estopped;
-        }
+        bool estopped() const;
+        bool local_mode() const;
 
         state_variant_ handle_event(event_connection_lost_);
         state_variant_ handle_event(event_estop_detected_);
@@ -589,59 +386,24 @@ class URArm::state_ {
         reason reason_;
     };
 
-    // TODO(acm): XXX - outline implementation?
+    // TODO(acm): Tighten up as a class?
     struct move_request {
        public:
-        explicit move_request(std::vector<trajectory_sample_point>&& samples, std::ofstream arm_joint_positions_stream)
-            : samples(std::move(samples)), arm_joint_positions_stream(std::move(arm_joint_positions_stream)) {
-            if (this->samples.empty()) {
-                throw std::invalid_argument("no trajectory samples provided to move request");
-            }
-        }
+        explicit move_request(std::vector<trajectory_sample_point>&& samples, std::ofstream arm_joint_positions_stream);
 
-        auto cancel() {
-            if (!cancellation_request) {
-                auto& cr = cancellation_request.emplace();
-                cr.future = cr.promise.get_future().share();
-            }
-            return cancellation_request->future;
-        }
+        std::shared_future<void> cancel();
 
-        void complete_success() {
-            // Mark the move_request as completed. If there
-            // was a cancel request, it raced and lost, but it doesn't
-            // need an error.
-            if (cancellation_request) {
-                cancellation_request->promise.set_value();
-            }
-        }
+        void complete_success();
 
-        void complete_cancelled() {
-            complete_error("arm's current trajectory cancelled");
-        }
+        void complete_cancelled();
 
-        void complete_failure() {
-            complete_error("arm's current trajectory failed");
-        }
+        void complete_failure();
 
-        void complete_error(std::string_view message) {
-            // The trajectory is being completed with an error of some sort. Set the completion result to an error,
-            // and unblock any cancellation request.
-            completion.set_exception(std::make_exception_ptr(std::runtime_error{std::string{message}}));
-            if (cancellation_request) {
-                cancellation_request->promise.set_value();
-            }
-            VIAM_SDK_LOG(warn) << "A trajectory completed with an error: " << message;
-        }
+        void complete_error(std::string_view message);
 
-        void cancel_error(std::string_view message) {
-            std::exchange(cancellation_request, {})
-                ->promise.set_exception(std::make_exception_ptr(std::runtime_error{std::string{message}}));
-        }
+        void cancel_error(std::string_view message);
 
-        void write_joint_data(vector6d_t& position, vector6d_t& velocity) {
-            ::write_joint_data(position, velocity, arm_joint_positions_stream, unix_time_iso8601(), arm_joint_positions_sample++);
-        }
+        void write_joint_data(vector6d_t& position, vector6d_t& velocity);
 
         std::vector<trajectory_sample_point> samples;
         std::ofstream arm_joint_positions_stream;
@@ -651,7 +413,7 @@ class URArm::state_ {
         struct cancellation_request {
             // This constructor needs to be written this way for
             // std::optional::emplace with no arguments to work.
-            cancellation_request() {}
+            cancellation_request();
 
             std::promise<void> promise;
             std::shared_future<void> future;
@@ -768,7 +530,6 @@ class URArm::state_ {
     std::atomic<std::size_t> move_epoch_{0};
     std::optional<move_request> move_request_;
 };
-
 
 URArm::state_::state_(private_, std::string configured_model_type, std::string host, std::string app_dir, std::string csv_output_path)
     : configured_model_type_{std::move(configured_model_type)},
@@ -935,6 +696,23 @@ std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
     return std::make_optional(move_request_->cancel());
 }
 
+std::string_view URArm::state_::state_disconnected_::name() {
+    using namespace std::literals::string_view_literals;
+    return "disconnected"sv;
+}
+
+auto URArm::state_::state_disconnected_::describe() const {
+    return name();
+}
+
+std::chrono::milliseconds URArm::state_::state_disconnected_::get_timeout() const {
+    return k_disconnect_delay;
+}
+
+std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::recv_arm_data(state_&) {
+    return std::nullopt;
+}
+
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::upgrade_downgrade(state_& state) {
     VIAM_SDK_LOG(info) << "disconnected: attempting recovery";
     auto arm_connection = std::make_unique<arm_connection_>();
@@ -1048,6 +826,17 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
     return event_connection_established_{std::move(arm_connection)};
 }
 
+std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::handle_move_request(state_& state) {
+    if (state.move_request_) {
+        std::exchange(state.move_request_, {})->complete_error("no connection to arm");
+    }
+    return std::nullopt;
+}
+
+std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::send_noop() {
+    return std::nullopt;
+}
+
 URArm::state_::state_variant_ URArm::state_::state_disconnected_::handle_event(event_connection_established_ event) {
     return state_controlled_{std::move(event.payload)};
 }
@@ -1055,6 +844,136 @@ URArm::state_::state_variant_ URArm::state_::state_disconnected_::handle_event(e
 template <typename Event>
 URArm::state_::state_variant_ URArm::state_::state_disconnected_::handle_event(Event) {
     return std::move(*this);
+}
+
+URArm::state_::state_connected_::state_connected_(std::unique_ptr<arm_connection_> arm_conn) : arm_conn_{std::move(arm_conn)} {}
+
+std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::send_noop() const {
+    if (!arm_conn_->driver->writeTrajectoryControlMessage(
+            control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
+        return event_connection_lost_{};
+    }
+    return std::nullopt;
+}
+
+std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::recv_arm_data(state_& state) const {
+    state.joint_positions_.reset();
+    state.joint_velocities_.reset();
+    state.tcp_state_.reset();
+
+    auto data_package = arm_conn_->driver->getDataPackage();
+
+    if (data_package) {
+        return event_connection_lost_{};
+    }
+
+    static const std::string k_joints_position_key = "actual_q";
+    static const std::string k_joints_velocity_key = "actual_qd";
+    static const std::string k_tcp_key = "actual_TCP_pose";
+
+    vector6d_t joint_positions{};
+    if (!arm_conn_->data_package->getData(k_joints_position_key, joint_positions)) {
+        VIAM_SDK_LOG(error) << "getData(\"actual_q\") returned false";
+        return event_connection_lost_{};
+    }
+
+    // read current joint velocities from robot data
+    vector6d_t joint_velocities{};
+    if (!arm_conn_->data_package->getData(k_joints_velocity_key, joint_velocities)) {
+        VIAM_SDK_LOG(error) << "getData(\"actual_qd\") returned false";
+        return event_connection_lost_{};
+    }
+
+    vector6d_t tcp_state{};
+    if (!arm_conn_->data_package->getData(k_tcp_key, tcp_state)) {
+        VIAM_SDK_LOG(warn) << "getData(\"actual_TCP_pos\") returned false";
+        return event_connection_lost_{};
+    }
+
+    // for consistency, update cached data only after all getData calls succeed,
+    // and we know we aren't going to be emitting an event that might kick us out of this state.
+    arm_conn_->data_package = std::move(data_package);
+    state.joint_positions_ = std::move(joint_positions);
+    state.joint_velocities_ = std::move(joint_velocities);
+    state.tcp_state_ = std::move(tcp_state);
+
+    return std::nullopt;
+}
+
+URArm::state_::state_controlled_::state_controlled_(std::unique_ptr<arm_connection_> arm_conn) : state_connected_(std::move(arm_conn)) {}
+
+std::string_view URArm::state_::state_controlled_::name() {
+    using namespace std::literals::string_view_literals;
+    return "controlled"sv;
+}
+
+auto URArm::state_::state_controlled_::describe() const {
+    return name();
+}
+
+std::chrono::milliseconds URArm::state_::state_controlled_::get_timeout() const {
+    return k_noop_delay;
+}
+
+std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::upgrade_downgrade(state_&) {
+    // TODO: Examine data packet for bits that tell us about estop or local mode
+    return std::nullopt;
+}
+
+std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::handle_move_request(state_& state) {
+    if (!state.move_request_) {
+        return std::nullopt;
+    }
+
+    if (!state.move_request_->samples.empty() && !state.move_request_->cancellation_request) {
+        // We have a move request, it has samples, and there is no pending cancel for that move. Issue the move.
+
+        VIAM_SDK_LOG(info) << "URArm sending trajectory";
+
+        const auto num_samples = state.move_request_->samples.size();
+
+        if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
+            VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
+            std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
+            // TODO: Should this be a state transition? We consider sending a noop a failure.
+        }
+
+        // By moving the samples out, we indicate that the trajectory is considered started.
+        auto samples = std::move(state.move_request_->samples);
+
+        VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << samples.size() << " cubic writeTrajectorySplinePoint/3";
+        for (size_t i = 0; i < samples.size(); i++) {
+            if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
+                VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
+                std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
+
+                // TODO: XXX ACM this is new but makes sense to me.
+                arm_conn_->driver->writeTrajectoryControlMessage(
+                    urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
+                // TODO: Should this be a state transition? We consider sending a noop a failure.
+            };
+        }
+    } else if (state.move_request_->samples.empty() && state.move_request_->cancellation_request &&
+               !state.move_request_->cancellation_request->issued) {
+        // We have a move request, the samples have been forwarded,
+        // and cancellation is requested but has not yet been issued. Issue a cancel.
+        state.move_request_->cancellation_request->issued = true;
+        if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
+            state.move_request_->cancel_error("failed to write trajectory control cancel message to URArm");
+            // TODO: Should this be a state transition? We consider sending a noop a failure.
+        }
+    } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
+        // We have a move request that we haven't issued but a
+        // cancel is already pending. Don't issue it, just cancel it.
+        std::exchange(state.move_request_, {})->complete_cancelled();
+    } else {
+        // TODO: is it assured that we have positions/velocities here?
+        state.move_request_->write_joint_data(*state.joint_positions_, *state.joint_velocities_);
+    }
+
+    return std::nullopt;
 }
 
 URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(event_connection_lost_) {
@@ -1072,6 +991,79 @@ URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(eve
 template <typename Event>
 URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(Event) {
     return std::move(*this);
+}
+
+URArm::state_::state_independent_::state_independent_(std::unique_ptr<arm_connection_> arm_conn, reason r)
+    : state_connected_(std::move(arm_conn)), reason_(r) {}
+
+std::string_view URArm::state_::state_independent_::name() {
+    using namespace std::literals::string_view_literals;
+    return "independent"sv;
+}
+
+std::string URArm::state_::state_independent_::describe() const {
+    std::ostringstream buffer;
+    buffer << name() << "(";
+    switch (reason_) {
+        case reason::k_estopped: {
+            buffer << "estop)";
+            break;
+        }
+        case reason::k_local_mode: {
+            buffer << "local)";
+            break;
+        }
+        case reason::k_both: {
+            buffer << "estop|local)";
+            break;
+        }
+        default: {
+            buffer << "unknown)";
+            break;
+        }
+    }
+    return buffer.str();
+}
+
+std::chrono::milliseconds URArm::state_::state_independent_::get_timeout() const {
+    if (estopped()) {
+        return k_estop_delay;
+    }
+    return k_noop_delay;
+}
+
+std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::upgrade_downgrade(state_&) {
+    return std::nullopt;
+}
+
+std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::handle_move_request(state_& state) {
+    if (state.move_request_) {
+        std::exchange(state.move_request_, {})->complete_error([this]() -> std::string {
+            switch (reason_) {
+                case reason::k_estopped: {
+                    return "arm is estopped";
+                }
+                case reason::k_local_mode: {
+                    return "arm is in local mode";
+                }
+                case reason::k_both: {
+                    return "arm is in local mode and estopped";
+                }
+                default: {
+                    return "arm is in an unknown and uncontrolled state";
+                }
+            }
+        }());
+    }
+    return std::nullopt;
+}
+
+bool URArm::state_::state_independent_::estopped() const {
+    return reason_ != reason::k_local_mode;
+}
+
+bool URArm::state_::state_independent_::local_mode() const {
+    return reason_ != reason::k_estopped;
 }
 
 URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_estop_cleared_) {
@@ -1118,6 +1110,58 @@ template <typename Event>
 URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(Event) {
     return std::move(*this);
 }
+
+URArm::state_::move_request::move_request(std::vector<trajectory_sample_point>&& samples, std::ofstream arm_joint_positions_stream)
+    : samples(std::move(samples)), arm_joint_positions_stream(std::move(arm_joint_positions_stream)) {
+    if (this->samples.empty()) {
+        throw std::invalid_argument("no trajectory samples provided to move request");
+    }
+}
+
+std::shared_future<void> URArm::state_::move_request::cancel() {
+    if (!cancellation_request) {
+        auto& cr = cancellation_request.emplace();
+        cr.future = cr.promise.get_future().share();
+    }
+    return cancellation_request->future;
+}
+
+void URArm::state_::move_request::complete_success() {
+    // Mark the move_request as completed. If there
+    // was a cancel request, it raced and lost, but it doesn't
+    // need an error.
+    if (cancellation_request) {
+        cancellation_request->promise.set_value();
+    }
+}
+
+void URArm::state_::move_request::complete_cancelled() {
+    complete_error("arm's current trajectory cancelled");
+}
+
+void URArm::state_::move_request::complete_failure() {
+    complete_error("arm's current trajectory failed");
+}
+
+void URArm::state_::move_request::complete_error(std::string_view message) {
+    // The trajectory is being completed with an error of some sort. Set the completion result to an error,
+    // and unblock any cancellation request.
+    completion.set_exception(std::make_exception_ptr(std::runtime_error{std::string{message}}));
+    if (cancellation_request) {
+        cancellation_request->promise.set_value();
+    }
+    VIAM_SDK_LOG(warn) << "A trajectory completed with an error: " << message;
+}
+
+void URArm::state_::move_request::cancel_error(std::string_view message) {
+    std::exchange(cancellation_request, {})->promise.set_exception(std::make_exception_ptr(std::runtime_error{std::string{message}}));
+}
+
+void URArm::state_::move_request::write_joint_data(vector6d_t& position, vector6d_t& velocity) {
+    ::write_joint_data(position, velocity, arm_joint_positions_stream, unix_time_iso8601(), arm_joint_positions_sample++);
+}
+
+URArm::state_::move_request::cancellation_request::cancellation_request() {}
 
 void URArm::state_::emit_event_(event_variant_&& event) {
     std::visit([this](auto&& event) { this->emit_event_(std::forward<decltype(event)>(event)); }, std::move(event));
