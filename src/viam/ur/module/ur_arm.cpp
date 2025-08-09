@@ -363,7 +363,7 @@ class URArm::state_ {
     };
 
     struct state_independent_ : public state_connected_ {
-        enum class reason { k_estopped, k_local_mode, k_both };
+        enum class reason : std::uint8_t { k_estopped, k_local_mode, k_both };
 
         explicit state_independent_(std::unique_ptr<arm_connection_> arm_conn, reason r);
 
@@ -542,7 +542,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     state->set_speed(degrees_to_radians(find_config_attribute<double>(config, "speed_degs_per_sec")));
     state->set_acceleration(degrees_to_radians(find_config_attribute<double>(config, "acceleration_degs_per_sec2")));
 
-    std::unique_lock lock(state->mutex_);
+    const std::lock_guard lock(state->mutex_);
     state->worker_thread_ = std::thread{&state_::run_, state.get()};
 
     // Attempt to manually drive the state machine out of the
@@ -818,7 +818,7 @@ URArm::state_::state_connected_::state_connected_(std::unique_ptr<arm_connection
 std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::send_noop() const {
     if (!arm_conn_->driver->writeTrajectoryControlMessage(
             control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-        return event_connection_lost_{};
+        return event_local_mode_detected_{};
     }
     return std::nullopt;
 }
@@ -955,19 +955,15 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
             VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
             std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
-            // TODO: Should this be a state transition? We consider sending a noop a failure.
+            return event_local_mode_detected_{};
         }
 
-        VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << samples.size() << " cubic writeTrajectorySplinePoint";
-        for (size_t i = 0; i < samples.size(); i++) {
+        VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
+        for (size_t i = 0; i < num_samples; i++) {
             if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
                 VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
                 std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
-
-                // TODO: XXX ACM this is new but makes sense to me.
-                arm_conn_->driver->writeTrajectoryControlMessage(
-                    urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off());
-                // TODO: Should this be a state transition? We consider sending a noop a failure.
+                return event_local_mode_detected_{};
             };
         }
 
@@ -981,7 +977,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
             state.move_request_->cancel_error("failed to write trajectory control cancel message to URArm");
-            // TODO: Should this be a state transition? We consider sending a noop a failure.
+            return event_local_mode_detected_{};
         }
     } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
         // We have a move request that we haven't issued but a
