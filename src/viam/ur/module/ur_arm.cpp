@@ -1,18 +1,22 @@
 #include "ur_arm.hpp"
 #include "utils.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <exception>
 #include <future>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
 
 #include <boost/format.hpp>
+#include <boost/io/ostream_joiner.hpp>
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/range/adaptor/transformed.hpp>
+#include <boost/range/algorithm.hpp>
 
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
@@ -110,6 +114,21 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     static_cast<void>(find_config_attribute<std::string>(cfg, "host"));
     static_cast<void>(find_config_attribute<double>(cfg, "speed_degs_per_sec"));
     static_cast<void>(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2"));
+    {
+        auto threshold = -1.0;
+        try {
+            threshold = find_config_attribute<double>(cfg, "reject_move_request_threshold_deg");
+        } catch (...) {
+            // will go away once find_config_attribute returns an optional
+            return {};
+        }
+        if (threshold < 0 || threshold > 360) {
+            std::stringstream sstream;
+            sstream << "reject_move_request_threshold_deg should be between 0 and 360, it is : " << threshold;
+            throw std::invalid_argument(sstream.str());
+        }
+    }
+
     return {};
 }
 
@@ -191,6 +210,7 @@ struct URArm::state_ {
     std::optional<vector6d_t> joints_position;
     std::optional<vector6d_t> joints_velocity;
     std::optional<vector6d_t> tcp_state;
+    std::optional<double> reject_move_request_threshold_rad;
 
     std::atomic<bool> shutdown{false};
     std::atomic<TrajectoryStatus> trajectory_status{TrajectoryStatus::k_stopped};
@@ -372,6 +392,13 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     current_state_->host = find_config_attribute<std::string>(cfg, "host");
     current_state_->speed.store(degrees_to_radians(find_config_attribute<double>(cfg, "speed_degs_per_sec")));
     current_state_->acceleration.store(degrees_to_radians(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2")));
+    try {
+        auto threshold = find_config_attribute<double>(cfg, "reject_move_request_threshold_deg");
+        current_state_->reject_move_request_threshold_rad.emplace(degrees_to_radians(threshold));
+    }  // will go away once find_config_attribute returns an optional
+    catch (...) {
+        (void)0;
+    }
 
     // get the APPDIR environment variable
     auto* const appdir = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
@@ -562,10 +589,12 @@ void URArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
 std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-    return get_joint_positions_(rlock);
+    auto joint_rads = get_joint_positions_rad_(rlock);
+    auto joint_position_degree = joint_rads | boost::adaptors::transformed(radians_to_degrees<const double&>);
+    return {std::begin(joint_position_degree), std::end(joint_position_degree)};
 }
 
-std::vector<double> URArm::get_joint_positions_(const std::shared_lock<std::shared_mutex>&) {
+vector6d_t URArm::get_joint_positions_rad_(const std::shared_lock<std::shared_mutex>&) {
     const std::lock_guard guard{current_state_->state_mutex};
     if (current_state_->last_driver_status == UrDriverStatus::READ_FAILURE) {
         // TODO(RSDK-11295): provide more context
@@ -577,12 +606,7 @@ std::vector<double> URArm::get_joint_positions_(const std::shared_lock<std::shar
         throw std::runtime_error("get_joint_positions: joint position is not currently known");
     }
 
-    std::vector<double> to_ret;
-    for (const double joint_pos_rad : *current_state_->joints_position) {
-        const double joint_pos_deg = radians_to_degrees(joint_pos_rad);
-        to_ret.push_back(joint_pos_deg);
-    }
-    return to_ret;
+    return *current_state_->joints_position;
 }
 
 std::string waypoints_filename(const std::string& path, const std::string& unix_time) {
@@ -805,14 +829,34 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
 
     // get current joint position and add that as starting pose to waypoints
     VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time;
-    std::vector<double> curr_joint_pos = get_joint_positions_(our_config_rlock);
+    auto curr_joint_pos = get_joint_positions_rad_(our_config_rlock);
     VIAM_SDK_LOG(info) << "move: get_joint_positions end " << unix_time;
+    auto curr_joint_pos_rad = Eigen::Map<Eigen::VectorXd>(curr_joint_pos.data(), curr_joint_pos.size());
+
+    if (current_state_->reject_move_request_threshold_rad) {
+        auto delta_pos = (waypoints.front() - curr_joint_pos_rad);
+
+        if (delta_pos.lpNorm<Eigen::Infinity>() > *current_state_->reject_move_request_threshold_rad) {
+            std::stringstream err_string;
+
+            err_string << "rejecting move request : difference between starting trajectory position [(";
+            auto first_waypoint = waypoints.front();
+            boost::copy(first_waypoint | boost::adaptors::transformed(radians_to_degrees<const double&>),
+                        boost::io::make_ostream_joiner(err_string, ", "));
+            err_string << ")] and joint position [(";
+            boost::copy(curr_joint_pos_rad | boost::adaptors::transformed(radians_to_degrees<const double&>),
+                        boost::io::make_ostream_joiner(err_string, ", "));
+            err_string << ")] is above threshold " << radians_to_degrees(delta_pos.lpNorm<Eigen::Infinity>()) << " > "
+                       << radians_to_degrees(*current_state_->reject_move_request_threshold_rad);
+            VIAM_SDK_LOG(error) << err_string.str();
+            throw std::runtime_error(err_string.str());
+        }
+    }
 
     VIAM_SDK_LOG(info) << "move: compute_trajectory start " << unix_time;
-    auto curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
-    auto curr_waypoint_rad = degrees_to_radians(std::move(curr_waypoint_deg)).eval();
-    if (!curr_waypoint_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
-        waypoints.emplace_front(std::move(curr_waypoint_rad));
+
+    if (!curr_joint_pos_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
+        waypoints.emplace_front(std::move(curr_joint_pos_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
         VIAM_SDK_LOG(info) << "arm is already at the desired joint positions";
