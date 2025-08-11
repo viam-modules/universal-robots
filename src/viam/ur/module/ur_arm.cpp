@@ -221,6 +221,7 @@ std::string unix_time_iso8601() {
     return stream.str();
 }
 
+#if 0
 // TODO: This may not survive the refactor
 enum class URArm::UrDriverStatus : int8_t  // Only available on 3.10/5.4
 {
@@ -229,6 +230,7 @@ enum class URArm::UrDriverStatus : int8_t  // Only available on 3.10/5.4
     READ_FAILURE = 3,
     DASHBOARD_FAILURE = 4
 };
+#endif
 
 // private variables to maintain connection and state
 class URArm::state_ {
@@ -313,13 +315,8 @@ class URArm::state_ {
     struct arm_connection_ {
         ~arm_connection_() {
             VIAM_SDK_LOG(warn) << "XXX ACM destroying current arm connection: data";
-            // driver->stopPrimaryClientCommunication();
-            // dashboard->disconnect();
             data_package.reset();
-            VIAM_SDK_LOG(warn) << "XXX ACM destroying current arm connection: driver 1";
-            driver->resetRTDEClient("", "");
-            //            driver->stopPrimaryClientCommunication();
-            VIAM_SDK_LOG(warn) << "XXX ACM destroying current arm connection: driver 2";
+            VIAM_SDK_LOG(warn) << "XXX ACM destroying current arm connection: driver";
             driver.reset();
             VIAM_SDK_LOG(warn) << "XXX ACM destroying current arm connection: dashboard";
             dashboard.reset();
@@ -461,8 +458,8 @@ class URArm::state_ {
     void emit_event_(T&& event);
 
     std::chrono::milliseconds get_timeout_() const;
-    void upgrade_downgrade_();
     void recv_arm_data_();
+    void upgrade_downgrade_();
     void handle_move_request_();
     void send_noop_();
 
@@ -748,8 +745,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
         running_flag.store(running, std::memory_order_release);
     };
     ur_cfg.headless_mode = true;
-    // TODO: Changed this to zero. Is that right? I think so. We want to handle reconnection ourselves.
-    ur_cfg.socket_reconnect_attempts = 0;
+    ur_cfg.socket_reconnect_attempts = 1;
 
     // TODO(acm): I stepped on how this ports thing was working, but I
     // didn't like it to begin with. Let's try to clean it up.
@@ -851,16 +847,15 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
         return event_connection_lost_{};
     }
 
-    arm_conn_->robot_status_bits = std::move(robot_status_bits);
-    arm_conn_->safety_status_bits = std::move(safety_status_bits);
-
     if (!prior_robot_status_bits || (*prior_robot_status_bits != robot_status_bits)) {
         VIAM_SDK_LOG(info) << "Updated robot status bits: `" << robot_status_bits << "`";
     }
+    arm_conn_->robot_status_bits = robot_status_bits;
 
     if (!prior_safety_status_bits || (*prior_safety_status_bits != safety_status_bits)) {
         VIAM_SDK_LOG(info) << "Updated safety status bits: `" << safety_status_bits << "`";
     }
+    arm_conn_->safety_status_bits = safety_status_bits;
 
     static const std::string k_joints_position_key = "actual_q";
     static const std::string k_joints_velocity_key = "actual_qd";
@@ -893,6 +888,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
         state.joint_velocities_ = std::move(joint_velocities);
         state.tcp_state_ = std::move(tcp_state);
     }
+
     return std::nullopt;
 }
 
@@ -1257,7 +1253,7 @@ void URArm::state_::emit_event_(T&& event) {
     current_state_ = std::visit(
         [&](auto& current_state) {
             const auto current_state_description = current_state.describe();
-            const auto event_description = std::forward<T>(event).describe();
+            const auto event_description = event.describe();
             auto new_state = current_state.handle_event(std::forward<T>(event));
             const auto new_state_description = std::visit([](const auto& state) { return std::string{state.describe()}; }, new_state);
             VIAM_SDK_LOG(info) << "URArm state transition from state `" << current_state_description << "` to state `"
@@ -1884,6 +1880,7 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
     trajectory_completion_future.get();
 }
 
+#if 0
 std::string URArm::status_to_string_(UrDriverStatus status) {
     switch (status) {
         case UrDriverStatus::ESTOPPED:
@@ -1897,6 +1894,7 @@ std::string URArm::status_to_string_(UrDriverStatus status) {
     }
     return "no status";
 }
+#endif
 
 // Define the destructor
 URArm::~URArm() {
