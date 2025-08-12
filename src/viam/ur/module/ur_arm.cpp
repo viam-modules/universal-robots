@@ -291,8 +291,8 @@ class URArm::state_ {
         std::string describe() const;
         std::chrono::milliseconds get_timeout() const;
 
-        std::optional<event_variant_> upgrade_downgrade(state_& state);
         std::optional<event_variant_> recv_arm_data(state_&);
+        std::optional<event_variant_> upgrade_downgrade(state_& state);
         std::optional<event_variant_> handle_move_request(state_& state);
         std::optional<event_variant_> send_noop();
 
@@ -663,7 +663,6 @@ bool URArm::state_::is_moving() const {
 
 std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
     const std::lock_guard lock{mutex_};
-
     if (!move_request_) {
         return std::nullopt;
     }
@@ -816,8 +815,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::se
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::recv_arm_data(state_& state) const {
-    // TODO: This needs to happen for disconnected too.
-
     const auto prior_robot_status_bits = std::exchange(arm_conn_->robot_status_bits, std::nullopt);
     const auto prior_safety_status_bits = std::exchange(arm_conn_->safety_status_bits, std::nullopt);
 
@@ -1626,7 +1623,6 @@ bool URArm::is_moving() {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
     return current_state_->is_moving();
-    // return current_state_->trajectory_status.load() == TrajectoryStatus::k_running;
 }
 
 URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {

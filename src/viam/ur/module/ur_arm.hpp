@@ -139,6 +139,8 @@ class URArm final : public Arm, public Reconfigurable {
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
 
+    const Model model_;
+
     const struct ports_ {
         ports_();
 
@@ -147,8 +149,6 @@ class URArm final : public Arm, public Reconfigurable {
         uint32_t trajectory_port;
         uint32_t script_command_port;
     } ports_;
-
-    const Model model_;
 
     std::shared_mutex config_mutex_;
     std::unique_ptr<state_> current_state_;
