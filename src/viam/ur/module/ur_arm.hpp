@@ -1,16 +1,16 @@
 #pragma once
 
+#include <list>
 #include <shared_mutex>
 
-#include <ur_client_library/control/trajectory_point_interface.h>
+#include <Eigen/Core>
+
 #include <ur_client_library/types.h>
 
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/reconfigurable.hpp>
-
-#include <third_party/trajectories/Path.h>
 
 using namespace viam::sdk;
 using namespace urcl;
@@ -53,24 +53,6 @@ std::string waypoints_filename(const std::string& path, const std::string& unix_
 std::string trajectory_filename(const std::string& path, const std::string& unix_time);
 std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
 std::string unix_time_iso8601();
-
-// The ports that are currently in use by the underlying UR driver
-struct ports {
-    uint32_t reverse_port;
-    uint32_t script_sender_port;
-    uint32_t trajectory_port;
-    uint32_t script_command_port;
-};
-
-// We need to requisition different ports for each independent URArm instance, otherwise they will all try
-// to use the same ports and only one of them will work.
-inline auto new_ports() {
-    uint32_t reverse_port = 50001;
-    // TODO: Don't ship this way.
-    // static std::atomic<uint32_t> port_counter(50001);
-    // const auto reverse_port = port_counter.fetch_add(4);
-    return ports{reverse_port, reverse_port + 1, reverse_port + 2, reverse_port + 3};
-}
 
 class URArm final : public Arm, public Reconfigurable {
    public:
@@ -154,14 +136,20 @@ class URArm final : public Arm, public Reconfigurable {
 
     void move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time_ms);
 
-    void trajectory_done_cb_(control::TrajectoryResult);
-
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
+
+    const struct ports_ {
+        ports_();
+
+        uint32_t reverse_port;
+        uint32_t script_sender_port;
+        uint32_t trajectory_port;
+        uint32_t script_command_port;
+    } ports_;
 
     const Model model_;
 
     std::shared_mutex config_mutex_;
     std::unique_ptr<state_> current_state_;
-    std::optional<ports> current_ports_;
 };

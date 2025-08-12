@@ -1,5 +1,4 @@
 #include "ur_arm.hpp"
-#include "utils.hpp"
 
 #include <array>
 #include <atomic>
@@ -25,6 +24,13 @@
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/range/adaptor/transformed.hpp>
 
+#include <viam/sdk/components/component.hpp>
+#include <viam/sdk/log/logging.hpp>
+#include <viam/sdk/module/module.hpp>
+#include <viam/sdk/module/service.hpp>
+#include <viam/sdk/registry/registry.hpp>
+#include <viam/sdk/resource/resource.hpp>
+
 #include <ur_client_library/control/trajectory_point_interface.h>
 #include <ur_client_library/rtde/data_package.h>
 #include <ur_client_library/rtde/rtde_client.h>
@@ -33,14 +39,9 @@
 #include <ur_client_library/ur/datatypes.h>
 #include <ur_client_library/ur/ur_driver.h>
 
-#include <viam/sdk/components/component.hpp>
-#include <viam/sdk/log/logging.hpp>
-#include <viam/sdk/module/module.hpp>
-#include <viam/sdk/module/service.hpp>
-#include <viam/sdk/registry/registry.hpp>
-#include <viam/sdk/resource/resource.hpp>
-
 #include <third_party/trajectories/Trajectory.h>
+
+#include "utils.hpp"
 
 // this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
 extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
@@ -226,22 +227,22 @@ class URArm::state_ {
     struct private_ {};
 
    public:
-    explicit state_(private_, std::string configured_model_type, std::string host, std::string app_dir, std::string csv_output_path);
+    explicit state_(private_,
+                    std::string configured_model_type,
+                    std::string host,
+                    std::string app_dir,
+                    std::string csv_output_path,
+                    const struct ports_& ports);
     ~state_();
 
-    static std::unique_ptr<state_> create(std::string configured_model_type, const ResourceConfig& config);
+    static std::unique_ptr<state_> create(std::string configured_model_type, const ResourceConfig& config, const struct ports_& ports);
     void shutdown();
 
     vector6d_t read_joint_positions() const;
     vector6d_t read_tcp_pose() const;
 
-    const std::string& csv_output_path() const {
-        return csv_output_path_;
-    }
-
-    const std::string& app_dir() const {
-        return app_dir_;
-    }
+    const std::string& csv_output_path() const;
+    const std::string& app_dir() const;
 
     void set_speed(double speed);
     double get_speed() const;
@@ -287,7 +288,7 @@ class URArm::state_ {
 
     struct state_disconnected_ {
         static std::string_view name();
-        auto describe() const;
+        std::string describe() const;
         std::chrono::milliseconds get_timeout() const;
 
         std::optional<event_variant_> upgrade_downgrade(state_& state);
@@ -325,7 +326,7 @@ class URArm::state_ {
         explicit state_controlled_(std::unique_ptr<arm_connection_> arm_conn);
 
         static std::string_view name();
-        auto describe() const;
+        std::string describe() const;
         std::chrono::milliseconds get_timeout() const;
 
         using state_connected_::recv_arm_data;
@@ -446,6 +447,7 @@ class URArm::state_ {
     void emit_event_(T&& event);
 
     std::chrono::milliseconds get_timeout_() const;
+    std::string describe_() const;
     void recv_arm_data_();
     void upgrade_downgrade_();
     void handle_move_request_();
@@ -458,6 +460,7 @@ class URArm::state_ {
     const std::string host_;
     const std::string app_dir_;
     const std::string csv_output_path_;
+    const struct ports_ ports_;
 
     std::atomic<double> speed_{0};
     std::atomic<double> acceleration_{0};
@@ -478,17 +481,25 @@ class URArm::state_ {
     std::optional<move_request> move_request_;
 };
 
-URArm::state_::state_(private_, std::string configured_model_type, std::string host, std::string app_dir, std::string csv_output_path)
+URArm::state_::state_(private_,
+                      std::string configured_model_type,
+                      std::string host,
+                      std::string app_dir,
+                      std::string csv_output_path,
+                      const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
       host_{std::move(host)},
       app_dir_{std::move(app_dir)},
-      csv_output_path_{std::move(csv_output_path)} {}
+      csv_output_path_{std::move(csv_output_path)},
+      ports_{ports} {}
 
 URArm::state_::~state_() {
     shutdown();
 }
 
-std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_model_type, const ResourceConfig& config) {
+std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_model_type,
+                                                     const ResourceConfig& config,
+                                                     const struct ports_& ports) {
     // get the APPDIR environment variable
     auto* const app_dir = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
     if (!app_dir) {
@@ -501,7 +512,6 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     // If the config contains `csv_output_path`, use that, otherwise,
     // fall back to `VIAM_MOUDLE_DATA` as the output path, which must
     // be set.
-
     auto csv_output_path = [&] {
         try {
             return find_config_attribute<std::string>(config, "csv_output_path");
@@ -524,7 +534,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     }();
 
     auto state = std::make_unique<state_>(
-        private_{}, std::move(configured_model_type), std::move(host), std::string{app_dir}, std::move(csv_output_path));
+        private_{}, std::move(configured_model_type), std::move(host), std::string{app_dir}, std::move(csv_output_path), ports);
 
     state->set_speed(degrees_to_radians(find_config_attribute<double>(config, "speed_degs_per_sec")));
     state->set_acceleration(degrees_to_radians(find_config_attribute<double>(config, "acceleration_degs_per_sec2")));
@@ -572,7 +582,9 @@ void URArm::state_::shutdown() {
 vector6d_t URArm::state_::read_joint_positions() const {
     const std::lock_guard lock{mutex_};
     if (!joint_positions_) {
-        throw std::runtime_error("read_joint_positions: joint position is not currently known");
+        std::ostringstream buffer;
+        buffer << "read_joint_positions: joint positions is not currently known; current state: " << describe_();
+        throw std::runtime_error(buffer.str());
     }
     return *joint_positions_;
 }
@@ -580,9 +592,19 @@ vector6d_t URArm::state_::read_joint_positions() const {
 vector6d_t URArm::state_::read_tcp_pose() const {
     const std::lock_guard lock{mutex_};
     if (!tcp_state_) {
-        throw std::runtime_error("read_tcp_pose: tcp pose is not currently known");
+        std::ostringstream buffer;
+        buffer << "read_tcp_pose: tcp pose is not currently known; current state: " << describe_();
+        throw std::runtime_error(buffer.str());
     }
     return *tcp_state_;
+}
+
+const std::string& URArm::state_::csv_output_path() const {
+    return csv_output_path_;
+}
+
+const std::string& URArm::state_::app_dir() const {
+    return app_dir_;
 }
 
 void URArm::state_::set_speed(double speed) {
@@ -655,8 +677,8 @@ std::string_view URArm::state_::state_disconnected_::name() {
     return "disconnected"sv;
 }
 
-auto URArm::state_::state_disconnected_::describe() const {
-    return name();
+std::string URArm::state_::state_disconnected_::describe() const {
+    return std::string{name()};
 }
 
 std::chrono::milliseconds URArm::state_::state_disconnected_::get_timeout() const {
@@ -718,13 +740,10 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
     ur_cfg.headless_mode = true;
     ur_cfg.socket_reconnect_attempts = 1;
 
-    // TODO(acm): I stepped on how this ports thing was working, but I
-    // didn't like it to begin with. Let's try to clean it up.
-    auto current_ports = new_ports();
-    ur_cfg.reverse_port = current_ports.reverse_port;
-    ur_cfg.script_sender_port = current_ports.script_sender_port;
-    ur_cfg.trajectory_port = current_ports.trajectory_port;
-    ur_cfg.script_command_port = current_ports.script_command_port;
+    ur_cfg.reverse_port = state.ports_.reverse_port;
+    ur_cfg.script_sender_port = state.ports_.script_sender_port;
+    ur_cfg.trajectory_port = state.ports_.trajectory_port;
+    ur_cfg.script_command_port = state.ports_.script_command_port;
     VIAM_SDK_LOG(info) << "using reverse_port " << ur_cfg.reverse_port;
     VIAM_SDK_LOG(info) << "using script_sender_port " << ur_cfg.script_sender_port;
     VIAM_SDK_LOG(info) << "using trajectory_port " << ur_cfg.trajectory_port;
@@ -870,8 +889,8 @@ std::string_view URArm::state_::state_controlled_::name() {
     return "controlled"sv;
 }
 
-auto URArm::state_::state_controlled_::describe() const {
-    return name();
+std::string URArm::state_::state_controlled_::describe() const {
+    return std::string{name()};
 }
 
 std::chrono::milliseconds URArm::state_::state_controlled_::get_timeout() const {
@@ -1344,6 +1363,10 @@ std::chrono::milliseconds URArm::state_::get_timeout_() const {
     return std::visit([](auto& state) { return state.get_timeout(); }, current_state_);
 }
 
+std::string URArm::state_::describe_() const {
+    return std::visit([](auto& state) { return state.describe(); }, current_state_);
+}
+
 void URArm::state_::upgrade_downgrade_() {
     if (auto event = std::visit([this](auto& state) { return state.upgrade_downgrade(*this); }, current_state_)) {
         emit_event_(*std::move(event));
@@ -1388,8 +1411,10 @@ void URArm::state_::run_() {
             VIAM_SDK_LOG(warn) << "Unknown exception in worker thread";
         }
     }
+
+    VIAM_SDK_LOG(info) << "worker thread emitting disconnection event";
+    emit_event_(event_connection_lost_{});
     VIAM_SDK_LOG(info) << "worker thread terminating";
-    // TODO: Do we need to do anything here? Like manually drive to state disconnected?
 }
 
 void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult trajectory_result) {
@@ -1500,7 +1525,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     });
 
     VIAM_SDK_LOG(info) << "URArm starting up";
-    current_state_ = state_::create(configured_model_type, cfg);
+    current_state_ = state_::create(configured_model_type, cfg, ports_);
 
     VIAM_SDK_LOG(info) << "URArm startup complete";
     failure_handler.deactivate();
@@ -1826,4 +1851,15 @@ void URArm::shutdown_(const std::unique_lock<std::shared_mutex>& lock) noexcept 
             VIAM_SDK_LOG(error) << "URArm shutdown failed with an unknown exception - module service will terminate";
         }
     }
+}
+
+// We need to requisition different ports for each independent URArm
+// instance, otherwise they will all try to use the same ports and
+// only one of them will work.
+URArm::ports_::ports_() {
+    static std::atomic<std::uint32_t> counter{50001};
+    reverse_port = counter.fetch_add(4);
+    script_sender_port = reverse_port + 1;
+    trajectory_port = script_sender_port + 1;
+    script_command_port = trajectory_port + 1;
 }
