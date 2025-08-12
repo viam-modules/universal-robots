@@ -468,7 +468,7 @@ class URArm::state_ {
     std::atomic<double> acceleration_{0};
 
     // TODO: We need to handle this
-    bool is_sim_{false};
+    // bool is_sim_{false};
 
     mutable std::mutex mutex_;
     state_variant_ current_state_{state_disconnected_{}};
