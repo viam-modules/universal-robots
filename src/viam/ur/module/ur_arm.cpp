@@ -1084,6 +1084,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     if (local_mode()) {
         // If we aren't connected to the dashboard, try to reconnect, so
         // we can get an honest answer to `commandIsInRemoteControl`.
+        //
+        // TODO: Log this
         if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
             arm_conn_->dashboard->disconnect();
             if (!arm_conn_->dashboard->connect(1)) {
