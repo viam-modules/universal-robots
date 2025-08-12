@@ -448,6 +448,8 @@ class URArm::state_ {
 
     std::chrono::milliseconds get_timeout_() const;
     std::string describe_() const;
+
+    void clear_ephemeral_values_();
     void recv_arm_data_();
     void upgrade_downgrade_();
     void handle_move_request_();
@@ -474,11 +476,15 @@ class URArm::state_ {
     std::condition_variable worker_wakeup_cv_;
     bool shutdown_requested_{false};
 
-    std::optional<vector6d_t> joint_positions_;
-    std::optional<vector6d_t> joint_velocities_;
-    std::optional<vector6d_t> tcp_state_;
     std::atomic<std::size_t> move_epoch_{0};
     std::optional<move_request> move_request_;
+
+    struct ephemeral_ {
+        vector6d_t joint_positions;
+        vector6d_t joint_velocities;
+        vector6d_t tcp_state;
+    };
+    std::optional<struct ephemeral_> ephemeral_;
 };
 
 URArm::state_::state_(private_,
@@ -581,22 +587,22 @@ void URArm::state_::shutdown() {
 
 vector6d_t URArm::state_::read_joint_positions() const {
     const std::lock_guard lock{mutex_};
-    if (!joint_positions_) {
+    if (!ephemeral_) {
         std::ostringstream buffer;
         buffer << "read_joint_positions: joint positions is not currently known; current state: " << describe_();
         throw std::runtime_error(buffer.str());
     }
-    return *joint_positions_;
+    return ephemeral_->joint_positions;
 }
 
 vector6d_t URArm::state_::read_tcp_pose() const {
     const std::lock_guard lock{mutex_};
-    if (!tcp_state_) {
+    if (!ephemeral_) {
         std::ostringstream buffer;
         buffer << "read_tcp_pose: tcp pose is not currently known; current state: " << describe_();
         throw std::runtime_error(buffer.str());
     }
-    return *tcp_state_;
+    return ephemeral_->tcp_state;
 }
 
 const std::string& URArm::state_::csv_output_path() const {
@@ -810,9 +816,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::se
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::recv_arm_data(state_& state) const {
-    state.joint_positions_.reset();
-    state.joint_velocities_.reset();
-    state.tcp_state_.reset();
+    // TODO: This needs to happen for disconnected too.
 
     const auto prior_robot_status_bits = std::exchange(arm_conn_->robot_status_bits, std::nullopt);
     const auto prior_safety_status_bits = std::exchange(arm_conn_->safety_status_bits, std::nullopt);
@@ -874,9 +878,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     // For consistency, update cached data only after all getData
     // calls succeed.
     if (data_good) {
-        state.joint_positions_ = std::move(joint_positions);
-        state.joint_velocities_ = std::move(joint_velocities);
-        state.tcp_state_ = std::move(tcp_state);
+      state.ephemeral_ = {std::move(joint_positions), std::move(joint_velocities), std::move(tcp_state)};
     }
 
     return std::nullopt;
@@ -983,7 +985,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         std::exchange(state.move_request_, {})->complete_cancelled();
     } else {
         // TODO: is it assured that we have positions/velocities here?
-        state.move_request_->write_joint_data(*state.joint_positions_, *state.joint_velocities_);
+        state.move_request_->write_joint_data(state.ephemeral_->joint_positions, state.ephemeral_->joint_velocities);
     }
 
     return std::nullopt;
@@ -1375,6 +1377,10 @@ void URArm::state_::upgrade_downgrade_() {
     }
 }
 
+void URArm::state_::clear_ephemeral_values_() {
+  ephemeral_.reset();
+}
+
 void URArm::state_::recv_arm_data_() {
     if (auto event = std::visit([this](auto& state) { return state.recv_arm_data(*this); }, current_state_)) {
         emit_event_(*std::move(event));
@@ -1403,6 +1409,7 @@ void URArm::state_::run_() {
         }
 
         try {
+            clear_ephemeral_values_();
             recv_arm_data_();
             upgrade_downgrade_();
             handle_move_request_();
