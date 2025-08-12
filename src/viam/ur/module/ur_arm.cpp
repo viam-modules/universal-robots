@@ -878,7 +878,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     // For consistency, update cached data only after all getData
     // calls succeed.
     if (data_good) {
-      state.ephemeral_ = {std::move(joint_positions), std::move(joint_velocities), std::move(tcp_state)};
+        state.ephemeral_ = {std::move(joint_positions), std::move(joint_velocities), std::move(tcp_state)};
     }
 
     return std::nullopt;
@@ -1378,7 +1378,7 @@ void URArm::state_::upgrade_downgrade_() {
 }
 
 void URArm::state_::clear_ephemeral_values_() {
-  ephemeral_.reset();
+    ephemeral_.reset();
 }
 
 void URArm::state_::recv_arm_data_() {
