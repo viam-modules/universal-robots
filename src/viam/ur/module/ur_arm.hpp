@@ -143,10 +143,6 @@ class URArm final : public Arm, public Reconfigurable {
    private:
     class state_;
 
-    enum class UrDriverStatus : int8_t;  // Only available on 3.10/5.4
-
-    static std::string status_to_string_(UrDriverStatus status);
-
     void configure_(const std::unique_lock<std::shared_mutex>& lock, const Dependencies& deps, const ResourceConfig& cfg);
 
     template <template <typename> typename lock_type>
@@ -154,18 +150,11 @@ class URArm final : public Arm, public Reconfigurable {
 
     void shutdown_(const std::unique_lock<std::shared_mutex>& lock) noexcept;
 
-    void keep_alive_();
-
     std::vector<double> get_joint_positions_(const std::shared_lock<std::shared_mutex>&);
 
     void move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time_ms);
 
-    bool send_trajectory_(const std::vector<trajectory_sample_point>& samples);
-
     void trajectory_done_cb_(control::TrajectoryResult);
-
-    URArm::UrDriverStatus read_joint_keep_alive_(bool log);
-    URArm::UrDriverStatus read_joint_keep_alive_inner_(bool log);
 
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
