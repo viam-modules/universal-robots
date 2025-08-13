@@ -623,8 +623,8 @@ void URArm::state_::shutdown() {
 }
 
 const std::optional<double>& URArm::state_::get_reject_move_request_threshold_rad() const {
-  // NOTE: It is OK to return this as a reference and without taking the lock, as this field is immutable inside `state_`.
-  return reject_move_request_threshold_rad_;
+    // NOTE: It is OK to return this as a reference and without taking the lock, as this field is immutable inside `state_`.
+    return reject_move_request_threshold_rad_;
 }
 
 vector6d_t URArm::state_::read_joint_positions() const {
