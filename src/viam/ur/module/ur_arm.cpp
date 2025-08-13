@@ -124,9 +124,6 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     return {};
 }
 
-// NOLINTNEXTLINE(performance-enum-size)
-enum class TrajectoryStatus { k_running = 1, k_cancelled = 2, k_stopped = 3 };
-
 template <typename Callable>
 auto make_scope_guard(Callable&& cleanup) {
     struct guard {
