@@ -132,7 +132,7 @@ class URArm final : public Arm, public Reconfigurable {
 
     void shutdown_(const std::unique_lock<std::shared_mutex>& lock) noexcept;
 
-    std::vector<double> get_joint_positions_(const std::shared_lock<std::shared_mutex>&);
+    vector6d_t get_joint_positions_rad_(const std::shared_lock<std::shared_mutex>&);
 
     void move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time_ms);
 
