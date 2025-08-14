@@ -858,7 +858,7 @@ URArm::state_::state_connected_::state_connected_(std::unique_ptr<arm_connection
 std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::send_noop() const {
     if (!arm_conn_->driver->writeTrajectoryControlMessage(
             control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-        return event_local_mode_detected_{};
+        return event_estop_detected_{};
     }
     return std::nullopt;
 }
@@ -962,7 +962,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     constexpr std::bitset<4> k_power_on_and_running{power_on_bit | program_running_bit};
 
     if (*(arm_conn_->robot_status_bits) != k_power_on_and_running) {
-        return event_local_mode_detected_{};
+        return event_estop_detected_{};
     }
 
     try {
@@ -1023,7 +1023,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
             if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
                 VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
                 std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
-                return event_local_mode_detected_{};
+                return event_estop_detected_{};
             };
         }
 
@@ -1037,7 +1037,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
             state.move_request_->cancel_error("failed to write trajectory control cancel message to URArm");
-            return event_local_mode_detected_{};
+            return event_estop_detected_{};
         }
     } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
         // We have a move request that we haven't issued but a
@@ -1123,26 +1123,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         return event_estop_detected_{};
     }
 
-    // On the other hand, if we are estopped, and that condition has been resolved, clear it.
-    //
-    // TODO(RSDK-11621): Deal with three position enabling stops.
-    if (estopped() && arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
-        // TODO(RSDK-11622): This doesn't seem like entirely the right place for
-        // this. We end up in states where we are "paused" and we don't
-        // come out, and I think this is the thing that unsticks us. So
-        // this must need to happen in more cases than just this one.
-        try {
-            VIAM_SDK_LOG(info) << "While in independent state: releasing brakes since no longer estopped";
-            if (!arm_conn_->dashboard->commandBrakeRelease()) {
-                VIAM_SDK_LOG(warn) << "While in independent state, could not release brakes";
-                return std::nullopt;
-            }
-        } catch (...) {
-            VIAM_SDK_LOG(warn) << "While in independent state, could not communicate with dashboard to release brakes; disconnecting";
-            return event_connection_lost_{};
-        }
-
-        return event_estop_cleared_{};
+    // If we aren't estopped, but the robot program is not running, become estopped.
+    if (!estopped() && !arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING))) {
+        return event_estop_detected_{};
     }
 
     if (local_mode()) {
@@ -1176,13 +1159,27 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // additional dashboard client reset.
         try {
             VIAM_SDK_LOG(info) << "Arm has exited local control - cycling primary client";
+            arm_conn_->dashboard->disconnect();
+            if (!arm_conn_->dashboard->connect(1)) {
+                return event_connection_lost_{};
+            }
             arm_conn_->driver->stopPrimaryClientCommunication();
             arm_conn_->driver->startPrimaryClientCommunication();
         } catch (...) {
             VIAM_SDK_LOG(warn) << "While in independent state, failed cycling primary client; disconnecting";
             return event_connection_lost_{};
         }
+        return event_remote_mode_restored_{};
+    }
 
+    // On the other hand, if we are estopped, and that condition has been resolved, clear it.
+    //
+    // TODO(RSDK-11621): Deal with three position enabling stops.
+    if (estopped() && arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
+        // TODO(RSDK-11622): This doesn't seem like entirely the right place for
+        // this. We end up in states where we are "paused" and we don't
+        // come out, and I think this is the thing that unsticks us. So
+        // this must need to happen in more cases than just this one.
         // If the arm isn't powered on, try to power it on. If we can't
         // power it on, stay local. If we fail to talk to the dashboard,
         // consider that a disconnection.
@@ -1196,6 +1193,18 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
                 VIAM_SDK_LOG(warn) << "While in independent state, could not communicate with dashboard to power on arm; disconnecting";
                 return event_connection_lost_{};
             }
+        }
+
+        try {
+            //TODO(RSDK-11645) find a way to detect if the breaks are locked
+            VIAM_SDK_LOG(info) << "While in independent state: releasing brakes since no longer estopped";
+            if (!arm_conn_->dashboard->commandBrakeRelease()) {
+                VIAM_SDK_LOG(warn) << "While in independent state, could not release brakes";
+                return std::nullopt;
+            }
+        } catch (...) {
+            VIAM_SDK_LOG(warn) << "While in independent state, could not communicate with dashboard to release brakes; disconnecting";
+            return event_connection_lost_{};
         }
 
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING))) {
@@ -1220,7 +1229,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             return std::nullopt;
         }
 
-        return event_remote_mode_restored_{};
+        return event_estop_cleared_{};
     }
 
     return std::nullopt;
