@@ -59,7 +59,7 @@ include(FetchContent)
 # NOTE: If you change the version below, please also update
 # the file `src/control/external_control.urscript` to match.
 #
-# TODO: We should just pull that file out of the repository.
+# TODO(RSDK-11618): We should just pull that file out of the repository.
 FetchContent_Declare(
   Universal_Robots_Client_Library
   GIT_REPOSITORY https://github.com/UniversalRobots/Universal_Robots_Client_Library

@@ -323,18 +323,22 @@ class URArm::state_ {
         ~arm_connection_();
 
         std::unique_ptr<DashboardClient> dashboard;
-        std::atomic<bool> program_running_flag{false};
         std::unique_ptr<UrDriver> driver;
         std::unique_ptr<rtde_interface::DataPackage> data_package;
         std::optional<std::bitset<4>> robot_status_bits;
         std::optional<std::bitset<11>> safety_status_bits;
+
+        // TODO(RSDK-11620): Check if we still need this flag. We may
+        // not, now that we examine status bits that include letting
+        // us know whether the program is running.
+        std::atomic<bool> program_running_flag{false};
     };
 
     struct state_connected_ {
         explicit state_connected_(std::unique_ptr<arm_connection_> arm_conn);
 
-        std::optional<event_variant_> send_noop() const;
         std::optional<event_variant_> recv_arm_data(state_& state) const;
+        std::optional<event_variant_> send_noop() const;
 
         std::unique_ptr<arm_connection_> arm_conn_;
     };
@@ -489,7 +493,7 @@ class URArm::state_ {
     std::atomic<double> speed_{0};
     std::atomic<double> acceleration_{0};
 
-    // TODO: We need to handle this
+    // TODO(RSDK-11625): We need to handle this
     // bool is_sim_{false};
 
     mutable std::mutex mutex_;
@@ -764,6 +768,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
 
     // If the arm is in remote control mode, we need to stop any
     // running program, since it might not be ours.
+    //
+    // TODO(11619): See if we can fully eliminate use of the
+    // DashboardClient and use only the `UrDriver`.
     if (arm_connection->dashboard->commandIsInRemoteControl()) {
         VIAM_SDK_LOG(info) << "disconnected: attempting recovery: stopping any currently running program";
         if (!arm_connection->dashboard->commandStop()) {
@@ -994,6 +1001,20 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
             VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
             std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
+
+            // Unfortunately, we can't differentiate given the `bool`
+            // return from `writeTrajectoryControlMessage` above
+            // whether the failure here is due to full connectivity
+            // loss, or just the arm being in local mode. If we
+            // interpreted the latter as the former, we would drop and
+            // re-form connections every time the arm went into local
+            // mode, which is too aggressive. So, instead, we
+            // interpret this as meaning local mode, and then let
+            // `upgrade_downgrade` for local mode make a subsequent
+            // determination about whether we have really lost
+            // connectivity such that we should enter
+            // `state_disconnected_`. The same log applies to the
+            // other cases below.
             return event_local_mode_detected_{};
         }
 
@@ -1080,7 +1101,7 @@ std::string URArm::state_::state_independent_::describe() const {
 }
 
 std::chrono::milliseconds URArm::state_::state_independent_::get_timeout() const {
-    // TODO: I'm not sure this actually makes sense: even if we are
+    // TODO(RSDK-11622): I'm not sure this actually makes sense: even if we are
     // estopped, we still want high frequency service for the rtde
     // interface.
     if (estopped()) {
@@ -1103,8 +1124,10 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     }
 
     // On the other hand, if we are estopped, and that condition has been resolved, clear it.
+    //
+    // TODO(RSDK-11621): Deal with three position enabling stops.
     if (estopped() && arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
-        // TODO: This doesn't seem like entirely the right place for
+        // TODO(RSDK-11622): This doesn't seem like entirely the right place for
         // this. We end up in states where we are "paused" and we don't
         // come out, and I think this is the thing that unsticks us. So
         // this must need to happen in more cases than just this one.
@@ -1126,7 +1149,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // If we aren't connected to the dashboard, try to reconnect, so
         // we can get an honest answer to `commandIsInRemoteControl`.
         //
-        // TODO: Log this
+        // TODO(RSDK-11622): Log this
         if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
             arm_conn_->dashboard->disconnect();
             if (!arm_conn_->dashboard->connect(1)) {
@@ -1148,7 +1171,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             return event_connection_lost_{};
         }
 
-        // TODO: I was experimenting here. Not sure if this is needed or not.
+        // TODO(RSDK-11622): I was experimenting here. Not sure if
+        // this is needed or not. We likely do need to do an
+        // additional dashboard client reset.
         try {
             VIAM_SDK_LOG(info) << "Arm has exited local control - cycling primary client";
             arm_conn_->driver->stopPrimaryClientCommunication();
@@ -1187,7 +1212,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             }
         }
 
-        // TODO: Grace period?
+        // TODO(RSDK-11622): Should we give up after a while rather
+        // than getting stuck here indefinitely? But see also
+        // RSDK-11620 which suggest removing this flag entirely.
         if (!arm_conn_->program_running_flag.load(std::memory_order_acquire)) {
             VIAM_SDK_LOG(info) << "While in independent state, waiting for callback to toggle program state to running";
             return std::nullopt;
