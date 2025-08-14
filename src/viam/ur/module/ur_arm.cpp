@@ -493,9 +493,6 @@ class URArm::state_ {
     std::atomic<double> speed_{0};
     std::atomic<double> acceleration_{0};
 
-    // TODO(RSDK-11625): We need to handle this
-    // bool is_sim_{false};
-
     mutable std::mutex mutex_;
     state_variant_ current_state_{state_disconnected_{}};
     std::thread worker_thread_;
