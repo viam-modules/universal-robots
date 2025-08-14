@@ -1156,6 +1156,10 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // Try to use the dashboard connection to determine if the arm
         // is now in remote mode. If we fail to communicate with the
         // dashboard, downgrade to disconnected.
+        // TODO(RSDK-11619) We currently only test this if we have already detected local mode. This is because when an estop occurs,
+        // and a user switches into local mode without recovering from the stop, the dashboard client cannot reach the arm.
+        // since the driver client does not appear to have this issue, we should revaluate where this check should live when we go to remove
+        // the dashboard client.
         try {
             if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
                 VIAM_SDK_LOG(warn) << "While in independent state, waiting for arm to re-enter remote mode";
@@ -1209,7 +1213,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         }
 
         try {
-            //TODO(RSDK-11645) find a way to detect if the breaks are locked
+            // TODO(RSDK-11645) find a way to detect if the breaks are locked
             VIAM_SDK_LOG(info) << "While in independent state: releasing brakes since no longer estopped";
             if (!arm_conn_->dashboard->commandBrakeRelease()) {
                 VIAM_SDK_LOG(warn) << "While in independent state, could not release brakes";
