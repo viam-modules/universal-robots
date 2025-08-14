@@ -303,7 +303,24 @@ class URArm::state_ {
                                         event_local_mode_detected_,
                                         event_remote_mode_restored_>;
 
-    struct state_disconnected_ {
+    template <typename T>
+    class state_event_handler_base_ {
+       public:
+        // This is the common catch-all handler for `Event`s for
+        // which the actual state classes lack a more specific
+        // overload (e.g., an event handler specifically for
+        // `event_stop_detected_`). It will log a warning, since this
+        // probably indicates that one of the states below is missing
+        // a handler for an event that it actually emits.
+        template <typename Event>
+        std::optional<state_variant_> handle_event(Event event);
+
+       private:
+        friend T;
+        state_event_handler_base_() = default;
+    };
+
+    struct state_disconnected_ : public state_event_handler_base_<state_disconnected_> {
         static std::string_view name();
         std::string describe() const;
         std::chrono::milliseconds get_timeout() const;
@@ -313,10 +330,9 @@ class URArm::state_ {
         std::optional<event_variant_> handle_move_request(state_& state);
         std::optional<event_variant_> send_noop();
 
-        state_variant_ handle_event(event_connection_established_ event);
+        std::optional<state_variant_> handle_event(event_connection_established_ event);
 
-        template <typename Event>
-        state_variant_ handle_event(Event);
+        using state_event_handler_base_<state_disconnected_>::handle_event;
     };
 
     struct arm_connection_ {
@@ -343,7 +359,7 @@ class URArm::state_ {
         std::unique_ptr<arm_connection_> arm_conn_;
     };
 
-    struct state_controlled_ : public state_connected_ {
+    struct state_controlled_ : public state_event_handler_base_<state_controlled_>, public state_connected_ {
         explicit state_controlled_(std::unique_ptr<arm_connection_> arm_conn);
 
         static std::string_view name();
@@ -355,15 +371,14 @@ class URArm::state_ {
         std::optional<event_variant_> handle_move_request(state_& state);
         using state_connected_::send_noop;
 
-        state_variant_ handle_event(event_connection_lost_);
-        state_variant_ handle_event(event_estop_detected_);
-        state_variant_ handle_event(event_local_mode_detected_);
+        std::optional<state_variant_> handle_event(event_connection_lost_);
+        std::optional<state_variant_> handle_event(event_estop_detected_);
+        std::optional<state_variant_> handle_event(event_local_mode_detected_);
 
-        template <typename Event>
-        state_variant_ handle_event(Event);
+        using state_event_handler_base_<state_controlled_>::handle_event;
     };
 
-    struct state_independent_ : public state_connected_ {
+    struct state_independent_ : public state_event_handler_base_<state_independent_>, public state_connected_ {
         enum class reason : std::uint8_t { k_estopped, k_local_mode, k_both };
 
         explicit state_independent_(std::unique_ptr<arm_connection_> arm_conn, reason r);
@@ -375,19 +390,18 @@ class URArm::state_ {
         using state_connected_::recv_arm_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
         std::optional<event_variant_> handle_move_request(state_& state);
-        using state_connected_::send_noop;
+        std::optional<event_variant_> send_noop();
 
         bool estopped() const;
         bool local_mode() const;
 
-        state_variant_ handle_event(event_connection_lost_);
-        state_variant_ handle_event(event_estop_detected_);
-        state_variant_ handle_event(event_local_mode_detected_);
-        state_variant_ handle_event(event_estop_cleared_);
-        state_variant_ handle_event(event_remote_mode_restored_);
+        std::optional<state_variant_> handle_event(event_connection_lost_);
+        std::optional<state_variant_> handle_event(event_estop_detected_);
+        std::optional<state_variant_> handle_event(event_local_mode_detected_);
+        std::optional<state_variant_> handle_event(event_estop_cleared_);
+        std::optional<state_variant_> handle_event(event_remote_mode_restored_);
 
-        template <typename Event>
-        state_variant_ handle_event(Event);
+        using state_event_handler_base_<state_independent_>::handle_event;
 
         reason reason_;
     };
@@ -464,11 +478,12 @@ class URArm::state_ {
 
     void emit_event_(event_variant_&& event);
 
-    template <typename T>
-    void emit_event_(T&& event);
+    template <typename Event>
+    void emit_event_(Event&& event);
 
     std::chrono::milliseconds get_timeout_() const;
     std::string describe_() const;
+    static std::string describe_state_(const state_variant_& state);
 
     void clear_ephemeral_values_();
     void recv_arm_data_();
@@ -492,9 +507,6 @@ class URArm::state_ {
 
     std::atomic<double> speed_{0};
     std::atomic<double> acceleration_{0};
-
-    // TODO(RSDK-11625): We need to handle this
-    // bool is_sim_{false};
 
     mutable std::mutex mutex_;
     state_variant_ current_state_{state_disconnected_{}};
@@ -622,8 +634,6 @@ void URArm::state_::shutdown() {
         worker.join();
         VIAM_SDK_LOG(info) << "worker thread terminated";
     }
-
-    emit_event_(event_connection_lost_{});
 }
 
 const std::optional<double>& URArm::state_::get_reject_move_request_threshold_rad() const {
@@ -714,6 +724,19 @@ std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
     }
 
     return std::make_optional(move_request_->cancel());
+}
+
+template <typename T>
+template <typename Event>
+std::optional<URArm::state_::state_variant_> URArm::state_::state_event_handler_base_<T>::handle_event(Event event) {
+    const auto current_state_desc = static_cast<T*>(this)->describe();
+    const auto event_desc = event.describe();
+
+    VIAM_SDK_LOG(warn) << "In state `" << current_state_desc << "`, received an event `" << event_desc
+                       << "` for which there is no declared handler; state will not be changed";
+
+    // No transition
+    return std::nullopt;
 }
 
 // Many of the state machine types get false positive clang-tidy
@@ -831,18 +854,13 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
     return std::nullopt;
 }
 
-URArm::state_::state_variant_ URArm::state_::state_disconnected_::handle_event(event_connection_established_ event) {
+std::optional<URArm::state_::state_variant_> URArm::state_::state_disconnected_::handle_event(event_connection_established_ event) {
     // If we are leaving disconnected mode for independent mode, we
     // don't know, really, in what state we will find the arm. Assume
     // the worst case scenario, that we are both estopped and in local
     // mode, and let the natural recovery process sort out how to get
     // back to a good place.
     return state_independent_{std::move(event.payload), state_independent_::reason::k_both};
-}
-
-template <typename Event>
-URArm::state_::state_variant_ URArm::state_::state_disconnected_::handle_event(Event) {
-    return std::move(*this);
 }
 
 URArm::state_::arm_connection_::~arm_connection_() {
@@ -1051,21 +1069,16 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
     return std::nullopt;
 }
 
-URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(event_connection_lost_) {
+std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_connection_lost_) {
     return state_disconnected_{};
 }
 
-URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(event_estop_detected_) {
+std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_estop_detected_) {
     return state_independent_{std::move(arm_conn_), state_independent_::reason::k_estopped};
 }
 
-URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(event_local_mode_detected_) {
+std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_local_mode_detected_) {
     return state_independent_{std::move(arm_conn_), state_independent_::reason::k_local_mode};
-}
-
-template <typename Event>
-URArm::state_::state_variant_ URArm::state_::state_controlled_::handle_event(Event) {
-    return std::move(*this);
 }
 
 URArm::state_::state_independent_::state_independent_(std::unique_ptr<arm_connection_> arm_conn, reason r)
@@ -1257,6 +1270,17 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     return std::nullopt;
 }
 
+std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::send_noop() {
+    // If we are in local mode, there is no point trying to spam NOOPs
+    // because each one will just get rejected and we will hammer the
+    // state machine with meaningless `event_local_mode_detected_` events.
+    if (local_mode()) {
+        return std::nullopt;
+    }
+
+    return state_connected_::send_noop();
+}
+
 bool URArm::state_::state_independent_::estopped() const {
     return reason_ != reason::k_local_mode;
 }
@@ -1265,7 +1289,7 @@ bool URArm::state_::state_independent_::local_mode() const {
     return reason_ != reason::k_estopped;
 }
 
-URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_estop_cleared_) {
+std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::handle_event(event_estop_cleared_) {
     if (reason_ == reason::k_local_mode) {
         return std::move(*this);
     } else if (reason_ == reason::k_both) {
@@ -1275,7 +1299,7 @@ URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(ev
     }
 }
 
-URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_remote_mode_restored_) {
+std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::handle_event(event_remote_mode_restored_) {
     if (reason_ == reason::k_estopped) {
         return std::move(*this);
     } else if (reason_ == reason::k_both) {
@@ -1285,7 +1309,7 @@ URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(ev
     }
 }
 
-URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_estop_detected_) {
+std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::handle_event(event_estop_detected_) {
     if (reason_ == reason::k_local_mode) {
         return state_independent_{std::move(arm_conn_), reason::k_both};
     } else {
@@ -1293,7 +1317,7 @@ URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(ev
     }
 }
 
-URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_local_mode_detected_) {
+std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::handle_event(event_local_mode_detected_) {
     if (reason_ == reason::k_estopped) {
         return state_independent_{std::move(arm_conn_), reason::k_both};
     } else {
@@ -1301,13 +1325,8 @@ URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(ev
     }
 }
 
-URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(event_connection_lost_) {
+std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::handle_event(event_connection_lost_) {
     return state_disconnected_{};
-}
-
-template <typename Event>
-URArm::state_::state_variant_ URArm::state_::state_independent_::handle_event(Event) {
-    return std::move(*this);
 }
 
 std::string_view URArm::state_::event_connection_established_::name() {
@@ -1425,17 +1444,26 @@ void URArm::state_::emit_event_(event_variant_&& event) {
 
 template <typename T>
 void URArm::state_::emit_event_(T&& event) {
-    current_state_ = std::visit(
-        [&](auto& current_state) {
-            const auto current_state_description = current_state.describe();
-            const auto event_description = event.describe();
+    auto new_state = std::visit(
+        [&, event_description = event.describe()](auto& current_state) {
+            // Get the description of the current state before it handles
+            // the event. Then, forward the event. If we got a new state
+            // back, ask it to describe itself. Otherwise, ask the original
+            // state to describe itself again, as it may present differently
+            // after interpreting the event.
+            const auto state_preimage_desc = current_state.describe();
             auto new_state = current_state.handle_event(std::forward<T>(event));
-            const auto new_state_description = std::visit([](const auto& state) { return std::string{state.describe()}; }, new_state);
-            VIAM_SDK_LOG(info) << "URArm state transition from state `" << current_state_description << "` to state `"
-                               << new_state_description << "` due to event `" << event_description << "`";
+            const auto state_postimage_desc = new_state ? describe_state_(*new_state) : current_state.describe();
+            VIAM_SDK_LOG(info) << "URArm state transition from state `" << state_preimage_desc << "` to state `" << state_postimage_desc
+                               << "` due to event `" << event_description << "`";
+
             return new_state;
         },
         current_state_);
+
+    if (new_state) {
+        current_state_ = std::move(*new_state);
+    }
 }
 
 std::chrono::milliseconds URArm::state_::get_timeout_() const {
@@ -1443,7 +1471,11 @@ std::chrono::milliseconds URArm::state_::get_timeout_() const {
 }
 
 std::string URArm::state_::describe_() const {
-    return std::visit([](auto& state) { return state.describe(); }, current_state_);
+    return describe_state_(current_state_);
+}
+
+std::string URArm::state_::describe_state_(const state_variant_& state) {
+    return std::visit([](auto& state) { return state.describe(); }, state);
 }
 
 void URArm::state_::upgrade_downgrade_() {
