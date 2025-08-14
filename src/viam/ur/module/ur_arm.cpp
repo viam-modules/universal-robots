@@ -637,8 +637,6 @@ void URArm::state_::shutdown() {
         worker.join();
         VIAM_SDK_LOG(info) << "worker thread terminated";
     }
-
-    emit_event_(event_connection_lost_{});
 }
 
 const std::optional<double>& URArm::state_::get_reject_move_request_threshold_rad() const {
