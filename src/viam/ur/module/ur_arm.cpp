@@ -63,8 +63,7 @@ constexpr char k_output_recipe[] = "/src/control/rtde_output_recipe.txt";
 constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
 
 // constants for robot operation
-constexpr auto k_noop_delay = std::chrono::milliseconds(2);     // 2 millisecond, 500 Hz
-constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
+constexpr auto k_noop_delay = std::chrono::milliseconds(2);  // 2 millisecond, 500 Hz
 constexpr auto k_disconnect_delay = std::chrono::seconds(1);
 
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
@@ -1114,12 +1113,6 @@ std::string URArm::state_::state_independent_::describe() const {
 }
 
 std::chrono::milliseconds URArm::state_::state_independent_::get_timeout() const {
-    // TODO(RSDK-11622): I'm not sure this actually makes sense: even if we are
-    // estopped, we still want high frequency service for the rtde
-    // interface.
-    if (estopped()) {
-        return k_estop_delay;
-    }
     return k_noop_delay;
 }
 
@@ -1232,12 +1225,17 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             }
         }
 
-        // TODO(RSDK-11622): Should we give up after a while rather
-        // than getting stuck here indefinitely? But see also
+        // "Wait" for the robot program to start running.
         // RSDK-11620 which suggest removing this flag entirely.
-        if (!arm_conn_->program_running_flag.load(std::memory_order_acquire)) {
-            VIAM_SDK_LOG(info) << "While in independent state, waiting for callback to toggle program state to running";
-            return std::nullopt;
+        VIAM_SDK_LOG(info) << "While in independent state, waiting for callback to toggle program state to running";
+        int retry_count = 10;
+        while (!arm_conn_->program_running_flag.load(std::memory_order_acquire)) {
+            if (retry_count <= 0) {
+                VIAM_SDK_LOG(warn) << "While in independent state, program state never loaded";
+                return event_connection_lost_{};
+            }
+            retry_count--;
+            std::this_thread::sleep_for(get_timeout());
         }
 
         return event_estop_cleared_{};
