@@ -63,7 +63,6 @@ constexpr char k_output_recipe[] = "/src/control/rtde_output_recipe.txt";
 constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
 
 // constants for robot operation
-constexpr auto k_noop_delay = std::chrono::milliseconds(2);     // 2 millisecond, 500 Hz
 constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
 constexpr auto k_disconnect_delay = std::chrono::seconds(1);
 
@@ -1135,7 +1134,7 @@ std::chrono::milliseconds URArm::state_::state_independent_::get_timeout() const
     if (estopped()) {
         return k_estop_delay;
     }
-    return k_noop_delay;
+    return state_connected_::get_timeout();
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::upgrade_downgrade(state_&) {
