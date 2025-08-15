@@ -1228,7 +1228,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // "Wait" for the robot program to start running.
         // RSDK-11620 which suggest removing this flag entirely.
         VIAM_SDK_LOG(info) << "While in independent state, waiting for callback to toggle program state to running";
-        int retry_count = 10;
+        int retry_count = 100;
         while (!arm_conn_->program_running_flag.load(std::memory_order_acquire)) {
             if (retry_count <= 0) {
                 VIAM_SDK_LOG(warn) << "While in independent state, program state never loaded";
