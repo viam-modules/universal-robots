@@ -121,22 +121,24 @@ void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& 
 }
 
 std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
-    static_cast<void>(find_config_attribute<std::string>(cfg, "host"));
-    static_cast<void>(find_config_attribute<double>(cfg, "speed_degs_per_sec"));
-    static_cast<void>(find_config_attribute<double>(cfg, "acceleration_degs_per_sec2"));
-    {
-        auto threshold = -1.0;
-        try {
-            threshold = find_config_attribute<double>(cfg, "reject_move_request_threshold_deg");
-        } catch (...) {
-            // will go away once find_config_attribute returns an optional
-            return {};
-        }
-        if (threshold < 0 || threshold > 360) {
-            std::stringstream sstream;
-            sstream << "reject_move_request_threshold_deg should be between 0 and 360, it is : " << threshold;
-            throw std::invalid_argument(sstream.str());
-        }
+    if (!find_config_attribute<std::string>(cfg, "host")) {
+        throw std::invalid_argument("attribute `host` is required");
+    }
+    if (!find_config_attribute<double>(cfg, "speed_degs_per_sec")) {
+        throw std::invalid_argument("attribute `speed_degs_per_sec` is required");
+    }
+    if (!find_config_attribute<double>(cfg, "acceleration_degs_per_sec2")) {
+        throw std::invalid_argument("attribute `acceleration_degs_per_sec2` is required");
+    }
+
+    auto threshold = find_config_attribute<double>(cfg, "reject_move_request_threshold_deg");
+    constexpr double k_min_threshold = 0.0;
+    constexpr double k_max_threshold = 360.0;
+    if (threshold && (*threshold < k_min_threshold || *threshold > k_max_threshold)) {
+        std::stringstream sstream;
+        sstream << "attribute `reject_move_request_threshold_deg` should be between " << k_min_threshold << " and " << k_max_threshold
+                << " , it is : " << *threshold << "degrees";
+        throw std::invalid_argument(sstream.str());
     }
 
     return {};
@@ -553,39 +555,27 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     }
     VIAM_SDK_LOG(info) << "APPDIR: " << app_dir;
 
-    auto host = find_config_attribute<std::string>(config, "host");
+    auto host = find_config_attribute<std::string>(config, "host").value();
 
     // If the config contains `csv_output_path`, use that, otherwise,
-    // fall back to `VIAM_MOUDLE_DATA` as the output path, which must
+    // fall back to `VIAM_MODULE_DATA` as the output path, which must
     // be set.
     auto csv_output_path = [&] {
-        try {
-            return find_config_attribute<std::string>(config, "csv_output_path");
-        } catch (...) {
-            // If we threw, but we have the attribute, then it failed to
-            // convert and we should report that error, since that is an
-            // actual user error.
-            if (config.attributes().count("csv_output_path") != 0) {
-                throw;
-            }
-
-            auto* const viam_module_data = std::getenv("VIAM_MODULE_DATA");  // NOLINT: Yes, we know getenv isn't thread safe
-            if (!viam_module_data) {
-                throw std::runtime_error("required environment variable `VIAM_MODULE_DATA` unset");
-            }
-            VIAM_SDK_LOG(info) << "VIAM_MODULE_DATA: " << viam_module_data;
-
-            return std::string{viam_module_data};
+        auto path = find_config_attribute<std::string>(config, "csv_output_path");
+        if (path) {
+            return path.value();
         }
+
+        auto* const viam_module_data = std::getenv("VIAM_MODULE_DATA");  // NOLINT: Yes, we know getenv isn't thread safe
+        if (!viam_module_data) {
+            throw std::runtime_error("required environment variable `VIAM_MODULE_DATA` unset");
+        }
+        VIAM_SDK_LOG(info) << "VIAM_MODULE_DATA: " << viam_module_data;
+
+        return std::string{viam_module_data};
     }();
 
-    auto threshold = [&] {
-        try {
-            return std::make_optional(find_config_attribute<double>(config, "reject_move_request_threshold_deg"));
-        } catch (...) {
-            return std::optional<double>();
-        }
-    }();
+    auto threshold = find_config_attribute<double>(config, "reject_move_request_threshold_deg");
 
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
@@ -595,8 +585,8 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           std::move(threshold),
                                           ports);
 
-    state->set_speed(degrees_to_radians(find_config_attribute<double>(config, "speed_degs_per_sec")));
-    state->set_acceleration(degrees_to_radians(find_config_attribute<double>(config, "acceleration_degs_per_sec2")));
+    state->set_speed(degrees_to_radians(find_config_attribute<double>(config, "speed_degs_per_sec").value()));
+    state->set_acceleration(degrees_to_radians(find_config_attribute<double>(config, "acceleration_degs_per_sec2").value()));
 
     const std::lock_guard lock(state->mutex_);
     state->worker_thread_ = std::thread{&state_::run_, state.get()};

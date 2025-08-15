@@ -1,6 +1,8 @@
 #pragma once
 
 #include <ur_client_library/log.h>
+
+#include <optional>
 #include <sstream>
 
 #include <viam/sdk/config/resource.hpp>
@@ -10,19 +12,18 @@ void configure_logger(const viam::sdk::ResourceConfig& cfg);
 
 // helper function to extract an attribute value from its key within a ResourceConfig
 template <class T>
-T find_config_attribute(const viam::sdk::ResourceConfig& cfg, const std::string& attribute) {
-    std::ostringstream buffer;
+std::optional<T> find_config_attribute(const viam::sdk::ResourceConfig& cfg, const std::string& attribute) {
     auto key = cfg.attributes().find(attribute);
     if (key == cfg.attributes().end()) {
-        buffer << "required attribute `" << attribute << "` not found in configuration";
-        throw std::invalid_argument(buffer.str());
+        return std::nullopt;
     }
     const auto* const val = key->second.get<T>();
     if (!val) {
-        buffer << "required non-empty attribute `" << attribute << " could not be decoded";
+        std::ostringstream buffer;
+        buffer << "attribute `" << attribute << " could not be converted to the required type";
         throw std::invalid_argument(buffer.str());
     }
-    return *val;
+    return std::make_optional(*val);
 }
 
 class URArmLogHandler : public urcl::LogHandler {
