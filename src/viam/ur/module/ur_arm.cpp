@@ -332,6 +332,10 @@ class URArm::state_ {
         std::optional<state_variant_> handle_event(event_connection_established_ event);
 
         using state_event_handler_base_<state_disconnected_>::handle_event;
+
+        // track how often we attempt to reconnect.
+        // We will use this to limit how often logs spam during expected behaviors.
+        int reconnect_attempts{-1};
     };
 
     struct arm_connection_ {
@@ -347,6 +351,7 @@ class URArm::state_ {
         // not, now that we examine status bits that include letting
         // us know whether the program is running.
         std::atomic<bool> program_running_flag{false};
+        bool log_destructor{false};
     };
 
     struct state_connected_ {
@@ -404,8 +409,9 @@ class URArm::state_ {
 
         reason reason_;
 
-        // track whether we have attempted to reconnect to local mode to avoid being spammy about it.
-        bool logged_local_reconnect_attempt{false};
+        // track how often we attempt to reconnect.
+        // We will use this to limit how often logs spam during expected behaviors.
+        int local_reconnect_attempts{-1};
     };
 
     struct event_connection_established_ {
@@ -758,7 +764,7 @@ std::string URArm::state_::state_disconnected_::describe() const {
 }
 
 std::chrono::milliseconds URArm::state_::state_disconnected_::get_timeout() const {
-    return k_disconnect_delay;
+    return std::chrono::seconds(1);
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::recv_arm_data(state_&) {
@@ -766,16 +772,24 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::upgrade_downgrade(state_& state) {
-    VIAM_SDK_LOG(info) << "disconnected: attempting recovery";
+    reconnect_attempts++;
+    const auto log_at_n_attempts = 100;
+    if (reconnect_attempts % log_at_n_attempts == 0) {
+        VIAM_SDK_LOG(info) << "disconnected: attempting recovery: " << reconnect_attempts;
+    }
     auto arm_connection = std::make_unique<arm_connection_>();
     arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_);
 
-    VIAM_SDK_LOG(info) << "disconnected: attempting recovery: trying to connect to dashboard";
+    if (reconnect_attempts % log_at_n_attempts == 0) {
+        VIAM_SDK_LOG(info) << "disconnected: attempting recovery: trying to connect to dashboard";
+    }
     if (!arm_connection->dashboard->connect(1)) {
         std::ostringstream buffer;
         buffer << "Failed trying to connect to UR dashboard on host " << state.host_;
         throw std::runtime_error(buffer.str());
     }
+    arm_connection->log_destructor = true;
+
     VIAM_SDK_LOG(info) << "disconnected: attempting recovery: connected to dashboard";
 
     VIAM_SDK_LOG(info) << "disconnected: attempting recovery: validating model";
@@ -867,9 +881,13 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_disconnected_:
 
 URArm::state_::arm_connection_::~arm_connection_() {
     data_package.reset();
-    VIAM_SDK_LOG(info) << "destroying current UrDriver instance";
+    if (log_destructor) {
+        VIAM_SDK_LOG(info) << "destroying current UrDriver instance";
+    }
     driver.reset();
-    VIAM_SDK_LOG(info) << "destroying current DashboardClient instance";
+    if (log_destructor) {
+        VIAM_SDK_LOG(info) << "destroying current DashboardClient instance";
+    }
     dashboard.reset();
 }
 
@@ -1151,15 +1169,18 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // Try to use the dashboard connection to determine if the arm
         // is now in remote mode. If we fail to communicate with the
         // dashboard, downgrade to disconnected.
+        //
         // TODO(RSDK-11619) We currently only test this if we have already detected local mode. This is because when an estop occurs,
         // and a user switches into local mode without recovering from the stop, the dashboard client cannot reach the arm.
         // since the driver client does not appear to have this issue, we should revaluate where this check should live when we go to remove
         // the dashboard client.
+        local_reconnect_attempts++;
         try {
             if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
-                if (!logged_local_reconnect_attempt) {
-                    VIAM_SDK_LOG(warn) << "While in independent state, waiting for arm to re-enter remote mode";
-                    logged_local_reconnect_attempt = true;
+                // only log the failure every 100 attempts to be less spammy
+                if (local_reconnect_attempts % 100 == 0) {
+                    VIAM_SDK_LOG(warn) << "While in independent state, waiting for arm to re-enter remote mode: "
+                                       << local_reconnect_attempts;
                 }
                 return std::nullopt;
             }
@@ -1232,7 +1253,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         }
 
         // "Wait" for the robot program to start running.
-        // RSDK-11620 which suggest removing this flag entirely.
+        //
+        // TODO(RSDK-11620) Check if we still need this flag.
         VIAM_SDK_LOG(info) << "While in independent state, waiting for callback to toggle program state to running";
         int retry_count = 100;
         while (!arm_conn_->program_running_flag.load(std::memory_order_acquire)) {
