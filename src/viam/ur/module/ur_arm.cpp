@@ -774,7 +774,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
     reconnect_attempts++;
     const auto log_at_n_attempts = 100;
     if (reconnect_attempts % log_at_n_attempts == 0) {
-        VIAM_SDK_LOG(info) << "disconnected: attempting recovery: " << reconnect_attempts;
+        VIAM_SDK_LOG(info) << "disconnected: attempting recovery";
     }
     auto arm_connection = std::make_unique<arm_connection_>();
     arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_);
@@ -1178,8 +1178,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
                 // only log the failure every 100 attempts to be less spammy
                 if (local_reconnect_attempts % 100 == 0) {
-                    VIAM_SDK_LOG(warn) << "While in independent state, waiting for arm to re-enter remote mode: "
-                                       << local_reconnect_attempts;
+                    VIAM_SDK_LOG(warn) << "While in independent state, waiting for arm to re-enter remote mode";
                 }
                 return std::nullopt;
             }
