@@ -260,8 +260,8 @@ class URArm::state_ {
                     std::string host,
                     std::string app_dir,
                     std::string csv_output_path,
-                    std::optional<double> robot_control_freq_hz,
                     std::optional<double> reject_move_request_threshold_rad,
+                    std::optional<double> robot_control_freq_hz,
                     const struct ports_& ports);
     ~state_();
 
