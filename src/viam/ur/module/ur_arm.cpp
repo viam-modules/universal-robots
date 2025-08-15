@@ -1177,7 +1177,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         try {
             if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
                 // only log the failure every 100 attempts to be less spammy
-                if (local_reconnect_attempts % 100 == 0) {
+                if (local_reconnect_attempts % 100000 == 0) {
                     VIAM_SDK_LOG(warn) << "While in independent state, waiting for arm to re-enter remote mode";
                 }
                 return std::nullopt;
