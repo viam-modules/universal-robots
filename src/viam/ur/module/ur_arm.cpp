@@ -21,6 +21,10 @@
 #include <utility>
 #include <variant>
 
+#include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics/mean.hpp>
+#include <boost/accumulators/statistics/stats.hpp>
+#include <boost/accumulators/statistics/variance.hpp>
 #include <boost/format.hpp>
 #include <boost/io/ostream_joiner.hpp>
 #include <boost/numeric/conversion/cast.hpp>
@@ -1513,11 +1517,43 @@ void URArm::state_::send_noop_() {
 
 void URArm::state_::run_() {
     VIAM_SDK_LOG(info) << "worker thread started";
+
+    // Periodically, collect a limited number of samples of the
+    // duration of our wait latency on the condition variable. We
+    // expect this to fairly well respect the configured
+    // `robot_control_freq_hz`. Report this in the log so that we can
+    // know how well we are doing staying a reliable consumer of arm
+    // data. The logging also serves as a proof of forward progress
+    // for the worker thread.
+    constexpr std::size_t k_num_samples = 100;
+    constexpr auto k_sampling_interval = std::chrono::minutes(5);
+    auto last_sampling_point = std::chrono::steady_clock::now();
+
+    namespace bacc = ::boost::accumulators;
+    std::optional<bacc::accumulator_set<double, bacc::stats<bacc::tag::mean, bacc::tag::variance>>> accumulator;
+
     while (true) {
         std::unique_lock lock(mutex_);
+
+        const auto wait_start = std::chrono::steady_clock::now();
         if (worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] { return shutdown_requested_; })) {
             VIAM_SDK_LOG(info) << "worker thread signaled to terminate";
             break;
+        }
+
+        if (!accumulator && ((wait_start - last_sampling_point) > k_sampling_interval)) {
+            last_sampling_point = wait_start;
+            accumulator.emplace();
+        }
+
+        if (accumulator) {
+            auto wait_end = std::chrono::steady_clock::now();
+            (*accumulator)(std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(wait_end - wait_start).count());
+            if (bacc::count(*accumulator) == k_num_samples) {
+                const auto accumulated = std::exchange(accumulator, std::nullopt);
+                VIAM_SDK_LOG(info) << "URArm worker thread mean wait between control cycles is " << bacc::mean(*accumulated)
+                                   << " milliseconds, with variance " << bacc::variance(*accumulated);
+            }
         }
 
         try {
