@@ -21,6 +21,10 @@
 #include <utility>
 #include <variant>
 
+#include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics/median.hpp>
+#include <boost/accumulators/statistics/stats.hpp>
+#include <boost/accumulators/statistics/variance.hpp>
 #include <boost/format.hpp>
 #include <boost/io/ostream_joiner.hpp>
 #include <boost/numeric/conversion/cast.hpp>
@@ -62,9 +66,7 @@ namespace {
 constexpr char k_output_recipe[] = "/src/control/rtde_output_recipe.txt";
 constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
 
-// constants for robot operation
-constexpr auto k_noop_delay = std::chrono::milliseconds(2);  // 2 millisecond, 500 Hz
-
+constexpr auto k_default_robot_control_freq_hz = 100.;
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 
@@ -135,7 +137,17 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     if (threshold && (*threshold < k_min_threshold || *threshold > k_max_threshold)) {
         std::stringstream sstream;
         sstream << "attribute `reject_move_request_threshold_deg` should be between " << k_min_threshold << " and " << k_max_threshold
-                << " , it is : " << *threshold << "degrees";
+                << ", it is : " << *threshold << " degrees";
+        throw std::invalid_argument(sstream.str());
+    }
+
+    auto frequency = find_config_attribute<double>(cfg, "robot_control_freq_hz");
+    constexpr double k_max_frequency = 1000.;
+    if (frequency && (*frequency <= 0. || *frequency >= k_max_frequency)) {
+        std::stringstream sstream;
+        sstream << "attribute `robot_control_freq_hz` should be a positive number less than " << k_max_frequency
+                << ", it is : " << *frequency << " hz";
+
         throw std::invalid_argument(sstream.str());
     }
 
@@ -248,6 +260,7 @@ class URArm::state_ {
                     std::string app_dir,
                     std::string csv_output_path,
                     std::optional<double> reject_move_request_threshold_rad,
+                    std::optional<double> robot_control_freq_hz,
                     const struct ports_& ports);
     ~state_();
 
@@ -358,6 +371,8 @@ class URArm::state_ {
     struct state_connected_ {
         explicit state_connected_(std::unique_ptr<arm_connection_> arm_conn);
 
+        std::chrono::milliseconds get_timeout() const;
+
         std::optional<event_variant_> recv_arm_data(state_& state) const;
         std::optional<event_variant_> send_noop() const;
 
@@ -369,7 +384,7 @@ class URArm::state_ {
 
         static std::string_view name();
         std::string describe() const;
-        std::chrono::milliseconds get_timeout() const;
+        using state_connected_::get_timeout;
 
         using state_connected_::recv_arm_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
@@ -390,7 +405,7 @@ class URArm::state_ {
 
         static std::string_view name();
         std::string describe() const;
-        std::chrono::milliseconds get_timeout() const;
+        using state_connected_::get_timeout;
 
         using state_connected_::recv_arm_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
@@ -507,6 +522,7 @@ class URArm::state_ {
     const std::string host_;
     const std::string app_dir_;
     const std::string csv_output_path_;
+    const double robot_control_freq_hz_;
 
     // If this field ever becomes mutable, the accessors for it must
     // start taking the lock and returning a copy.
@@ -540,11 +556,13 @@ URArm::state_::state_(private_,
                       std::string app_dir,
                       std::string csv_output_path,
                       std::optional<double> reject_move_request_threshold_rad,
+                      std::optional<double> robot_control_freq_hz,
                       const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
       host_{std::move(host)},
       app_dir_{std::move(app_dir)},
       csv_output_path_{std::move(csv_output_path)},
+      robot_control_freq_hz_(robot_control_freq_hz.value_or(k_default_robot_control_freq_hz)),
       reject_move_request_threshold_rad_(std::move(reject_move_request_threshold_rad)),
       ports_{ports} {}
 
@@ -583,6 +601,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     }();
 
     auto threshold = find_config_attribute<double>(config, "reject_move_request_threshold_deg");
+    auto frequency = find_config_attribute<double>(config, "robot_control_freq_hz");
 
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
@@ -590,6 +609,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           std::string{app_dir},
                                           std::move(csv_output_path),
                                           std::move(threshold),
+                                          std::move(frequency),
                                           ports);
 
     state->set_speed(degrees_to_radians(find_config_attribute<double>(config, "speed_degs_per_sec").value()));
@@ -833,6 +853,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
 
     arm_connection->driver = std::make_unique<UrDriver>(ur_cfg);
 
+    // A little weird, but there doesn't seem to be a way to directly
+    // set the target frequency, so we need to do a `resetRTDEClient`
+    // call to achieve what we want.
+    arm_connection->driver->resetRTDEClient(
+        ur_cfg.output_recipe_file, ur_cfg.input_recipe_file, static_cast<std::uint32_t>(std::ceil(state.robot_control_freq_hz_)));
+
     arm_connection->driver->registerTrajectoryDoneCallback(
         std::bind(&URArm::state_::trajectory_done_callback_, &state, std::placeholders::_1));
 
@@ -878,6 +904,10 @@ URArm::state_::arm_connection_::~arm_connection_() {
         VIAM_SDK_LOG(info) << "destroying current DashboardClient instance";
     }
     dashboard.reset();
+}
+
+std::chrono::milliseconds URArm::state_::state_connected_::get_timeout() const {
+    return std::chrono::milliseconds{1000UL / arm_conn_->driver->getControlFrequency()};
 }
 
 URArm::state_::state_connected_::state_connected_(std::unique_ptr<arm_connection_> arm_conn) : arm_conn_{std::move(arm_conn)} {}
@@ -966,10 +996,6 @@ std::string_view URArm::state_::state_controlled_::name() {
 
 std::string URArm::state_::state_controlled_::describe() const {
     return std::string{name()};
-}
-
-std::chrono::milliseconds URArm::state_::state_controlled_::get_timeout() const {
-    return k_noop_delay;
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::upgrade_downgrade(state_&) {
@@ -1120,10 +1146,6 @@ std::string URArm::state_::state_independent_::describe() const {
         }
     }
     return buffer.str();
-}
-
-std::chrono::milliseconds URArm::state_::state_independent_::get_timeout() const {
-    return k_noop_delay;
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::upgrade_downgrade(state_&) {
@@ -1520,11 +1542,43 @@ void URArm::state_::send_noop_() {
 
 void URArm::state_::run_() {
     VIAM_SDK_LOG(info) << "worker thread started";
+
+    // Periodically, collect a limited number of samples of the
+    // duration of our wait latency on the condition variable. We
+    // expect this to fairly well respect the configured
+    // `robot_control_freq_hz`. Report this in the log so that we can
+    // know how well we are doing staying a reliable consumer of arm
+    // data. The logging also serves as a proof of forward progress
+    // for the worker thread.
+    constexpr std::size_t k_num_samples = 100;
+    constexpr auto k_sampling_interval = std::chrono::minutes(5);
+    auto last_sampling_point = std::chrono::steady_clock::now();
+
+    namespace bacc = ::boost::accumulators;
+    std::optional<bacc::accumulator_set<double, bacc::stats<bacc::tag::median, bacc::tag::variance>>> accumulator;
+
     while (true) {
         std::unique_lock lock(mutex_);
+
+        const auto wait_start = std::chrono::steady_clock::now();
         if (worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] { return shutdown_requested_; })) {
             VIAM_SDK_LOG(info) << "worker thread signaled to terminate";
             break;
+        }
+
+        if (!accumulator && ((wait_start - last_sampling_point) > k_sampling_interval)) {
+            last_sampling_point = wait_start;
+            accumulator.emplace();
+        }
+
+        if (accumulator) {
+            auto wait_end = std::chrono::steady_clock::now();
+            (*accumulator)(std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(wait_end - wait_start).count());
+            if (bacc::count(*accumulator) == k_num_samples) {
+                const auto accumulated = std::exchange(accumulator, std::nullopt);
+                VIAM_SDK_LOG(info) << "URArm worker thread median wait between control cycles is " << bacc::median(*accumulated)
+                                   << " milliseconds, with variance " << bacc::variance(*accumulated);
+            }
         }
 
         try {
