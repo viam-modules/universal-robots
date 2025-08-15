@@ -1144,9 +1144,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     if (local_mode()) {
         // If we aren't connected to the dashboard, try to reconnect, so
         // we can get an honest answer to `commandIsInRemoteControl`.
-        //
-        // TODO(RSDK-11622): Log this
         if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
+            VIAM_SDK_LOG(info) << "While in independent state, dashboard client is disconnected. Attempting to recover";
             arm_conn_->dashboard->disconnect();
             if (!arm_conn_->dashboard->connect(1)) {
                 return event_connection_lost_{};
@@ -1171,9 +1170,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             return event_connection_lost_{};
         }
 
-        // TODO(RSDK-11622): I was experimenting here. Not sure if
-        // this is needed or not. We likely do need to do an
-        // additional dashboard client reset.
+        // reset the clients to clear the state that blocks commands.
         try {
             VIAM_SDK_LOG(info) << "Arm has exited local control - cycling primary client";
             arm_conn_->dashboard->disconnect();
@@ -1193,13 +1190,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     //
     // TODO(RSDK-11621): Deal with three position enabling stops.
     if (estopped() && arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
-        // TODO(RSDK-11622): This doesn't seem like entirely the right place for
-        // this. We end up in states where we are "paused" and we don't
-        // come out, and I think this is the thing that unsticks us. So
-        // this must need to happen in more cases than just this one.
-        // If the arm isn't powered on, try to power it on. If we can't
-        // power it on, stay local. If we fail to talk to the dashboard,
-        // consider that a disconnection.
+        // ensure the arm is powered on
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_POWER_ON))) {
             VIAM_SDK_LOG(info) << "While in independent state, arm is not powered on; attempting to power on arm";
             try {
@@ -1224,6 +1215,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             return event_connection_lost_{};
         }
 
+        // resend the robot program if the control script is not running on the arm.
+        // This has been found to occur on some estops and when
+        // controlling the arm directly while in local mode.
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING))) {
             arm_conn_->program_running_flag.store(false, std::memory_order_release);
             VIAM_SDK_LOG(info) << "While in independent state, program is not running on arm; attempting to resend program";
