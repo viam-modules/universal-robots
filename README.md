@@ -34,7 +34,7 @@ The following attributes are available for `viam:universal-robots` arms:
 | `speed_degs_per_sec` | float | **Required** | Set the maximum desired speed of the arm joints in degrees per second. |
 | `acceleration_degs_per_sec2` | float | **Required** | Set the maximum desired acceleration of the arm joints. |
 | `reject_move_request_threshold_deg` | float | Not Required | Rejects move requests when the difference between the current position and first waypoint is above threshold |
-| `robot_control_freq_hz` | float | Not Required | Sets the processing frequency for communication with the arm in cycles/second|
+| `robot_control_freq_hz` | float | Not Required | Sets the processing frequency for communication with the arm in cycles/second. **Default 100 Hz** |
 
 ### Example configuration:
 
