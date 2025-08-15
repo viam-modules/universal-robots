@@ -403,6 +403,9 @@ class URArm::state_ {
         using state_event_handler_base_<state_independent_>::handle_event;
 
         reason reason_;
+
+        // track whether we have attempted to reconnect to local mode to avoid being spammy about it.
+        bool logged_local_reconnect_attempt{false};
     };
 
     struct event_connection_established_ {
@@ -1154,7 +1157,10 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // the dashboard client.
         try {
             if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
-                VIAM_SDK_LOG(warn) << "While in independent state, waiting for arm to re-enter remote mode";
+                if (!logged_local_reconnect_attempt) {
+                    VIAM_SDK_LOG(warn) << "While in independent state, waiting for arm to re-enter remote mode";
+                    logged_local_reconnect_attempt = true;
+                }
                 return std::nullopt;
             }
         } catch (...) {
