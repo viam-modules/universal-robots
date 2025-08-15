@@ -22,7 +22,7 @@
 #include <variant>
 
 #include <boost/accumulators/accumulators.hpp>
-#include <boost/accumulators/statistics/mean.hpp>
+#include <boost/accumulators/statistics/median.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
 #include <boost/accumulators/statistics/variance.hpp>
 #include <boost/format.hpp>
@@ -1530,7 +1530,7 @@ void URArm::state_::run_() {
     auto last_sampling_point = std::chrono::steady_clock::now();
 
     namespace bacc = ::boost::accumulators;
-    std::optional<bacc::accumulator_set<double, bacc::stats<bacc::tag::mean, bacc::tag::variance>>> accumulator;
+    std::optional<bacc::accumulator_set<double, bacc::stats<bacc::tag::median, bacc::tag::variance>>> accumulator;
 
     while (true) {
         std::unique_lock lock(mutex_);
@@ -1551,7 +1551,7 @@ void URArm::state_::run_() {
             (*accumulator)(std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(wait_end - wait_start).count());
             if (bacc::count(*accumulator) == k_num_samples) {
                 const auto accumulated = std::exchange(accumulator, std::nullopt);
-                VIAM_SDK_LOG(info) << "URArm worker thread mean wait between control cycles is " << bacc::mean(*accumulated)
+                VIAM_SDK_LOG(info) << "URArm worker thread median wait between control cycles is " << bacc::median(*accumulated)
                                    << " milliseconds, with variance " << bacc::variance(*accumulated);
             }
         }
