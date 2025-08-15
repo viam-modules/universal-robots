@@ -64,7 +64,6 @@ constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
 
 // constants for robot operation
 constexpr auto k_noop_delay = std::chrono::milliseconds(2);  // 2 millisecond, 500 Hz
-constexpr auto k_disconnect_delay = std::chrono::seconds(1);
 
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
