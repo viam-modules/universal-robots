@@ -66,10 +66,6 @@ namespace {
 constexpr char k_output_recipe[] = "/src/control/rtde_output_recipe.txt";
 constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
 
-// constants for robot operation
-constexpr auto k_estop_delay = std::chrono::milliseconds(100);  // 100 millisecond, 10 Hz
-constexpr auto k_disconnect_delay = std::chrono::seconds(1);
-
 constexpr auto k_default_robot_control_freq_hz = 100.;
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
@@ -350,6 +346,10 @@ class URArm::state_ {
         std::optional<state_variant_> handle_event(event_connection_established_ event);
 
         using state_event_handler_base_<state_disconnected_>::handle_event;
+
+        // track how often we attempt to reconnect.
+        // We will use this to limit how often logs spam during expected behaviors.
+        int reconnect_attempts{-1};
     };
 
     struct arm_connection_ {
@@ -365,6 +365,7 @@ class URArm::state_ {
         // not, now that we examine status bits that include letting
         // us know whether the program is running.
         std::atomic<bool> program_running_flag{false};
+        bool log_destructor{false};
     };
 
     struct state_connected_ {
@@ -404,7 +405,7 @@ class URArm::state_ {
 
         static std::string_view name();
         std::string describe() const;
-        std::chrono::milliseconds get_timeout() const;
+        using state_connected_::get_timeout;
 
         using state_connected_::recv_arm_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
@@ -423,6 +424,10 @@ class URArm::state_ {
         using state_event_handler_base_<state_independent_>::handle_event;
 
         reason reason_;
+
+        // track how often we attempt to reconnect.
+        // We will use this to limit how often logs spam during expected behaviors.
+        int local_reconnect_attempts{-1};
     };
 
     struct event_connection_established_ {
@@ -768,7 +773,7 @@ std::string URArm::state_::state_disconnected_::describe() const {
 }
 
 std::chrono::milliseconds URArm::state_::state_disconnected_::get_timeout() const {
-    return k_disconnect_delay;
+    return std::chrono::seconds(1);
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::recv_arm_data(state_&) {
@@ -776,16 +781,24 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::upgrade_downgrade(state_& state) {
-    VIAM_SDK_LOG(info) << "disconnected: attempting recovery";
+    reconnect_attempts++;
+    const auto log_at_n_attempts = 100;
+    if (reconnect_attempts % log_at_n_attempts == 0) {
+        VIAM_SDK_LOG(info) << "disconnected: attempting recovery";
+    }
     auto arm_connection = std::make_unique<arm_connection_>();
     arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_);
 
-    VIAM_SDK_LOG(info) << "disconnected: attempting recovery: trying to connect to dashboard";
+    if (reconnect_attempts % log_at_n_attempts == 0) {
+        VIAM_SDK_LOG(info) << "disconnected: attempting recovery: trying to connect to dashboard";
+    }
     if (!arm_connection->dashboard->connect(1)) {
         std::ostringstream buffer;
         buffer << "Failed trying to connect to UR dashboard on host " << state.host_;
         throw std::runtime_error(buffer.str());
     }
+    arm_connection->log_destructor = true;
+
     VIAM_SDK_LOG(info) << "disconnected: attempting recovery: connected to dashboard";
 
     VIAM_SDK_LOG(info) << "disconnected: attempting recovery: validating model";
@@ -883,9 +896,13 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_disconnected_:
 
 URArm::state_::arm_connection_::~arm_connection_() {
     data_package.reset();
-    VIAM_SDK_LOG(info) << "destroying current UrDriver instance";
+    if (log_destructor) {
+        VIAM_SDK_LOG(info) << "destroying current UrDriver instance";
+    }
     driver.reset();
-    VIAM_SDK_LOG(info) << "destroying current DashboardClient instance";
+    if (log_destructor) {
+        VIAM_SDK_LOG(info) << "destroying current DashboardClient instance";
+    }
     dashboard.reset();
 }
 
@@ -898,7 +915,7 @@ URArm::state_::state_connected_::state_connected_(std::unique_ptr<arm_connection
 std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::send_noop() const {
     if (!arm_conn_->driver->writeTrajectoryControlMessage(
             control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-        return event_local_mode_detected_{};
+        return event_estop_detected_{};
     }
     return std::nullopt;
 }
@@ -998,7 +1015,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     constexpr std::bitset<4> k_power_on_and_running{power_on_bit | program_running_bit};
 
     if (*(arm_conn_->robot_status_bits) != k_power_on_and_running) {
-        return event_local_mode_detected_{};
+        return event_estop_detected_{};
     }
 
     try {
@@ -1059,7 +1076,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
             if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
                 VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
                 std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
-                return event_local_mode_detected_{};
+                return event_estop_detected_{};
             };
         }
 
@@ -1073,7 +1090,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
             state.move_request_->cancel_error("failed to write trajectory control cancel message to URArm");
-            return event_local_mode_detected_{};
+            return event_estop_detected_{};
         }
     } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
         // We have a move request that we haven't issued but a
@@ -1131,16 +1148,6 @@ std::string URArm::state_::state_independent_::describe() const {
     return buffer.str();
 }
 
-std::chrono::milliseconds URArm::state_::state_independent_::get_timeout() const {
-    // TODO(RSDK-11622): I'm not sure this actually makes sense: even if we are
-    // estopped, we still want high frequency service for the rtde
-    // interface.
-    if (estopped()) {
-        return k_estop_delay;
-    }
-    return state_connected_::get_timeout();
-}
-
 std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::upgrade_downgrade(state_&) {
     namespace urtde = urcl::rtde_interface;
 
@@ -1154,34 +1161,16 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         return event_estop_detected_{};
     }
 
-    // On the other hand, if we are estopped, and that condition has been resolved, clear it.
-    //
-    // TODO(RSDK-11621): Deal with three position enabling stops.
-    if (estopped() && arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
-        // TODO(RSDK-11622): This doesn't seem like entirely the right place for
-        // this. We end up in states where we are "paused" and we don't
-        // come out, and I think this is the thing that unsticks us. So
-        // this must need to happen in more cases than just this one.
-        try {
-            VIAM_SDK_LOG(info) << "While in independent state: releasing brakes since no longer estopped";
-            if (!arm_conn_->dashboard->commandBrakeRelease()) {
-                VIAM_SDK_LOG(warn) << "While in independent state, could not release brakes";
-                return std::nullopt;
-            }
-        } catch (...) {
-            VIAM_SDK_LOG(warn) << "While in independent state, could not communicate with dashboard to release brakes; disconnecting";
-            return event_connection_lost_{};
-        }
-
-        return event_estop_cleared_{};
+    // If we aren't estopped, but the robot program is not running, become estopped.
+    if (!estopped() && !arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING))) {
+        return event_estop_detected_{};
     }
 
     if (local_mode()) {
         // If we aren't connected to the dashboard, try to reconnect, so
         // we can get an honest answer to `commandIsInRemoteControl`.
-        //
-        // TODO(RSDK-11622): Log this
         if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
+            VIAM_SDK_LOG(info) << "While in independent state, dashboard client is disconnected. Attempting to recover";
             arm_conn_->dashboard->disconnect();
             if (!arm_conn_->dashboard->connect(1)) {
                 return event_connection_lost_{};
@@ -1191,9 +1180,18 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // Try to use the dashboard connection to determine if the arm
         // is now in remote mode. If we fail to communicate with the
         // dashboard, downgrade to disconnected.
+        //
+        // TODO(RSDK-11619) We currently only test this if we have already detected local mode. This is because when an estop occurs,
+        // and a user switches into local mode without recovering from the stop, the dashboard client cannot reach the arm.
+        // since the driver client does not appear to have this issue, we should revaluate where this check should live when we go to remove
+        // the dashboard client.
+        local_reconnect_attempts++;
         try {
             if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
-                VIAM_SDK_LOG(warn) << "While in independent state, waiting for arm to re-enter remote mode";
+                // only log the failure every 100 attempts to be less spammy
+                if (local_reconnect_attempts % 100000 == 0) {
+                    VIAM_SDK_LOG(warn) << "While in independent state, waiting for arm to re-enter remote mode";
+                }
                 return std::nullopt;
             }
         } catch (...) {
@@ -1202,21 +1200,27 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             return event_connection_lost_{};
         }
 
-        // TODO(RSDK-11622): I was experimenting here. Not sure if
-        // this is needed or not. We likely do need to do an
-        // additional dashboard client reset.
+        // reset the clients to clear the state that blocks commands.
         try {
             VIAM_SDK_LOG(info) << "Arm has exited local control - cycling primary client";
+            arm_conn_->dashboard->disconnect();
+            if (!arm_conn_->dashboard->connect(1)) {
+                return event_connection_lost_{};
+            }
             arm_conn_->driver->stopPrimaryClientCommunication();
             arm_conn_->driver->startPrimaryClientCommunication();
         } catch (...) {
             VIAM_SDK_LOG(warn) << "While in independent state, failed cycling primary client; disconnecting";
             return event_connection_lost_{};
         }
+        return event_remote_mode_restored_{};
+    }
 
-        // If the arm isn't powered on, try to power it on. If we can't
-        // power it on, stay local. If we fail to talk to the dashboard,
-        // consider that a disconnection.
+    // On the other hand, if we are estopped, and that condition has been resolved, clear it.
+    //
+    // TODO(RSDK-11621): Deal with three position enabling stops.
+    if (estopped() && arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
+        // ensure the arm is powered on
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_POWER_ON))) {
             VIAM_SDK_LOG(info) << "While in independent state, arm is not powered on; attempting to power on arm";
             try {
@@ -1229,6 +1233,21 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             }
         }
 
+        try {
+            // TODO(RSDK-11645) find a way to detect if the breaks are locked
+            VIAM_SDK_LOG(info) << "While in independent state: releasing brakes since no longer estopped";
+            if (!arm_conn_->dashboard->commandBrakeRelease()) {
+                VIAM_SDK_LOG(warn) << "While in independent state, could not release brakes";
+                return std::nullopt;
+            }
+        } catch (...) {
+            VIAM_SDK_LOG(warn) << "While in independent state, could not communicate with dashboard to release brakes; disconnecting";
+            return event_connection_lost_{};
+        }
+
+        // resend the robot program if the control script is not running on the arm.
+        // This has been found to occur on some estops and when
+        // controlling the arm directly while in local mode.
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING))) {
             arm_conn_->program_running_flag.store(false, std::memory_order_release);
             VIAM_SDK_LOG(info) << "While in independent state, program is not running on arm; attempting to resend program";
@@ -1243,15 +1262,21 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             }
         }
 
-        // TODO(RSDK-11622): Should we give up after a while rather
-        // than getting stuck here indefinitely? But see also
-        // RSDK-11620 which suggest removing this flag entirely.
-        if (!arm_conn_->program_running_flag.load(std::memory_order_acquire)) {
-            VIAM_SDK_LOG(info) << "While in independent state, waiting for callback to toggle program state to running";
-            return std::nullopt;
+        // "Wait" for the robot program to start running.
+        //
+        // TODO(RSDK-11620) Check if we still need this flag.
+        VIAM_SDK_LOG(info) << "While in independent state, waiting for callback to toggle program state to running";
+        int retry_count = 100;
+        while (!arm_conn_->program_running_flag.load(std::memory_order_acquire)) {
+            if (retry_count <= 0) {
+                VIAM_SDK_LOG(warn) << "While in independent state, program state never loaded";
+                return event_connection_lost_{};
+            }
+            retry_count--;
+            std::this_thread::sleep_for(get_timeout());
         }
 
-        return event_remote_mode_restored_{};
+        return event_estop_cleared_{};
     }
 
     return std::nullopt;
