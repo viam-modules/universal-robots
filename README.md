@@ -50,6 +50,28 @@ The following attributes are available for `viam:universal-robots` arms:
 }
 ```
 
+### DoCommand
+
+#### set_acc DoCommand
+
+`set_acc` will update the `acceleration_degs_per_sec2` maximum acceleration for joints, in deg/sec^2. The value will reset back to the configured maximum when the arm is reconfigured. 
+
+```json
+{
+  "set_acc": <float>
+}
+```
+
+#### set_vel DoCommand
+
+`set_vel` will update the `speed_degs_per_sec` maximum speed for joints, in deg/sec. The value will reset back to the configured maximum when the arm is reconfigured. 
+
+```json
+{
+  "set_vel": <float>
+}
+```
+
 ### Interacting with the Arm
 First ensure that your machine is displaying as **Live** on the Viam App. Then you can interact with your Universal Robots arm in a couple ways:
 - To simply view data from and manipulate your arm, use the **CONTROL** tab of the Viam App.
