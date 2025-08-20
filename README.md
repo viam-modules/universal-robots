@@ -8,21 +8,15 @@ This repo is a [module](https://docs.viam.com/registry/#modular-resources) that 
 
 ## Configuration and Usage
 
-Navigate to the [**CONFIGURE** tab](https://docs.viam.com/build/configure/) of your [machine](https://docs.viam.com/fleet/machines/) in [the Viam app](https://app.viam.com/).
-[Add `arm / universal-robots` to your machine](https://docs.viam.com/build/configure/#components).
-
-On the new component panel, copy and paste the following attribute template into your camera’s attributes field, editing the attributes as applicable:
+This model can be used to control a universal robots arm from a machine running a viam-server. We recommend that the machine running the viam-server is using a wired ethernet connection for the best performance of this module. The following attribute template can be used to configure this model:
 
 ```json
 {
-    "host": "10.1.10.84",
-    "speed_degs_per_sec": 60,
-    "acceleration_degs_per_sec2": 8
+    "host": <arm ip address string>,
+    "speed_degs_per_sec": <float>,
+    "acceleration_degs_per_sec2": <float>
 }
 ```
-
-> [!NOTE]
-> For more information, see [Configure a Machine](https://docs.viam.com/manage/configuration/).
 
 ### Attributes
 
@@ -34,25 +28,25 @@ The following attributes are available for `viam:universal-robots` arms:
 | `speed_degs_per_sec` | float | **Required** | Set the maximum desired speed of the arm joints in degrees per second. |
 | `acceleration_degs_per_sec2` | float | **Required** | Set the maximum desired acceleration of the arm joints. |
 | `reject_move_request_threshold_deg` | float | Not Required | Rejects move requests when the difference between the current position and first waypoint is above threshold |
-| `robot_control_freq_hz` | float | Not Required | Sets the processing frequency for communication with the arm in cycles/second. **Default 100 Hz** |
+| `robot_control_freq_hz` | float | Not Required | Sets the processing frequency for communication with the arm in cycles/second. If the machine running this model is using WiFi, we recommend configuring this to a lower frequency, such as 10 Hz. **Default 100 Hz** |
 
 ### Example configuration:
 
-```
+#### using a wired ethernet connection on the same network as the arm
+```json
 {
-    "components": [
-        {
-            "name": "myURArm",
-            "attributes": {
-                "host": "10.1.10.84",
-                "speed_degs_per_sec": 120,
-                "acceleration_degs_per_sec2": 8
-            },
-            "namespace": "rdk",
-            "type": "arm",
-            "model": "viam:arm:universal-robots"
-        }
-    ]
+    "host": "10.1.10.84",
+    "speed_degs_per_sec": 120,
+    "acceleration_degs_per_sec2": 8
+}
+```
+#### using a WiFi connection on the same network as the arm
+```json
+{
+    "host": "10.1.10.84",
+    "speed_degs_per_sec": 120,
+    "acceleration_degs_per_sec2": 8,
+    "robot_control_freq_hz": 10 
 }
 ```
 

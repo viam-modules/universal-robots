@@ -929,8 +929,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     auto new_packet = arm_conn_->driver->getDataPackage();
     if (!new_packet) {
         consecutive_missed_packets++;
-        constexpr int k_allowed_packet_loss = 3;  // how many packets we can drop before restarting the connection
-        if (consecutive_missed_packets > k_allowed_packet_loss) {
+        // how many packets we can drop before restarting the connection
+        if (consecutive_missed_packets > 3) {
             VIAM_SDK_LOG(error) << "Failed to read a data package from the arm: dropping connection";
             return event_connection_lost_{};
         }
