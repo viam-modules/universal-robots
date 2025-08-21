@@ -373,10 +373,12 @@ class URArm::state_ {
 
         std::chrono::milliseconds get_timeout() const;
 
-        std::optional<event_variant_> recv_arm_data(state_& state) const;
+        std::optional<event_variant_> recv_arm_data(state_& state);
         std::optional<event_variant_> send_noop() const;
 
         std::unique_ptr<arm_connection_> arm_conn_;
+
+        int consecutive_missed_packets{0};
     };
 
     struct state_controlled_ : public state_event_handler_base_<state_controlled_>, public state_connected_ {
@@ -920,14 +922,22 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::se
     return std::nullopt;
 }
 
-std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::recv_arm_data(state_& state) const {
+std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::recv_arm_data(state_& state) {
     const auto prior_robot_status_bits = std::exchange(arm_conn_->robot_status_bits, std::nullopt);
     const auto prior_safety_status_bits = std::exchange(arm_conn_->safety_status_bits, std::nullopt);
-
-    arm_conn_->data_package = arm_conn_->driver->getDataPackage();
-    if (!arm_conn_->data_package) {
-        VIAM_SDK_LOG(error) << "Failed to read a data package from the arm: dropping connection";
-        return event_connection_lost_{};
+    // arm_conn_->data_package
+    auto new_packet = arm_conn_->driver->getDataPackage();
+    if (!new_packet) {
+        consecutive_missed_packets++;
+        // how many packets we can drop before restarting the connection
+        if (consecutive_missed_packets > 3) {
+            VIAM_SDK_LOG(error) << "Failed to read a data package from the arm: dropping connection";
+            return event_connection_lost_{};
+        }
+        VIAM_SDK_LOG(warn) << "Failed to read a data package from the arm: missed a packet: " << consecutive_missed_packets;
+    } else {
+        arm_conn_->data_package = std::move(new_packet);
+        consecutive_missed_packets = 0;
     }
 
     static const std::string k_robot_status_bits_key = "robot_status_bits";
