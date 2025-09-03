@@ -55,3 +55,13 @@ class URArmLogHandler : public urcl::LogHandler {
         }
     }
 };
+
+template <typename T>
+[[nodiscard]] constexpr decltype(auto) degrees_to_radians(T&& degrees) {
+    return std::forward<T>(degrees) * (M_PI / 180.0);
+}
+
+template <typename T>
+[[nodiscard]] constexpr decltype(auto) radians_to_degrees(T&& radians) {
+    return std::forward<T>(radians) * (180.0 / M_PI);
+}
