@@ -113,6 +113,12 @@ add_library(viam-ur)
 target_sources(viam-ur
   PRIVATE
     src/viam/ur/module/ur_arm.cpp
+    src/viam/ur/module/ur_arm_state.cpp
+    src/viam/ur/module/ur_arm_state_connected.cpp
+    src/viam/ur/module/ur_arm_state_controlled.cpp
+    src/viam/ur/module/ur_arm_state_disconnected.cpp
+    src/viam/ur/module/ur_arm_state_events.cpp
+    src/viam/ur/module/ur_arm_state_independent.cpp
     src/viam/ur/module/utils.cpp
 )
 target_link_libraries(viam-ur
