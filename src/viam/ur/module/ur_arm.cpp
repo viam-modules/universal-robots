@@ -381,9 +381,8 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         throw std::runtime_error(str(boost::format("no kinematics file known for model '%1'") % model_.to_string()));
     }();
 
-    constexpr char kSvaFileTemplate[] = "%1%/src/kinematics/%2%.json";
-
-    const auto sva_file_path = str(boost::format(kSvaFileTemplate) % current_state_->app_dir() % model_string);
+    constexpr char kSvaFileTemplate[] = "kinematics/%2%.json";
+    const auto sva_file_path = current_state_->resource_root() / str(boost::format(kSvaFileTemplate) % model_string);
 
     // Open the file in binary mode
     std::ifstream sva_file(sva_file_path, std::ios::binary);
