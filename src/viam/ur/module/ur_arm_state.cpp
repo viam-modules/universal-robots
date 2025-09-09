@@ -17,6 +17,8 @@
 
 #include "ur_arm_config.hpp"
 
+namespace {
+
 std::filesystem::path find_resource_root() {
     const auto module_executable_path = boost::dll::program_location();
     const auto module_executable_directory = module_executable_path.parent_path();
@@ -26,7 +28,11 @@ std::filesystem::path find_resource_root() {
     return data_directory;
 }
 
+}  // namespace
+
 #else
+
+namespace {
 
 std::filesystem::path find_resource_root() {
     // get the APPDIR environment variable
@@ -38,6 +44,8 @@ std::filesystem::path find_resource_root() {
     VIAM_SDK_LOG(info) << "APPDIR is `" << app_dir << "`; resources will be found in `" << data_directory << "`";
     return data_directory;
 }
+
+}  // namespace
 
 #endif
 
