@@ -1,5 +1,13 @@
 #include "ur_arm_state.hpp"
 
+#include <algorithm>
+
+#include <boost/io/ostream_joiner.hpp>
+#include <boost/range/adaptor/filtered.hpp>
+#include <boost/range/adaptor/transformed.hpp>
+#include <boost/range/empty.hpp>
+#include <boost/range/irange.hpp>
+
 // NOLINTBEGIN(readability-convert-member-functions-to-static)
 
 URArm::state_::state_independent_::state_independent_(std::unique_ptr<arm_connection_> arm_conn, reason r)
@@ -13,9 +21,45 @@ std::string_view URArm::state_::state_independent_::name() {
 std::string URArm::state_::state_independent_::describe() const {
     std::ostringstream buffer;
     buffer << name() << "(";
+
+    const auto describe_stoppage = [this](std::ostream& stream) -> std::ostream& {
+        // TODO: We should ask URCL to provide more of this for us.
+        constexpr std::string_view k_safety_status_field_names[] =  //
+            {"NORMAL_MODE",
+             "REDUCED_MODE",
+             "PROTECTIVE_STOPPED",
+             "RECOVERY_MODE",
+             "SAFEGUARD_STOPPED",
+             "SYSTEM_EMERGENCY_STOPPED",
+             "ROBOT_EMERGENCY_STOPPED",
+             "EMERGENCY_STOPPED",
+             "VIOLATION",
+             "FAULT",
+             "STOPPED_DUE_TO_SAFETY"};
+
+        static_assert(arm_connection_::k_num_safety_status_bits == std::size(k_safety_status_field_names));
+
+        stream << "stop{";
+
+        if (!arm_conn_->safety_status_bits.has_value()) {
+            stream << "<safety-flags-unavailable>";
+        } else {
+            const auto& bits = arm_conn_->safety_status_bits.value();
+            const auto set_bit_names = boost::irange(0, (int)std::size(k_safety_status_field_names)) |
+                                       boost::adaptors::filtered([&](int i) { return bits[i]; }) |
+                                       boost::adaptors::transformed([&](int i) { return k_safety_status_field_names[i]; });
+
+            if (!boost::empty(set_bit_names)) {
+                std::copy(set_bit_names.begin(), set_bit_names.end(), boost::io::make_ostream_joiner(stream, ","));
+            }
+        }
+
+        return stream << "}";
+    };
+
     switch (reason_) {
         case reason::k_stopped: {
-            buffer << "stop)";
+            describe_stoppage(buffer) << ")";
             break;
         }
         case reason::k_local_mode: {
@@ -23,7 +67,7 @@ std::string URArm::state_::state_independent_::describe() const {
             break;
         }
         case reason::k_both: {
-            buffer << "stop|local)";
+            describe_stoppage(buffer) << "|local)";
             break;
         }
         default: {

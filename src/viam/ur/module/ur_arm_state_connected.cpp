@@ -35,14 +35,14 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     }
 
     static const std::string k_robot_status_bits_key = "robot_status_bits";
-    std::bitset<4> robot_status_bits;
+    decltype(arm_conn_->robot_status_bits)::value_type robot_status_bits;
     if (!arm_conn_->data_package->getData<std::uint32_t>(k_robot_status_bits_key, robot_status_bits)) {
         VIAM_SDK_LOG(error) << "Data package did not contain the expected `robot_status_bits` information; dropping connection";
         return event_connection_lost_{};
     }
 
     static const std::string k_safety_status_bits_key = "safety_status_bits";
-    std::bitset<11> safety_status_bits;
+    decltype(arm_conn_->safety_status_bits)::value_type safety_status_bits;
     if (!arm_conn_->data_package->getData<std::uint32_t>(k_safety_status_bits_key, safety_status_bits)) {
         VIAM_SDK_LOG(error) << "Data package did not contain the expected `safety_status_bits` information; dropping connection";
         return event_connection_lost_{};

@@ -112,13 +112,16 @@ class URArm::state_ {
     };
 
     struct arm_connection_ {
+        static constexpr size_t k_num_robot_status_bits = 4;
+        static constexpr size_t k_num_safety_status_bits = 11;
+
         ~arm_connection_();
 
         std::unique_ptr<DashboardClient> dashboard;
         std::unique_ptr<UrDriver> driver;
         std::unique_ptr<rtde_interface::DataPackage> data_package;
-        std::optional<std::bitset<4>> robot_status_bits;
-        std::optional<std::bitset<11>> safety_status_bits;
+        std::optional<std::bitset<k_num_robot_status_bits>> robot_status_bits;
+        std::optional<std::bitset<k_num_safety_status_bits>> safety_status_bits;
 
         // TODO(RSDK-11620): Check if we still need this flag. We may
         // not, now that we examine status bits that include letting
