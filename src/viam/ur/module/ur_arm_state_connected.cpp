@@ -11,7 +11,7 @@ URArm::state_::state_connected_::state_connected_(std::unique_ptr<arm_connection
 std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::send_noop() const {
     if (!arm_conn_->driver->writeTrajectoryControlMessage(
             control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-        return event_estop_detected_{};
+        return event_stop_detected_{};
     }
     return std::nullopt;
 }

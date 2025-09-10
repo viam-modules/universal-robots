@@ -135,7 +135,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
 std::optional<URArm::state_::state_variant_> URArm::state_::state_disconnected_::handle_event(event_connection_established_ event) {
     // If we are leaving disconnected mode for independent mode, we
     // don't know, really, in what state we will find the arm. Assume
-    // the worst case scenario, that we are both estopped and in local
+    // the worst case scenario, that we are both stopped and in local
     // mode, and let the natural recovery process sort out how to get
     // back to a good place.
     return state_independent_{std::move(event.payload), state_independent_::reason::k_both};

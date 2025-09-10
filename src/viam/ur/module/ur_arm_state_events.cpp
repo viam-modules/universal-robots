@@ -20,19 +20,19 @@ std::string_view URArm::state_::event_connection_lost_::describe() const {
     return name();
 }
 
-std::string_view URArm::state_::event_estop_detected_::name() {
-    return "estop_detected"sv;
+std::string_view URArm::state_::event_stop_detected_::name() {
+    return "stop_detected"sv;
 }
 
-std::string_view URArm::state_::event_estop_detected_::describe() const {
+std::string_view URArm::state_::event_stop_detected_::describe() const {
     return name();
 }
 
-std::string_view URArm::state_::event_estop_cleared_::name() {
-    return "estop_cleared"sv;
+std::string_view URArm::state_::event_stop_cleared_::name() {
+    return "stop_cleared"sv;
 }
 
-std::string_view URArm::state_::event_estop_cleared_::describe() const {
+std::string_view URArm::state_::event_stop_cleared_::describe() const {
     return name();
 }
 
