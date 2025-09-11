@@ -22,7 +22,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     }
 
     if (!arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
-        return event_estop_detected_{};
+        return event_stop_detected_{};
     }
 
     constexpr auto power_on_bit = 1ULL << static_cast<int>(urtde::UrRtdeRobotStatusBits::IS_POWER_ON);
@@ -30,7 +30,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     constexpr std::bitset<4> k_power_on_and_running{power_on_bit | program_running_bit};
 
     if (*(arm_conn_->robot_status_bits) != k_power_on_and_running) {
-        return event_estop_detected_{};
+        return event_stop_detected_{};
     }
 
     try {
@@ -91,7 +91,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
             if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
                 VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
                 std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
-                return event_estop_detected_{};
+                return event_stop_detected_{};
             };
         }
 
@@ -105,7 +105,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
             state.move_request_->cancel_error("failed to write trajectory control cancel message to URArm");
-            return event_estop_detected_{};
+            return event_stop_detected_{};
         }
     } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
         // We have a move request that we haven't issued but a
@@ -123,8 +123,8 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::h
     return state_disconnected_{};
 }
 
-std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_estop_detected_) {
-    return state_independent_{std::move(arm_conn_), state_independent_::reason::k_estopped};
+std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_stop_detected_) {
+    return state_independent_{std::move(arm_conn_), state_independent_::reason::k_stopped};
 }
 
 std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_local_mode_detected_) {
