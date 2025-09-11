@@ -96,26 +96,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         return event_stop_detected_{};
     }
 
-    // Much like above, we may have arrived here due to a stop
-    // detected event, but local mode happened simultaneously. If
-    // we aren't in local mode already, see if we should be.
-    //
-    // NOTE: This is something of an artifact due to the limitation
-    // that the state machine only emits/handles one event at a
-    // time. If a state notices that the arm has both become stopped
-    // and entered local mode, it has no way to communicate that.
-    if (!local_mode()) {
-        try {
-            if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
-                return event_local_mode_detected_{};
-            }
-        } catch (...) {
-            VIAM_SDK_LOG(warn)
-                << "While in independent state, could not communicate with dashboard to determine remote control state; disconnecting";
-            return event_connection_lost_{};
-        }
-    }
-
     if (local_mode()) {
         // If we aren't connected to the dashboard, try to reconnect, so
         // we can get an honest answer to `commandIsInRemoteControl`.
