@@ -45,9 +45,9 @@ std::string URArm::state_::state_independent_::describe() const {
             stream << "<safety-status-unavailable>";
         } else {
             const auto& bits = arm_conn_->safety_status_bits.value();
-            const auto set_bit_names = boost::irange(0, (int)std::size(k_safety_status_field_names)) |
-                                       boost::adaptors::filtered([&](int i) { return bits[i]; }) |
-                                       boost::adaptors::transformed([&](int i) { return k_safety_status_field_names[i]; });
+            const auto set_bit_names = boost::irange(size_t{0}, std::size(k_safety_status_field_names)) |
+                                       boost::adaptors::filtered([&](size_t i) { return bits[i]; }) |
+                                       boost::adaptors::transformed([&](size_t i) { return k_safety_status_field_names[i]; });
 
             if (!boost::empty(set_bit_names)) {
                 std::copy(set_bit_names.begin(), set_bit_names.end(), boost::io::make_ostream_joiner(stream, ","));
