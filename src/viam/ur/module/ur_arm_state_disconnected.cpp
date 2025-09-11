@@ -82,6 +82,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
     ur_cfg.script_file = state.app_dir_ + k_script_file;
     ur_cfg.output_recipe_file = state.app_dir_ + k_output_recipe;
     ur_cfg.input_recipe_file = state.app_dir_ + k_input_recipe;
+
+    // TODO: Change how this works. It ends up logging with this
+    // disconnected.cpp filename state when we have a connection.
     ur_cfg.handle_program_state = [&running_flag = arm_connection->program_running_flag](bool running) {
         VIAM_SDK_LOG(info) << "UR program is " << (running ? "running" : "not running");
         running_flag.store(running, std::memory_order_release);

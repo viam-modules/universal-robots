@@ -42,7 +42,7 @@ std::string URArm::state_::state_independent_::describe() const {
         stream << "stop{";
 
         if (!arm_conn_->safety_status_bits.has_value()) {
-            stream << "<safety-flags-unavailable>";
+            stream << "<safety-status-unavailable>";
         } else {
             const auto& bits = arm_conn_->safety_status_bits.value();
             const auto set_bit_names = boost::irange(0, (int)std::size(k_safety_status_field_names)) |
