@@ -9,11 +9,15 @@ format-check:
 	ls src/viam/ur/module/*.*pp | xargs clang-format-19 -i --style=file --dry-run --Werror
 
 configure:
-	cmake -S . -B build -G Ninja
+	cmake -S . -B build -G Ninja $(if $(DISABLE_APPIMAGE),-DVIAM_UR_DISABLE_APPIMAGE=ON)
 
 build: configure
 	cmake --build build --target all -- -j4
-	cmake --install build --prefix build/install/usr
+ifeq ($(DISABLE_APPIMAGE),1)
+	DESTDIR=build/install cmake --install build --prefix /
+else
+	DESTDIR=build/install cmake --install build --prefix /usr
+endif
 
 test: build
 	./build/universal-robots-test
@@ -92,8 +96,12 @@ appimage-amd64: format-check build
 appimages: appimage-amd64 appimage-arm64
 
 module.tar.gz: meta.json
+ifeq ($(DISABLE_APPIMAGE),1)
+	tar czf $@ -C build/install .
+else
 	cp ./packaging/appimages/deploy/universal-robots-latest-$(ARCH).AppImage universal-robots.AppImage
 	tar czf $@ $^ universal-robots.AppImage
+endif
 
 build/_deps/universal_robots_client_library-src/scripts/start_ursim.sh:
 	# we need to ignore `cmake -G Ninja  ..` failing as the this project's CMakeLists.txt

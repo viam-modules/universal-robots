@@ -15,6 +15,13 @@ project(
 option(VIAM_UR_USE_WALL_WERROR "Build with -Wall and -Werror flags" ON)
 
 
+# - `VIAM_UR_DISABLE_APPIMAGE`
+#
+# Configure the build for not producing an AppImage
+#
+option(VIAM_UR_DISABLE_APPIMAGE "Disable AppImage builds" OFF)
+
+
 # If no build type is selected, build optimized but retain debug
 # info. This is probably the right build type for packaging and
 # release.
@@ -52,8 +59,32 @@ if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 endif()
 include(GNUInstallDirs)
 
+# If we aren't doing an app image build, configure runtime paths for relocatable installs
+if (VIAM_UR_DISABLE_APPIMAGE)
+  set(CMAKE_BUILD_WITH_INSTALL_RPATH false)
+  set(CMAKE_BUILD_RPATH_USE_ORIGIN true)
+  set(CMAKE_INSTALL_RPATH_USE_LINK_PATH true)
+  set(CMAKE_SKIP_BUILD_RPATH false)
 
+  list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}" isSystemDir)
+  if("${isSystemDir}" STREQUAL "-1")
+    # TODO: Is there a way to do this with generator expressions?
+    file(RELATIVE_PATH BINTOPREFIXRELPATH ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR} ${CMAKE_INSTALL_PREFIX})
+    file(RELATIVE_PATH PREFIXTOLIBRELPATH ${CMAKE_INSTALL_PREFIX} ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
+
+    if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+      list(PREPEND CMAKE_INSTALL_RPATH "@loader_path/${BINTOPREFIXRELPATH}/${PREFIXTOLIBRELPATH}")
+    else()
+      list(PREPEND CMAKE_INSTALL_RPATH "$ORIGIN/${BINTOPREFIXRELPATH}/${PREFIXTOLIBRELPATH}")
+    endif()
+  endif()
+endif()
+
+
+#
 # Obtain dependencies via FetchContent / find_package
+#
+
 include(FetchContent)
 
 # NOTE: If you change the version below, please also update
@@ -72,9 +103,13 @@ FetchContent_MakeAvailable(Universal_Robots_Client_Library)
 FetchContent_Declare(
   viam-cpp-sdk
   GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-  GIT_TAG releases/v0.13.2 # Keep in sync with Dockerfile
+  GIT_TAG releases/v0.19.0 # Keep in sync with Dockerfile
   GIT_SHALLOW TRUE
   SYSTEM
+  # Without this patch command, using this as a SYSTEM package results
+  # in failed compilation due to the statically included protobuf gens
+  # getting in the wrong order. Just delete them, we don't need them.
+  PATCH_COMMAND find ./src/viam/api -name "*.pb.h" -type f -exec rm {} +
   FIND_PACKAGE_ARGS
 )
 FetchContent_MakeAvailable(viam-cpp-sdk)
@@ -86,15 +121,27 @@ find_package(viam-cpp-sdk 0.13 CONFIG REQUIRED viamsdk)
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
+# Get boost pulled in
+find_package(Boost CONFIG REQUIRED
+  COMPONENTS
+    headers
+)
 
+
+#
 # Declare targets
+#
+
 add_library(trajectories)
+
 set_target_properties(trajectories PROPERTIES SYSTEM TRUE)
+
 target_sources(trajectories
   PRIVATE
     src/third_party/trajectories/Trajectory.cpp
     src/third_party/trajectories/Path.cpp
 )
+
 target_include_directories(trajectories
   INTERFACE
     src
@@ -104,12 +151,35 @@ target_link_libraries(trajectories
   PUBLIC
     Eigen3::Eigen
 )
+
 install(
   TARGETS
     trajectories
 )
 
+
 add_library(viam-ur)
+
+if (VIAM_UR_DISABLE_APPIMAGE)
+
+  # Compute the relative path from the bindir to the data
+  # directory. This is relocatable such that if we later install to a
+  # different prefix it will still be correct, but we need to use the
+  # full paths to compute it.
+  file(RELATIVE_PATH VIAM_UR_RELPATH_BINDIR_TO_DATADIR ${CMAKE_INSTALL_FULL_BINDIR} ${CMAKE_INSTALL_FULL_DATADIR})
+
+  configure_file(
+      src/viam/ur/module/ur_arm_config.hpp.in
+      ${CMAKE_CURRENT_BINARY_DIR}/src/viam/ur/module/ur_arm_config.hpp
+      @ONLY
+  )
+
+  target_include_directories(viam-ur
+    PRIVATE
+      ${CMAKE_CURRENT_BINARY_DIR}/src/viam/ur/module
+  )
+endif()
+
 target_sources(viam-ur
   PRIVATE
     src/viam/ur/module/ur_arm.cpp
@@ -121,12 +191,20 @@ target_sources(viam-ur
     src/viam/ur/module/ur_arm_state_independent.cpp
     src/viam/ur/module/utils.cpp
 )
+
+# Tell boost::dll to use std::filesystem rather than boost::filesystem.
+target_compile_definitions(viam-ur
+  PRIVATE
+    BOOST_DLL_USE_STD_FS
+)
+
 target_link_libraries(viam-ur
   PUBLIC
     trajectories
     urcl
     viam-cpp-sdk::viamsdk
 )
+
 install(
   TARGETS
     viam-ur
@@ -136,6 +214,7 @@ install(
 if (VIAM_UR_USE_WALL_WERROR)
   set(GNULIKE_COMPILERS "Clang" "AppleClang" "GNU")
   if (CMAKE_CXX_COMPILER_ID IN_LIST GNULIKE_COMPILERS)
+    # TODO: Arguably, these should be `PRIVATE`.
     target_compile_options(viam-ur PUBLIC
       -Wall
       -Werror
@@ -158,25 +237,55 @@ endif()
 
 
 add_executable(universal-robots)
+
 target_sources(universal-robots
   PRIVATE
     src/viam/ur/module/main.cpp
 )
+
 target_link_libraries(universal-robots
   PRIVATE
     viam-ur
 )
+
 install(
   TARGETS
     universal-robots
 )
 
+
 add_executable(universal-robots-test)
+
 target_sources(universal-robots-test
   PRIVATE
     src/viam/ur/module/test.cpp
 )
+
 target_link_libraries(universal-robots-test
   PRIVATE
     viam-ur
 )
+
+
+
+#
+# Installation and packaging
+#
+
+if (VIAM_UR_DISABLE_APPIMAGE)
+  configure_file(
+      meta.json-no-app-image.in
+      ${CMAKE_CURRENT_BINARY_DIR}/meta.json
+      @ONLY
+  )
+
+  install(
+    FILES ${CMAKE_CURRENT_BINARY_DIR}/meta.json
+    DESTINATION .
+  )
+
+  install(
+    DIRECTORY src/kinematics src/control
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/universal-robots
+  )
+endif()

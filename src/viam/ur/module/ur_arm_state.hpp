@@ -2,6 +2,7 @@
 
 #include <bitset>
 #include <condition_variable>
+#include <filesystem>
 #include <future>
 #include <thread>
 #include <variant>
@@ -16,8 +17,8 @@ class URArm::state_ {
     explicit state_(private_,
                     std::string configured_model_type,
                     std::string host,
-                    std::string app_dir,
-                    std::string csv_output_path,
+                    std::filesystem::path resource_root,
+                    std::filesystem::path csv_output_path,
                     std::optional<double> reject_move_request_threshold_rad,
                     std::optional<double> robot_control_freq_hz,
                     const struct ports_& ports);
@@ -30,8 +31,8 @@ class URArm::state_ {
     vector6d_t read_joint_positions() const;
     vector6d_t read_tcp_pose() const;
 
-    const std::string& csv_output_path() const;
-    const std::string& app_dir() const;
+    const std::filesystem::path& csv_output_path() const;
+    const std::filesystem::path& resource_root() const;
 
     void set_speed(double speed);
     double get_speed() const;
@@ -93,6 +94,8 @@ class URArm::state_ {
     };
 
     struct state_disconnected_ : public state_event_handler_base_<state_disconnected_> {
+        state_disconnected_() = default;
+
         static std::string_view name();
         std::string describe() const;
         std::chrono::milliseconds get_timeout() const;
@@ -284,8 +287,8 @@ class URArm::state_ {
 
     const std::string configured_model_type_;
     const std::string host_;
-    const std::string app_dir_;
-    const std::string csv_output_path_;
+    const std::filesystem::path resource_root_;
+    const std::filesystem::path csv_output_path_;
     const double robot_control_freq_hz_;
 
     // If this field ever becomes mutable, the accessors for it must
