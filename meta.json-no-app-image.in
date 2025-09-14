@@ -1,0 +1,25 @@
+{
+  "$schema": "https://dl.viam.dev/module.schema.json",
+  "module_id": "viam:universal-robots",
+  "visibility": "public",
+  "url": "https://github.com/viam-modules/universal-robots",
+  "description": "C++ module for Universal Robots arms",
+  "models": [
+    {
+      "api": "rdk:component:arm",
+      "model": "viam:universal-robots:ur3e",
+      "markdown_link": "README.md#configuration-and-usage"
+    },
+    {
+      "api": "rdk:component:arm",
+      "model": "viam:universal-robots:ur5e",
+      "markdown_link": "README.md#configuration-and-usage"
+    },
+    {
+      "api": "rdk:component:arm",
+      "model": "viam:universal-robots:ur20",
+      "markdown_link": "README.md#configuration-and-usage"
+    }
+  ],
+  "entrypoint": "@CMAKE_INSTALL_BINDIR@/universal-robots"
+}

@@ -1,9 +1,53 @@
 #include "ur_arm_state.hpp"
 
+#include <filesystem>
+#include <stdexcept>
+
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/median.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
 #include <boost/accumulators/statistics/variance.hpp>
+#include <boost/dll/runtime_symbol_info.hpp>
+
+// The `ur_arm_config.hpp` header is only generated for non-AppImage
+// builds. If the header exists, include it and note that we aren't
+// using appimage. Otherwise, we are. Name a constant to distinguish
+// the cases.
+#if __has_include("ur_arm_config.hpp")
+
+#include "ur_arm_config.hpp"
+
+namespace {
+
+std::filesystem::path find_resource_root() {
+    const auto module_executable_path = boost::dll::program_location();
+    const auto module_executable_directory = module_executable_path.parent_path();
+    auto data_directory = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "universal-robots");
+    VIAM_SDK_LOG(info) << "Universal robots module executable found in `" << module_executable_path << "; resources will be found in `"
+                       << data_directory << "`";
+    return data_directory;
+}
+
+}  // namespace
+
+#else
+
+namespace {
+
+std::filesystem::path find_resource_root() {
+    // get the APPDIR environment variable
+    auto* const app_dir = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
+    if (!app_dir) {
+        throw std::runtime_error("required environment variable `APPDIR` unset");
+    }
+    auto data_directory = std::filesystem::path{app_dir} / "src";
+    VIAM_SDK_LOG(info) << "APPDIR is `" << app_dir << "`; resources will be found in `" << data_directory << "`";
+    return data_directory;
+}
+
+}  // namespace
+
+#endif
 
 #include "utils.hpp"
 
@@ -34,14 +78,14 @@ void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& 
 URArm::state_::state_(private_,
                       std::string configured_model_type,
                       std::string host,
-                      std::string app_dir,
-                      std::string csv_output_path,
+                      std::filesystem::path resource_root,
+                      std::filesystem::path csv_output_path,
                       std::optional<double> reject_move_request_threshold_rad,
                       std::optional<double> robot_control_freq_hz,
                       const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
       host_{std::move(host)},
-      app_dir_{std::move(app_dir)},
+      resource_root_{std::move(resource_root)},
       csv_output_path_{std::move(csv_output_path)},
       robot_control_freq_hz_(robot_control_freq_hz.value_or(k_default_robot_control_freq_hz)),
       reject_move_request_threshold_rad_(std::move(reject_move_request_threshold_rad)),
@@ -54,14 +98,9 @@ URArm::state_::~state_() {
 std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_model_type,
                                                      const ResourceConfig& config,
                                                      const struct ports_& ports) {
-    // get the APPDIR environment variable
-    auto* const app_dir = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
-    if (!app_dir) {
-        throw std::runtime_error("required environment variable `APPDIR` unset");
-    }
-    VIAM_SDK_LOG(info) << "APPDIR: " << app_dir;
-
     auto host = find_config_attribute<std::string>(config, "host").value();
+
+    auto resource_root = find_resource_root();
 
     // If the config contains `csv_output_path`, use that, otherwise,
     // fall back to `VIAM_MODULE_DATA` as the output path, which must
@@ -87,10 +126,11 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
                                           std::move(host),
-                                          std::string{app_dir},
+                                          std::move(resource_root),
                                           std::move(csv_output_path),
                                           std::move(threshold),
                                           std::move(frequency),
+
                                           ports);
 
     state->set_speed(degrees_to_radians(find_config_attribute<double>(config, "speed_degs_per_sec").value()));
@@ -159,12 +199,12 @@ vector6d_t URArm::state_::read_tcp_pose() const {
     return ephemeral_->tcp_state;
 }
 
-const std::string& URArm::state_::csv_output_path() const {
+const std::filesystem::path& URArm::state_::csv_output_path() const {
     return csv_output_path_;
 }
 
-const std::string& URArm::state_::app_dir() const {
-    return app_dir_;
+const std::filesystem::path& URArm::state_::resource_root() const {
+    return resource_root_;
 }
 
 void URArm::state_::set_speed(double speed) {
