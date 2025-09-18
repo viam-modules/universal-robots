@@ -241,6 +241,13 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         return std::nullopt;
     }
 
+    // Similarly, if we are stopped, don't send the noop if the
+    // program isn't running.
+    namespace urtde = urcl::rtde_interface;
+    if (stopped() && !arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING))) {
+        return std::nullopt;
+    }
+
     return state_connected_::send_noop();
 }
 
