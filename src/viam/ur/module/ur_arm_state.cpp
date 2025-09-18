@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <stdexcept>
+#include <thread>
 
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/median.hpp>
@@ -130,30 +131,38 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           std::move(csv_output_path),
                                           std::move(threshold),
                                           std::move(frequency),
-
                                           ports);
 
     state->set_speed(degrees_to_radians(find_config_attribute<double>(config, "speed_degs_per_sec").value()));
     state->set_acceleration(degrees_to_radians(find_config_attribute<double>(config, "acceleration_degs_per_sec2").value()));
 
+    // Hold the mutex while we start the worker thread. It will not be
+    // able to advance, but will be ready to take over work as soon as
+    // we release the lock, minimizing the delay between establishing
+    // a connection and allowing the worker thread to begin meeting
+    // its service obligations.
     const std::lock_guard lock(state->mutex_);
     state->worker_thread_ = std::thread{&state_::run_, state.get()};
 
     // Attempt to manually drive the state machine out of the
     // disconnected state. For now, just try a few times with the
     // natural recovery cycle.
-    for (size_t i = 0; i != 5; ++i) {
+    size_t connection_failures = 0;
+    constexpr size_t max_connection_failures = 5;
+    while (std::holds_alternative<state_disconnected_>(state->current_state_)) {
         try {
             state->upgrade_downgrade_();
-            return state;
         } catch (const std::exception& xcp) {
-            VIAM_SDK_LOG(warn) << "Failed to establish working connection to arm after " << (i + 1) << " attempts: `" << xcp.what() << "`";
-            const auto timeout = state->get_timeout_();
-            VIAM_SDK_LOG(warn) << "Retrying after " << timeout.count() << " milliseconds";
-            std::this_thread::sleep_for(timeout);
+            VIAM_SDK_LOG(warn) << "Failed to establish working connection to arm after " << ++connection_failures << " attempts: `"
+                               << xcp.what() << "`";
+            if (connection_failures >= max_connection_failures) {
+                throw;
+            }
+            VIAM_SDK_LOG(warn) << "Retrying after " << state->get_timeout_().count() << " milliseconds";
         }
+        std::this_thread::sleep_for(state->get_timeout_());
     }
-    state->upgrade_downgrade_();
+
     return state;
 }
 

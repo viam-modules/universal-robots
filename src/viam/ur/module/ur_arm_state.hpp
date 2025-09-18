@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <filesystem>
 #include <future>
+#include <optional>
 #include <thread>
 #include <variant>
 
@@ -51,6 +52,7 @@ class URArm::state_ {
     std::optional<std::shared_future<void>> cancel_move_request();
 
    private:
+    struct arm_connection_;
     struct state_disconnected_;
     friend struct state_disconnected_;
 
@@ -109,9 +111,12 @@ class URArm::state_ {
 
         using state_event_handler_base_<state_disconnected_>::handle_event;
 
+        std::unique_ptr<arm_connection_> connect_(state_& state);
+
         // track how often we attempt to reconnect.
         // We will use this to limit how often logs spam during expected behaviors.
         int reconnect_attempts{-1};
+        std::optional<std::future<std::unique_ptr<arm_connection_>>> pending_connection;
     };
 
     struct arm_connection_ {

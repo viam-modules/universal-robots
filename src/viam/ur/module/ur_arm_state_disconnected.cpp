@@ -12,7 +12,10 @@ std::string URArm::state_::state_disconnected_::describe() const {
 }
 
 std::chrono::milliseconds URArm::state_::state_disconnected_::get_timeout() const {
-    return std::chrono::seconds(1);
+    // If we have a pending connection, we are polling for completion,
+    // so increase the sampling rate. Otherwise we want to wait a more
+    // reasonable length of time before attempting to connect again.
+    return pending_connection ? std::chrono::milliseconds(5) : std::chrono::seconds(1);
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::recv_arm_data(state_&) {
@@ -20,15 +23,42 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::upgrade_downgrade(state_& state) {
-    reconnect_attempts++;
-    const auto log_at_n_attempts = 100;
-    if (reconnect_attempts % log_at_n_attempts == 0) {
+    if (pending_connection) {
+        // There is a pending connection attempt. Poll it for
+        // completion. If it has completed, get the result, which will
+        // either cause an exception to be thrown or return the arm
+        // connection that we can wrap up into a connection established
+        // event. If the future isn't ready, there is no event to
+        // return, and we will come back to poll again.
+        switch (pending_connection->wait_for(std::chrono::seconds(0))) {
+            case std::future_status::ready: {
+                return event_connection_established_{std::exchange(pending_connection, std::nullopt)->get()};
+            }
+            case std::future_status::timeout: {
+                break;
+            }
+            case std::future_status::deferred: {
+                // Impossible, due to `std::launch::async` below.
+                std::abort();
+            }
+        }
+    } else {
+        // Otherwise, there is no pending connection attempt. Start a new one, and do not advance the state machine.
+        pending_connection.emplace(std::async(std::launch::async, [this, &state] { return connect_(state); }));
+    }
+    return std::nullopt;
+}
+
+std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnected_::connect_(state_& state) {
+    auto arm_connection = std::make_unique<arm_connection_>();
+
+    constexpr auto k_log_at_n_attempts = 100;
+    if (++reconnect_attempts % k_log_at_n_attempts == 0) {
         VIAM_SDK_LOG(info) << "disconnected: attempting recovery";
     }
-    auto arm_connection = std::make_unique<arm_connection_>();
-    arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_);
 
-    if (reconnect_attempts % log_at_n_attempts == 0) {
+    arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_);
+    if (reconnect_attempts % k_log_at_n_attempts == 0) {
         VIAM_SDK_LOG(info) << "disconnected: attempting recovery: trying to connect to dashboard";
     }
     if (!arm_connection->dashboard->connect(1)) {
@@ -116,7 +146,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
     }
 
     VIAM_SDK_LOG(info) << "disconnected: attempting recovery: recovery appears to have been successful; transitioning to independent mode";
-    return event_connection_established_{std::move(arm_connection)};
+    return arm_connection;
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::handle_move_request(state_& state) {
