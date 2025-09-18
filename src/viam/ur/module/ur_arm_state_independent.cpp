@@ -86,8 +86,18 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         return event_connection_lost_{};
     }
 
+    if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
+        VIAM_SDK_LOG(info) << "While in independent state, dashboard client is disconnected; disconnecting";
+        return event_connection_lost_{};
+    }
+
     // If we aren't stopped, but the safety flags say we are, become stopped immediately.
     if (!stopped() && !arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
+        return event_stop_detected_{};
+    }
+
+    // If we aren't stopped, but the robot is not powered on, become stopped.
+    if (!stopped() && !arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_POWER_ON))) {
         return event_stop_detected_{};
     }
 
@@ -96,25 +106,20 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         return event_stop_detected_{};
     }
 
-    if (local_mode()) {
-        // If we aren't connected to the dashboard, try to reconnect, so
-        // we can get an honest answer to `commandIsInRemoteControl`.
-        if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
-            VIAM_SDK_LOG(info) << "While in independent state, dashboard client is disconnected. Attempting to recover";
-            arm_conn_->dashboard->disconnect();
-            if (!arm_conn_->dashboard->connect(1)) {
-                return event_connection_lost_{};
+    // If we aren't in local mode, but the arm says we are, enter local mode.
+    if (!local_mode()) {
+        try {
+            if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
+                return event_local_mode_detected_{};
             }
+        } catch (...) {
+            VIAM_SDK_LOG(warn)
+                << "While in independent state, could not communicate with dashboard to determine remote control state; disconnecting";
+            return event_connection_lost_{};
         }
+    }
 
-        // Try to use the dashboard connection to determine if the arm
-        // is now in remote mode. If we fail to communicate with the
-        // dashboard, downgrade to disconnected.
-        //
-        // TODO(RSDK-11619) We currently only test this if we have already detected local mode. This is because when an stop occurs,
-        // and a user switches into local mode without recovering from the stop, the dashboard client cannot reach the arm.
-        // since the driver client does not appear to have this issue, we should revaluate where this check should live when we go to remove
-        // the dashboard client.
+    if (local_mode()) {
         local_reconnect_attempts++;
         try {
             if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
@@ -131,19 +136,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         }
 
         // reset the clients to clear the state that blocks commands.
-        try {
-            VIAM_SDK_LOG(info) << "Arm has exited local control - cycling primary client";
-            arm_conn_->dashboard->disconnect();
-            if (!arm_conn_->dashboard->connect(1)) {
-                return event_connection_lost_{};
-            }
-            arm_conn_->driver->stopPrimaryClientCommunication();
-            arm_conn_->driver->startPrimaryClientCommunication();
-        } catch (...) {
-            VIAM_SDK_LOG(warn) << "While in independent state, failed cycling primary client; disconnecting";
-            return event_connection_lost_{};
-        }
-        return event_remote_mode_restored_{};
+        return event_remote_mode_detected_{};
     }
 
     // On the other hand, if we are stopped, and that condition has been resolved, clear it.
@@ -264,7 +257,7 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::
     }
 }
 
-std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::handle_event(event_remote_mode_restored_) {
+std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::handle_event(event_remote_mode_detected_) {
     if (reason_ == reason::k_stopped) {
         return std::move(*this);
     } else if (reason_ == reason::k_both) {

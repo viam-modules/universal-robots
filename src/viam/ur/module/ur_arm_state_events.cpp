@@ -44,11 +44,11 @@ std::string_view URArm::state_::event_local_mode_detected_::describe() const {
     return name();
 }
 
-std::string_view URArm::state_::event_remote_mode_restored_::name() {
+std::string_view URArm::state_::event_remote_mode_detected_::name() {
     return "remote_mode_restored"sv;
 }
 
-std::string_view URArm::state_::event_remote_mode_restored_::describe() const {
+std::string_view URArm::state_::event_remote_mode_detected_::describe() const {
     return name();
 }
 

@@ -69,14 +69,14 @@ class URArm::state_ {
     struct event_stop_detected_;
     struct event_stop_cleared_;
     struct event_local_mode_detected_;
-    struct event_remote_mode_restored_;
+    struct event_remote_mode_detected_;
 
     using event_variant_ = std::variant<event_connection_established_,
                                         event_connection_lost_,
                                         event_stop_detected_,
                                         event_stop_cleared_,
                                         event_local_mode_detected_,
-                                        event_remote_mode_restored_>;
+                                        event_remote_mode_detected_>;
 
     template <typename T>
     class state_event_handler_base_ {
@@ -166,7 +166,6 @@ class URArm::state_ {
 
         std::optional<state_variant_> handle_event(event_connection_lost_);
         std::optional<state_variant_> handle_event(event_stop_detected_);
-        std::optional<state_variant_> handle_event(event_local_mode_detected_);
 
         using state_event_handler_base_<state_controlled_>::handle_event;
     };
@@ -192,7 +191,7 @@ class URArm::state_ {
         std::optional<state_variant_> handle_event(event_stop_detected_);
         std::optional<state_variant_> handle_event(event_local_mode_detected_);
         std::optional<state_variant_> handle_event(event_stop_cleared_);
-        std::optional<state_variant_> handle_event(event_remote_mode_restored_);
+        std::optional<state_variant_> handle_event(event_remote_mode_detected_);
 
         using state_event_handler_base_<state_independent_>::handle_event;
 
@@ -229,7 +228,7 @@ class URArm::state_ {
         std::string_view describe() const;
     };
 
-    struct event_remote_mode_restored_ {
+    struct event_remote_mode_detected_ {
         static std::string_view name();
         std::string_view describe() const;
     };
