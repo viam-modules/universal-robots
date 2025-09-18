@@ -39,6 +39,8 @@ class URArm::state_ {
     void set_acceleration(double acceleration);
     double get_acceleration() const;
 
+    bool do_command_close_safety_popup();
+
     size_t get_move_epoch() const;
 
     std::future<void> enqueue_move_request(size_t current_move_epoch,
@@ -96,6 +98,7 @@ class URArm::state_ {
         static std::string_view name();
         std::string describe() const;
         std::chrono::milliseconds get_timeout() const;
+        bool do_command_close_safety_popup();
 
         std::optional<event_variant_> recv_arm_data(state_&);
         std::optional<event_variant_> upgrade_downgrade(state_& state);
@@ -131,6 +134,7 @@ class URArm::state_ {
         explicit state_connected_(std::unique_ptr<arm_connection_> arm_conn);
 
         std::chrono::milliseconds get_timeout() const;
+        bool do_command_close_safety_popup();
 
         std::optional<event_variant_> recv_arm_data(state_& state);
         std::optional<event_variant_> send_noop() const;
@@ -145,6 +149,7 @@ class URArm::state_ {
 
         static std::string_view name();
         std::string describe() const;
+        using state_connected_::do_command_close_safety_popup;
         using state_connected_::get_timeout;
 
         using state_connected_::recv_arm_data;
@@ -166,6 +171,7 @@ class URArm::state_ {
 
         static std::string_view name();
         std::string describe() const;
+        using state_connected_::do_command_close_safety_popup;
         using state_connected_::get_timeout;
 
         using state_connected_::recv_arm_data;

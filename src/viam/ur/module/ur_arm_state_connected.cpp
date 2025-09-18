@@ -6,6 +6,20 @@ std::chrono::milliseconds URArm::state_::state_connected_::get_timeout() const {
     return std::chrono::milliseconds{1000UL / arm_conn_->driver->getControlFrequency()};
 }
 
+bool URArm::state_::state_connected_::do_command_close_safety_popup() {
+    // use a try catch, in case the arm was disconnected but the state machine has not detected it yet.
+    try {
+        // arm_conn_->dashboard->commandUnlockProtectiveStop()
+        if (!arm_conn_->dashboard->commandUnlockProtectiveStop()) {
+            return false;
+        }
+        return true;
+    } catch (...) {
+        // throw an error but do not try to change the state, let the worker thread handle that.
+        throw std::runtime_error("cannot close popup, arm is currently disconnected");
+    }
+}
+
 URArm::state_::state_connected_::state_connected_(std::unique_ptr<arm_connection_> arm_conn) : arm_conn_{std::move(arm_conn)} {}
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::send_noop() const {

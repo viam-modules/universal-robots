@@ -23,6 +23,10 @@ std::chrono::milliseconds URArm::state_::state_disconnected_::get_timeout() cons
     return std::chrono::seconds(1);
 }
 
+bool URArm::state_::state_disconnected_::do_command_close_safety_popup() {
+    throw std::runtime_error("cannot close popup, arm is currently disconnected");
+}
+
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::recv_arm_data(state_&) {
     return std::nullopt;
 }

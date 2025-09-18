@@ -420,6 +420,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     // `::move_` loads from these values independently.
     constexpr char k_acc_key[] = "set_acc";
     constexpr char k_vel_key[] = "set_vel";
+    constexpr char k_close_safety_popup[] = "clear_pstop";
     for (const auto& kv : command) {
         if (kv.first == k_vel_key) {
             const double val = *kv.second.get<double>();
@@ -430,6 +431,12 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             const double val = *kv.second.get<double>();
             current_state_->set_acceleration(degrees_to_radians(val));
             resp.emplace(k_acc_key, val);
+        }
+        if (kv.first == k_close_safety_popup) {
+            if (!current_state_->do_command_close_safety_popup()) {
+                throw std::runtime_error("failed to clear the pstop");
+            }
+            resp.emplace(k_close_safety_popup, "pstop_cleared");
         }
     }
 
