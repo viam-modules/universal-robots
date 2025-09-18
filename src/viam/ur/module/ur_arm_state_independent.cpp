@@ -149,7 +149,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
                                << ", arm is not powered on; attempting to power on arm - ensure the dashboard is in remote mode";
             try {
                 if (!arm_conn_->dashboard->commandPowerOn()) {
-                    return std::nullopt;
+                    VIAM_SDK_LOG(warn) << "While in state " << describe() << ", unable to power on arm; dropping connection";
+
+                    return event_connection_lost_{};
                 }
             } catch (...) {
                 VIAM_SDK_LOG(warn) << "While in state " << describe()
@@ -164,7 +166,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             if (!arm_conn_->dashboard->commandBrakeRelease()) {
                 VIAM_SDK_LOG(warn) << "While in state " << describe()
                                    << ", could not release brakes - ensure the dashboard is in remote mode";
-                return std::nullopt;
+                return event_connection_lost_{};
             }
         } catch (...) {
             VIAM_SDK_LOG(warn) << "While in state " << describe()
