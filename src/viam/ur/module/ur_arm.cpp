@@ -520,7 +520,6 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
 
     for (const auto& segment : segments) {
         const Trajectory trajectory(Path(segment, 0.1), max_velocity, max_acceleration);
-        trajectory.outputPhasePlaneTrajectory();
         if (!trajectory.isValid()) {
             std::stringstream buffer;
             buffer << "trajectory generation failed for path:";
@@ -535,18 +534,23 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
         }
 
         const double duration = trajectory.getDuration();
+
         if (!std::isfinite(duration)) {
             throw std::runtime_error("trajectory.getDuration() was not a finite number");
         }
+
         // TODO(RSDK-11069): Make this configurable
         // https://viam.atlassian.net/browse/RSDK-11069
         if (duration > 600) {  // if the duration is longer than 10 minutes
             throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
         }
+
         if (duration < k_min_timestep_sec) {
             VIAM_SDK_LOG(info) << "duration of move is too small, assuming arm is at goal";
             return;
         }
+
+        trajectory.outputPhasePlaneTrajectory();
 
         // desired sampling frequency. if the duration is small we will oversample but that should be fine.
         constexpr double k_sampling_freq_hz = 5;
