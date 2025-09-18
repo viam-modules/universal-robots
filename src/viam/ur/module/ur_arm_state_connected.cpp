@@ -11,6 +11,7 @@ URArm::state_::state_connected_::state_connected_(std::unique_ptr<arm_connection
 std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::send_noop() const {
     if (!arm_conn_->driver->writeTrajectoryControlMessage(
             control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
+        VIAM_SDK_LOG(error) << "While in a connected state, failed to write a NOOP trajectory control message; dropping connection";
         return event_connection_lost_{};
     }
     return std::nullopt;
@@ -37,14 +38,16 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     static const std::string k_robot_status_bits_key = "robot_status_bits";
     decltype(arm_conn_->robot_status_bits)::value_type robot_status_bits;
     if (!arm_conn_->data_package->getData<std::uint32_t>(k_robot_status_bits_key, robot_status_bits)) {
-        VIAM_SDK_LOG(error) << "Data package did not contain the expected `robot_status_bits` information; dropping connection";
+        VIAM_SDK_LOG(error) << "While in a connected state, the data package did not contain the expected `robot_status_bits` information; "
+                               "dropping connection";
         return event_connection_lost_{};
     }
 
     static const std::string k_safety_status_bits_key = "safety_status_bits";
     decltype(arm_conn_->safety_status_bits)::value_type safety_status_bits;
     if (!arm_conn_->data_package->getData<std::uint32_t>(k_safety_status_bits_key, safety_status_bits)) {
-        VIAM_SDK_LOG(error) << "Data package did not contain the expected `safety_status_bits` information; dropping connection";
+        VIAM_SDK_LOG(error) << "While in connected state, the data package did not contain the expected `safety_status_bits` information; "
+                               "dropping connection";
         return event_connection_lost_{};
     }
 

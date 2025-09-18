@@ -17,7 +17,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     namespace urtde = urcl::rtde_interface;
 
     if (!arm_conn_->safety_status_bits || !arm_conn_->robot_status_bits) {
-        VIAM_SDK_LOG(warn) << "While in controlled state, robot and safety status bits were not available; disconnecting";
+        VIAM_SDK_LOG(warn) << "While in state " << describe() << ", robot and safety status bits were not available; dropping connection";
         return event_connection_lost_{};
     }
 
@@ -34,7 +34,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     }
 
     if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
-        VIAM_SDK_LOG(info) << "While in controlled state, dashboard client is disconnected; disconnecting";
+        VIAM_SDK_LOG(info) << "While in state " << describe() << ", dashboard client is disconnected; dropping connection";
         return event_connection_lost_{};
     }
 
@@ -44,11 +44,11 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     // reliable across local/remote mode transitions.
     try {
         if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
-            VIAM_SDK_LOG(warn) << "While in controlled state, detected that dashboard is no longer in remote mode";
+            VIAM_SDK_LOG(warn) << "While in state " << describe() << ", detected that dashboard is no longer in remote mode";
             return event_connection_lost_{};
         }
     } catch (...) {
-        VIAM_SDK_LOG(warn) << "While in controlled state, could not communicate with dashboard to determine remote control state";
+        VIAM_SDK_LOG(warn) << "While in state " << describe() << ", could not communicate with dashboard to determine remote control state";
         // We want to go to local mode first so we can try to recover
         // by reconnecting to the dashboard. If local mode can't make
         // that happen, then it will further downgrade to
