@@ -107,6 +107,7 @@ class URArm::state_ {
         std::optional<event_variant_> handle_move_request(state_& state);
         std::optional<event_variant_> send_noop();
 
+        std::optional<state_variant_> handle_event(event_connection_lost_);
         std::optional<state_variant_> handle_event(event_connection_established_ event);
 
         using state_event_handler_base_<state_disconnected_>::handle_event;
