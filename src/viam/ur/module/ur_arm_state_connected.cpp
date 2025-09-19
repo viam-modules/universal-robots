@@ -11,7 +11,8 @@ URArm::state_::state_connected_::state_connected_(std::unique_ptr<arm_connection
 std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::send_noop() const {
     if (!arm_conn_->driver->writeTrajectoryControlMessage(
             control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-        return event_stop_detected_{};
+        VIAM_SDK_LOG(error) << "While in a connected state, failed to write a NOOP trajectory control message; dropping connection";
+        return event_connection_lost_::trajectory_control_failure();
     }
     return std::nullopt;
 }
@@ -26,7 +27,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
         // how many packets we can drop before restarting the connection
         if (consecutive_missed_packets > 3) {
             VIAM_SDK_LOG(error) << "Failed to read a data package from the arm: dropping connection";
-            return event_connection_lost_{};
+            return event_connection_lost_::data_communication_failure();
         }
         VIAM_SDK_LOG(warn) << "Failed to read a data package from the arm: missed a packet: " << consecutive_missed_packets;
     } else {
@@ -37,15 +38,17 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     static const std::string k_robot_status_bits_key = "robot_status_bits";
     decltype(arm_conn_->robot_status_bits)::value_type robot_status_bits;
     if (!arm_conn_->data_package->getData<std::uint32_t>(k_robot_status_bits_key, robot_status_bits)) {
-        VIAM_SDK_LOG(error) << "Data package did not contain the expected `robot_status_bits` information; dropping connection";
-        return event_connection_lost_{};
+        VIAM_SDK_LOG(error) << "While in a connected state, the data package did not contain the expected `robot_status_bits` information; "
+                               "dropping connection";
+        return event_connection_lost_::data_communication_failure();
     }
 
     static const std::string k_safety_status_bits_key = "safety_status_bits";
     decltype(arm_conn_->safety_status_bits)::value_type safety_status_bits;
     if (!arm_conn_->data_package->getData<std::uint32_t>(k_safety_status_bits_key, safety_status_bits)) {
-        VIAM_SDK_LOG(error) << "Data package did not contain the expected `safety_status_bits` information; dropping connection";
-        return event_connection_lost_{};
+        VIAM_SDK_LOG(error) << "While in connected state, the data package did not contain the expected `safety_status_bits` information; "
+                               "dropping connection";
+        return event_connection_lost_::data_communication_failure();
     }
 
     if (!prior_robot_status_bits) {
