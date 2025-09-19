@@ -156,7 +156,7 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     return arm_connection;
 }
 
-std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::handle_move_request(state_& state) {
+std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::handle_move_request(state_& state) const {
     if (state.move_request_) {
         const std::string error_message = "move request failed: no connection to arm; current state: " + describe();
         std::exchange(state.move_request_, {})->complete_error(error_message);

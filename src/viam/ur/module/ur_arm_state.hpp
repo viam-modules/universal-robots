@@ -105,7 +105,7 @@ class URArm::state_ {
 
         std::optional<event_variant_> recv_arm_data(state_&);
         std::optional<event_variant_> upgrade_downgrade(state_& state);
-        std::optional<event_variant_> handle_move_request(state_& state);
+        std::optional<event_variant_> handle_move_request(state_& state) const;
         std::optional<event_variant_> send_noop();
 
         std::optional<state_variant_> handle_event(event_connection_lost_ event);

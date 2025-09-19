@@ -44,11 +44,13 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     // reliable across local/remote mode transitions.
     try {
         if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
-            VIAM_SDK_LOG(warn) << "While in state " << describe() << ", detected that dashboard is no longer in remote mode; dropping connection";
+            VIAM_SDK_LOG(warn) << "While in state " << describe()
+                               << ", detected that dashboard is no longer in remote mode; dropping connection";
             return event_connection_lost_::dashboard_control_mode_change();
         }
     } catch (...) {
-        VIAM_SDK_LOG(warn) << "While in state " << describe() << ", could not communicate with dashboard to determine remote control state; dropping connection";
+        VIAM_SDK_LOG(warn) << "While in state " << describe()
+                           << ", could not communicate with dashboard to determine remote control state; dropping connection";
         return event_connection_lost_::dashboard_communication_failure();
     }
 
@@ -96,7 +98,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
             state.move_request_->cancel_error("failed to write trajectory control cancel message to URArm");
-            VIAM_SDK_LOG(error) << "While in state " << describe() << ", failed to write trajectory control cancel message; dropping connection";
+            VIAM_SDK_LOG(error) << "While in state " << describe()
+                                << ", failed to write trajectory control cancel message; dropping connection";
             return event_connection_lost_::trajectory_control_failure();
         }
     } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
