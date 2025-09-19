@@ -17,9 +17,16 @@ using namespace urcl;
 
 struct trajectory_sample_point {
     vector6d_t p;
-    vector6d_t v;
+    vector6d_t v; // this is 6 dim bc one for each motor
     float timestep;
+    bool is_joint_space;
 };
+// movevaluep takes in:
+// pose which is 6 dimensional
+// acceleration which is a single value (tool acceleration m/s^2)
+// velocity which is a single value (tool speed m/s)
+// IT SEEMS THAT THERE IS A DEFAULT VALUE WE CAN FALL BACK ON FOR VEL AND ACCEL
+// blend radius (m) --> can assume this will always be zero, so the struct doesn't need to be populated with this
 
 template <typename Func>
 void sampling_func(std::vector<trajectory_sample_point>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
@@ -93,6 +100,11 @@ class URArm final : public Arm, public Reconfigurable {
     /// @return Pose of the end effector with respect to the arm base.
     pose get_end_position(const ProtoStruct& extra) override;
 
+    /// @brief Move the arm to a defined pose.
+    /// @param p The pose the arm will move to.
+    /// @return An error indicating if we succeeded or not.
+    void move_to_position(const pose& p, const ProtoStruct&) override;
+
     /// @brief Reports if the arm is in motion.
     bool is_moving() override;
 
@@ -112,11 +124,7 @@ class URArm final : public Arm, public Reconfigurable {
     /// contain joint waypoints
     ProtoStruct do_command(const ProtoStruct& command) override;
 
-    // --------------- UNIMPLEMENTED FUNCTIONS ---------------
-    void move_to_position(const pose&, const ProtoStruct&) override {
-        throw std::runtime_error("unimplemented");
-    }
-
+    // --------------- UNIMPLEMENTED FUNCTIONS --------------
     // the arm server within RDK will reconstruct the geometries from the kinematics and joint positions if left unimplemented
     std::vector<GeometryConfig> get_geometries(const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
@@ -134,7 +142,7 @@ class URArm final : public Arm, public Reconfigurable {
 
     vector6d_t get_joint_positions_rad_(const std::shared_lock<std::shared_mutex>&);
 
-    void move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time_ms);
+    void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time_ms);
 
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
