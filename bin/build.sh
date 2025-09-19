@@ -34,19 +34,19 @@ protobuf/*: protobuf/5.27.0
 protobuf/*: protobuf/5.27.0
 EOF
 
-#       -o:a "viam-cpp-sdk/*:shared=False" \
-#       -s:a "&:build_type=RelWithDebInfo"
-conan install . --update \
+conan install ./../.. --update \
       --profile=protobuf-override.profile \
       --build={missing,outdated} \
       -s:a build_type=Release \
+      -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=17 \
 
-
-#      -o:a "viam-cpp-sdk/*:shared=False" \
-#      -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
-conan build . \
+conan build ./../.. \
       --profile=protobuf-override.profile \
       --build=none \
-       -s:a build_type=Release \
-      -s:a compiler.cppstd=17
+      -s:a build_type=Release \
+      -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
+      -s:a "&:build_type=RelWithDebInfo" \
+      -s:a compiler.cppstd=17 \
+      --deployer-folder=./deploy \
+      --deployer=full_deploy \

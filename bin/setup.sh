@@ -84,11 +84,11 @@ conan install . --update \
       -s:a build_type=Release \
       -s:a compiler.cppstd=17
 
-#       -s:a "&:build_type=RelWithDebInfo" \
 conan create . \
       --profile=protobuf-override.profile \
       --build=viam-cpp-sdk/0.19.0 \
       -s:a build_type=Release \
+      -s:a "&:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=17
 
 # Cleanup
