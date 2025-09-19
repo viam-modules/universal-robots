@@ -12,9 +12,9 @@ std::string_view URArm::state_::state_disconnected_::name() {
 
 std::string URArm::state_::state_disconnected_::describe() const {
     if (triggering_event_) {
-        return std::string{name()} + " (" + std::string{triggering_event_->describe()} + ")";
+        return std::string{name()} + "(" + std::string{triggering_event_->describe()} + ")";
     } else {
-        return std::string{name()} + " (awaiting connection)";
+        return std::string{name()} + "(awaiting connection)";
     }
 }
 
