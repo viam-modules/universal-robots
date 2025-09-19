@@ -65,7 +65,7 @@ class URArm::state_ {
     using state_variant_ = std::variant<state_disconnected_, state_controlled_, state_independent_>;
 
     struct event_connection_established_;
-    struct event_connection_lost_;
+    class event_connection_lost_;
     struct event_stop_detected_;
     struct event_stop_cleared_;
     struct event_local_mode_detected_;
@@ -97,6 +97,7 @@ class URArm::state_ {
 
     struct state_disconnected_ : public state_event_handler_base_<state_disconnected_> {
         state_disconnected_() = default;
+        explicit state_disconnected_(event_connection_lost_ triggering_event);
 
         static std::string_view name();
         std::string describe() const;
@@ -107,7 +108,7 @@ class URArm::state_ {
         std::optional<event_variant_> handle_move_request(state_& state);
         std::optional<event_variant_> send_noop();
 
-        std::optional<state_variant_> handle_event(event_connection_lost_);
+        std::optional<state_variant_> handle_event(event_connection_lost_ event);
         std::optional<state_variant_> handle_event(event_connection_established_ event);
 
         using state_event_handler_base_<state_disconnected_>::handle_event;
@@ -118,6 +119,10 @@ class URArm::state_ {
         // We will use this to limit how often logs spam during expected behaviors.
         int reconnect_attempts{-1};
         std::optional<std::future<std::unique_ptr<arm_connection_>>> pending_connection;
+
+        // The event that caused us to enter the disconnected state (if any).
+        // Using unique_ptr instead of optional because event_connection_lost_ is incomplete here.
+        std::unique_ptr<event_connection_lost_> triggering_event_;
     };
 
     struct arm_connection_ {
@@ -164,7 +169,7 @@ class URArm::state_ {
         std::optional<event_variant_> handle_move_request(state_& state);
         using state_connected_::send_noop;
 
-        std::optional<state_variant_> handle_event(event_connection_lost_);
+        std::optional<state_variant_> handle_event(event_connection_lost_ event);
         std::optional<state_variant_> handle_event(event_stop_detected_);
 
         using state_event_handler_base_<state_controlled_>::handle_event;
@@ -187,7 +192,7 @@ class URArm::state_ {
         bool stopped() const;
         bool local_mode() const;
 
-        std::optional<state_variant_> handle_event(event_connection_lost_);
+        std::optional<state_variant_> handle_event(event_connection_lost_ event);
         std::optional<state_variant_> handle_event(event_stop_detected_);
         std::optional<state_variant_> handle_event(event_local_mode_detected_);
         std::optional<state_variant_> handle_event(event_stop_cleared_);
@@ -208,9 +213,33 @@ class URArm::state_ {
         std::unique_ptr<arm_connection_> payload;
     };
 
-    struct event_connection_lost_ {
+    class event_connection_lost_ {
+       public:
+        static event_connection_lost_ data_communication_failure();
+        static event_connection_lost_ dashboard_communication_failure();
+        static event_connection_lost_ dashboard_command_failure();
+        static event_connection_lost_ dashboard_control_mode_change();
+        static event_connection_lost_ robot_program_failure();
+        static event_connection_lost_ trajectory_control_failure();
+        static event_connection_lost_ module_shutdown();
+
         static std::string_view name();
         std::string_view describe() const;
+
+       private:
+        enum reason : std::uint8_t {
+            k_data_communication_failure,
+            k_dashboard_communication_failure,
+            k_dashboard_command_failure,
+            k_dashboard_control_mode_change,
+            k_robot_program_failure,
+            k_trajectory_control_failure,
+            k_module_shutdown
+        };
+
+        explicit event_connection_lost_(reason r);
+
+        reason reason_code;
     };
 
     struct event_stop_detected_ {

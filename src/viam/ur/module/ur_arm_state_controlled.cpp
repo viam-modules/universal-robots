@@ -18,7 +18,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
 
     if (!arm_conn_->safety_status_bits || !arm_conn_->robot_status_bits) {
         VIAM_SDK_LOG(warn) << "While in state " << describe() << ", robot and safety status bits were not available; dropping connection";
-        return event_connection_lost_{};
+        return event_connection_lost_::data_communication_failure();
     }
 
     if (!arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
@@ -35,7 +35,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
 
     if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
         VIAM_SDK_LOG(warn) << "While in state " << describe() << ", dashboard client is disconnected; dropping connection";
-        return event_connection_lost_{};
+        return event_connection_lost_::dashboard_communication_failure();
     }
 
     // If we get anything but a positive answer from the dashboard
@@ -45,11 +45,11 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     try {
         if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
             VIAM_SDK_LOG(warn) << "While in state " << describe() << ", detected that dashboard is no longer in remote mode; dropping connection";
-            return event_connection_lost_{};
+            return event_connection_lost_::dashboard_control_mode_change();
         }
     } catch (...) {
         VIAM_SDK_LOG(warn) << "While in state " << describe() << ", could not communicate with dashboard to determine remote control state; dropping connection";
-        return event_connection_lost_{};
+        return event_connection_lost_::dashboard_communication_failure();
     }
 
     return std::nullopt;
@@ -74,7 +74,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
             VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false; dropping connection";
             std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
-            return event_connection_lost_{};
+            return event_connection_lost_::trajectory_control_failure();
         }
 
         VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
@@ -82,7 +82,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
             if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
                 VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false; dropping connection";
                 std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
-                return event_connection_lost_{};
+                return event_connection_lost_::trajectory_control_failure();
             }
         }
 
@@ -97,7 +97,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
             state.move_request_->cancel_error("failed to write trajectory control cancel message to URArm");
             VIAM_SDK_LOG(error) << "While in state " << describe() << ", failed to write trajectory control cancel message; dropping connection";
-            return event_connection_lost_{};
+            return event_connection_lost_::trajectory_control_failure();
         }
     } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
         // We have a move request that we haven't issued but a
@@ -111,8 +111,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
     return std::nullopt;
 }
 
-std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_connection_lost_) {
-    return state_disconnected_{};
+std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_connection_lost_ event) {
+    return state_disconnected_{std::move(event)};
 }
 
 std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_stop_detected_) {

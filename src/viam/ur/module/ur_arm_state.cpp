@@ -474,7 +474,7 @@ void URArm::state_::run_() {
     }
 
     VIAM_SDK_LOG(info) << "worker thread emitting disconnection event";
-    emit_event_(event_connection_lost_{});
+    emit_event_(event_connection_lost_::module_shutdown());
     VIAM_SDK_LOG(info) << "worker thread terminating";
 }
 

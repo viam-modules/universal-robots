@@ -83,12 +83,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
 
     if (!arm_conn_->safety_status_bits || !arm_conn_->robot_status_bits) {
         VIAM_SDK_LOG(warn) << "While in state " << describe() << ", robot and safety status bits were not available; dropping connection";
-        return event_connection_lost_{};
+        return event_connection_lost_::data_communication_failure();
     }
 
     if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
         VIAM_SDK_LOG(info) << "While in state " << describe() << ", dashboard client is disconnected; dropping connection";
-        return event_connection_lost_{};
+        return event_connection_lost_::dashboard_communication_failure();
     }
 
     // If we aren't stopped, but the safety flags say we are, become stopped immediately.
@@ -115,7 +115,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         } catch (...) {
             VIAM_SDK_LOG(warn) << "While in state " << describe()
                                << ", could not communicate with dashboard to determine remote control state; dropping connection";
-            return event_connection_lost_{};
+            return event_connection_lost_::dashboard_communication_failure();
         }
     }
 
@@ -132,7 +132,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         } catch (...) {
             VIAM_SDK_LOG(warn) << "While in state " << describe()
                                << ", could not communicate with dashboard to determine remote control state; dropping connection";
-            return event_connection_lost_{};
+            return event_connection_lost_::dashboard_communication_failure();
         }
 
         // reset the clients to clear the state that blocks commands.
@@ -151,12 +151,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
                 if (!arm_conn_->dashboard->commandPowerOn()) {
                     VIAM_SDK_LOG(warn) << "While in state " << describe() << ", unable to power on arm; dropping connection";
 
-                    return event_connection_lost_{};
+                    return event_connection_lost_::dashboard_command_failure();
                 }
             } catch (...) {
                 VIAM_SDK_LOG(warn) << "While in state " << describe()
                                    << ", could not communicate with dashboard to power on arm; dropping connection";
-                return event_connection_lost_{};
+                return event_connection_lost_::dashboard_communication_failure();
             }
         }
 
@@ -166,12 +166,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             if (!arm_conn_->dashboard->commandBrakeRelease()) {
                 VIAM_SDK_LOG(warn) << "While in state " << describe()
                                    << ", could not release brakes - ensure the dashboard is in remote mode; dropping connection";
-                return event_connection_lost_{};
+                return event_connection_lost_::dashboard_command_failure();
             }
         } catch (...) {
             VIAM_SDK_LOG(warn) << "While in state " << describe()
                                << ", could not communicate with dashboard to release brakes; dropping connection";
-            return event_connection_lost_{};
+            return event_connection_lost_::dashboard_communication_failure();
         }
 
         // resend the robot program if the control script is not running on the arm.
@@ -184,12 +184,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
                 if (!arm_conn_->driver->sendRobotProgram()) {
                     VIAM_SDK_LOG(warn) << "While in state " << describe()
                                        << ", could not send program to robot via driver; dropping connection";
-                    return event_connection_lost_{};
+                    return event_connection_lost_::robot_program_failure();
                 }
             } catch (...) {
                 VIAM_SDK_LOG(warn) << "While in state " << describe()
                                    << ", failed sending program to robot via driver; dropping connection";
-                return event_connection_lost_{};
+                return event_connection_lost_::robot_program_failure();
             }
         }
 
@@ -201,7 +201,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         while (!arm_conn_->program_running_flag.load(std::memory_order_acquire)) {
             if (retry_count <= 0) {
                 VIAM_SDK_LOG(warn) << "While in state " << describe() << ", program state never loaded; dropping connection";
-                return event_connection_lost_{};
+                return event_connection_lost_::robot_program_failure();
             }
             retry_count--;
             std::this_thread::sleep_for(get_timeout());
@@ -297,8 +297,8 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::
     }
 }
 
-std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::handle_event(event_connection_lost_) {
-    return state_disconnected_{};
+std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::handle_event(event_connection_lost_ event) {
+    return state_disconnected_{std::move(event)};
 }
 
 // NOLINTEND(readability-convert-member-functions-to-static)
