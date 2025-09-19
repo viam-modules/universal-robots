@@ -165,7 +165,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             VIAM_SDK_LOG(info) << "While in state " << describe() << ": releasing brakes since no longer stopped";
             if (!arm_conn_->dashboard->commandBrakeRelease()) {
                 VIAM_SDK_LOG(warn) << "While in state " << describe()
-                                   << ", could not release brakes - ensure the dashboard is in remote mode";
+                                   << ", could not release brakes - ensure the dashboard is in remote mode; dropping connection";
                 return event_connection_lost_{};
             }
         } catch (...) {
@@ -200,7 +200,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         int retry_count = 100;
         while (!arm_conn_->program_running_flag.load(std::memory_order_acquire)) {
             if (retry_count <= 0) {
-                VIAM_SDK_LOG(warn) << "While in state " << describe() << ", program state never loaded";
+                VIAM_SDK_LOG(warn) << "While in state " << describe() << ", program state never loaded; dropping connection";
                 return event_connection_lost_{};
             }
             retry_count--;

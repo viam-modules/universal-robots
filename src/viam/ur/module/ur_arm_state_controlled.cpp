@@ -34,7 +34,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     }
 
     if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
-        VIAM_SDK_LOG(info) << "While in state " << describe() << ", dashboard client is disconnected; dropping connection";
+        VIAM_SDK_LOG(warn) << "While in state " << describe() << ", dashboard client is disconnected; dropping connection";
         return event_connection_lost_{};
     }
 
@@ -44,15 +44,11 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     // reliable across local/remote mode transitions.
     try {
         if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
-            VIAM_SDK_LOG(warn) << "While in state " << describe() << ", detected that dashboard is no longer in remote mode";
+            VIAM_SDK_LOG(warn) << "While in state " << describe() << ", detected that dashboard is no longer in remote mode; dropping connection";
             return event_connection_lost_{};
         }
     } catch (...) {
-        VIAM_SDK_LOG(warn) << "While in state " << describe() << ", could not communicate with dashboard to determine remote control state";
-        // We want to go to local mode first so we can try to recover
-        // by reconnecting to the dashboard. If local mode can't make
-        // that happen, then it will further downgrade to
-        // disconnected.
+        VIAM_SDK_LOG(warn) << "While in state " << describe() << ", could not communicate with dashboard to determine remote control state; dropping connection";
         return event_connection_lost_{};
     }
 
@@ -76,7 +72,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
-            VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
+            VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false; dropping connection";
             std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
             return event_connection_lost_{};
         }
@@ -84,7 +80,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
         for (size_t i = 0; i < num_samples; i++) {
             if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
-                VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
+                VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false; dropping connection";
                 std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
                 return event_connection_lost_{};
             }
@@ -100,6 +96,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
             state.move_request_->cancel_error("failed to write trajectory control cancel message to URArm");
+            VIAM_SDK_LOG(error) << "While in state " << describe() << ", failed to write trajectory control cancel message; dropping connection";
             return event_connection_lost_{};
         }
     } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
