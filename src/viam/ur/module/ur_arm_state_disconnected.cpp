@@ -1,13 +1,5 @@
 #include "ur_arm_state.hpp"
 
-namespace {
-
-// locations of files necessary to build module, specified as relative paths
-constexpr char k_output_recipe[] = "/src/control/rtde_output_recipe.txt";
-constexpr char k_input_recipe[] = "/src/control/rtde_input_recipe.txt";
-
-}  // namespace
-
 // NOLINTBEGIN(readability-convert-member-functions-to-static)
 
 std::string_view URArm::state_::state_disconnected_::name() {
@@ -20,7 +12,10 @@ std::string URArm::state_::state_disconnected_::describe() const {
 }
 
 std::chrono::milliseconds URArm::state_::state_disconnected_::get_timeout() const {
-    return std::chrono::seconds(1);
+    // If we have a pending connection, we are polling for completion,
+    // so increase the sampling rate. Otherwise we want to wait a more
+    // reasonable length of time before attempting to connect again.
+    return pending_connection ? std::chrono::milliseconds(5) : std::chrono::seconds(1);
 }
 
 bool URArm::state_::state_disconnected_::do_command_close_safety_popup() {
@@ -32,15 +27,42 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::upgrade_downgrade(state_& state) {
-    reconnect_attempts++;
-    const auto log_at_n_attempts = 100;
-    if (reconnect_attempts % log_at_n_attempts == 0) {
+    if (pending_connection) {
+        // There is a pending connection attempt. Poll it for
+        // completion. If it has completed, get the result, which will
+        // either cause an exception to be thrown or return the arm
+        // connection that we can wrap up into a connection established
+        // event. If the future isn't ready, there is no event to
+        // return, and we will come back to poll again.
+        switch (pending_connection->wait_for(std::chrono::seconds(0))) {
+            case std::future_status::ready: {
+                return event_connection_established_{std::exchange(pending_connection, std::nullopt)->get()};
+            }
+            case std::future_status::timeout: {
+                break;
+            }
+            case std::future_status::deferred: {
+                // Impossible, due to `std::launch::async` below.
+                std::abort();
+            }
+        }
+    } else {
+        // Otherwise, there is no pending connection attempt. Start a new one, and do not advance the state machine.
+        pending_connection.emplace(std::async(std::launch::async, [this, &state] { return connect_(state); }));
+    }
+    return std::nullopt;
+}
+
+std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnected_::connect_(state_& state) {
+    auto arm_connection = std::make_unique<arm_connection_>();
+
+    constexpr auto k_log_at_n_attempts = 100;
+    if (++reconnect_attempts % k_log_at_n_attempts == 0) {
         VIAM_SDK_LOG(info) << "disconnected: attempting recovery";
     }
-    auto arm_connection = std::make_unique<arm_connection_>();
-    arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_);
 
-    if (reconnect_attempts % log_at_n_attempts == 0) {
+    arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_);
+    if (reconnect_attempts % k_log_at_n_attempts == 0) {
         VIAM_SDK_LOG(info) << "disconnected: attempting recovery: trying to connect to dashboard";
     }
     if (!arm_connection->dashboard->connect(1)) {
@@ -77,15 +99,21 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
         }
     }
 
-    constexpr char k_script_file[] = "/src/control/external_control.urscript";
+    // locations of files necessary to build module, specified as relative paths
+    constexpr char k_script_file[] = "control/external_control.urscript";
+    constexpr char k_output_recipe[] = "control/rtde_output_recipe.txt";
+    constexpr char k_input_recipe[] = "control/rtde_input_recipe.txt";
 
     VIAM_SDK_LOG(info) << "disconnected: attempting recovery: instantiating new UrDriver";
     // Now the robot is ready to receive a program
     auto ur_cfg = urcl::UrDriverConfiguration{};
     ur_cfg.robot_ip = state.host_;
-    ur_cfg.script_file = state.app_dir_ + k_script_file;
-    ur_cfg.output_recipe_file = state.app_dir_ + k_output_recipe;
-    ur_cfg.input_recipe_file = state.app_dir_ + k_input_recipe;
+    ur_cfg.script_file = state.resource_root_ / k_script_file;
+    ur_cfg.output_recipe_file = state.resource_root_ / k_output_recipe;
+    ur_cfg.input_recipe_file = state.resource_root_ / k_input_recipe;
+
+    // TODO: Change how this works. It ends up logging with this
+    // disconnected.cpp filename state when we have a connection.
     ur_cfg.handle_program_state = [&running_flag = arm_connection->program_running_flag](bool running) {
         VIAM_SDK_LOG(info) << "UR program is " << (running ? "running" : "not running");
         running_flag.store(running, std::memory_order_release);
@@ -122,7 +150,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
     }
 
     VIAM_SDK_LOG(info) << "disconnected: attempting recovery: recovery appears to have been successful; transitioning to independent mode";
-    return event_connection_established_{std::move(arm_connection)};
+    return arm_connection;
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::handle_move_request(state_& state) {
@@ -139,7 +167,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
 std::optional<URArm::state_::state_variant_> URArm::state_::state_disconnected_::handle_event(event_connection_established_ event) {
     // If we are leaving disconnected mode for independent mode, we
     // don't know, really, in what state we will find the arm. Assume
-    // the worst case scenario, that we are both estopped and in local
+    // the worst case scenario, that we are both stopped and in local
     // mode, and let the natural recovery process sort out how to get
     // back to a good place.
     return state_independent_{std::move(event.payload), state_independent_::reason::k_both};

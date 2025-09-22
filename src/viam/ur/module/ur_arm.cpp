@@ -381,9 +381,8 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         throw std::runtime_error(str(boost::format("no kinematics file known for model '%1'") % model_.to_string()));
     }();
 
-    constexpr char kSvaFileTemplate[] = "%1%/src/kinematics/%2%.json";
-
-    const auto sva_file_path = str(boost::format(kSvaFileTemplate) % current_state_->app_dir() % model_string);
+    constexpr char kSvaFileTemplate[] = "kinematics/%1%.json";
+    const auto sva_file_path = current_state_->resource_root() / str(boost::format(kSvaFileTemplate) % model_string);
 
     // Open the file in binary mode
     std::ifstream sva_file(sva_file_path, std::ios::binary);
@@ -413,6 +412,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 
     ProtoStruct resp = ProtoStruct{};
 
+    constexpr char k_get_tcp_force_key[] = "get_tcp_forces";
     // NOTE: Changes to these values will not be effective for any
     // trajectory currently being planned, and will only affect
     // trajectory planning initiated after these values have been
@@ -431,6 +431,15 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             const double val = *kv.second.get<double>();
             current_state_->set_acceleration(degrees_to_radians(val));
             resp.emplace(k_acc_key, val);
+        }
+        if (kv.first == k_get_tcp_force_key) {
+            const auto forces = current_state_->read_tcp_forces();
+            resp.emplace("Fx_N", forces[0]);
+            resp.emplace("Fy_N", forces[1]);
+            resp.emplace("Fz_N", forces[2]);
+            resp.emplace("TRx_Nm", forces[3]);
+            resp.emplace("TRy_Nm", forces[4]);
+            resp.emplace("TRz_Nm", forces[5]);
         }
         if (kv.first == k_close_safety_popup) {
             if (!current_state_->do_command_close_safety_popup()) {
