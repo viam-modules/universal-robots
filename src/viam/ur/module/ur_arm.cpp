@@ -412,6 +412,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 
     ProtoStruct resp = ProtoStruct{};
 
+    constexpr char k_close_safety_popup[] = "clear_pstop";
     constexpr char k_get_tcp_force_key[] = "get_tcp_forces";
     // NOTE: Changes to these values will not be effective for any
     // trajectory currently being planned, and will only affect
@@ -420,7 +421,6 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     // `::move_` loads from these values independently.
     constexpr char k_acc_key[] = "set_acc";
     constexpr char k_vel_key[] = "set_vel";
-    constexpr char k_close_safety_popup[] = "clear_pstop";
     for (const auto& kv : command) {
         if (kv.first == k_vel_key) {
             const double val = *kv.second.get<double>();
