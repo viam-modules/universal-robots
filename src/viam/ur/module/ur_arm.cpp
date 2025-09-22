@@ -422,30 +422,40 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     constexpr char k_vel_key[] = "set_vel";
     constexpr char k_close_safety_popup[] = "clear_pstop";
     for (const auto& kv : command) {
-        if (kv.first == k_vel_key) {
-            const double val = *kv.second.get<double>();
-            current_state_->set_speed(degrees_to_radians(val));
-            resp.emplace(k_vel_key, val);
-        }
-        if (kv.first == k_acc_key) {
-            const double val = *kv.second.get<double>();
-            current_state_->set_acceleration(degrees_to_radians(val));
-            resp.emplace(k_acc_key, val);
-        }
-        if (kv.first == k_get_tcp_force_key) {
-            const auto forces = current_state_->read_tcp_forces();
-            resp.emplace("Fx_N", forces[0]);
-            resp.emplace("Fy_N", forces[1]);
-            resp.emplace("Fz_N", forces[2]);
-            resp.emplace("TRx_Nm", forces[3]);
-            resp.emplace("TRy_Nm", forces[4]);
-            resp.emplace("TRz_Nm", forces[5]);
-        }
-        if (kv.first == k_close_safety_popup) {
-            if (!current_state_->do_command_close_safety_popup()) {
-                throw std::runtime_error("failed to clear the pstop");
+        switch (kv.first) {
+            case k_vel_key: {
+                const double val = *kv.second.get<double>();
+                current_state_->set_speed(degrees_to_radians(val));
+                resp.emplace(k_vel_key, val);
+                break;
             }
-            resp.emplace(k_close_safety_popup, "pstop_cleared");
+            case k_acc_key: {
+                const double val = *kv.second.get<double>();
+                current_state_->set_acceleration(degrees_to_radians(val));
+                resp.emplace(k_acc_key, val);
+                break;
+            }
+            case k_get_tcp_force_key: {
+                const auto forces = current_state_->read_tcp_forces();
+                resp.emplace("Fx_N", forces[0]);
+                resp.emplace("Fy_N", forces[1]);
+                resp.emplace("Fz_N", forces[2]);
+                resp.emplace("TRx_Nm", forces[3]);
+                resp.emplace("TRy_Nm", forces[4]);
+                resp.emplace("TRz_Nm", forces[5]);
+                break;
+            }
+            case k_close_safety_popup: {
+                if (!current_state_->do_command_close_safety_popup()) {
+                    throw std::runtime_error("failed to clear the pstop");
+                }
+                resp.emplace(k_close_safety_popup, "pstop_cleared");
+                break;
+            }
+            default: {
+                resp.emplace(kv.first, "unrecognized key");
+                break;
+            }
         }
     }
 
