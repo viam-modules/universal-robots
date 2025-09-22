@@ -31,6 +31,7 @@ class URArm::state_ {
     const std::optional<double>& get_reject_move_request_threshold_rad() const;
     vector6d_t read_joint_positions() const;
     vector6d_t read_tcp_pose() const;
+    vector6d_t read_tcp_forces() const;
 
     const std::filesystem::path& csv_output_path() const;
     const std::filesystem::path& resource_root() const;
@@ -318,6 +319,7 @@ class URArm::state_ {
         vector6d_t joint_positions;
         vector6d_t joint_velocities;
         vector6d_t tcp_state;
+        vector6d_t tcp_forces;
     };
     std::optional<struct ephemeral_> ephemeral_;
 };
