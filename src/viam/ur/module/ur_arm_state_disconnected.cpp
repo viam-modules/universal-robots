@@ -61,6 +61,10 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
 
     constexpr auto k_log_at_n_attempts = 100;
     if (++reconnect_attempts % k_log_at_n_attempts == 0) {
+        if (triggering_event_) {
+            VIAM_SDK_LOG(warn) << "disconnected: the connection to the arm was lost due to a " << triggering_event_->describe()
+                               << " event; attempting automatic recovery which may take some time";
+        }
         VIAM_SDK_LOG(info) << "disconnected: attempting recovery";
     }
 

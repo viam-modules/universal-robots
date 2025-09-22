@@ -161,7 +161,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         }
 
         try {
-            // TODO(RSDK-11645) find a way to detect if the breaks are locked
+            // TODO(RSDK-11645) find a way to detect if the brakes are locked
             VIAM_SDK_LOG(info) << "While in state " << describe() << ": releasing brakes since no longer stopped";
             if (!arm_conn_->dashboard->commandBrakeRelease()) {
                 VIAM_SDK_LOG(warn) << "While in state " << describe()
