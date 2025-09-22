@@ -18,10 +18,6 @@ std::chrono::milliseconds URArm::state_::state_disconnected_::get_timeout() cons
     return pending_connection ? std::chrono::milliseconds(5) : std::chrono::seconds(1);
 }
 
-bool URArm::state_::state_disconnected_::do_command_close_safety_popup() {
-    throw std::runtime_error("cannot close popup, arm is currently disconnected");
-}
-
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::recv_arm_data(state_&) {
     return std::nullopt;
 }
@@ -171,6 +167,10 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_disconnected_:
     // mode, and let the natural recovery process sort out how to get
     // back to a good place.
     return state_independent_{std::move(event.payload), state_independent_::reason::k_both};
+}
+
+bool URArm::state_::state_disconnected_::do_command_close_safety_popup() const {
+    throw std::runtime_error("cannot close popup, arm is currently disconnected");
 }
 
 // NOLINTEND(readability-convert-member-functions-to-static)

@@ -365,7 +365,7 @@ void URArm::state_::emit_event_(event_variant_&& event) {
     std::visit([this](auto&& event) { this->emit_event_(std::forward<decltype(event)>(event)); }, std::move(event));
 }
 
-bool URArm::state_::do_command_close_safety_popup() {
+bool URArm::state_::do_command_close_safety_popup() const {
     const std::lock_guard lock{mutex_};
     return std::visit([](auto& state) { return state.do_command_close_safety_popup(); }, current_state_);
 }

@@ -294,4 +294,23 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::
     return state_disconnected_{};
 }
 
+bool URArm::state_::state_independent_::do_command_close_safety_popup() const {
+    namespace urtde = urcl::rtde_interface;
+
+    // make sure the do_command is being used correctly. We should only be clearing the protective stop if the protective stop is set
+    if (!arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_PROTECTIVE_STOPPED))) {
+        throw std::runtime_error("cannot close popup, arm is not currently pstopped");
+    }
+    // use a try catch, in case the arm was disconnected but the state machine has not detected it yet.
+    try {
+        if (!arm_conn_->dashboard->commandUnlockProtectiveStop()) {
+            return false;
+        }
+        return true;
+    } catch (...) {
+        // throw an error but do not try to change the state, let the worker thread handle that.
+        throw std::runtime_error("cannot close popup, arm is currently disconnected");
+    }
+}
+
 // NOLINTEND(readability-convert-member-functions-to-static)

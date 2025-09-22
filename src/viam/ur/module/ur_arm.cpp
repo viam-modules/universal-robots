@@ -444,7 +444,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             }
             resp.emplace(k_close_safety_popup, "pstop_cleared");
         } else {
-            throw std::runtime_error(str(boost::format("unrecognized key:'%1'") % kv.first));
+            throw std::runtime_error("unrecognized key: " + kv.first);
         }
     }
 

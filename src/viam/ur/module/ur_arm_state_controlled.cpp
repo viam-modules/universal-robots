@@ -131,4 +131,8 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::h
     return state_independent_{std::move(arm_conn_), state_independent_::reason::k_local_mode};
 }
 
+bool URArm::state_::state_controlled_::do_command_close_safety_popup() const {
+    throw std::runtime_error("cannot close popup, arm is not currently pstopped");
+}
+
 // NOLINTEND(readability-convert-member-functions-to-static)
