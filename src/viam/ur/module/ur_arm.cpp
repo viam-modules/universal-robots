@@ -439,10 +439,8 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             resp.emplace("TRy_Nm", forces[4]);
             resp.emplace("TRz_Nm", forces[5]);
         } else if (kv.first == k_clear_pstop) {
-            if (!current_state_->clear_pstop()) {
-                throw std::runtime_error("failed to clear the pstop");
-            }
-            resp.emplace(k_clear_pstop, "pstop_cleared");
+            current_state_->clear_pstop();
+            resp.emplace(k_clear_pstop, "protective stop cleared");
         } else {
             throw std::runtime_error("unrecognized key: " + kv.first);
         }
