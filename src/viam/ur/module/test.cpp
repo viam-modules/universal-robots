@@ -176,9 +176,7 @@ BOOST_AUTO_TEST_CASE(test_rotation_vector_to_matrix_90_degrees_x) {
     const auto rotation_matrix = rotation_vector_to_matrix(tcp_pose);
 
     Eigen::Matrix3d expected;
-    expected << 1, 0, 0,
-                0, 0, -1,
-                0, 1, 0;
+    expected << 1, 0, 0, 0, 0, -1, 0, 1, 0;
 
     BOOST_CHECK(rotation_matrix.isApprox(expected, 1e-8));
 }
@@ -191,9 +189,7 @@ BOOST_AUTO_TEST_CASE(test_rotation_vector_to_matrix_90_degrees_y) {
     const auto rotation_matrix = rotation_vector_to_matrix(tcp_pose);
 
     Eigen::Matrix3d expected;
-    expected << 0, 0, 1,
-                0, 1, 0,
-                -1, 0, 0;
+    expected << 0, 0, 1, 0, 1, 0, -1, 0, 0;
 
     BOOST_CHECK(rotation_matrix.isApprox(expected, 1e-8));
 }
@@ -206,9 +202,7 @@ BOOST_AUTO_TEST_CASE(test_rotation_vector_to_matrix_90_degrees_z) {
     const auto rotation_matrix = rotation_vector_to_matrix(tcp_pose);
 
     Eigen::Matrix3d expected;
-    expected << 0, -1, 0,
-                1, 0, 0,
-                0, 0, 1;
+    expected << 0, -1, 0, 1, 0, 0, 0, 0, 1;
 
     BOOST_CHECK(rotation_matrix.isApprox(expected, 1e-8));
 }
@@ -252,9 +246,7 @@ BOOST_AUTO_TEST_CASE(test_transform_vector_90_degrees_x) {
     const Eigen::Vector3d input_vector(1.0, 2.0, 3.0);
 
     Eigen::Matrix3d rotation_matrix;
-    rotation_matrix << 1, 0, 0,
-                       0, 0, -1,
-                       0, 1, 0;
+    rotation_matrix << 1, 0, 0, 0, 0, -1, 0, 1, 0;
 
     const auto result = transform_vector(input_vector, rotation_matrix);
 
@@ -269,9 +261,7 @@ BOOST_AUTO_TEST_CASE(test_transform_vector_90_degrees_z) {
     const Eigen::Vector3d input_vector(1.0, 2.0, 3.0);
 
     Eigen::Matrix3d rotation_matrix;
-    rotation_matrix << 0, -1, 0,
-                       1, 0, 0,
-                       0, 0, 1;
+    rotation_matrix << 0, -1, 0, 1, 0, 0, 0, 0, 1;
 
     const auto result = transform_vector(input_vector, rotation_matrix);
 
@@ -421,12 +411,12 @@ BOOST_AUTO_TEST_CASE(test_convert_tcp_force_to_tool_frame_small_rotation_angle) 
 
     // Small rotations produce small but measurable changes due to the rotation calculation
     // Use looser tolerances to account for small-angle numerical effects
-    BOOST_CHECK_CLOSE(result[0], 1.0, 1e-3);     // X component (unchanged for X rotation)
-    BOOST_CHECK_CLOSE(result[1], 2.0, 1e-3);     // Y component (small change due to rotation)
-    BOOST_CHECK_CLOSE(result[2], 3.0, 1e-3);     // Z component (small change due to rotation)
-    BOOST_CHECK_CLOSE(result[3], 4.0, 1e-3);     // TRx component (unchanged for X rotation)
-    BOOST_CHECK_CLOSE(result[4], 5.0, 1e-3);     // TRy component (small change due to rotation)
-    BOOST_CHECK_CLOSE(result[5], 6.0, 1e-3);     // TRz component (small change due to rotation)
+    BOOST_CHECK_CLOSE(result[0], 1.0, 1e-3);  // X component (unchanged for X rotation)
+    BOOST_CHECK_CLOSE(result[1], 2.0, 1e-3);  // Y component (small change due to rotation)
+    BOOST_CHECK_CLOSE(result[2], 3.0, 1e-3);  // Z component (small change due to rotation)
+    BOOST_CHECK_CLOSE(result[3], 4.0, 1e-3);  // TRx component (unchanged for X rotation)
+    BOOST_CHECK_CLOSE(result[4], 5.0, 1e-3);  // TRy component (small change due to rotation)
+    BOOST_CHECK_CLOSE(result[5], 6.0, 1e-3);  // TRz component (small change due to rotation)
 }
 
 BOOST_AUTO_TEST_CASE(test_convert_tcp_force_to_tool_frame_large_rotation_angle) {
@@ -523,7 +513,7 @@ BOOST_AUTO_TEST_CASE(test_convert_tcp_force_to_tool_frame_pure_torque) {
 
     const auto result = convert_tcp_force_to_tool_frame(tcp_pose, tcp_force_base);
 
-    BOOST_CHECK_CLOSE(result[0], 0.0, 1e-8);   // Forces remain zero
+    BOOST_CHECK_CLOSE(result[0], 0.0, 1e-8);  // Forces remain zero
     BOOST_CHECK_CLOSE(result[1], 0.0, 1e-8);
     BOOST_CHECK_CLOSE(result[2], 0.0, 1e-8);
     BOOST_CHECK_CLOSE(result[3], 2.0, 1e-6);   // TRx = TRy_base
