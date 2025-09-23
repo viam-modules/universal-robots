@@ -412,6 +412,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 
     ProtoStruct resp = ProtoStruct{};
 
+    constexpr char k_clear_pstop[] = "clear_pstop";
     constexpr char k_get_tcp_force_key[] = "get_tcp_forces";
     // NOTE: Changes to these values will not be effective for any
     // trajectory currently being planned, and will only affect
@@ -425,13 +426,11 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             const double val = *kv.second.get<double>();
             current_state_->set_speed(degrees_to_radians(val));
             resp.emplace(k_vel_key, val);
-        }
-        if (kv.first == k_acc_key) {
+        } else if (kv.first == k_acc_key) {
             const double val = *kv.second.get<double>();
             current_state_->set_acceleration(degrees_to_radians(val));
             resp.emplace(k_acc_key, val);
-        }
-        if (kv.first == k_get_tcp_force_key) {
+        } else if (kv.first == k_get_tcp_force_key) {
             const auto forces = current_state_->read_tcp_forces();
             resp.emplace("Fx_N", forces[0]);
             resp.emplace("Fy_N", forces[1]);
@@ -439,6 +438,11 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             resp.emplace("TRx_Nm", forces[3]);
             resp.emplace("TRy_Nm", forces[4]);
             resp.emplace("TRz_Nm", forces[5]);
+        } else if (kv.first == k_clear_pstop) {
+            current_state_->clear_pstop();
+            resp.emplace(k_clear_pstop, "protective stop cleared");
+        } else {
+            throw std::runtime_error("unsupported do_command key: " + kv.first);
         }
     }
 

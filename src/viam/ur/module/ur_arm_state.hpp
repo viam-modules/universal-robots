@@ -42,6 +42,8 @@ class URArm::state_ {
     void set_acceleration(double acceleration);
     double get_acceleration() const;
 
+    void clear_pstop() const;
+
     size_t get_move_epoch() const;
 
     std::future<void> enqueue_move_request(size_t current_move_epoch,
@@ -103,6 +105,7 @@ class URArm::state_ {
         static std::string_view name();
         std::string describe() const;
         std::chrono::milliseconds get_timeout() const;
+        void clear_pstop() const;
 
         std::optional<event_variant_> recv_arm_data(state_&);
         std::optional<event_variant_> upgrade_downgrade(state_& state);
@@ -164,6 +167,7 @@ class URArm::state_ {
         static std::string_view name();
         std::string describe() const;
         using state_connected_::get_timeout;
+        void clear_pstop() const;
 
         using state_connected_::recv_arm_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
@@ -184,6 +188,7 @@ class URArm::state_ {
         static std::string_view name();
         std::string describe() const;
         using state_connected_::get_timeout;
+        void clear_pstop() const;
 
         using state_connected_::recv_arm_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
