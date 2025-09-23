@@ -412,7 +412,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 
     ProtoStruct resp = ProtoStruct{};
 
-    constexpr char k_close_safety_popup[] = "clear_pstop";
+    constexpr char k_clear_pstop[] = "clear_pstop";
     constexpr char k_get_tcp_force_key[] = "get_tcp_forces";
     // NOTE: Changes to these values will not be effective for any
     // trajectory currently being planned, and will only affect
@@ -438,11 +438,11 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             resp.emplace("TRx_Nm", forces[3]);
             resp.emplace("TRy_Nm", forces[4]);
             resp.emplace("TRz_Nm", forces[5]);
-        } else if (kv.first == k_close_safety_popup) {
-            if (!current_state_->do_command_close_safety_popup()) {
+        } else if (kv.first == k_clear_pstop) {
+            if (!current_state_->clear_pstop()) {
                 throw std::runtime_error("failed to clear the pstop");
             }
-            resp.emplace(k_close_safety_popup, "pstop_cleared");
+            resp.emplace(k_clear_pstop, "pstop_cleared");
         } else {
             throw std::runtime_error("unrecognized key: " + kv.first);
         }

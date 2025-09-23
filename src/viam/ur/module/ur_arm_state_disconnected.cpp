@@ -169,8 +169,8 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_disconnected_:
     return state_independent_{std::move(event.payload), state_independent_::reason::k_both};
 }
 
-bool URArm::state_::state_disconnected_::do_command_close_safety_popup() const {
-    throw std::runtime_error("cannot close popup, arm is currently disconnected");
+bool URArm::state_::state_disconnected_::clear_pstop() const {
+    throw std::runtime_error("cannot clear the pstop, arm is currently disconnected");
 }
 
 // NOLINTEND(readability-convert-member-functions-to-static)
