@@ -208,13 +208,14 @@ vector6d_t URArm::state_::read_tcp_pose() const {
     return ephemeral_->tcp_state;
 }
 
-vector6d_t URArm::state_::read_tcp_forces() const {
+vector6d_t URArm::state_::read_tcp_forces_at_base() const {
     const std::lock_guard lock{mutex_};
     if (!ephemeral_) {
         std::ostringstream buffer;
-        buffer << "read_tcp_forces: tcp forces are not currently known; current state: " << describe_();
+        buffer << "read_tcp_forces_at_base: tcp forces are not currently known; current state: " << describe_();
         throw std::runtime_error(buffer.str());
     }
+
     return ephemeral_->tcp_forces;
 }
 

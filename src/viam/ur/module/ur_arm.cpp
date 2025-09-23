@@ -412,7 +412,8 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 
     ProtoStruct resp = ProtoStruct{};
 
-    constexpr char k_get_tcp_force_key[] = "get_tcp_forces";
+    constexpr char k_get_tcp_forces_base_key[] = "get_tcp_forces_base";
+    constexpr char k_get_tcp_forces_tool_key[] = "get_tcp_forces_tool";
     // NOTE: Changes to these values will not be effective for any
     // trajectory currently being planned, and will only affect
     // trajectory planning initiated after these values have been
@@ -431,14 +432,25 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             current_state_->set_acceleration(degrees_to_radians(val));
             resp.emplace(k_acc_key, val);
         }
-        if (kv.first == k_get_tcp_force_key) {
-            const auto forces = current_state_->read_tcp_forces();
-            resp.emplace("Fx_N", forces[0]);
-            resp.emplace("Fy_N", forces[1]);
-            resp.emplace("Fz_N", forces[2]);
-            resp.emplace("TRx_Nm", forces[3]);
-            resp.emplace("TRy_Nm", forces[4]);
-            resp.emplace("TRz_Nm", forces[5]);
+        if (kv.first == k_get_tcp_forces_base_key) {
+            const auto tcp_force = current_state_->read_tcp_forces_at_base();
+            resp.emplace("Fx_N", tcp_force[0]);
+            resp.emplace("Fy_N", tcp_force[1]);
+            resp.emplace("Fz_N", tcp_force[2]);
+            resp.emplace("TRx_Nm", tcp_force[3]);
+            resp.emplace("TRy_Nm", tcp_force[4]);
+            resp.emplace("TRz_Nm", tcp_force[5]);
+        }
+        if (kv.first == k_get_tcp_forces_tool_key) {
+            const auto tcp_pose = current_state_->read_tcp_pose();
+            const auto tcp_force_base = current_state_->read_tcp_forces_at_base();
+            const auto tcp_force = convert_tcp_force_to_tool_frame(tcp_pose, tcp_force_base);
+            resp.emplace("Fx_N", tcp_force[0]);
+            resp.emplace("Fy_N", tcp_force[1]);
+            resp.emplace("Fz_N", tcp_force[2]);
+            resp.emplace("TRx_Nm", tcp_force[3]);
+            resp.emplace("TRy_Nm", tcp_force[4]);
+            resp.emplace("TRz_Nm", tcp_force[5]);
         }
     }
 
