@@ -421,6 +421,10 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     // `::move_` loads from these values independently.
     constexpr char k_acc_key[] = "set_acc";
     constexpr char k_vel_key[] = "set_vel";
+
+    // Cache TCP state to ensure atomic read of pose and forces from same timestamp
+    std::optional<decltype(current_state_->read_tcp_state_snapshot())> cached_tcp_state;
+
     for (const auto& kv : command) {
         if (kv.first == k_vel_key) {
             const double val = *kv.second.get<double>();
@@ -433,7 +437,10 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             resp.emplace(k_acc_key, val);
         }
         if (kv.first == k_get_tcp_forces_base_key) {
-            const auto tcp_force = current_state_->read_tcp_forces_at_base();
+            if (!cached_tcp_state) {
+                cached_tcp_state = current_state_->read_tcp_state_snapshot();
+            }
+            const auto& tcp_force = cached_tcp_state->forces_at_base;
             ProtoStruct tcp_forces_base;
             tcp_forces_base.emplace("Fx_N", tcp_force[0]);
             tcp_forces_base.emplace("Fy_N", tcp_force[1]);
@@ -444,9 +451,10 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             resp.emplace("tcp_forces_base", std::move(tcp_forces_base));
         }
         if (kv.first == k_get_tcp_forces_tool_key) {
-            const auto tcp_pose = current_state_->read_tcp_pose();
-            const auto tcp_force_base = current_state_->read_tcp_forces_at_base();
-            const auto tcp_force = convert_tcp_force_to_tool_frame(tcp_pose, tcp_force_base);
+            if (!cached_tcp_state) {
+                cached_tcp_state = current_state_->read_tcp_state_snapshot();
+            }
+            const auto tcp_force = convert_tcp_force_to_tool_frame(cached_tcp_state->pose, cached_tcp_state->forces_at_base);
             ProtoStruct tcp_forces_tool;
             tcp_forces_tool.emplace("Fx_N", tcp_force[0]);
             tcp_forces_tool.emplace("Fy_N", tcp_force[1]);

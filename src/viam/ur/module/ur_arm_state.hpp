@@ -28,10 +28,16 @@ class URArm::state_ {
     static std::unique_ptr<state_> create(std::string configured_model_type, const ResourceConfig& config, const struct ports_& ports);
     void shutdown();
 
+    struct tcp_state_snapshot {
+        vector6d_t pose;
+        vector6d_t forces_at_base;
+    };
+
     const std::optional<double>& get_reject_move_request_threshold_rad() const;
     vector6d_t read_joint_positions() const;
     vector6d_t read_tcp_pose() const;
     vector6d_t read_tcp_forces_at_base() const;
+    tcp_state_snapshot read_tcp_state_snapshot() const;
 
     const std::filesystem::path& csv_output_path() const;
     const std::filesystem::path& resource_root() const;

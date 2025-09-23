@@ -219,6 +219,17 @@ vector6d_t URArm::state_::read_tcp_forces_at_base() const {
     return ephemeral_->tcp_forces;
 }
 
+URArm::state_::tcp_state_snapshot URArm::state_::read_tcp_state_snapshot() const {
+    const std::lock_guard lock{mutex_};
+    if (!ephemeral_) {
+        std::ostringstream buffer;
+        buffer << "read_tcp_state_snapshot: tcp state not currently available; current state: " << describe_();
+        throw std::runtime_error(buffer.str());
+    }
+
+    return {ephemeral_->tcp_state, ephemeral_->tcp_forces};
+}
+
 const std::filesystem::path& URArm::state_::csv_output_path() const {
     return csv_output_path_;
 }
