@@ -442,7 +442,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             current_state_->clear_pstop();
             resp.emplace(k_clear_pstop, "protective stop cleared");
         } else {
-            throw std::runtime_error("unrecognized key: " + kv.first);
+            throw std::runtime_error("unsupported do_command key: " + kv.first);
         }
     }
 
