@@ -83,6 +83,16 @@ The following attributes are available for `viam:universal-robots` arms:
 ```
 
 example output: 
+```json
+{
+  "TRy_Nm": -0.002283915120630059,
+  "Fx_N": 2.860603275894862,
+  "Fz_N": -1.7602239771400954,
+  "TRz_Nm": 0.030823427258229515,
+  "Fy_N": 2.0520459818874928,
+  "TRx_Nm": -0.08206897295825417
+}
+```
 
 
 #### clear_pstop DoCommand
