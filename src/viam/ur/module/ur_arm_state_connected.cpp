@@ -69,6 +69,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     static const std::string k_joints_position_key = "actual_q";
     static const std::string k_joints_velocity_key = "actual_qd";
     static const std::string k_tcp_key = "actual_TCP_pose";
+    static const std::string k_tcp_force_key = "actual_TCP_force";
 
     bool data_good = true;
     vector6d_t joint_positions{};
@@ -90,10 +91,16 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
         data_good = false;
     }
 
+    vector6d_t tcp_force{};
+    if (!arm_conn_->data_package->getData(k_tcp_force_key, tcp_force)) {
+        VIAM_SDK_LOG(warn) << "getData(\"actual_TCP_force\") returned false - end effector force will not be available";
+        data_good = false;
+    }
+
     // For consistency, update cached data only after all getData
     // calls succeed.
     if (data_good) {
-        state.ephemeral_ = {std::move(joint_positions), std::move(joint_velocities), std::move(tcp_state)};
+        state.ephemeral_ = {std::move(joint_positions), std::move(joint_velocities), std::move(tcp_state), std::move(tcp_force)};
     }
 
     return std::nullopt;

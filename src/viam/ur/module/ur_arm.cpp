@@ -412,6 +412,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 
     ProtoStruct resp = ProtoStruct{};
 
+    constexpr char k_get_tcp_force_key[] = "get_tcp_forces";
     // NOTE: Changes to these values will not be effective for any
     // trajectory currently being planned, and will only affect
     // trajectory planning initiated after these values have been
@@ -429,6 +430,15 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             const double val = *kv.second.get<double>();
             current_state_->set_acceleration(degrees_to_radians(val));
             resp.emplace(k_acc_key, val);
+        }
+        if (kv.first == k_get_tcp_force_key) {
+            const auto forces = current_state_->read_tcp_forces();
+            resp.emplace("Fx_N", forces[0]);
+            resp.emplace("Fy_N", forces[1]);
+            resp.emplace("Fz_N", forces[2]);
+            resp.emplace("TRx_Nm", forces[3]);
+            resp.emplace("TRy_Nm", forces[4]);
+            resp.emplace("TRz_Nm", forces[5]);
         }
     }
 
