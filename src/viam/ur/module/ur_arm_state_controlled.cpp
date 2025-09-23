@@ -17,8 +17,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     namespace urtde = urcl::rtde_interface;
 
     if (!arm_conn_->safety_status_bits || !arm_conn_->robot_status_bits) {
-        VIAM_SDK_LOG(warn) << "While in controlled state, robot and safety status bits were not available; disconnecting";
-        return event_connection_lost_{};
+        VIAM_SDK_LOG(warn) << "While in state " << describe() << ", robot and safety status bits were not available; dropping connection";
+        return event_connection_lost_::data_communication_failure();
     }
 
     if (!arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
@@ -33,18 +33,25 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
         return event_stop_detected_{};
     }
 
+    if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
+        VIAM_SDK_LOG(warn) << "While in state " << describe() << ", dashboard client is disconnected; dropping connection";
+        return event_connection_lost_::dashboard_communication_failure();
+    }
+
+    // If we get anything but a positive answer from the dashboard
+    // that we are in remote control, assume that we need to
+    // completely re-create our connection, since sockets aren't
+    // reliable across local/remote mode transitions.
     try {
         if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
-            VIAM_SDK_LOG(warn) << "While in controlled state, detected that dashboard is no longer in remote mode";
-            return event_local_mode_detected_{};
+            VIAM_SDK_LOG(warn) << "While in state " << describe()
+                               << ", detected that dashboard is no longer in remote mode; dropping connection";
+            return event_connection_lost_::dashboard_control_mode_change();
         }
     } catch (...) {
-        VIAM_SDK_LOG(warn) << "While in controlled state, could not communicate with dashboard to determine remote control state";
-        // We want to go to local mode first so we can try to recover
-        // by reconnecting to the dashboard. If local mode can't make
-        // that happen, then it will further downgrade to
-        // disconnected.
-        return event_local_mode_detected_{};
+        VIAM_SDK_LOG(warn) << "While in state " << describe()
+                           << ", could not communicate with dashboard to determine remote control state; dropping connection";
+        return event_connection_lost_::dashboard_communication_failure();
     }
 
     return std::nullopt;
@@ -67,32 +74,18 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
-            VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false";
+            VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false; dropping connection";
             std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
-
-            // Unfortunately, we can't differentiate given the `bool`
-            // return from `writeTrajectoryControlMessage` above
-            // whether the failure here is due to full connectivity
-            // loss, or just the arm being in local mode. If we
-            // interpreted the latter as the former, we would drop and
-            // re-form connections every time the arm went into local
-            // mode, which is too aggressive. So, instead, we
-            // interpret this as meaning local mode, and then let
-            // `upgrade_downgrade` for local mode make a subsequent
-            // determination about whether we have really lost
-            // connectivity such that we should enter
-            // `state_disconnected_`. The same log applies to the
-            // other cases below.
-            return event_local_mode_detected_{};
+            return event_connection_lost_::trajectory_control_failure();
         }
 
         VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
         for (size_t i = 0; i < num_samples; i++) {
             if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
-                VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false";
+                VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false; dropping connection";
                 std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
-                return event_stop_detected_{};
-            };
+                return event_connection_lost_::trajectory_control_failure();
+            }
         }
 
         VIAM_SDK_LOG(info) << "URArm trajectory sent";
@@ -105,7 +98,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
             state.move_request_->cancel_error("failed to write trajectory control cancel message to URArm");
-            return event_stop_detected_{};
+            VIAM_SDK_LOG(error) << "While in state " << describe()
+                                << ", failed to write trajectory control cancel message; dropping connection";
+            return event_connection_lost_::trajectory_control_failure();
         }
     } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
         // We have a move request that we haven't issued but a
@@ -119,18 +114,13 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
     return std::nullopt;
 }
 
-std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_connection_lost_) {
-    return state_disconnected_{};
+std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_connection_lost_ event) {
+    return state_disconnected_{std::move(event)};
 }
 
 std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_stop_detected_) {
     return state_independent_{std::move(arm_conn_), state_independent_::reason::k_stopped};
 }
-
-std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_local_mode_detected_) {
-    return state_independent_{std::move(arm_conn_), state_independent_::reason::k_local_mode};
-}
-
 void URArm::state_::state_controlled_::clear_pstop() const {
     throw std::runtime_error("cannot clear the protective stop, arm is not currently pstopped");
 }

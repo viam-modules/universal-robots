@@ -2,13 +2,20 @@
 
 // NOLINTBEGIN(readability-convert-member-functions-to-static)
 
+URArm::state_::state_disconnected_::state_disconnected_(event_connection_lost_ triggering_event)
+    : triggering_event_{std::make_unique<event_connection_lost_>(std::move(triggering_event))} {}
+
 std::string_view URArm::state_::state_disconnected_::name() {
     using namespace std::literals::string_view_literals;
     return "disconnected"sv;
 }
 
 std::string URArm::state_::state_disconnected_::describe() const {
-    return std::string{name()};
+    if (triggering_event_) {
+        return std::string{name()} + "(" + std::string{triggering_event_->describe()} + ")";
+    } else {
+        return std::string{name()} + "(awaiting connection)";
+    }
 }
 
 std::chrono::milliseconds URArm::state_::state_disconnected_::get_timeout() const {
@@ -54,6 +61,10 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
 
     constexpr auto k_log_at_n_attempts = 100;
     if (++reconnect_attempts % k_log_at_n_attempts == 0) {
+        if (triggering_event_) {
+            VIAM_SDK_LOG(warn) << "disconnected: the connection to the arm was lost due to a " << triggering_event_->describe()
+                               << " event; attempting automatic recovery which may take some time";
+        }
         VIAM_SDK_LOG(info) << "disconnected: attempting recovery";
     }
 
@@ -149,14 +160,19 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     return arm_connection;
 }
 
-std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::handle_move_request(state_& state) {
+std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::handle_move_request(state_& state) const {
     if (state.move_request_) {
-        std::exchange(state.move_request_, {})->complete_error("no connection to arm");
+        const std::string error_message = "move request failed: no connection to arm; current state: " + describe();
+        std::exchange(state.move_request_, {})->complete_error(error_message);
     }
     return std::nullopt;
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::send_noop() {
+    return std::nullopt;
+}
+
+std::optional<URArm::state_::state_variant_> URArm::state_::state_disconnected_::handle_event(event_connection_lost_) {
     return std::nullopt;
 }
 
