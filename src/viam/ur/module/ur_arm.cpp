@@ -434,23 +434,27 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
         }
         if (kv.first == k_get_tcp_forces_base_key) {
             const auto tcp_force = current_state_->read_tcp_forces_at_base();
-            resp.emplace("Fx_N", tcp_force[0]);
-            resp.emplace("Fy_N", tcp_force[1]);
-            resp.emplace("Fz_N", tcp_force[2]);
-            resp.emplace("TRx_Nm", tcp_force[3]);
-            resp.emplace("TRy_Nm", tcp_force[4]);
-            resp.emplace("TRz_Nm", tcp_force[5]);
+            ProtoStruct tcp_forces_base;
+            tcp_forces_base.emplace("Fx_N", tcp_force[0]);
+            tcp_forces_base.emplace("Fy_N", tcp_force[1]);
+            tcp_forces_base.emplace("Fz_N", tcp_force[2]);
+            tcp_forces_base.emplace("TRx_Nm", tcp_force[3]);
+            tcp_forces_base.emplace("TRy_Nm", tcp_force[4]);
+            tcp_forces_base.emplace("TRz_Nm", tcp_force[5]);
+            resp.emplace("tcp_forces_base", std::move(tcp_forces_base));
         }
         if (kv.first == k_get_tcp_forces_tool_key) {
             const auto tcp_pose = current_state_->read_tcp_pose();
             const auto tcp_force_base = current_state_->read_tcp_forces_at_base();
             const auto tcp_force = convert_tcp_force_to_tool_frame(tcp_pose, tcp_force_base);
-            resp.emplace("Fx_N", tcp_force[0]);
-            resp.emplace("Fy_N", tcp_force[1]);
-            resp.emplace("Fz_N", tcp_force[2]);
-            resp.emplace("TRx_Nm", tcp_force[3]);
-            resp.emplace("TRy_Nm", tcp_force[4]);
-            resp.emplace("TRz_Nm", tcp_force[5]);
+            ProtoStruct tcp_forces_tool;
+            tcp_forces_tool.emplace("Fx_N", tcp_force[0]);
+            tcp_forces_tool.emplace("Fy_N", tcp_force[1]);
+            tcp_forces_tool.emplace("Fz_N", tcp_force[2]);
+            tcp_forces_tool.emplace("TRx_Nm", tcp_force[3]);
+            tcp_forces_tool.emplace("TRy_Nm", tcp_force[4]);
+            tcp_forces_tool.emplace("TRz_Nm", tcp_force[5]);
+            resp.emplace("tcp_forces_tool", std::move(tcp_forces_tool));
         }
     }
 
