@@ -46,7 +46,7 @@ The following attributes are available for `viam:universal-robots` arms:
     "host": "10.1.10.84",
     "speed_degs_per_sec": 120,
     "acceleration_degs_per_sec2": 8,
-    "robot_control_freq_hz": 10 
+    "robot_control_freq_hz": 10
 }
 ```
 
@@ -54,7 +54,7 @@ The following attributes are available for `viam:universal-robots` arms:
 
 #### set_acc DoCommand
 
-`set_acc` will update the `acceleration_degs_per_sec2` maximum acceleration for joints, in deg/sec^2. The value will reset back to the configured maximum when the arm is reconfigured. 
+`set_acc` will update the `acceleration_degs_per_sec2` maximum acceleration for joints, in deg/sec^2. The value will reset back to the configured maximum when the arm is reconfigured.
 
 ```json
 {
@@ -64,7 +64,7 @@ The following attributes are available for `viam:universal-robots` arms:
 
 #### set_vel DoCommand
 
-`set_vel` will update the `speed_degs_per_sec` maximum speed for joints, in deg/sec. The value will reset back to the configured maximum when the arm is reconfigured. 
+`set_vel` will update the `speed_degs_per_sec` maximum speed for joints, in deg/sec. The value will reset back to the configured maximum when the arm is reconfigured.
 
 ```json
 {
@@ -72,17 +72,17 @@ The following attributes are available for `viam:universal-robots` arms:
 }
 ```
 
-#### get_tcp_forces DoCommand
+#### get_tcp_forces_{base,tool} DoCommand
 
-`get_tcp_forces` will return the current forces and torques on the end effector, if available. The forces are measured in Newtons(N) and torques are measured in Newtonmeters(Nm). Measurements are at the tool flange with the orientation of the arm's base coordinate system.
+`get_tcp_forces_base` and `get_tcp_forces_tool` will return the current forces and torques on the end effector, if available. The forces are measured in Newtons(N) and torques are measured in Newtonmeters(Nm). Measurements are at the tool flange with the orientation of the arm's base or tool coordinate system, respectively.
 
 ```json
 {
-  "get_tcp_forces": ""
+  "get_tcp_forces_base": ""
 }
 ```
 
-example output: 
+example output:
 ```json
 {
   "TRy_Nm": -0.002283915120630059,
@@ -97,7 +97,7 @@ example output:
 
 #### clear_pstop DoCommand
 
-`clear_pstop` will clear an active protective stop on the arm. If there is no active protective stops or the arm is disconnected, this will throw an error. 
+`clear_pstop` will clear an active protective stop on the arm. If there is no active protective stops or the arm is disconnected, this will throw an error.
 
 ```json
 {
