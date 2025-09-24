@@ -377,6 +377,11 @@ void URArm::state_::emit_event_(event_variant_&& event) {
     std::visit([this](auto&& event) { this->emit_event_(std::forward<decltype(event)>(event)); }, std::move(event));
 }
 
+void URArm::state_::clear_pstop() const {
+    const std::lock_guard lock{mutex_};
+    std::visit([](auto& state) { state.clear_pstop(); }, current_state_);
+}
+
 template <typename T>
 void URArm::state_::emit_event_(T&& event) {
     auto new_state = std::visit(

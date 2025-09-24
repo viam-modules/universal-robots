@@ -412,15 +412,16 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 
     ProtoStruct resp = ProtoStruct{};
 
-    constexpr char k_get_tcp_forces_base_key[] = "get_tcp_forces_base";
-    constexpr char k_get_tcp_forces_tool_key[] = "get_tcp_forces_tool";
     // NOTE: Changes to these values will not be effective for any
     // trajectory currently being planned, and will only affect
     // trajectory planning initiated after these values have been
     // changed. Note that torn reads are also possible, since
     // `::move_` loads from these values independently.
-    constexpr char k_acc_key[] = "set_acc";
     constexpr char k_vel_key[] = "set_vel";
+    constexpr char k_acc_key[] = "set_acc";
+    constexpr char k_get_tcp_forces_base_key[] = "get_tcp_forces_base";
+    constexpr char k_get_tcp_forces_tool_key[] = "get_tcp_forces_tool";
+    constexpr char k_clear_pstop[] = "clear_pstop";
 
     // Cache TCP state to ensure atomic read of pose and forces from same timestamp
     std::optional<decltype(current_state_->read_tcp_state_snapshot())> cached_tcp_state;
@@ -430,13 +431,11 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             const double val = *kv.second.get<double>();
             current_state_->set_speed(degrees_to_radians(val));
             resp.emplace(k_vel_key, val);
-        }
-        if (kv.first == k_acc_key) {
+        } else if (kv.first == k_acc_key) {
             const double val = *kv.second.get<double>();
             current_state_->set_acceleration(degrees_to_radians(val));
             resp.emplace(k_acc_key, val);
-        }
-        if (kv.first == k_get_tcp_forces_base_key) {
+        } else if (kv.first == k_get_tcp_forces_base_key) {
             if (!cached_tcp_state) {
                 cached_tcp_state = current_state_->read_tcp_state_snapshot();
             }
@@ -449,8 +448,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             tcp_forces_base.emplace("TRy_Nm", tcp_force[4]);
             tcp_forces_base.emplace("TRz_Nm", tcp_force[5]);
             resp.emplace("tcp_forces_base", std::move(tcp_forces_base));
-        }
-        if (kv.first == k_get_tcp_forces_tool_key) {
+        } else if (kv.first == k_get_tcp_forces_tool_key) {
             if (!cached_tcp_state) {
                 cached_tcp_state = current_state_->read_tcp_state_snapshot();
             }
@@ -463,6 +461,11 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             tcp_forces_tool.emplace("TRy_Nm", tcp_force[4]);
             tcp_forces_tool.emplace("TRz_Nm", tcp_force[5]);
             resp.emplace("tcp_forces_tool", std::move(tcp_forces_tool));
+        } else if (kv.first == k_clear_pstop) {
+            current_state_->clear_pstop();
+            resp.emplace(k_clear_pstop, "protective stop cleared");
+        } else {
+            throw std::runtime_error("unsupported do_command key: " + kv.first);
         }
     }
 

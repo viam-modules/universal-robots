@@ -72,6 +72,39 @@ The following attributes are available for `viam:universal-robots` arms:
 }
 ```
 
+#### get_tcp_forces DoCommand
+
+`get_tcp_forces` will return the current forces and torques on the end effector, if available. The forces are measured in Newtons(N) and torques are measured in Newtonmeters(Nm). Measurements are at the tool flange with the orientation of the arm's base coordinate system.
+
+```json
+{
+  "get_tcp_forces": ""
+}
+```
+
+example output: 
+```json
+{
+  "TRy_Nm": -0.002283915120630059,
+  "Fx_N": 2.860603275894862,
+  "Fz_N": -1.7602239771400954,
+  "TRz_Nm": 0.030823427258229515,
+  "Fy_N": 2.0520459818874928,
+  "TRx_Nm": -0.08206897295825417
+}
+```
+
+
+#### clear_pstop DoCommand
+
+`clear_pstop` will clear an active protective stop on the arm. If there is no active protective stops or the arm is disconnected, this will throw an error. 
+
+```json
+{
+  "clear_pstop": ""
+}
+```
+
 ### Interacting with the Arm
 First ensure that your machine is displaying as **Live** on the Viam App. Then you can interact with your Universal Robots arm in a couple ways:
 - To simply view data from and manipulate your arm, use the **CONTROL** tab of the Viam App.
