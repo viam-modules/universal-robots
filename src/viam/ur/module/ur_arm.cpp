@@ -168,6 +168,12 @@ std::string waypoints_filename(const std::string& path, const std::string& unix_
     return (fmt % unix_time).str();
 }
 
+std::string resume_trajectory_waypoints_filename(const std::string& path, const std::string& unix_time) {
+    constexpr char kWaypointsCsvNameTemplate[] = "/%1%_resumed_waypoints.csv";
+    auto fmt = boost::format(path + kWaypointsCsvNameTemplate);
+    return (fmt % unix_time).str();
+}
+
 std::string trajectory_filename(const std::string& path, const std::string& unix_time) {
     constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_trajectory.csv";
     auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
@@ -407,7 +413,7 @@ void URArm::stop(const ProtoStruct&) {
 }
 
 ProtoStruct URArm::do_command(const ProtoStruct& command) {
-    const std::shared_lock rlock{config_mutex_};
+    std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
     ProtoStruct resp = ProtoStruct{};
@@ -422,6 +428,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     constexpr char k_get_tcp_forces_base_key[] = "get_tcp_forces_base";
     constexpr char k_get_tcp_forces_tool_key[] = "get_tcp_forces_tool";
     constexpr char k_clear_pstop[] = "clear_pstop";
+    constexpr char k_resume_trajectory[] = "resume_trajectory";
 
     // Cache TCP state to ensure atomic read of pose and forces from same timestamp
     std::optional<decltype(current_state_->read_tcp_state_snapshot())> cached_tcp_state;
@@ -464,12 +471,53 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
         } else if (kv.first == k_clear_pstop) {
             current_state_->clear_pstop();
             resp.emplace(k_clear_pstop, "protective stop cleared");
+        } else if (kv.first == k_resume_trajectory) {
+            resp.emplace(k_resume_trajectory, resume_trajectory_(std::move(rlock)));
         } else {
             throw std::runtime_error("unsupported do_command key: " + kv.first);
         }
     }
 
     return resp;
+}
+
+int URArm::resume_trajectory_(std::shared_lock<std::shared_mutex> config_rlock) {
+    auto our_config_rlock = std::move(config_rlock);
+    // if we cannot control the arm, clear the pstop
+    // if (describe_() != "controlled") {
+    //     clear_pstop();
+    //     int wait_cnt = 0;
+    //     // arbitrary sleep for 1 second or until we are controlled. this might not be needed
+    //     while (wait_cnt < 100) {
+    //         if (describe_() != "controlled") {
+    //             break;
+    //         }
+    //         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    //     }
+    //     if (wait_cnt == 100) {
+    //         throw std::runtime_error("failed to ready the arm");
+    //     }
+    // }
+
+    if (current_state_->pending_samples_from_failure.size() == 0) {
+        throw std::runtime_error("no trajectory to resume");
+    }
+
+    std::list<Eigen::VectorXd> waypoints;
+    for (const auto& sample : current_state_->pending_samples_from_failure) {
+        auto sample_p = Eigen::VectorXd::Map(sample.p.data(), boost::numeric_cast<Eigen::Index>(sample.p.size()));
+        waypoints.emplace_back(std::move(sample_p));
+    }
+
+    const auto unix_time = unix_time_iso8601();
+    const auto filename = resume_trajectory_waypoints_filename(current_state_->csv_output_path(), unix_time);
+
+    write_waypoints_to_csv(filename, waypoints);
+
+    // move will throw if an error occurs
+    move_(std::move(our_config_rlock), std::move(waypoints), unix_time);
+
+    return boost::numeric_cast<int>(current_state_->pending_samples_from_failure.size());
 }
 
 void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {

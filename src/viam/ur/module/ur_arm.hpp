@@ -50,6 +50,7 @@ void sampling_func(std::vector<trajectory_sample_point>& samples, double duratio
 void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples);
 void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::VectorXd>& waypoints);
 std::string waypoints_filename(const std::string& path, const std::string& unix_time);
+std::string resume_trajectory_waypoints_filename(const std::string& path, const std::string& unix_time);
 std::string trajectory_filename(const std::string& path, const std::string& unix_time);
 std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
 std::string unix_time_iso8601();
@@ -133,6 +134,8 @@ class URArm final : public Arm, public Reconfigurable {
     void shutdown_(const std::unique_lock<std::shared_mutex>& lock) noexcept;
 
     vector6d_t get_joint_positions_rad_(const std::shared_lock<std::shared_mutex>&);
+
+    int resume_trajectory_(std::shared_lock<std::shared_mutex> config_rlock);
 
     void move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time_ms);
 

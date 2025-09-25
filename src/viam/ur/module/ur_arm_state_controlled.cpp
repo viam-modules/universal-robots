@@ -62,14 +62,16 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         return std::nullopt;
     }
 
-    if (!state.move_request_->samples.empty() && !state.move_request_->cancellation_request) {
+    if ((state.move_request_->trajectory_start.time_since_epoch().count() == 0) && !state.move_request_->cancellation_request) {
+        // empty any pending failed requests
+        state.pending_samples_from_failure.clear();
         // We have a move request, it has samples, and there is no pending cancel for that move. Issue the move.
 
         VIAM_SDK_LOG(info) << "URArm sending trajectory";
-
-        // By moving the samples out, we indicate that the trajectory is considered started.
-        auto samples = std::move(state.move_request_->samples);
-        const auto num_samples = samples.size();
+        // Marking the start time indicates the trajectory has started
+        state.move_request_->trajectory_start = std::chrono::steady_clock::now();
+        
+        const auto num_samples = state.move_request_->samples.size();
 
         VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
@@ -81,7 +83,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
 
         VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
         for (size_t i = 0; i < num_samples; i++) {
-            if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
+            if (!arm_conn_->driver->writeTrajectorySplinePoint(
+                    state.move_request_->samples[i].p, state.move_request_->samples[i].v, state.move_request_->samples[i].timestep)) {
                 VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false; dropping connection";
                 std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
                 return event_connection_lost_::trajectory_control_failure();
@@ -90,7 +93,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
 
         VIAM_SDK_LOG(info) << "URArm trajectory sent";
 
-    } else if (state.move_request_->samples.empty() && state.move_request_->cancellation_request &&
+    } else if ((state.move_request_->trajectory_start.time_since_epoch().count() != 0) && state.move_request_->cancellation_request &&
                !state.move_request_->cancellation_request->issued) {
         // We have a move request, the samples have been forwarded,
         // and cancellation is requested but has not yet been issued. Issue a cancel.
@@ -102,7 +105,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                                 << ", failed to write trajectory control cancel message; dropping connection";
             return event_connection_lost_::trajectory_control_failure();
         }
-    } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
+    } else if ((state.move_request_->trajectory_start.time_since_epoch().count() == 0) && state.move_request_->cancellation_request) {
         // We have a move request that we haven't issued but a
         // cancel is already pending. Don't issue it, just cancel it.
         std::exchange(state.move_request_, {})->complete_cancelled();
