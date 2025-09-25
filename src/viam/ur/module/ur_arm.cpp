@@ -474,7 +474,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             } else {
                 resp.emplace(k_arm_ready, false);
             }
-        } else if (kv.first == k_arm_status){
+        } else if (kv.first == k_arm_status) {
             resp.emplace(k_arm_status, description);
         } else {
             throw std::runtime_error("unsupported do_command key: " + kv.first);
