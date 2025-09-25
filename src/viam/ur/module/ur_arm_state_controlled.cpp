@@ -70,7 +70,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         VIAM_SDK_LOG(info) << "URArm sending trajectory";
         // Marking the start time indicates the trajectory has started
         state.move_request_->trajectory_start = std::chrono::steady_clock::now();
-        
+
         const auto num_samples = state.move_request_->samples.size();
 
         VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";

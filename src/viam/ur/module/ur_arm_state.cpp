@@ -410,6 +410,11 @@ std::chrono::milliseconds URArm::state_::get_timeout_() const {
     return std::visit([](auto& state) { return state.get_timeout(); }, current_state_);
 }
 
+std::string URArm::state_::describe() const {
+    const std::lock_guard lock{mutex_};
+    return describe_();
+}
+
 std::string URArm::state_::describe_() const {
     return describe_state_(current_state_);
 }
