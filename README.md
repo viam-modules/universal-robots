@@ -46,7 +46,7 @@ The following attributes are available for `viam:universal-robots` arms:
     "host": "10.1.10.84",
     "speed_degs_per_sec": 120,
     "acceleration_degs_per_sec2": 8,
-    "robot_control_freq_hz": 10 
+    "robot_control_freq_hz": 10
 }
 ```
 
@@ -54,7 +54,7 @@ The following attributes are available for `viam:universal-robots` arms:
 
 #### set_acc DoCommand
 
-`set_acc` will update the `acceleration_degs_per_sec2` maximum acceleration for joints, in deg/sec^2. The value will reset back to the configured maximum when the arm is reconfigured. 
+`set_acc` will update the `acceleration_degs_per_sec2` maximum acceleration for joints, in deg/sec^2. The value will reset back to the configured maximum when the arm is reconfigured.
 
 ```json
 {
@@ -64,11 +64,44 @@ The following attributes are available for `viam:universal-robots` arms:
 
 #### set_vel DoCommand
 
-`set_vel` will update the `speed_degs_per_sec` maximum speed for joints, in deg/sec. The value will reset back to the configured maximum when the arm is reconfigured. 
+`set_vel` will update the `speed_degs_per_sec` maximum speed for joints, in deg/sec. The value will reset back to the configured maximum when the arm is reconfigured.
 
 ```json
 {
   "set_vel": <float>
+}
+```
+
+#### get_tcp_forces_{base,tool} DoCommand
+
+`get_tcp_forces_base` and `get_tcp_forces_tool` will return the current forces and torques on the end effector, if available. The forces are measured in Newtons(N) and torques are measured in Newtonmeters(Nm). Measurements are at the tool flange with the orientation of the arm's base or tool coordinate system, respectively.
+
+```json
+{
+  "get_tcp_forces_base": ""
+}
+```
+
+example output:
+```json
+{
+  "TRy_Nm": -0.002283915120630059,
+  "Fx_N": 2.860603275894862,
+  "Fz_N": -1.7602239771400954,
+  "TRz_Nm": 0.030823427258229515,
+  "Fy_N": 2.0520459818874928,
+  "TRx_Nm": -0.08206897295825417
+}
+```
+
+
+#### clear_pstop DoCommand
+
+`clear_pstop` will clear an active protective stop on the arm. If there is no active protective stops or the arm is disconnected, this will throw an error.
+
+```json
+{
+  "clear_pstop": ""
 }
 ```
 

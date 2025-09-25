@@ -11,7 +11,8 @@ URArm::state_::state_connected_::state_connected_(std::unique_ptr<arm_connection
 std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::send_noop() const {
     if (!arm_conn_->driver->writeTrajectoryControlMessage(
             control::TrajectoryControlMessage::TRAJECTORY_NOOP, 0, RobotReceiveTimeout::off())) {
-        return event_estop_detected_{};
+        VIAM_SDK_LOG(error) << "While in a connected state, failed to write a NOOP trajectory control message; dropping connection";
+        return event_connection_lost_::trajectory_control_failure();
     }
     return std::nullopt;
 }
@@ -19,14 +20,14 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::se
 std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::recv_arm_data(state_& state) {
     const auto prior_robot_status_bits = std::exchange(arm_conn_->robot_status_bits, std::nullopt);
     const auto prior_safety_status_bits = std::exchange(arm_conn_->safety_status_bits, std::nullopt);
-    // arm_conn_->data_package
+
     auto new_packet = arm_conn_->driver->getDataPackage();
     if (!new_packet) {
         consecutive_missed_packets++;
         // how many packets we can drop before restarting the connection
         if (consecutive_missed_packets > 3) {
             VIAM_SDK_LOG(error) << "Failed to read a data package from the arm: dropping connection";
-            return event_connection_lost_{};
+            return event_connection_lost_::data_communication_failure();
         }
         VIAM_SDK_LOG(warn) << "Failed to read a data package from the arm: missed a packet: " << consecutive_missed_packets;
     } else {
@@ -35,32 +36,40 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     }
 
     static const std::string k_robot_status_bits_key = "robot_status_bits";
-    std::bitset<4> robot_status_bits;
+    decltype(arm_conn_->robot_status_bits)::value_type robot_status_bits;
     if (!arm_conn_->data_package->getData<std::uint32_t>(k_robot_status_bits_key, robot_status_bits)) {
-        VIAM_SDK_LOG(error) << "Data package did not contain the expected `robot_status_bits` information; dropping connection";
-        return event_connection_lost_{};
+        VIAM_SDK_LOG(error) << "While in a connected state, the data package did not contain the expected `robot_status_bits` information; "
+                               "dropping connection";
+        return event_connection_lost_::data_communication_failure();
     }
 
     static const std::string k_safety_status_bits_key = "safety_status_bits";
-    std::bitset<11> safety_status_bits;
+    decltype(arm_conn_->safety_status_bits)::value_type safety_status_bits;
     if (!arm_conn_->data_package->getData<std::uint32_t>(k_safety_status_bits_key, safety_status_bits)) {
-        VIAM_SDK_LOG(error) << "Data package did not contain the expected `safety_status_bits` information; dropping connection";
-        return event_connection_lost_{};
+        VIAM_SDK_LOG(error) << "While in connected state, the data package did not contain the expected `safety_status_bits` information; "
+                               "dropping connection";
+        return event_connection_lost_::data_communication_failure();
     }
 
-    if (!prior_robot_status_bits || (*prior_robot_status_bits != robot_status_bits)) {
-        VIAM_SDK_LOG(info) << "Updated robot status bits: `" << robot_status_bits << "`";
+    if (!prior_robot_status_bits) {
+        VIAM_SDK_LOG(info) << "Obtained robot status bits: `" << robot_status_bits;
+    } else if (*prior_robot_status_bits != robot_status_bits) {
+        VIAM_SDK_LOG(info) << "Updated robot status bits: `" << robot_status_bits << "` (previously `" << *prior_robot_status_bits << "`)`";
     }
     arm_conn_->robot_status_bits = robot_status_bits;
 
-    if (!prior_safety_status_bits || (*prior_safety_status_bits != safety_status_bits)) {
-        VIAM_SDK_LOG(info) << "Updated safety status bits: `" << safety_status_bits << "`";
+    if (!prior_safety_status_bits) {
+        VIAM_SDK_LOG(info) << "Obtained safety status bits: `" << safety_status_bits << "`";
+    } else if (*prior_safety_status_bits != safety_status_bits) {
+        VIAM_SDK_LOG(info) << "Updated safety status bits: `" << safety_status_bits << "` (previously `" << *prior_safety_status_bits
+                           << "`)`";
     }
     arm_conn_->safety_status_bits = safety_status_bits;
 
     static const std::string k_joints_position_key = "actual_q";
     static const std::string k_joints_velocity_key = "actual_qd";
     static const std::string k_tcp_key = "actual_TCP_pose";
+    static const std::string k_tcp_force_key = "actual_TCP_force";
 
     bool data_good = true;
     vector6d_t joint_positions{};
@@ -82,10 +91,16 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
         data_good = false;
     }
 
+    vector6d_t tcp_force{};
+    if (!arm_conn_->data_package->getData(k_tcp_force_key, tcp_force)) {
+        VIAM_SDK_LOG(warn) << "getData(\"actual_TCP_force\") returned false - end effector force will not be available";
+        data_good = false;
+    }
+
     // For consistency, update cached data only after all getData
     // calls succeed.
     if (data_good) {
-        state.ephemeral_ = {std::move(joint_positions), std::move(joint_velocities), std::move(tcp_state)};
+        state.ephemeral_ = {std::move(joint_positions), std::move(joint_velocities), std::move(tcp_state), std::move(tcp_force)};
     }
 
     return std::nullopt;

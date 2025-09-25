@@ -1,9 +1,54 @@
 #include "ur_arm_state.hpp"
 
+#include <filesystem>
+#include <stdexcept>
+#include <thread>
+
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/median.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
 #include <boost/accumulators/statistics/variance.hpp>
+#include <boost/dll/runtime_symbol_info.hpp>
+
+// The `ur_arm_config.hpp` header is only generated for non-AppImage
+// builds. If the header exists, include it and note that we aren't
+// using appimage. Otherwise, we are. Name a constant to distinguish
+// the cases.
+#if __has_include("ur_arm_config.hpp")
+
+#include "ur_arm_config.hpp"
+
+namespace {
+
+std::filesystem::path find_resource_root() {
+    const auto module_executable_path = boost::dll::program_location();
+    const auto module_executable_directory = module_executable_path.parent_path();
+    auto data_directory = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "universal-robots");
+    VIAM_SDK_LOG(info) << "Universal robots module executable found in `" << module_executable_path << "; resources will be found in `"
+                       << data_directory << "`";
+    return data_directory;
+}
+
+}  // namespace
+
+#else
+
+namespace {
+
+std::filesystem::path find_resource_root() {
+    // get the APPDIR environment variable
+    auto* const app_dir = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
+    if (!app_dir) {
+        throw std::runtime_error("required environment variable `APPDIR` unset");
+    }
+    auto data_directory = std::filesystem::path{app_dir} / "src";
+    VIAM_SDK_LOG(info) << "APPDIR is `" << app_dir << "`; resources will be found in `" << data_directory << "`";
+    return data_directory;
+}
+
+}  // namespace
+
+#endif
 
 #include "utils.hpp"
 
@@ -34,14 +79,14 @@ void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& 
 URArm::state_::state_(private_,
                       std::string configured_model_type,
                       std::string host,
-                      std::string app_dir,
-                      std::string csv_output_path,
+                      std::filesystem::path resource_root,
+                      std::filesystem::path csv_output_path,
                       std::optional<double> reject_move_request_threshold_rad,
                       std::optional<double> robot_control_freq_hz,
                       const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
       host_{std::move(host)},
-      app_dir_{std::move(app_dir)},
+      resource_root_{std::move(resource_root)},
       csv_output_path_{std::move(csv_output_path)},
       robot_control_freq_hz_(robot_control_freq_hz.value_or(k_default_robot_control_freq_hz)),
       reject_move_request_threshold_rad_(std::move(reject_move_request_threshold_rad)),
@@ -54,14 +99,9 @@ URArm::state_::~state_() {
 std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_model_type,
                                                      const ResourceConfig& config,
                                                      const struct ports_& ports) {
-    // get the APPDIR environment variable
-    auto* const app_dir = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
-    if (!app_dir) {
-        throw std::runtime_error("required environment variable `APPDIR` unset");
-    }
-    VIAM_SDK_LOG(info) << "APPDIR: " << app_dir;
-
     auto host = find_config_attribute<std::string>(config, "host").value();
+
+    auto resource_root = find_resource_root();
 
     // If the config contains `csv_output_path`, use that, otherwise,
     // fall back to `VIAM_MODULE_DATA` as the output path, which must
@@ -87,7 +127,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
                                           std::move(host),
-                                          std::string{app_dir},
+                                          std::move(resource_root),
                                           std::move(csv_output_path),
                                           std::move(threshold),
                                           std::move(frequency),
@@ -96,24 +136,33 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     state->set_speed(degrees_to_radians(find_config_attribute<double>(config, "speed_degs_per_sec").value()));
     state->set_acceleration(degrees_to_radians(find_config_attribute<double>(config, "acceleration_degs_per_sec2").value()));
 
+    // Hold the mutex while we start the worker thread. It will not be
+    // able to advance, but will be ready to take over work as soon as
+    // we release the lock, minimizing the delay between establishing
+    // a connection and allowing the worker thread to begin meeting
+    // its service obligations.
     const std::lock_guard lock(state->mutex_);
     state->worker_thread_ = std::thread{&state_::run_, state.get()};
 
     // Attempt to manually drive the state machine out of the
     // disconnected state. For now, just try a few times with the
     // natural recovery cycle.
-    for (size_t i = 0; i != 5; ++i) {
+    size_t connection_failures = 0;
+    constexpr size_t max_connection_failures = 5;
+    while (std::holds_alternative<state_disconnected_>(state->current_state_)) {
         try {
             state->upgrade_downgrade_();
-            return state;
         } catch (const std::exception& xcp) {
-            VIAM_SDK_LOG(warn) << "Failed to establish working connection to arm after " << (i + 1) << " attempts: `" << xcp.what() << "`";
-            const auto timeout = state->get_timeout_();
-            VIAM_SDK_LOG(warn) << "Retrying after " << timeout.count() << " milliseconds";
-            std::this_thread::sleep_for(timeout);
+            VIAM_SDK_LOG(warn) << "Failed to establish working connection to arm after " << ++connection_failures << " attempts: `"
+                               << xcp.what() << "`";
+            if (connection_failures >= max_connection_failures) {
+                throw;
+            }
+            VIAM_SDK_LOG(warn) << "Retrying after " << state->get_timeout_().count() << " milliseconds";
         }
+        std::this_thread::sleep_for(state->get_timeout_());
     }
-    state->upgrade_downgrade_();
+
     return state;
 }
 
@@ -159,12 +208,34 @@ vector6d_t URArm::state_::read_tcp_pose() const {
     return ephemeral_->tcp_state;
 }
 
-const std::string& URArm::state_::csv_output_path() const {
+vector6d_t URArm::state_::read_tcp_forces_at_base() const {
+    const std::lock_guard lock{mutex_};
+    if (!ephemeral_) {
+        std::ostringstream buffer;
+        buffer << "read_tcp_forces_at_base: tcp forces are not currently known; current state: " << describe_();
+        throw std::runtime_error(buffer.str());
+    }
+
+    return ephemeral_->tcp_forces;
+}
+
+URArm::state_::tcp_state_snapshot URArm::state_::read_tcp_state_snapshot() const {
+    const std::lock_guard lock{mutex_};
+    if (!ephemeral_) {
+        std::ostringstream buffer;
+        buffer << "read_tcp_state_snapshot: tcp state not currently available; current state: " << describe_();
+        throw std::runtime_error(buffer.str());
+    }
+
+    return {ephemeral_->tcp_state, ephemeral_->tcp_forces};
+}
+
+const std::filesystem::path& URArm::state_::csv_output_path() const {
     return csv_output_path_;
 }
 
-const std::string& URArm::state_::app_dir() const {
-    return app_dir_;
+const std::filesystem::path& URArm::state_::resource_root() const {
+    return resource_root_;
 }
 
 void URArm::state_::set_speed(double speed) {
@@ -306,6 +377,11 @@ void URArm::state_::emit_event_(event_variant_&& event) {
     std::visit([this](auto&& event) { this->emit_event_(std::forward<decltype(event)>(event)); }, std::move(event));
 }
 
+void URArm::state_::clear_pstop() const {
+    const std::lock_guard lock{mutex_};
+    std::visit([](auto& state) { state.clear_pstop(); }, current_state_);
+}
+
 template <typename T>
 void URArm::state_::emit_event_(T&& event) {
     auto new_state = std::visit(
@@ -425,7 +501,7 @@ void URArm::state_::run_() {
     }
 
     VIAM_SDK_LOG(info) << "worker thread emitting disconnection event";
-    emit_event_(event_connection_lost_{});
+    emit_event_(event_connection_lost_::module_shutdown());
     VIAM_SDK_LOG(info) << "worker thread terminating";
 }
 

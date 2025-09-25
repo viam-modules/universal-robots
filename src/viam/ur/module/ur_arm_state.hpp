@@ -2,7 +2,9 @@
 
 #include <bitset>
 #include <condition_variable>
+#include <filesystem>
 #include <future>
+#include <optional>
 #include <thread>
 #include <variant>
 
@@ -16,8 +18,8 @@ class URArm::state_ {
     explicit state_(private_,
                     std::string configured_model_type,
                     std::string host,
-                    std::string app_dir,
-                    std::string csv_output_path,
+                    std::filesystem::path resource_root,
+                    std::filesystem::path csv_output_path,
                     std::optional<double> reject_move_request_threshold_rad,
                     std::optional<double> robot_control_freq_hz,
                     const struct ports_& ports);
@@ -26,18 +28,27 @@ class URArm::state_ {
     static std::unique_ptr<state_> create(std::string configured_model_type, const ResourceConfig& config, const struct ports_& ports);
     void shutdown();
 
+    struct tcp_state_snapshot {
+        vector6d_t pose;
+        vector6d_t forces_at_base;
+    };
+
     const std::optional<double>& get_reject_move_request_threshold_rad() const;
     vector6d_t read_joint_positions() const;
     vector6d_t read_tcp_pose() const;
+    vector6d_t read_tcp_forces_at_base() const;
+    tcp_state_snapshot read_tcp_state_snapshot() const;
 
-    const std::string& csv_output_path() const;
-    const std::string& app_dir() const;
+    const std::filesystem::path& csv_output_path() const;
+    const std::filesystem::path& resource_root() const;
 
     void set_speed(double speed);
     double get_speed() const;
 
     void set_acceleration(double acceleration);
     double get_acceleration() const;
+
+    void clear_pstop() const;
 
     size_t get_move_epoch() const;
 
@@ -50,6 +61,7 @@ class URArm::state_ {
     std::optional<std::shared_future<void>> cancel_move_request();
 
    private:
+    struct arm_connection_;
     struct state_disconnected_;
     friend struct state_disconnected_;
 
@@ -62,18 +74,18 @@ class URArm::state_ {
     using state_variant_ = std::variant<state_disconnected_, state_controlled_, state_independent_>;
 
     struct event_connection_established_;
-    struct event_connection_lost_;
-    struct event_estop_detected_;
-    struct event_estop_cleared_;
+    class event_connection_lost_;
+    struct event_stop_detected_;
+    struct event_stop_cleared_;
     struct event_local_mode_detected_;
-    struct event_remote_mode_restored_;
+    struct event_remote_mode_detected_;
 
     using event_variant_ = std::variant<event_connection_established_,
                                         event_connection_lost_,
-                                        event_estop_detected_,
-                                        event_estop_cleared_,
+                                        event_stop_detected_,
+                                        event_stop_cleared_,
                                         event_local_mode_detected_,
-                                        event_remote_mode_restored_>;
+                                        event_remote_mode_detected_>;
 
     template <typename T>
     class state_event_handler_base_ {
@@ -93,32 +105,47 @@ class URArm::state_ {
     };
 
     struct state_disconnected_ : public state_event_handler_base_<state_disconnected_> {
+        state_disconnected_() = default;
+        explicit state_disconnected_(event_connection_lost_ triggering_event);
+
         static std::string_view name();
         std::string describe() const;
         std::chrono::milliseconds get_timeout() const;
+        void clear_pstop() const;
 
         std::optional<event_variant_> recv_arm_data(state_&);
         std::optional<event_variant_> upgrade_downgrade(state_& state);
-        std::optional<event_variant_> handle_move_request(state_& state);
+        std::optional<event_variant_> handle_move_request(state_& state) const;
         std::optional<event_variant_> send_noop();
 
+        std::optional<state_variant_> handle_event(event_connection_lost_ event);
         std::optional<state_variant_> handle_event(event_connection_established_ event);
 
         using state_event_handler_base_<state_disconnected_>::handle_event;
 
+        std::unique_ptr<arm_connection_> connect_(state_& state);
+
         // track how often we attempt to reconnect.
         // We will use this to limit how often logs spam during expected behaviors.
         int reconnect_attempts{-1};
+        std::optional<std::future<std::unique_ptr<arm_connection_>>> pending_connection;
+
+        // The event that caused us to enter the disconnected state (if any).
+        // Using unique_ptr instead of optional because event_connection_lost_ is incomplete here.
+        std::unique_ptr<event_connection_lost_> triggering_event_;
     };
 
     struct arm_connection_ {
+        static constexpr size_t k_num_robot_status_bits = 4;
+        static constexpr size_t k_num_safety_status_bits = 11;
+
         ~arm_connection_();
 
         std::unique_ptr<DashboardClient> dashboard;
         std::unique_ptr<UrDriver> driver;
         std::unique_ptr<rtde_interface::DataPackage> data_package;
-        std::optional<std::bitset<4>> robot_status_bits;
-        std::optional<std::bitset<11>> safety_status_bits;
+        std::optional<std::bitset<k_num_robot_status_bits>> robot_status_bits;
+        std::optional<std::bitset<k_num_safety_status_bits>> safety_status_bits;
 
         // TODO(RSDK-11620): Check if we still need this flag. We may
         // not, now that we examine status bits that include letting
@@ -146,41 +173,42 @@ class URArm::state_ {
         static std::string_view name();
         std::string describe() const;
         using state_connected_::get_timeout;
+        void clear_pstop() const;
 
         using state_connected_::recv_arm_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
         std::optional<event_variant_> handle_move_request(state_& state);
         using state_connected_::send_noop;
 
-        std::optional<state_variant_> handle_event(event_connection_lost_);
-        std::optional<state_variant_> handle_event(event_estop_detected_);
-        std::optional<state_variant_> handle_event(event_local_mode_detected_);
+        std::optional<state_variant_> handle_event(event_connection_lost_ event);
+        std::optional<state_variant_> handle_event(event_stop_detected_);
 
         using state_event_handler_base_<state_controlled_>::handle_event;
     };
 
     struct state_independent_ : public state_event_handler_base_<state_independent_>, public state_connected_ {
-        enum class reason : std::uint8_t { k_estopped, k_local_mode, k_both };
+        enum class reason : std::uint8_t { k_stopped, k_local_mode, k_both };
 
         explicit state_independent_(std::unique_ptr<arm_connection_> arm_conn, reason r);
 
         static std::string_view name();
         std::string describe() const;
         using state_connected_::get_timeout;
+        void clear_pstop() const;
 
         using state_connected_::recv_arm_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
         std::optional<event_variant_> handle_move_request(state_& state);
         std::optional<event_variant_> send_noop();
 
-        bool estopped() const;
+        bool stopped() const;
         bool local_mode() const;
 
-        std::optional<state_variant_> handle_event(event_connection_lost_);
-        std::optional<state_variant_> handle_event(event_estop_detected_);
+        std::optional<state_variant_> handle_event(event_connection_lost_ event);
+        std::optional<state_variant_> handle_event(event_stop_detected_);
         std::optional<state_variant_> handle_event(event_local_mode_detected_);
-        std::optional<state_variant_> handle_event(event_estop_cleared_);
-        std::optional<state_variant_> handle_event(event_remote_mode_restored_);
+        std::optional<state_variant_> handle_event(event_stop_cleared_);
+        std::optional<state_variant_> handle_event(event_remote_mode_detected_);
 
         using state_event_handler_base_<state_independent_>::handle_event;
 
@@ -197,17 +225,41 @@ class URArm::state_ {
         std::unique_ptr<arm_connection_> payload;
     };
 
-    struct event_connection_lost_ {
+    class event_connection_lost_ {
+       public:
+        static event_connection_lost_ data_communication_failure();
+        static event_connection_lost_ dashboard_communication_failure();
+        static event_connection_lost_ dashboard_command_failure();
+        static event_connection_lost_ dashboard_control_mode_change();
+        static event_connection_lost_ robot_program_failure();
+        static event_connection_lost_ trajectory_control_failure();
+        static event_connection_lost_ module_shutdown();
+
+        static std::string_view name();
+        std::string_view describe() const;
+
+       private:
+        enum reason : std::uint8_t {
+            k_data_communication_failure,
+            k_dashboard_communication_failure,
+            k_dashboard_command_failure,
+            k_dashboard_control_mode_change,
+            k_robot_program_failure,
+            k_trajectory_control_failure,
+            k_module_shutdown
+        };
+
+        explicit event_connection_lost_(reason r);
+
+        reason reason_code;
+    };
+
+    struct event_stop_detected_ {
         static std::string_view name();
         std::string_view describe() const;
     };
 
-    struct event_estop_detected_ {
-        static std::string_view name();
-        std::string_view describe() const;
-    };
-
-    struct event_estop_cleared_ {
+    struct event_stop_cleared_ {
         static std::string_view name();
         std::string_view describe() const;
     };
@@ -217,7 +269,7 @@ class URArm::state_ {
         std::string_view describe() const;
     };
 
-    struct event_remote_mode_restored_ {
+    struct event_remote_mode_detected_ {
         static std::string_view name();
         std::string_view describe() const;
     };
@@ -281,8 +333,8 @@ class URArm::state_ {
 
     const std::string configured_model_type_;
     const std::string host_;
-    const std::string app_dir_;
-    const std::string csv_output_path_;
+    const std::filesystem::path resource_root_;
+    const std::filesystem::path csv_output_path_;
     const double robot_control_freq_hz_;
 
     // If this field ever becomes mutable, the accessors for it must
@@ -307,6 +359,7 @@ class URArm::state_ {
         vector6d_t joint_positions;
         vector6d_t joint_velocities;
         vector6d_t tcp_state;
+        vector6d_t tcp_forces;
     };
     std::optional<struct ephemeral_> ephemeral_;
 };

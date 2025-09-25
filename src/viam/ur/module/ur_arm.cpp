@@ -407,9 +407,8 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         throw std::runtime_error(str(boost::format("no kinematics file known for model '%1'") % model_.to_string()));
     }();
 
-    constexpr char kSvaFileTemplate[] = "%1%/src/kinematics/%2%.json";
-
-    const auto sva_file_path = str(boost::format(kSvaFileTemplate) % current_state_->app_dir() % model_string);
+    constexpr char kSvaFileTemplate[] = "kinematics/%1%.json";
+    const auto sva_file_path = current_state_->resource_root() / str(boost::format(kSvaFileTemplate) % model_string);
 
     // Open the file in binary mode
     std::ifstream sva_file(sva_file_path, std::ios::binary);
@@ -444,18 +443,55 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     // trajectory planning initiated after these values have been
     // changed. Note that torn reads are also possible, since
     // `::move_` loads from these values independently.
-    constexpr char k_acc_key[] = "set_acc";
     constexpr char k_vel_key[] = "set_vel";
+    constexpr char k_acc_key[] = "set_acc";
+    constexpr char k_get_tcp_forces_base_key[] = "get_tcp_forces_base";
+    constexpr char k_get_tcp_forces_tool_key[] = "get_tcp_forces_tool";
+    constexpr char k_clear_pstop[] = "clear_pstop";
+
+    // Cache TCP state to ensure atomic read of pose and forces from same timestamp
+    std::optional<decltype(current_state_->read_tcp_state_snapshot())> cached_tcp_state;
+
     for (const auto& kv : command) {
         if (kv.first == k_vel_key) {
             const double val = *kv.second.get<double>();
             current_state_->set_speed(degrees_to_radians(val));
             resp.emplace(k_vel_key, val);
-        }
-        if (kv.first == k_acc_key) {
+        } else if (kv.first == k_acc_key) {
             const double val = *kv.second.get<double>();
             current_state_->set_acceleration(degrees_to_radians(val));
             resp.emplace(k_acc_key, val);
+        } else if (kv.first == k_get_tcp_forces_base_key) {
+            if (!cached_tcp_state) {
+                cached_tcp_state = current_state_->read_tcp_state_snapshot();
+            }
+            const auto& tcp_force = cached_tcp_state->forces_at_base;
+            ProtoStruct tcp_forces_base;
+            tcp_forces_base.emplace("Fx_N", tcp_force[0]);
+            tcp_forces_base.emplace("Fy_N", tcp_force[1]);
+            tcp_forces_base.emplace("Fz_N", tcp_force[2]);
+            tcp_forces_base.emplace("TRx_Nm", tcp_force[3]);
+            tcp_forces_base.emplace("TRy_Nm", tcp_force[4]);
+            tcp_forces_base.emplace("TRz_Nm", tcp_force[5]);
+            resp.emplace("tcp_forces_base", std::move(tcp_forces_base));
+        } else if (kv.first == k_get_tcp_forces_tool_key) {
+            if (!cached_tcp_state) {
+                cached_tcp_state = current_state_->read_tcp_state_snapshot();
+            }
+            const auto tcp_force = convert_tcp_force_to_tool_frame(cached_tcp_state->pose, cached_tcp_state->forces_at_base);
+            ProtoStruct tcp_forces_tool;
+            tcp_forces_tool.emplace("Fx_N", tcp_force[0]);
+            tcp_forces_tool.emplace("Fy_N", tcp_force[1]);
+            tcp_forces_tool.emplace("Fz_N", tcp_force[2]);
+            tcp_forces_tool.emplace("TRx_Nm", tcp_force[3]);
+            tcp_forces_tool.emplace("TRy_Nm", tcp_force[4]);
+            tcp_forces_tool.emplace("TRz_Nm", tcp_force[5]);
+            resp.emplace("tcp_forces_tool", std::move(tcp_forces_tool));
+        } else if (kv.first == k_clear_pstop) {
+            current_state_->clear_pstop();
+            resp.emplace(k_clear_pstop, "protective stop cleared");
+        } else {
+            throw std::runtime_error("unsupported do_command key: " + kv.first);
         }
     }
 
@@ -595,7 +631,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock, 
 
     for (const auto& segment : segments) {
         const Trajectory trajectory(Path(segment, 0.1), max_velocity, max_acceleration);
-        trajectory.outputPhasePlaneTrajectory();
         if (!trajectory.isValid()) {
             std::stringstream buffer;
             buffer << "trajectory generation failed for path:";
@@ -610,18 +645,23 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock, 
         }
 
         const double duration = trajectory.getDuration();
+
         if (!std::isfinite(duration)) {
             throw std::runtime_error("trajectory.getDuration() was not a finite number");
         }
+
         // TODO(RSDK-11069): Make this configurable
         // https://viam.atlassian.net/browse/RSDK-11069
         if (duration > 600) {  // if the duration is longer than 10 minutes
             throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
         }
+
         if (duration < k_min_timestep_sec) {
             VIAM_SDK_LOG(info) << "duration of move is too small, assuming arm is at goal";
             return;
         }
+
+        trajectory.outputPhasePlaneTrajectory();
 
         // desired sampling frequency. if the duration is small we will oversample but that should be fine.
         constexpr double k_sampling_freq_hz = 5;
