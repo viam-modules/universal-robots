@@ -414,6 +414,11 @@ std::string URArm::state_::describe_() const {
     return describe_state_(current_state_);
 }
 
+std::string URArm::state_::describe() const {
+    const std::lock_guard lock{mutex_};
+    return describe_();
+}
+
 std::string URArm::state_::describe_state_(const state_variant_& state) {
     return std::visit([](auto& state) { return state.describe(); }, state);
 }
