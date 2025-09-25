@@ -215,6 +215,25 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::handle_move_request(state_& state) {
     if (state.move_request_) {
+        // if we switched to independent mode, store the remaining trajectory so it can be resumed
+        auto trajectory_end = std::chrono::steady_clock::now();
+        auto traj_duration =
+            std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(trajectory_end - state.move_request_->trajectory_start)
+                .count() /
+            1000.0;
+        const auto num_samples = state.move_request_->samples.size();
+        double time_traj = 0.0;
+        size_t traj_end_index = -1;
+        for (size_t i = 0; i < num_samples; i++) {
+            time_traj += boost::numeric_cast<double>(state.move_request_->samples[i].timestep);
+            if (time_traj > traj_duration) {
+                traj_end_index = i;
+                break;
+            }
+        }
+        state.pending_samples_from_failure.insert(state.pending_samples_from_failure.end(),
+                                                  std::make_move_iterator(state.move_request_->samples.begin() + traj_end_index),
+                                                  std::make_move_iterator(state.move_request_->samples.end()));
         std::exchange(state.move_request_, {})->complete_error([this]() -> std::string {
             switch (reason_) {
                 case reason::k_stopped: {

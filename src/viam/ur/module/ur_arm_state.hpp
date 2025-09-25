@@ -32,7 +32,7 @@ class URArm::state_ {
         vector6d_t pose;
         vector6d_t forces_at_base;
     };
-
+    std::string describe() const;
     const std::optional<double>& get_reject_move_request_threshold_rad() const;
     vector6d_t read_joint_positions() const;
     vector6d_t read_tcp_pose() const;
@@ -49,6 +49,7 @@ class URArm::state_ {
     double get_acceleration() const;
 
     void clear_pstop() const;
+    std::vector<trajectory_sample_point> pending_samples_from_failure;
 
     size_t get_move_epoch() const;
 
@@ -296,6 +297,8 @@ class URArm::state_ {
         void write_joint_data(vector6d_t& position, vector6d_t& velocity);
 
         std::vector<trajectory_sample_point> samples;
+        std::chrono::_V2::steady_clock::time_point trajectory_start = {};
+
         std::ofstream arm_joint_positions_stream;
         std::size_t arm_joint_positions_sample{0};
         std::promise<void> completion;
