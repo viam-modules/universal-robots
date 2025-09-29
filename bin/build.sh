@@ -40,13 +40,25 @@ conan install ./../.. --update \
       -s:a build_type=Release \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=17 \
+      -o:a "*:shared=False" \
+      -o:a "&:shared=False"
 
-conan build ./../.. \
+conan create ./../.. \
       --profile=protobuf-override.profile \
-      --build=none \
+      --build=viam-universal-robots/0.3.1 \
       -s:a build_type=Release \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a "&:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=17 \
-      --deployer-folder=./deploy \
-      --deployer=full_deploy \
+      -o:a "*:shared=False" \
+      -o:a "&:shared=False"
+
+conan install \
+      --profile=protobuf-override.profile \
+      --requires=viam-universal-robots/0.3.1 \
+      --deployer-folder=packageme --deployer-package "&" \
+      -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
+      -s:a "&:build_type=RelWithDebInfo" \
+      -s:a compiler.cppstd=17 \
+      -o:a "*:shared=False" \
+      -o:a "&:shared=False"

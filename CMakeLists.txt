@@ -19,7 +19,7 @@ option(VIAM_UR_USE_WALL_WERROR "Build with -Wall and -Werror flags" ON)
 #
 # Configure the build for not producing an AppImage
 #
-option(VIAM_UR_DISABLE_APPIMAGE "Disable AppImage builds" OFF)
+option(VIAM_UR_DISABLE_APPIMAGE "Disable AppImage builds" ON)
 
 
 # If no build type is selected, build optimized but retain debug
@@ -288,4 +288,11 @@ if (VIAM_UR_DISABLE_APPIMAGE)
     DIRECTORY src/kinematics src/control
     DESTINATION ${CMAKE_INSTALL_DATADIR}/universal-robots
   )
+
+  set(CPACK_PACKAGE_NAME "viam-universal-robots")
+  set(CPACK_PACKAGE_FILE_NAME "module")
+  set(CPACK_GENERATOR "TGZ")
+  set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY 0)
+  include(CPack)
+
 endif()

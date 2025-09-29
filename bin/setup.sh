@@ -77,21 +77,24 @@ protobuf/*: protobuf/5.27.0
 protobuf/*: protobuf/5.27.0
 EOF
 
-
 conan install . --update \
       --profile=protobuf-override.profile \
       --build={missing,outdated} \
       -s:a build_type=Release \
-      -s:a compiler.cppstd=17
+      -s:a compiler.cppstd=17 \
+      -o:a "*:shared=False" \
+      -o:a "&:shared=False"
 
 conan create . \
       --profile=protobuf-override.profile \
       --build=viam-cpp-sdk/0.19.0 \
       -s:a build_type=Release \
       -s:a "&:build_type=RelWithDebInfo" \
-      -s:a compiler.cppstd=17
+      -s:a compiler.cppstd=17 \
+      -o:a "*:shared=False" \
+      -o:a "&:shared=False"
 
 # Cleanup
 popd  # viam-cpp-sdk
 popd  # tmp_cpp_sdk
-rm -rf tmp_cpp_sdk
+#rm -rf tmp_cpp_sdk
