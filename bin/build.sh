@@ -17,21 +17,11 @@ set -euxo pipefail
 # the actual module build gets built with an override to `RelWithDebInfo`, which we
 # don't want to have accidentally affect our dependencies (it makes the build far too large).
 # The override itself is derived from https://github.com/conan-io/conan/issues/12656.
-#
-if [ -f "./venv/bin/activate" ]; then
-  echo 'sourcing virtual env'
-  source ./venv/bin/activate
-fi
-
 
 cat > protobuf-override.profile << 'EOF'
 include(default)
-
-[replace_requires]
-protobuf/*: protobuf/5.27.0
-
 [replace_tool_requires]
-protobuf/*: protobuf/5.27.0
+protobuf/*: protobuf/<host_version>
 EOF
 
 VIAM_UNIVERSAL_ROBOTS_VERSION=$(conan inspect -vquiet . --format=json | jq -r '.version')
