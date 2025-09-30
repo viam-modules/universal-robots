@@ -8,8 +8,20 @@ set -euxo pipefail
 # Get the directory containing this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Get the git repo root
-REPO_ROOT="$(cd "${SCRIPT_DIR}" && git rev-parse --show-toplevel)"
+# Assumes bin/build.sh, but otherwise we need git to
+# do this, and you might want to build out of a source tarball.
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+
+# Otherwise, the C++ SDK build ends up creating two copies of proto and then mixes up which one to use.
+cat > protobuf-override.profile << 'EOF'
+include(default)
+[replace_tool_requires]
+protobuf/*: protobuf/<host_version>
+EOF
+
+# Dig out the declared version of the module so we can use it for arguments to --build and --requires below.
+VIAM_UNIVERSAL_ROBOTS_VERSION=$(conan inspect -vquiet ${REPO_ROOT} --format=json | jq -r '.version')
 
 # Build the viam-universal-robots module
 #
@@ -22,14 +34,6 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}" && git rev-parse --show-toplevel)"
 # the actual module build gets built with an override to `RelWithDebInfo`, which we
 # don't want to have accidentally affect our dependencies (it makes the build far too large).
 # The override itself is derived from https://github.com/conan-io/conan/issues/12656.
-
-cat > protobuf-override.profile << 'EOF'
-include(default)
-[replace_tool_requires]
-protobuf/*: protobuf/<host_version>
-EOF
-
-VIAM_UNIVERSAL_ROBOTS_VERSION=$(conan inspect -vquiet ${REPO_ROOT} --format=json | jq -r '.version')
 
 conan install ${REPO_ROOT} --update \
       --output-folder=. \

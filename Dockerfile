@@ -84,7 +84,7 @@ RUN apt install -y libeigen3-dev
 RUN cd /root/opt/src && \
     git clone https://github.com/viamrobotics/viam-cpp-sdk && \
     cd viam-cpp-sdk && \
-    git checkout releases/v0.19.0 && \
+    git checkout releases/v0.20.0 && \
     cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DVIAMCPPSDK_USE_DYNAMIC_PROTOS=ON \
