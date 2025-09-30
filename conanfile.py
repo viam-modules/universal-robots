@@ -1,13 +1,8 @@
-import os
-import re
-import tarfile
-
-from tempfile import TemporaryDirectory
-
 from conan import ConanFile
 from conan.tools.build import check_min_cppstd
 from conan.tools.cmake import CMake, CMakeDeps, CMakeToolchain, cmake_layout
-from conan.tools.files import copy, load
+from conan.tools.files import copy
+from conan.tools.scm import Git
 
 class universal_robots(ConanFile):
     name = "viam-universal-robots"
@@ -30,23 +25,25 @@ class universal_robots(ConanFile):
             copy(self, pat, self.recipe_folder, self.export_sources_folder)
 
     def set_version(self):
-        self.version = "0.3.1"
+        git = Git(self)
+        try:
+            self.version = git.run("describe --tags --always").strip().lstrip('v')
+        except Exception:
+            self.version = "0.0.0-unknown"
 
     def requirements(self):
         # NOTE: If you update the `viam-cpp-sdk` dependency here, it
-        # should also be updated in `bin/setup.{sh,ps1}`.
-        self.requires("viam-cpp-sdk/0.19.0")
+        # should also be updated in `bin/setup.sh`.
+        self.requires("viam-cpp-sdk/0.20.0")
         self.requires("eigen/[>=3.3]")
         self.requires("boost/[>=1.74.0]")
 
     def validate(self):
         check_min_cppstd(self, 17)
 
-    def validate(self):
-        check_min_cppstd(self, 17)
-
     def generate(self):
         tc = CMakeToolchain(self)
+        tc.cache_variables["VIAM_UR_DISABLE_APPIMAGE"] = True
         tc.generate()
         CMakeDeps(self).generate()
 

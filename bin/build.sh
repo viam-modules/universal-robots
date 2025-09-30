@@ -6,7 +6,7 @@
 set -euxo pipefail
 
 
-# Build the viam-orbbec module
+# Build the viam-universal-robots module
 #
 # We want a static binary, so we turn off shared. Elect for C++17
 # compilation, since it seems some of the dependencies we pick mandate
@@ -34,7 +34,9 @@ protobuf/*: protobuf/5.27.0
 protobuf/*: protobuf/5.27.0
 EOF
 
-conan install ./../.. --update \
+VIAM_UNIVERSAL_ROBOTS_VERSION=$(conan inspect -vquiet . --format=json | jq -r '.version')
+
+conan install . --update \
       --profile=protobuf-override.profile \
       --build={missing,outdated} \
       -s:a build_type=Release \
@@ -43,9 +45,9 @@ conan install ./../.. --update \
       -o:a "*:shared=False" \
       -o:a "&:shared=False"
 
-conan create ./../.. \
+conan create . \
       --profile=protobuf-override.profile \
-      --build=viam-universal-robots/0.3.1 \
+      --build=viam-universal-robots/$VIAM_UNIVERSAL_ROBOTS_VERSION \
       -s:a build_type=Release \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a "&:build_type=RelWithDebInfo" \
@@ -55,7 +57,7 @@ conan create ./../.. \
 
 conan install \
       --profile=protobuf-override.profile \
-      --requires=viam-universal-robots/0.3.1 \
+      --requires=viam-universal-robots/$VIAM_UNIVERSAL_ROBOTS_VERSION \
       --deployer-folder=packageme --deployer-package "&" \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a "&:build_type=RelWithDebInfo" \

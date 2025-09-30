@@ -19,7 +19,7 @@ option(VIAM_UR_USE_WALL_WERROR "Build with -Wall and -Werror flags" ON)
 #
 # Configure the build for not producing an AppImage
 #
-option(VIAM_UR_DISABLE_APPIMAGE "Disable AppImage builds" ON)
+option(VIAM_UR_DISABLE_APPIMAGE "Disable AppImage builds" OFF)
 
 
 # If no build type is selected, build optimized but retain debug

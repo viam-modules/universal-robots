@@ -55,7 +55,7 @@ fi
 
 # NOTE: If you change this version, also change it in the `conanfile.py` requirements
 # and in the Dockerfile
-git checkout releases/v0.19.0
+git checkout releases/v0.20.0
 
 # Build the C++ SDK repo
 #
@@ -87,7 +87,7 @@ conan install . --update \
 
 conan create . \
       --profile=protobuf-override.profile \
-      --build=viam-cpp-sdk/0.19.0 \
+      --build=viam-cpp-sdk/0.20.0 \
       -s:a build_type=Release \
       -s:a "&:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=17 \
@@ -97,4 +97,4 @@ conan create . \
 # Cleanup
 popd  # viam-cpp-sdk
 popd  # tmp_cpp_sdk
-#rm -rf tmp_cpp_sdk
+rm -rf tmp_cpp_sdk
