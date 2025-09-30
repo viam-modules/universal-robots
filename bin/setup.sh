@@ -38,7 +38,7 @@ EOF
 
 conan install . --update \
       --profile=protobuf-override.profile \
-      --build={missing,outdated} \
+      --build=missing \
       -s:a build_type=Release \
       -s:a compiler.cppstd=17 \
       -o:a "*:shared=False" \
@@ -52,8 +52,3 @@ conan create . \
       -s:a compiler.cppstd=17 \
       -o:a "*:shared=False" \
       -o:a "&:shared=False"
-
-# Cleanup
-popd  # viam-cpp-sdk
-popd  # tmp_cpp_sdk
-rm -rf tmp_cpp_sdk

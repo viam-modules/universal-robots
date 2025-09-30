@@ -5,6 +5,11 @@
 #     -o pipefail: if something in the middle of a pipeline fails, the whole thing fails
 set -euxo pipefail
 
+# Get the directory containing this script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Get the git repo root
+REPO_ROOT="$(cd "${SCRIPT_DIR}" && git rev-parse --show-toplevel)"
 
 # Build the viam-universal-robots module
 #
@@ -24,18 +29,19 @@ include(default)
 protobuf/*: protobuf/<host_version>
 EOF
 
-VIAM_UNIVERSAL_ROBOTS_VERSION=$(conan inspect -vquiet . --format=json | jq -r '.version')
+VIAM_UNIVERSAL_ROBOTS_VERSION=$(conan inspect -vquiet ${REPO_ROOT} --format=json | jq -r '.version')
 
-conan install . --update \
+conan install ${REPO_ROOT} --update \
+      --output-folder=. \
       --profile=protobuf-override.profile \
-      --build={missing,outdated} \
+      --build=missing \
       -s:a build_type=Release \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=17 \
       -o:a "*:shared=False" \
       -o:a "&:shared=False"
 
-conan create . \
+conan create ${REPO_ROOT} \
       --profile=protobuf-override.profile \
       --build=viam-universal-robots/$VIAM_UNIVERSAL_ROBOTS_VERSION \
       -s:a build_type=Release \
@@ -46,9 +52,11 @@ conan create . \
       -o:a "&:shared=False"
 
 conan install \
+      --output-folder=. \
       --profile=protobuf-override.profile \
+      --build=never \
       --requires=viam-universal-robots/$VIAM_UNIVERSAL_ROBOTS_VERSION \
-      --deployer-folder=packageme --deployer-package "&" \
+      --deployer-folder=. --deployer-package "&" \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a "&:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=17 \
