@@ -62,9 +62,6 @@ git checkout releases/v0.20.0
 # We want a static binary, so we turn off shared. Elect for C++17
 # compilation, since it seems some of the dependencies we pick mandate
 # it anyway.
-#
-#       -o:a "&:shared=False" \
-    #
 
 # Create a profile file with version overrides
 cat > protobuf-override.profile << 'EOF'
