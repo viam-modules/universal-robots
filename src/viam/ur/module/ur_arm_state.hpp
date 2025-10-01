@@ -57,6 +57,8 @@ class URArm::state_ {
                                            std::ofstream arm_joint_positions_stream);
 
     bool is_moving() const;
+    std::string describe() const;
+    bool is_current_state_controlled(std::string* description = nullptr) const;
 
     std::optional<std::shared_future<void>> cancel_move_request();
 
