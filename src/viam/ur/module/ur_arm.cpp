@@ -422,13 +422,18 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     constexpr char k_get_tcp_forces_base_key[] = "get_tcp_forces_base";
     constexpr char k_get_tcp_forces_tool_key[] = "get_tcp_forces_tool";
     constexpr char k_clear_pstop[] = "clear_pstop";
-    constexpr char k_arm_ready[] = "arm_ready";
-    constexpr char k_arm_status[] = "arm_status";
+    constexpr char k_is_controllable[] = "is_controllable_state";
+    constexpr char k_get_state_description[] = "get_state_description";
 
     // Cache TCP state to ensure atomic read of pose and forces from same timestamp
     std::optional<decltype(current_state_->read_tcp_state_snapshot())> cached_tcp_state;
     // Cache arm state description
     auto description = current_state_->describe();
+    struct controlled_info {
+        bool controlled;
+        std::string description;
+    };
+    std::optional<controlled_info> cached_controlled_info;
 
     for (const auto& kv : command) {
         if (kv.first == k_vel_key) {
@@ -468,14 +473,18 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
         } else if (kv.first == k_clear_pstop) {
             current_state_->clear_pstop();
             resp.emplace(k_clear_pstop, "protective stop cleared");
-        } else if (kv.first == k_arm_ready) {
-            if (description == "controlled") {
-                resp.emplace(k_arm_ready, true);
-            } else {
-                resp.emplace(k_arm_ready, false);
+        } else if (kv.first == k_is_controllable) {
+            if (!cached_controlled_info) {
+                cached_controlled_info = controlled_info{};
+                cached_controlled_info->controlled = current_state_->is_current_state_controlled(&cached_controlled_info->description);
             }
-        } else if (kv.first == k_arm_status) {
-            resp.emplace(k_arm_status, description);
+            resp.emplace(k_is_controllable, cached_controlled_info->controlled);
+        } else if (kv.first == k_get_state_description) {
+            if (!cached_controlled_info) {
+                cached_controlled_info = controlled_info{};
+                cached_controlled_info->controlled = current_state_->is_current_state_controlled(&cached_controlled_info->description);
+            }
+            resp.emplace(k_get_state_description, cached_controlled_info->description);
         } else {
             throw std::runtime_error("unsupported do_command key: " + kv.first);
         }

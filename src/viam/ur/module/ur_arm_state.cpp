@@ -423,6 +423,14 @@ std::string URArm::state_::describe_state_(const state_variant_& state) {
     return std::visit([](auto& state) { return state.describe(); }, state);
 }
 
+bool URArm::state_::is_current_state_controlled(std::string* description /*= nullptr*/) const {
+    const std::lock_guard lock{mutex_};
+    if (description != nullptr) {
+        *description = describe_();
+    }
+    return current_state_.index() == 1;
+}
+
 void URArm::state_::upgrade_downgrade_() {
     if (auto event = std::visit([this](auto& state) { return state.upgrade_downgrade(*this); }, current_state_)) {
         emit_event_(*std::move(event));
