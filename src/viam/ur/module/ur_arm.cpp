@@ -427,8 +427,8 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 
     // Cache TCP state to ensure atomic read of pose and forces from same timestamp
     std::optional<decltype(current_state_->read_tcp_state_snapshot())> cached_tcp_state;
-    // Cache arm state description
-    auto description = current_state_->describe();
+
+    // cache state descriptors to ensure atomic read from the same timestamp
     struct controlled_info {
         bool controlled;
         std::string description;

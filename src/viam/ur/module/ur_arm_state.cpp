@@ -428,7 +428,7 @@ bool URArm::state_::is_current_state_controlled(std::string* description /*= nul
     if (description != nullptr) {
         *description = describe_();
     }
-    return current_state_.index() == 1;
+    return std::holds_alternative<state_controlled_>(current_state_);
 }
 
 void URArm::state_::upgrade_downgrade_() {
