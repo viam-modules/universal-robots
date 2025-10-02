@@ -72,12 +72,6 @@ jobs:
     container: ${{ matrix.container }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          submodules: true
-          fetch-depth: 0
-
       # Debian/Ubuntu setup: Install system dependencies
       - name: Install system dependencies (Debian)
         if: matrix.setup_type == 'debian'
@@ -111,6 +105,12 @@ jobs:
         run: |
           brew install conan jq
           conan profile detect
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
 
       # Build using setup.sh and build.sh scripts
       - name: Setup C++ SDK
