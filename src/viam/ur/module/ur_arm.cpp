@@ -511,12 +511,12 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 int URArm::resume_trajectory_(std::shared_lock<std::shared_mutex> config_rlock) {
     auto our_config_rlock = std::move(config_rlock);
     // if we cannot control the arm, clear the pstop
-    if (current_state_->describe() != "controlled") {
+    if (current_state_->is_current_state_controlled()) {
         current_state_->clear_pstop();
         int wait_cnt = 0;
         // arbitrary sleep for 1 second or until we are controlled. this might not be needed
         while (wait_cnt < 100) {
-            if (current_state_->describe() != "controlled") {
+            if (current_state_->is_current_state_controlled()) {
                 break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
