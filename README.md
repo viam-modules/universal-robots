@@ -4,6 +4,7 @@ This repo is a [module](https://docs.viam.com/registry/#modular-resources) that 
 
 - UR3e, as `viam:universal-robots:ur3e`
 - UR5e, as `viam:universal-robots:ur5e`
+- UR7e, as `viam:universal-robots:ur7e`
 - UR20, as `viam:universal-robots:ur20`
 
 ## Configuration and Usage

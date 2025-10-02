@@ -17,6 +17,11 @@
     },
     {
       "api": "rdk:component:arm",
+      "model": "viam:universal-robots:ur7e",
+      "markdown_link": "README.md#configuration-and-usage"
+    },
+    {
+      "api": "rdk:component:arm",
       "model": "viam:universal-robots:ur20",
       "markdown_link": "README.md#configuration-and-usage"
     }
