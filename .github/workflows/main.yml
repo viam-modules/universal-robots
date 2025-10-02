@@ -45,33 +45,86 @@ jobs:
         run: make test
 
   publish:
-    name: Publish
+    name: Publish ${{ matrix.platform }}
     needs: [main]
     if: startsWith(github.ref, 'refs/tags/v') && (github.repository_owner == 'viam-modules')
-    runs-on: ${{matrix.runner}}
-    container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
     strategy:
-        matrix:
-          include:
-          - arch: amd64
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds in Debian Bookworm container
+          - platform: linux/amd64
             runner: ubuntu-latest
-            arch2: x86_64
-          - arch: arm64
+            container: debian:bookworm
+          - platform: linux/arm64
             runner: ubuntu-4cpu-arm
-            arch2: aarch64
-          arch: [amd64, arm64]
+            container: debian:bookworm
+          # macOS native build
+          - platform: darwin/arm64
+            runner: macos-14
+
+    # Linux builds run in container
+    container: ${{ matrix.container }}
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          submodules: true
-      - name: build
+          fetch-depth: 0
+
+      # Linux setup: Install system dependencies
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
-          make appimage-${{ matrix.arch }}
-          ARCH=${{ matrix.arch2 }} make module.tar.gz
-      - uses: viamrobotics/upload-module@v1
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            cmake \
+            curl \
+            g++ \
+            git \
+            gnupg \
+            gpg \
+            jq \
+            ninja-build \
+            pkg-config \
+            python3 \
+            python3-pip \
+            python3-venv \
+            sudo \
+            wget
+
+      # Linux setup: Install Conan via pip
+      - name: Install Conan (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m pip install --break-system-packages conan
+          conan profile detect
+
+      # macOS setup: Install Conan via Homebrew
+      - name: Install Conan (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install conan jq
+          conan profile detect
+
+      # Build using setup.sh and build.sh scripts
+      - name: Setup C++ SDK
+        run: ./bin/setup.sh
+        working-directory: ${{ github.workspace }}
+
+      - name: Build module
+        run: ./bin/build.sh
+        working-directory: ${{ github.workspace }}/bin
+
+      # Locate and upload the built module.tar.gz
+      - name: Upload module
+        uses: viamrobotics/upload-module@v1
         with:
-          module-path: module.tar.gz
-          platform: linux/${{ matrix.arch }}
+          module-path: bin/packageme/module.tar.gz
+          platform: ${{ matrix.platform }}
           version: ${{ github.ref_name }}
           key-id: ${{ secrets.viam_key_id }}
           key-value: ${{ secrets.viam_key_value }}
