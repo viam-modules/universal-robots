@@ -64,6 +64,7 @@ class URArm::state_ {
 
    private:
     std::vector<trajectory_sample_point> pending_samples_from_failure;
+    void store_pending_samples(std::vector<trajectory_sample_point> samples, double traj_duration);
     struct arm_connection_;
     struct state_disconnected_;
     friend struct state_disconnected_;

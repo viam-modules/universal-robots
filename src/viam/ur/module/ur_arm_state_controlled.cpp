@@ -65,8 +65,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
     if ((state.move_request_->trajectory_start.time_since_epoch().count() == 0) && !state.move_request_->cancellation_request) {
         // empty any pending failed requests
         state.pending_samples_from_failure.clear();
-        // We have a move request, it has samples, and there is no pending cancel for that move. Issue the move.
 
+        // We have a move request, it has samples, and there is no pending cancel for that move. Issue the move.
         VIAM_SDK_LOG(info) << "URArm sending trajectory";
         // Marking the start time indicates the trajectory has started
         state.move_request_->trajectory_start = std::chrono::steady_clock::now();
@@ -95,7 +95,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
 
     } else if ((state.move_request_->trajectory_start.time_since_epoch().count() != 0) && state.move_request_->cancellation_request &&
                !state.move_request_->cancellation_request->issued) {
-        // We have a move request, the samples have been forwarded,
+        // We have a move request, and the trajectory has been started,
         // and cancellation is requested but has not yet been issued. Issue a cancel.
         state.move_request_->cancellation_request->issued = true;
         if (!arm_conn_->driver->writeTrajectoryControlMessage(

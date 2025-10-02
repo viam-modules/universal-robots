@@ -548,43 +548,17 @@ void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult tr
         }
         case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED: {
             report = "canceled";
-            const auto num_samples = move_request->samples.size();
-            double time_traj = 0.0;
-            size_t traj_end_index = -1;
-            for (size_t i = 0; i < num_samples; i++) {
-                time_traj += boost::numeric_cast<double>(move_request->samples[i].timestep);
-                if (time_traj > traj_duration) {
-                    traj_end_index = i;
-
-                    break;
-                }
-            }
-            pending_samples_from_failure.insert(pending_samples_from_failure.end(),
-                                                std::make_move_iterator(move_request->samples.begin() + traj_end_index),
-                                                std::make_move_iterator(move_request->samples.end()));
             if (move_request) {
+                store_pending_samples(std::move(move_request->samples), traj_duration);
                 move_request->complete_cancelled();
             }
             break;
         }
         case control::TrajectoryResult::TRAJECTORY_RESULT_FAILURE:
         default: {
-            const auto num_samples = move_request->samples.size();
-            double time_traj = 0.0;
-            size_t traj_end_index = -1;
-            for (size_t i = 0; i < num_samples; i++) {
-                time_traj += boost::numeric_cast<double>(move_request->samples[i].timestep);
-                if (time_traj > traj_duration) {
-                    traj_end_index = i;
-
-                    break;
-                }
-            }
-            pending_samples_from_failure.insert(pending_samples_from_failure.end(),
-                                                std::make_move_iterator(move_request->samples.begin() + traj_end_index),
-                                                std::make_move_iterator(move_request->samples.end()));
             report = "failure";
             if (move_request) {
+                store_pending_samples(std::move(move_request->samples), traj_duration);
                 move_request->complete_failure();
             }
             break;
@@ -592,4 +566,21 @@ void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult tr
     }
 
     VIAM_SDK_LOG(info) << "trajectory report: " << report;
+}
+
+void URArm::state_::store_pending_samples(std::vector<trajectory_sample_point> samples, double traj_duration) {
+    const auto num_samples = samples.size();
+    double time_traj = 0.0;
+    size_t traj_end_index = -1;
+    for (size_t i = 0; i < num_samples; i++) {
+        time_traj += boost::numeric_cast<double>(samples[i].timestep);
+        if (time_traj > traj_duration) {
+            traj_end_index = i;
+
+            break;
+        }
+    }
+    pending_samples_from_failure.insert(pending_samples_from_failure.end(),
+                                        std::make_move_iterator(samples.begin() + traj_end_index),
+                                        std::make_move_iterator(samples.end()));
 }
