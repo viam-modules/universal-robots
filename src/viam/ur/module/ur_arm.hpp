@@ -17,7 +17,7 @@ using namespace urcl;
 
 struct trajectory_sample_point {
     vector6d_t p;
-    vector6d_t v; // this is 6 dim bc one for each motor
+    vector6d_t v;  // this is 6 dim bc one for each motor
     float timestep;
     bool is_joint_space;
 };
@@ -142,7 +142,11 @@ class URArm final : public Arm, public Reconfigurable {
 
     vector6d_t get_joint_positions_rad_(const std::shared_lock<std::shared_mutex>&);
 
-    void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time_ms);
+    void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
+                           std::list<Eigen::VectorXd> waypoints,
+                           const std::string& unix_time_ms);
+
+    void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time_ms);
 
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);

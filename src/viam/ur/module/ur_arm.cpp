@@ -366,29 +366,32 @@ bool URArm::is_moving() {
 }
 
 void URArm::move_to_position(const pose& p, const ProtoStruct&) {
+    std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
     VIAM_SDK_LOG(info) << "move_to_position via on-robot IK + movej";
 
     // 1) Position: Viam mm -> UR m
-    const double x = p.coordinates.x * 1e-3;
-    const double y = p.coordinates.y * 1e-3;
-    const double z = p.coordinates.z * 1e-3;
+    // const double x = p.coordinates.x * 1e-3;
+    // const double y = p.coordinates.y * 1e-3;
+    // const double z = p.coordinates.z * 1e-3;
 
     // 2) Orientation: (Ox,Oy,Oz, Theta_deg) -> (rx,ry,rz) in radians
     // TODO: the way we calculate orientation needs to be fixed!
-    double rx = 0, ry = M_PI / 2, rz = 0;  // or compute via your to_rotation_vector(...)
+    // double rx = 0, ry = M_PI / 2, rz = 0;  // or compute via your to_rotation_vector(...)
 
     // 3) Motion params for movej (t=0 => use a/v)
-    const float v = 1.2f;  // rad/s  (joint speed)
-    const float a = 1.0f;  // rad/s^2 (joint accel)
-    const float t = 0.0f;  // seconds (let a,v govern)
-    const float r = 0.0f;  // rad (joint blend, usually 0 for a single target)
+    // const float v = 1.2f;  // rad/s  (joint speed)
+    // const float a = 1.0f;  // rad/s^2 (joint accel)
+    // const float t = 0.0f;  // seconds (let a,v govern)
+    // const float r = 0.0f;  // rad (joint blend, usually 0 for a single target)
 
     // here we want to use movep
 
     // then want to use driver->writemotionprimitve
     // need to figure out how to define motion primitive
+    const auto unix_time = unix_time_iso8601();
 
-
+    move_tool_space_(std::move(rlock), std::move(p), unix_time);
 }
 
 URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
@@ -505,12 +508,12 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     // slipped in while we were planning.
     auto current_move_epoch = current_state_->get_move_epoch();
 
-
-    VIAM_SDK_LOG(info) << "move tool space: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
+    VIAM_SDK_LOG(info) << "move tool space: start unix_time_ms " << unix_time << " p " << p;
     const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move tool space: end unix_time " << unix_time; });
 
     // get current pose and add that as a starting pose
     auto current_pose = ur_vector_to_pose(current_state_->read_tcp_pose());
+    VIAM_SDK_LOG(info) << "current_pose " << current_pose;
 
     // TODO: if delta between current_pose and p is below some epsilon, assume we are already there
     //       if yes, then state so in logger and return
@@ -529,24 +532,43 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     const double z = p.coordinates.z * 1e-3;
     // we need to convert the pose's orientation to be in axis angles
     // TODO: ACTUALLY CONVERT OV TO AXIS ANGLES
-    double rx = 0, ry = M_PI / 2, rz = 0;  
+    double rx = 0, ry = M_PI / 2, rz = 0;
 
     // create a trajectory sample point with where we want to go to
     std::vector<trajectory_sample_point> samples;
 
-    trajectory_sample_point p{
+    trajectory_sample_point point{
         {x, y, z, rx, ry, rz},  // positions
-        {0, 0, 0, 0, 0, 0},  // velocities
-        0f,                           // step
-        false                             // flag
+        {0, 0, 0, 0, 0, 0},     // velocities
+        0.0,                    // step
+        false                   // flag
     };
 
-    samples.push_back(p);
+    samples.push_back(point);
 
+    // VIAM_SDK_LOG(info) << "this is what samples is, does this make sense? " << samples;
 
+    // take the list of sample points and hand that over to the ur arm
+    const std::string& path = current_state_->csv_output_path();
+    write_trajectory_to_file(trajectory_filename(path, unix_time), samples);
+
+    std::ofstream ajp_of(arm_joint_positions_filename(path, unix_time));
+    ajp_of << "time_ms,read_attempt,"
+              "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
+              "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
+
+    auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
+        return current_state_->enqueue_move_request(current_move_epoch, std::move(samples), std::move(ajp_of));
+    }();
+
+    // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
+    // with the current state other than to wait on the result of this future.
+    trajectory_completion_future.get();
 }
 
-void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
+void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
+                              std::list<Eigen::VectorXd> waypoints,
+                              const std::string& unix_time) {
     auto our_config_rlock = std::move(config_rlock);
 
     // Capture the current movement epoch, so we can later detect if another caller
@@ -670,7 +692,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock, 
             auto v_eigen = trajectory.getVelocity(t);
             return trajectory_sample_point{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
                                            {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
-                                           boost::numeric_cast<float>(step), true};
+                                           boost::numeric_cast<float>(step),
+                                           true};
         });
     }
     VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time << " samples.size() " << samples.size() << " segments "

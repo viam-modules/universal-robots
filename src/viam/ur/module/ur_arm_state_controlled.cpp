@@ -71,22 +71,54 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         auto samples = std::move(state.move_request_->samples);
         const auto num_samples = samples.size();
 
-        VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
-        if (!arm_conn_->driver->writeTrajectoryControlMessage(
-                urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
-            VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false; dropping connection";
-            std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
-            return event_connection_lost_::trajectory_control_failure();
-        }
-
-        VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
-        for (size_t i = 0; i < num_samples; i++) {
-            if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
-                VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false; dropping connection";
-                std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
+        // if joint
+        if (samples[0].is_joint_space) {
+            VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
+            if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                    urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
+                VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false; dropping connection";
+                std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
                 return event_connection_lost_::trajectory_control_failure();
             }
+
+            VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
+            for (size_t i = 0; i < num_samples; i++) {
+                if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
+                    VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false; dropping connection";
+                    std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
+                    return event_connection_lost_::trajectory_control_failure();
+                }
+            }
         }
+        if (!samples[0].is_joint_space) {
+            // this consumes a motion primitive so we need to create one of those here
+
+            // arm_conn_->driver->writeMotionPrimitive()
+
+            // assume samples is a std::vector<trajectory_sample_point>
+            const auto& s0 = samples[0];
+
+            // 1. Build a UR pose from p (x, y, z, rx, ry, rz)
+            urcl::Pose target_pose(s0.p[0], s0.p[1], s0.p[2], s0.p[3], s0.p[4], s0.p[5]);
+
+            // 2. Choose motion parameters (you can adjust these)
+            double blend_radius = 0.0;
+            double acceleration = 1.4;
+            double velocity = 1.04;  // could also derive from s0.v if you want
+            // double duration = 0.0;
+            std::chrono::duration<double> duration(0);
+            // std::chrono::duration<double>(0.0);
+
+            // 3. Create the primitive
+            // MoveLPrimitive moveL(target_pose, blend_radius, duration, acceleration, velocity);
+            auto motion_primitive = std::make_shared<urcl::control::MotionPrimitive>(
+                urcl::control::MoveLPrimitive(target_pose, blend_radius, duration, acceleration, velocity));
+
+            // 4. Send it to the driver
+            arm_conn_->driver->writeMotionPrimitive(motion_primitive);
+        }
+
+        // if tool
 
         VIAM_SDK_LOG(info) << "URArm trajectory sent";
 
