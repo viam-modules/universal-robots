@@ -223,7 +223,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             1000.0;
         const auto num_samples = state.move_request_->samples.size();
         double time_traj = 0.0;
-        size_t traj_end_index = -1;
+        size_t traj_end_index = 0;
         for (size_t i = 0; i < num_samples; i++) {
             time_traj += boost::numeric_cast<double>(state.move_request_->samples[i].timestep);
             if (time_traj > traj_duration) {
