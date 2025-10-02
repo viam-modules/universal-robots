@@ -382,6 +382,11 @@ void URArm::state_::clear_pstop() const {
     std::visit([](auto& state) { state.clear_pstop(); }, current_state_);
 }
 
+std::vector<trajectory_sample_point> URArm::state_::get_failed_trajectory() {
+    const std::lock_guard lock{mutex_};
+    return pending_samples_from_failure;
+}
+
 template <typename T>
 void URArm::state_::emit_event_(T&& event) {
     auto new_state = std::visit(
@@ -408,11 +413,6 @@ void URArm::state_::emit_event_(T&& event) {
 
 std::chrono::milliseconds URArm::state_::get_timeout_() const {
     return std::visit([](auto& state) { return state.get_timeout(); }, current_state_);
-}
-
-std::string URArm::state_::describe() const {
-    const std::lock_guard lock{mutex_};
-    return describe_();
 }
 
 std::string URArm::state_::describe_() const {

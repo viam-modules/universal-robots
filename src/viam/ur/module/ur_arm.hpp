@@ -135,7 +135,7 @@ class URArm final : public Arm, public Reconfigurable {
 
     vector6d_t get_joint_positions_rad_(const std::shared_lock<std::shared_mutex>&);
 
-    int resume_trajectory_(std::shared_lock<std::shared_mutex> config_rlock);
+    void resume_trajectory_(std::shared_lock<std::shared_mutex> config_rlock);
 
     void move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time_ms);
 

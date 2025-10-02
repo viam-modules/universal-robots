@@ -32,7 +32,6 @@ class URArm::state_ {
         vector6d_t pose;
         vector6d_t forces_at_base;
     };
-    std::string describe() const;
     const std::optional<double>& get_reject_move_request_threshold_rad() const;
     vector6d_t read_joint_positions() const;
     vector6d_t read_tcp_pose() const;
@@ -49,7 +48,7 @@ class URArm::state_ {
     double get_acceleration() const;
 
     void clear_pstop() const;
-    std::vector<trajectory_sample_point> pending_samples_from_failure;
+    std::vector<trajectory_sample_point> get_failed_trajectory();
 
     size_t get_move_epoch() const;
 
@@ -64,6 +63,7 @@ class URArm::state_ {
     std::optional<std::shared_future<void>> cancel_move_request();
 
    private:
+    std::vector<trajectory_sample_point> pending_samples_from_failure;
     struct arm_connection_;
     struct state_disconnected_;
     friend struct state_disconnected_;

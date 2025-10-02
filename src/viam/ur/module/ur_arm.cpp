@@ -501,38 +501,41 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
         }
     }
 
-    if (resume_traj){
-        resp.emplace(k_resume_trajectory, resume_trajectory_(std::move(rlock)));
+    if (resume_traj) {
+        resume_trajectory_(std::move(rlock));
+        resp.emplace(k_resume_trajectory, true);
     }
 
     return resp;
 }
 
-int URArm::resume_trajectory_(std::shared_lock<std::shared_mutex> config_rlock) {
+void URArm::resume_trajectory_(std::shared_lock<std::shared_mutex> config_rlock) {
     auto our_config_rlock = std::move(config_rlock);
     // if we cannot control the arm, clear the pstop
-    if (current_state_->is_current_state_controlled()) {
+    if (!current_state_->is_current_state_controlled()) {
         current_state_->clear_pstop();
         int wait_cnt = 0;
         // arbitrary sleep for 1 second or until we are controlled. this might not be needed
         while (wait_cnt < 100) {
-            if (current_state_->is_current_state_controlled()) {
+            if (!current_state_->is_current_state_controlled()) {
                 break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            wait_cnt++;
         }
         if (wait_cnt == 100) {
             throw std::runtime_error("failed to ready the arm");
         }
     }
+    auto failed_trajectory = current_state_->get_failed_trajectory();
 
-    if (current_state_->pending_samples_from_failure.size() == 0) {
+    if (failed_trajectory.size() == 0) {
         throw std::runtime_error("no trajectory to resume");
     }
 
     // format the trajectory to be consumed by move_
     std::list<Eigen::VectorXd> waypoints;
-    for (const auto& sample : current_state_->pending_samples_from_failure) {
+    for (const auto& sample : failed_trajectory) {
         auto sample_p = Eigen::VectorXd::Map(sample.p.data(), boost::numeric_cast<Eigen::Index>(sample.p.size()));
         waypoints.emplace_back(std::move(sample_p));
     }
@@ -544,9 +547,6 @@ int URArm::resume_trajectory_(std::shared_lock<std::shared_mutex> config_rlock) 
 
     // move will throw if an error occurs
     move_(std::move(our_config_rlock), std::move(waypoints), unix_time);
-
-    // TODO:REMOVE THIS
-    return boost::numeric_cast<int>(current_state_->pending_samples_from_failure.size());
 }
 
 void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
