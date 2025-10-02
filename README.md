@@ -105,6 +105,26 @@ example output:
 }
 ```
 
+#### is_controllable_state DoCommand
+
+`is_controllable_state` returns a boolean that informs a user whether the arm is in a controllable state and ready to receive commands.
+
+```json
+{
+  "is_controllable_state": ""
+}
+```
+
+#### get_state_description DoCommand
+
+`get_state_description` returns the description of the arm's current state, such as whether the arm is controllable or whether the arm is in a stopped or disconnected state.
+
+```json
+{
+  "get_state_description": ""
+}
+```
+
 ### Interacting with the Arm
 First ensure that your machine is displaying as **Live** on the Viam App. Then you can interact with your Universal Robots arm in a couple ways:
 - To simply view data from and manipulate your arm, use the **CONTROL** tab of the Viam App.

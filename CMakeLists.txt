@@ -288,4 +288,11 @@ if (VIAM_UR_DISABLE_APPIMAGE)
     DIRECTORY src/kinematics src/control
     DESTINATION ${CMAKE_INSTALL_DATADIR}/universal-robots
   )
+
+  set(CPACK_PACKAGE_NAME "viam-universal-robots")
+  set(CPACK_PACKAGE_FILE_NAME "module")
+  set(CPACK_GENERATOR "TGZ")
+  set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY 0)
+  include(CPack)
+
 endif()
