@@ -114,7 +114,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(viam-cpp-sdk)
 
-find_package(Eigen3 3.3 CONFIG REQUIRED)
+find_package(Eigen3 3.4 CONFIG REQUIRED)
 find_package(viam-cpp-sdk 0.13 CONFIG REQUIRED viamsdk)
 
 # Everything needs threads, and prefer -pthread if available
