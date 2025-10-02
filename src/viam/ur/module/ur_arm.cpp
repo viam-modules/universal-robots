@@ -255,7 +255,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
         } else if (model_ == URArm::model("ur5e")) {
             return "UR5";
         } else if (model_ == URArm::model("ur7e")) {
-            return "UR7";  // this potentially needs to still be UR5
+            return "UR7";  // this potentially needs to be UR5
         } else if (model_ == URArm::model("ur20")) {
             return "UR20";
         } else {
