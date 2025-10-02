@@ -124,7 +124,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: bin/packageme/module.tar.gz
+          path: module.tar.gz
           retention-days: 7
           if-no-files-found: error
 
@@ -132,7 +132,7 @@ jobs:
       - name: Upload module to Viam
         uses: viamrobotics/upload-module@v1
         with:
-          module-path: bin/packageme/module.tar.gz
+          module-path: module.tar.gz
           platform: ${{ matrix.platform }}
           version: ${{ github.ref_name }}
           key-id: ${{ secrets.viam_key_id }}
