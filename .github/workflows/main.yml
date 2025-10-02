@@ -50,32 +50,38 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') && (github.repository_owner == 'viam-modules')
     runs-on: ${{ matrix.runner }}
     strategy:
-      fail-fast: false
       matrix:
         include:
           # Linux builds in Debian Bookworm container
           - platform: linux/amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             container: debian:bookworm
+            setup_type: debian
+            artifact_name: module-linux-amd64
           - platform: linux/arm64
-            runner: ubuntu-4cpu-arm
+            runner: ubuntu-24.04-arm
             container: debian:bookworm
+            setup_type: debian
+            artifact_name: module-linux-arm64
           # macOS native build
           - platform: darwin/arm64
             runner: macos-14
+            setup_type: macos
+            artifact_name: module-darwin-arm64
 
-    # Linux builds run in container
+    # Container is only populated for Linux builds
     container: ${{ matrix.container }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          submodules: true
           fetch-depth: 0
 
-      # Linux setup: Install system dependencies
-      - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
+      # Debian/Ubuntu setup: Install system dependencies
+      - name: Install system dependencies (Debian)
+        if: matrix.setup_type == 'debian'
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
@@ -85,27 +91,24 @@ jobs:
             curl \
             g++ \
             git \
-            gnupg \
-            gpg \
             jq \
             ninja-build \
             pkg-config \
             python3 \
             python3-pip \
-            python3-venv \
             sudo \
             wget
 
-      # Linux setup: Install Conan via pip
-      - name: Install Conan (Linux)
-        if: runner.os == 'Linux'
+      # Debian/Ubuntu setup: Install Conan via pip (not using conan-io/setup-conan for container compatibility)
+      - name: Install Conan (Debian)
+        if: matrix.setup_type == 'debian'
         run: |
           python3 -m pip install --break-system-packages conan
           conan profile detect
 
       # macOS setup: Install Conan via Homebrew
       - name: Install Conan (macOS)
-        if: runner.os == 'macOS'
+        if: matrix.setup_type == 'macos'
         run: |
           brew install conan jq
           conan profile detect
@@ -113,14 +116,21 @@ jobs:
       # Build using setup.sh and build.sh scripts
       - name: Setup C++ SDK
         run: ./bin/setup.sh
-        working-directory: ${{ github.workspace }}
 
       - name: Build module
         run: ./bin/build.sh
-        working-directory: ${{ github.workspace }}/bin
 
-      # Locate and upload the built module.tar.gz
-      - name: Upload module
+      # Attach module.tar.gz to workflow run
+      - name: Attach build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: bin/packageme/module.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+      # Upload to Viam
+      - name: Upload module to Viam
         uses: viamrobotics/upload-module@v1
         with:
           module-path: bin/packageme/module.tar.gz
