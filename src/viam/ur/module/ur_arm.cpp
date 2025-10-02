@@ -442,6 +442,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     };
     std::optional<controlled_info> cached_controlled_info;
 
+    bool resume_traj = false;
     for (const auto& kv : command) {
         if (kv.first == k_vel_key) {
             const double val = *kv.second.get<double>();
@@ -481,7 +482,8 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             current_state_->clear_pstop();
             resp.emplace(k_clear_pstop, "protective stop cleared");
         } else if (kv.first == k_resume_trajectory) {
-            resp.emplace(k_resume_trajectory, resume_trajectory_(std::move(rlock)));
+            // flag that we are resuming a trajectory, to ensure any other commands are captured first before we move the lock.
+            resume_traj = true;
         } else if (kv.first == k_is_controllable) {
             if (!cached_controlled_info) {
                 cached_controlled_info = controlled_info{};
@@ -497,6 +499,10 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
         } else {
             throw std::runtime_error("unsupported do_command key: " + kv.first);
         }
+    }
+
+    if (resume_traj){
+        resp.emplace(k_resume_trajectory, resume_trajectory_(std::move(rlock)));
     }
 
     return resp;
