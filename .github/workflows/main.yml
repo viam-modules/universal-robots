@@ -53,12 +53,12 @@ jobs:
         include:
           # Linux builds in Debian Bookworm container
           - platform: linux/amd64
-            runner: ubuntu-24.04
+            runner: ubuntu-latest
             container: debian:bookworm
             setup_type: debian
             artifact_name: module-linux-amd64
           - platform: linux/arm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-4cpu-arm
             container: debian:bookworm
             setup_type: debian
             artifact_name: module-linux-arm64
