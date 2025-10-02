@@ -17,8 +17,6 @@ on:
 jobs:
   check-recent-commits:
     name: Check for Recent Commits
-    # Only run commit check for scheduled builds on main in viam-modules org
-    if: github.event_name == 'schedule' && github.ref == 'refs/heads/main' && github.repository_owner == 'viam-modules'
     runs-on: ubuntu-latest
     outputs:
       has_recent_commits: ${{ steps.check.outputs.has-new-commits }}
@@ -32,14 +30,6 @@ jobs:
 
   build-test-lint:
     name: Build, Test, and Lint
-    needs: [check-recent-commits]
-    # Run unless it's a daily scheduled build (Mon-Sat) without recent commits.
-    # Sunday schedule always runs. Use always() so this job runs when check-recent-commits is skipped.
-    if: |
-      always() &&
-      (github.event_name != 'schedule' ||
-       needs.check-recent-commits.outputs.has_recent_commits == 'true' ||
-       github.event.schedule == '0 10 * * 0')
     runs-on: ${{ matrix.runner }}
     container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
     strategy:
@@ -71,8 +61,15 @@ jobs:
 
   build-release-artifacts:
     name: Build Release Artifacts
-    needs: [build-test-lint]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    needs: [check-recent-commits, build-test-lint]
+    # Run on tags, manual dispatch, or scheduled builds (daily with commits, weekly unconditional).
+    # For scheduled: skip daily (Mon-Sat) runs without recent commits, always run Sunday.
+    if: |
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' &&
+       (needs.check-recent-commits.outputs.has_recent_commits == 'true' ||
+        github.event.schedule == '0 10 * * 0'))
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -158,7 +155,6 @@ jobs:
   publish:
     name: Publish to Viam Module Registry
     needs: [build-release-artifacts]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: true
