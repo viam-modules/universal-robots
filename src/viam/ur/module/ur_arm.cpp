@@ -529,7 +529,7 @@ void URArm::resume_trajectory_(std::shared_lock<std::shared_mutex> config_rlock)
     }
     auto failed_trajectory = current_state_->get_failed_trajectory();
 
-    if (failed_trajectory.size() == 0) {
+    if (failed_trajectory.empty()) {
         throw std::runtime_error("no trajectory to resume");
     }
 

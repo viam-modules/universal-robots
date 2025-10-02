@@ -300,7 +300,7 @@ class URArm::state_ {
         void write_joint_data(vector6d_t& position, vector6d_t& velocity);
 
         std::vector<trajectory_sample_point> samples;
-        std::chrono::_V2::steady_clock::time_point trajectory_start = {};
+        std::chrono::_V2::steady_clock::time_point trajectory_start;
 
         std::ofstream arm_joint_positions_stream;
         std::size_t arm_joint_positions_sample{0};
