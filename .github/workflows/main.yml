@@ -16,7 +16,7 @@ on:
 
 jobs:
   check-recent-commits:
-    name: Check for recent commits
+    name: Check for Recent Commits
     # Only run commit check for scheduled builds on main in viam-modules org
     if: github.event_name == 'schedule' && github.ref == 'refs/heads/main' && github.repository_owner == 'viam-modules'
     runs-on: ubuntu-latest
@@ -30,8 +30,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           seconds: 86400
 
-  main:
-    name: Main CI
+  build-test-lint:
+    name: Build, Test, and Lint
     needs: [check-recent-commits]
     # Run unless it's a daily scheduled build (Mon-Sat) without recent commits.
     # Sunday schedule always runs. Use always() so this job runs when check-recent-commits is skipped.
@@ -69,8 +69,8 @@ jobs:
       - name: Test
         run: make test
 
-  publish:
-    name: Publish ${{ matrix.platform }}
+  build-release-artifacts:
+    name: Build Release Artifacts ${{ matrix.platform }}
     needs: [main]
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ${{ matrix.runner }}
@@ -155,7 +155,28 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      # Upload to Viam
+  publish:
+    name: Publish to Viam Module Registry
+    needs: [build-release-artifacts]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            artifact_name: module-linux-amd64
+          - platform: linux/arm64
+            artifact_name: module-linux-arm64
+          - platform: darwin/arm64
+            artifact_name: module-darwin-arm64
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+
       - name: Upload module to Viam
         uses: viamrobotics/upload-module@v1
         with:
