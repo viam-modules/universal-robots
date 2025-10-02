@@ -382,6 +382,11 @@ void URArm::state_::clear_pstop() const {
     std::visit([](auto& state) { state.clear_pstop(); }, current_state_);
 }
 
+std::vector<trajectory_sample_point> URArm::state_::get_failed_trajectory() {
+    const std::lock_guard lock{mutex_};
+    return pending_samples_from_failure;
+}
+
 template <typename T>
 void URArm::state_::emit_event_(T&& event) {
     auto new_state = std::visit(
@@ -527,6 +532,12 @@ void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult tr
         return std::exchange(move_request_, {});
     }();
 
+    // if the trajectory was stopped or had some other failure, record the remaining trajectory so we can resume the run
+    auto trajectory_end = std::chrono::steady_clock::now();
+    auto traj_duration =
+        std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(trajectory_end - move_request->trajectory_start).count() /
+        1000.0;
+
     switch (trajectory_result) {
         case control::TrajectoryResult::TRAJECTORY_RESULT_SUCCESS: {
             report = "success";
@@ -538,6 +549,7 @@ void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult tr
         case control::TrajectoryResult::TRAJECTORY_RESULT_CANCELED: {
             report = "canceled";
             if (move_request) {
+                store_pending_samples(std::move(move_request->samples), traj_duration);
                 move_request->complete_cancelled();
             }
             break;
@@ -546,6 +558,7 @@ void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult tr
         default: {
             report = "failure";
             if (move_request) {
+                store_pending_samples(std::move(move_request->samples), traj_duration);
                 move_request->complete_failure();
             }
             break;
@@ -553,4 +566,22 @@ void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult tr
     }
 
     VIAM_SDK_LOG(info) << "trajectory report: " << report;
+}
+
+void URArm::state_::store_pending_samples(std::vector<trajectory_sample_point> samples, double traj_duration) {
+    const auto num_samples = samples.size();
+    double time_traj = 0.0;
+    size_t traj_end_index = 0;
+    for (size_t i = 0; i < num_samples; i++) {
+        time_traj += boost::numeric_cast<double>(samples[i].timestep);
+        if (time_traj > traj_duration) {
+            traj_end_index = i;
+
+            break;
+        }
+    }
+    pending_samples_from_failure.insert(
+        pending_samples_from_failure.end(),
+        std::make_move_iterator(samples.begin() + static_cast<std::vector<trajectory_sample_point>::difference_type>(traj_end_index)),
+        std::make_move_iterator(samples.end()));
 }
