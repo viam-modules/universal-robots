@@ -120,7 +120,7 @@ jobs:
       - name: Install Conan (Debian)
         if: matrix.setup_type == 'debian'
         run: |
-          python3 -m pip install --break-system-packages conan
+          python3 -m pip install conan
           conan profile detect
 
       # macOS setup: Install Conan via Homebrew
