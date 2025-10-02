@@ -215,6 +215,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
     const auto model_strings = {
         "ur3e",  //
         "ur5e",  //
+        "ur7e",  //
         "ur20"   //
     };
 
@@ -253,6 +254,8 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
             return "UR3";
         } else if (model_ == URArm::model("ur5e")) {
             return "UR5";
+        } else if (model_ == URArm::model("ur7e")) {
+            return "UR7";  // this potentially needs to still be UR5
         } else if (model_ == URArm::model("ur20")) {
             return "UR20";
         } else {
@@ -375,6 +378,8 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
             return "ur3e";
         } else if (model_ == model("ur5e")) {
             return "ur5e";
+        } else if (model_ == model("ur7e")) {
+            return "ur7e";
         } else if (model_ == model("ur20")) {
             return "ur20";
         }
