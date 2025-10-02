@@ -75,15 +75,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux builds in Debian Bookworm container
+          # Linux builds in Ubuntu Jammy container
           - platform: linux/amd64
             runner: ubuntu-latest
-            container: debian:bookworm
+            container: ubuntu:jammy
             setup_type: debian
             artifact_name: module-linux-amd64
           - platform: linux/arm64
             runner: ubuntu-4cpu-arm
-            container: debian:bookworm
+            container: ubuntu:jammy
             setup_type: debian
             artifact_name: module-linux-arm64
           # macOS native build
