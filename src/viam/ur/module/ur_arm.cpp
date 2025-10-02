@@ -515,7 +515,7 @@ void URArm::resume_trajectory_(std::shared_lock<std::shared_mutex> config_rlock)
     if (!current_state_->is_current_state_controlled()) {
         current_state_->clear_pstop();
         int wait_cnt = 0;
-        // arbitrary sleep for 1 second or until we are controlled. this might not be needed
+        // arbitrary sleep for 1 second or until we are controlled.
         while (wait_cnt < 100) {
             if (!current_state_->is_current_state_controlled()) {
                 break;

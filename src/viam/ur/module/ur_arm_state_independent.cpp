@@ -231,9 +231,11 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
                 break;
             }
         }
-        state.pending_samples_from_failure.insert(state.pending_samples_from_failure.end(),
-                                                  std::make_move_iterator(state.move_request_->samples.begin() + traj_end_index),
-                                                  std::make_move_iterator(state.move_request_->samples.end()));
+        state.pending_samples_from_failure.insert(
+            state.pending_samples_from_failure.end(),
+            std::make_move_iterator(state.move_request_->samples.begin() +
+                                    static_cast<std::vector<trajectory_sample_point>::difference_type>(traj_end_index)),
+            std::make_move_iterator(state.move_request_->samples.end()));
         std::exchange(state.move_request_, {})->complete_error([this]() -> std::string {
             switch (reason_) {
                 case reason::k_stopped: {

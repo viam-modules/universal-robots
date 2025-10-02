@@ -580,7 +580,8 @@ void URArm::state_::store_pending_samples(std::vector<trajectory_sample_point> s
             break;
         }
     }
-    pending_samples_from_failure.insert(pending_samples_from_failure.end(),
-                                        std::make_move_iterator(samples.begin() + traj_end_index),
-                                        std::make_move_iterator(samples.end()));
+    pending_samples_from_failure.insert(
+        pending_samples_from_failure.end(),
+        std::make_move_iterator(samples.begin() + static_cast<std::vector<trajectory_sample_point>::difference_type>(traj_end_index)),
+        std::make_move_iterator(samples.end()));
 }
