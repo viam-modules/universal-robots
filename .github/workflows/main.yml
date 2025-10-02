@@ -70,7 +70,7 @@ jobs:
         run: make test
 
   build-release-artifacts:
-    name: Build Release Artifacts ${{ matrix.platform }}
+    name: Build Release Artifacts
     needs: [build-test-lint]
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ${{ matrix.runner }}
