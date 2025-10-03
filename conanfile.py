@@ -35,7 +35,7 @@ class universal_robots(ConanFile):
         # NOTE: If you update the `viam-cpp-sdk` dependency here, it
         # should also be updated in `bin/setup.sh`.
         self.requires("viam-cpp-sdk/[>=0.20.0]")
-        self.requires("eigen/[>=3.3]")
+        self.requires("eigen/[>=3.4 <5.0]")
         self.requires("boost/[>=1.74.0]")
 
     def validate(self):
@@ -43,7 +43,6 @@ class universal_robots(ConanFile):
 
     def generate(self):
         tc = CMakeToolchain(self)
-        tc.cache_variables["VIAM_UR_DISABLE_APPIMAGE"] = True
         tc.generate()
         CMakeDeps(self).generate()
 
