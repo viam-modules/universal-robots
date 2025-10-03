@@ -43,7 +43,6 @@ class universal_robots(ConanFile):
 
     def generate(self):
         tc = CMakeToolchain(self)
-        tc.cache_variables["VIAM_UR_DISABLE_APPIMAGE"] = True
         tc.generate()
         CMakeDeps(self).generate()
 

@@ -59,27 +59,6 @@ RUN apt-get -y --no-install-recommends install -t llvm-toolchain-jammy-19 \
 
 RUN mkdir -p /root/opt/src
 
-# Install appimage-builder deps
-RUN apt install -y \
-    binutils \
-    coreutils \
-    desktop-file-utils \
-    fakeroot \
-    fuse \
-    jq \
-    libgdk-pixbuf2.0-dev \
-    patchelf \
-    python3-pip python3-setuptools \
-    squashfs-tools \
-    strace \
-    vim \
-    util-linux zsync
-
-RUN pip3 install -U pip setuptools urllib3==1.26.12 requests==2.26.0
-
-# Install appimage-builder
-RUN pip3 install git+https://github.com/viamrobotics/appimage-builder.git@viam-2025-07-22
-
 # Install Eigen
 RUN apt install -y libeigen3-dev
 
