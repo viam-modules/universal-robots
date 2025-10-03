@@ -25,7 +25,7 @@ format-check:
 	ls src/viam/ur/module/*.*pp | xargs clang-format-19 -i --style=file --dry-run --Werror
 
 configure:
-	cmake -S . -B build -G Ninja
+	cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -G Ninja
 
 build: configure
 	cmake --build build --target all -- -j4
