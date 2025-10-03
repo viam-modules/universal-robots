@@ -34,7 +34,7 @@ install: build
 	DESTDIR=build/install cmake --install build --prefix /
 
 test: build
-	ctest --test-dir build --output-on-failure --build-run-dir build
+	cmake --build build --target test
 
 module.tar.gz: format-check install
 	cd build && cpack -G TGZ

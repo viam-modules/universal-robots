@@ -118,6 +118,7 @@ find_package(Boost CONFIG REQUIRED
     headers
 )
 
+enable_testing()
 
 #
 # Declare targets
