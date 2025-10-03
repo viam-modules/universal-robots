@@ -254,6 +254,10 @@ target_link_libraries(universal-robots-test
     viam-ur
 )
 
+add_test(
+  NAME universal-robots
+  COMMAND universal-robots-test
+)
 
 
 #

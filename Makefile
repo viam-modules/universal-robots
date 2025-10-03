@@ -34,10 +34,10 @@ install: build
 	DESTDIR=build/install cmake --install build --prefix /
 
 test: build
-	./build/universal-robots-test
+	ctest --test-dir build --output-on-failure --build-run-dir build
 
 module.tar.gz: format-check install
-	tar czf $@ -C build/install .
+	cd build && cpack -G TGZ
 
 run-clang-tidy:
 	clang-tidy-19 \
