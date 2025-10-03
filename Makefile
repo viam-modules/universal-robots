@@ -37,7 +37,7 @@ test: build
 	cmake --build build --target test
 
 module.tar.gz: format-check install
-	cd build && cpack -G TGZ
+	cmake --build build --target package
 
 run-clang-tidy:
 	clang-tidy-19 \
