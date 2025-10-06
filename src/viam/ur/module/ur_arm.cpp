@@ -356,6 +356,15 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
 pose URArm::get_end_position(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
+
+    const auto pos = current_state_->read_tcp_pose();
+    VIAM_SDK_LOG(info) << "this is the end position from the end position api";
+    VIAM_SDK_LOG(info) << "pos[0] " << pos[0];
+    VIAM_SDK_LOG(info) << "pos[1] " << pos[1];
+    VIAM_SDK_LOG(info) << "pos[2] " << pos[2];
+    VIAM_SDK_LOG(info) << "pos[3] " << pos[3];
+    VIAM_SDK_LOG(info) << "pos[4] " << pos[4];
+    VIAM_SDK_LOG(info) << "pos[5] " << pos[5];
     return ur_vector_to_pose(current_state_->read_tcp_pose());
 }
 
@@ -532,7 +541,15 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     const double z = p.coordinates.z * 1e-3;
     // we need to convert the pose's orientation to be in axis angles
     // TODO: ACTUALLY CONVERT OV TO AXIS ANGLES
-    double rx = 0, ry = M_PI / 2, rz = 0;
+    double rx = M_PI / 2, ry = 0, rz = 0;
+
+    VIAM_SDK_LOG(info) << "this is the end position from the pose we have askked it to move to";
+    VIAM_SDK_LOG(info) << "x " << x;
+    VIAM_SDK_LOG(info) << "y " << y;
+    VIAM_SDK_LOG(info) << "z " << z;
+    VIAM_SDK_LOG(info) << "rx " << rx;
+    VIAM_SDK_LOG(info) << "ry " << ry;
+    VIAM_SDK_LOG(info) << "rz " << rz;
 
     // create a trajectory sample point with where we want to go to
     std::vector<trajectory_sample_point> samples;

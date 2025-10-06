@@ -111,10 +111,17 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
 
             // 3. Create the primitive
             // MoveLPrimitive moveL(target_pose, blend_radius, duration, acceleration, velocity);
+            if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                    urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(1), RobotReceiveTimeout::off())) {
+                VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false; dropping connection";
+                std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
+                return event_connection_lost_::trajectory_control_failure();
+            }
             auto motion_primitive = std::make_shared<urcl::control::MotionPrimitive>(
                 urcl::control::MoveLPrimitive(target_pose, blend_radius, duration, acceleration, velocity));
 
             // 4. Send it to the driver
+
             arm_conn_->driver->writeMotionPrimitive(motion_primitive);
         }
 
@@ -124,6 +131,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
 
     } else if (state.move_request_->samples.empty() && state.move_request_->cancellation_request &&
                !state.move_request_->cancellation_request->issued) {
+        VIAM_SDK_LOG(info) << "else case 1";
         // We have a move request, the samples have been forwarded,
         // and cancellation is requested but has not yet been issued. Issue a cancel.
         state.move_request_->cancellation_request->issued = true;
@@ -135,10 +143,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
             return event_connection_lost_::trajectory_control_failure();
         }
     } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
+        VIAM_SDK_LOG(info) << "else case 2";
         // We have a move request that we haven't issued but a
         // cancel is already pending. Don't issue it, just cancel it.
         std::exchange(state.move_request_, {})->complete_cancelled();
     } else {
+        VIAM_SDK_LOG(info) << "else case 3";
         // TODO: is it assured that we have positions/velocities here?
         state.move_request_->write_joint_data(state.ephemeral_->joint_positions, state.ephemeral_->joint_velocities);
     }
