@@ -103,8 +103,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
 
             // 2. Choose motion parameters (you can adjust these)
             double blend_radius = 0.0;
-            double acceleration = 1.4;
-            double velocity = 1.04;  // could also derive from s0.v if you want
+            double acceleration = 0.25;
+            double velocity = 0.10;  // could also derive from s0.v if you want
             // double duration = 0.0;
             std::chrono::duration<double> duration(0);
             // std::chrono::duration<double>(0.0);

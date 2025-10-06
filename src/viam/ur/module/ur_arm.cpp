@@ -34,7 +34,7 @@
 #include "ur_arm_state.hpp"
 #include "utils.hpp"
 
-// this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
+// this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose or a pose to a UR vector
 extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
 extern "C" void free_quaternion_memory(void* q);
 
@@ -44,10 +44,15 @@ extern "C" void free_orientation_vector_memory(void* ov);
 extern "C" double* orientation_vector_get_components(void* ov);
 extern "C" void free_orientation_vector_components(double* ds);
 
-namespace {
-
-constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
-constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
+// OrientationVector
+extern "C" void* new_orientation_vector(double ox, double oy, double oz, double theta);
+extern "C" void* quaternion_from_orientation_vector(void* ov);
+extern "C" void free_orientation_vector_components(double* ds);  // you already have this
+// Quaternion
+extern "C" void free_quaternion_memory(void* q);  // you already have this
+// AxisAngle
+extern "C" double* axis_angle_from_quaternion(void* q);
+extern "C" void free_axis_angles_memory(void* aa);
 
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = std::hypot(vec[3], vec[4], vec[5]);
@@ -70,6 +75,83 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
 
     return {position, orientation, theta};
 }
+
+inline double degrees_to_radians(double deg) {
+    return deg * M_PI / 180.0;
+}
+
+urcl::vector6d_t pose_to_ur_vector(const pose& p) {
+    urcl::vector6d_t v{};
+
+    // 1) Position: mm → meters
+    v[0] = p.coordinates.x / 1000.0;
+    v[1] = p.coordinates.y / 1000.0;
+    v[2] = p.coordinates.z / 1000.0;
+
+    // 2) Orientation vector (o_x, o_y, o_z, theta [deg]) → quaternion → axis-angle
+    constexpr double k_angle_epsilon = 1e-12;
+
+    if (std::isnan(p.theta)) {
+        throw std::invalid_argument("pose_to_ur_vector: theta is NaN");
+    }
+
+    const double theta_rad = degrees_to_radians(p.theta);
+    // If angle ~ 0, the UR axis-angle vector is just (0,0,0)
+    if (std::abs(theta_rad) < k_angle_epsilon) {
+        v[3] = v[4] = v[5] = 0.0;
+        return v;
+    }
+
+    // Build an OrientationVector in rust-utils, then convert:
+    // new_orientation_vector(ox, oy, oz, theta_radians)
+    void* ov = new_orientation_vector(p.orientation.o_x, p.orientation.o_y, p.orientation.o_z, theta_rad);
+    if (!ov) {
+        throw std::runtime_error("pose_to_ur_vector: failed to create orientation vector");
+    }
+
+    // quaternion_from_orientation_vector(ov)
+    void* q = quaternion_from_orientation_vector(ov);
+    if (!q) {
+        free_orientation_vector_memory(ov);
+        throw std::runtime_error("pose_to_ur_vector: failed to create quaternion");
+    }
+
+    // axis_angle_from_quaternion(q) -> returns [ax, ay, az, theta] (theta in radians)
+    double* aa = axis_angle_from_quaternion(q);
+    if (!aa) {
+        free_quaternion_memory(q);
+        free_orientation_vector_memory(ov);
+        throw std::runtime_error("pose_to_ur_vector: failed to compute axis-angle");
+    }
+
+    // UR expects (rx, ry, rz) = axis * theta  (a.k.a. axis-angle "vector")
+    const double ax = aa[0];
+    const double ay = aa[1];
+    const double az = aa[2];
+    const double th = aa[3];
+
+    // If the axis is near-zero or th ~ 0, treat as zero rotation (robust to numeric noise)
+    const double n = std::hypot(ax, std::hypot(ay, az));
+    if (n < k_angle_epsilon || std::abs(th) < k_angle_epsilon) {
+        v[3] = v[4] = v[5] = 0.0;
+    } else {
+        v[3] = ax * th;
+        v[4] = ay * th;
+        v[5] = az * th;
+    }
+
+    // clean up FFI allocations
+    free_axis_angles_memory(aa);
+    free_quaternion_memory(q);
+    free_orientation_vector_memory(ov);
+
+    return v;
+}
+
+namespace {
+
+constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
+constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 
 std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     if (!find_config_attribute<std::string>(cfg, "host")) {
@@ -359,12 +441,12 @@ pose URArm::get_end_position(const ProtoStruct&) {
 
     const auto pos = current_state_->read_tcp_pose();
     VIAM_SDK_LOG(info) << "this is the end position from the end position api";
-    VIAM_SDK_LOG(info) << "pos[0] " << pos[0];
-    VIAM_SDK_LOG(info) << "pos[1] " << pos[1];
-    VIAM_SDK_LOG(info) << "pos[2] " << pos[2];
-    VIAM_SDK_LOG(info) << "pos[3] " << pos[3];
-    VIAM_SDK_LOG(info) << "pos[4] " << pos[4];
-    VIAM_SDK_LOG(info) << "pos[5] " << pos[5];
+    VIAM_SDK_LOG(info) << "x " << pos[0];
+    VIAM_SDK_LOG(info) << "y " << pos[1];
+    VIAM_SDK_LOG(info) << "z " << pos[2];
+    VIAM_SDK_LOG(info) << "rx " << pos[3];
+    VIAM_SDK_LOG(info) << "ry " << pos[4];
+    VIAM_SDK_LOG(info) << "rz " << pos[5];
     return ur_vector_to_pose(current_state_->read_tcp_pose());
 }
 
@@ -521,8 +603,14 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move tool space: end unix_time " << unix_time; });
 
     // get current pose and add that as a starting pose
-    auto current_pose = ur_vector_to_pose(current_state_->read_tcp_pose());
-    VIAM_SDK_LOG(info) << "current_pose " << current_pose;
+    auto current_pose = current_state_->read_tcp_pose();
+    VIAM_SDK_LOG(info) << "this is from read tcp pose";
+    VIAM_SDK_LOG(info) << "x " << current_pose[0];
+    VIAM_SDK_LOG(info) << "y " << current_pose[1];
+    VIAM_SDK_LOG(info) << "z " << current_pose[2];
+    VIAM_SDK_LOG(info) << "rx " << current_pose[3];
+    VIAM_SDK_LOG(info) << "ry " << current_pose[4];
+    VIAM_SDK_LOG(info) << "rz " << current_pose[5];
 
     // TODO: if delta between current_pose and p is below some epsilon, assume we are already there
     //       if yes, then state so in logger and return
@@ -536,29 +624,36 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     // this can be converted or we just perscribe some default
 
     // we need to convert the pose's translation to be in meters not millimeters
-    const double x = p.coordinates.x * 1e-3;
-    const double y = p.coordinates.y * 1e-3;
-    const double z = p.coordinates.z * 1e-3;
-    // we need to convert the pose's orientation to be in axis angles
-    // TODO: ACTUALLY CONVERT OV TO AXIS ANGLES
-    double rx = M_PI / 2, ry = 0, rz = 0;
+    // const double x = p.coordinates.x * 1e-3;
+    // const double y = p.coordinates.y * 1e-3;
+    // const double z = p.coordinates.z * 1e-3;
+    // // we need to convert the pose's orientation to be in axis angles
+    // // TODO: ACTUALLY CONVERT OV TO AXIS ANGLES
+    // double rx = M_PI / 2, ry = 0, rz = 0;
+    auto ur_pose = pose_to_ur_vector(p);
 
-    VIAM_SDK_LOG(info) << "this is the end position from the pose we have askked it to move to";
-    VIAM_SDK_LOG(info) << "x " << x;
-    VIAM_SDK_LOG(info) << "y " << y;
-    VIAM_SDK_LOG(info) << "z " << z;
-    VIAM_SDK_LOG(info) << "rx " << rx;
-    VIAM_SDK_LOG(info) << "ry " << ry;
-    VIAM_SDK_LOG(info) << "rz " << rz;
+    VIAM_SDK_LOG(info) << "this is the output of pose_to_ur_vector";
+    VIAM_SDK_LOG(info) << "ur_pose.x " << ur_pose[0];
+    VIAM_SDK_LOG(info) << "ur_pose.y " << ur_pose[1];
+    VIAM_SDK_LOG(info) << "ur_pose.z " << ur_pose[2];
+    VIAM_SDK_LOG(info) << "ur_pose.rx " << ur_pose[3];
+    VIAM_SDK_LOG(info) << "ur_pose.ry " << ur_pose[4];
+    VIAM_SDK_LOG(info) << "ur_pose.rz " << ur_pose[5];
+    // VIAM_SDK_LOG(info) << "x " << x;
+    // VIAM_SDK_LOG(info) << "y " << y;
+    // VIAM_SDK_LOG(info) << "z " << z;
+    // VIAM_SDK_LOG(info) << "rx " << rx;
+    // VIAM_SDK_LOG(info) << "ry " << ry;
+    // VIAM_SDK_LOG(info) << "rz " << rz;
 
     // create a trajectory sample point with where we want to go to
     std::vector<trajectory_sample_point> samples;
 
     trajectory_sample_point point{
-        {x, y, z, rx, ry, rz},  // positions
-        {0, 0, 0, 0, 0, 0},     // velocities
-        0.0,                    // step
-        false                   // flag
+        ur_pose,             // positions
+        {0, 0, 0, 0, 0, 0},  // velocities
+        0.0,                 // step
+        false                // flag
     };
 
     samples.push_back(point);
