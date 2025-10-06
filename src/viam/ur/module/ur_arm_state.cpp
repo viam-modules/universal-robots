@@ -10,46 +10,7 @@
 #include <boost/accumulators/statistics/variance.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
 
-// The `ur_arm_config.hpp` header is only generated for non-AppImage
-// builds. If the header exists, include it and note that we aren't
-// using appimage. Otherwise, we are. Name a constant to distinguish
-// the cases.
-#if __has_include("ur_arm_config.hpp")
-
 #include "ur_arm_config.hpp"
-
-namespace {
-
-std::filesystem::path find_resource_root() {
-    const auto module_executable_path = boost::dll::program_location();
-    const auto module_executable_directory = module_executable_path.parent_path();
-    auto data_directory = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "universal-robots");
-    VIAM_SDK_LOG(info) << "Universal robots module executable found in `" << module_executable_path << "; resources will be found in `"
-                       << data_directory << "`";
-    return data_directory;
-}
-
-}  // namespace
-
-#else
-
-namespace {
-
-std::filesystem::path find_resource_root() {
-    // get the APPDIR environment variable
-    auto* const app_dir = std::getenv("APPDIR");  // NOLINT: Yes, we know getenv isn't thread safe
-    if (!app_dir) {
-        throw std::runtime_error("required environment variable `APPDIR` unset");
-    }
-    auto data_directory = std::filesystem::path{app_dir} / "src";
-    VIAM_SDK_LOG(info) << "APPDIR is `" << app_dir << "`; resources will be found in `" << data_directory << "`";
-    return data_directory;
-}
-
-}  // namespace
-
-#endif
-
 #include "utils.hpp"
 
 namespace {
@@ -101,7 +62,11 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                                      const struct ports_& ports) {
     auto host = find_config_attribute<std::string>(config, "host").value();
 
-    auto resource_root = find_resource_root();
+    const auto module_executable_path = boost::dll::program_location();
+    const auto module_executable_directory = module_executable_path.parent_path();
+    auto resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "universal-robots");
+    VIAM_SDK_LOG(info) << "Universal robots module executable found in `" << module_executable_path << "; resources will be found in `"
+                       << resource_root << "`";
 
     // If the config contains `csv_output_path`, use that, otherwise,
     // fall back to `VIAM_MODULE_DATA` as the output path, which must

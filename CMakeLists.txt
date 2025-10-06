@@ -15,13 +15,6 @@ project(
 option(VIAM_UR_USE_WALL_WERROR "Build with -Wall and -Werror flags" ON)
 
 
-# - `VIAM_UR_DISABLE_APPIMAGE`
-#
-# Configure the build for not producing an AppImage
-#
-option(VIAM_UR_DISABLE_APPIMAGE "Disable AppImage builds" OFF)
-
-
 # If no build type is selected, build optimized but retain debug
 # info. This is probably the right build type for packaging and
 # release.
@@ -60,23 +53,21 @@ endif()
 include(GNUInstallDirs)
 
 # If we aren't doing an app image build, configure runtime paths for relocatable installs
-if (VIAM_UR_DISABLE_APPIMAGE)
-  set(CMAKE_BUILD_WITH_INSTALL_RPATH false)
-  set(CMAKE_BUILD_RPATH_USE_ORIGIN true)
-  set(CMAKE_INSTALL_RPATH_USE_LINK_PATH true)
-  set(CMAKE_SKIP_BUILD_RPATH false)
+set(CMAKE_BUILD_WITH_INSTALL_RPATH false)
+set(CMAKE_BUILD_RPATH_USE_ORIGIN true)
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH true)
+set(CMAKE_SKIP_BUILD_RPATH false)
 
-  list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}" isSystemDir)
-  if("${isSystemDir}" STREQUAL "-1")
-    # TODO: Is there a way to do this with generator expressions?
-    file(RELATIVE_PATH BINTOPREFIXRELPATH ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR} ${CMAKE_INSTALL_PREFIX})
-    file(RELATIVE_PATH PREFIXTOLIBRELPATH ${CMAKE_INSTALL_PREFIX} ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
+list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}" isSystemDir)
+if("${isSystemDir}" STREQUAL "-1")
+  # TODO: Is there a way to do this with generator expressions?
+  file(RELATIVE_PATH BINTOPREFIXRELPATH ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR} ${CMAKE_INSTALL_PREFIX})
+  file(RELATIVE_PATH PREFIXTOLIBRELPATH ${CMAKE_INSTALL_PREFIX} ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
 
-    if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-      list(PREPEND CMAKE_INSTALL_RPATH "@loader_path/${BINTOPREFIXRELPATH}/${PREFIXTOLIBRELPATH}")
-    else()
-      list(PREPEND CMAKE_INSTALL_RPATH "$ORIGIN/${BINTOPREFIXRELPATH}/${PREFIXTOLIBRELPATH}")
-    endif()
+  if (CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+    list(PREPEND CMAKE_INSTALL_RPATH "@loader_path/${BINTOPREFIXRELPATH}/${PREFIXTOLIBRELPATH}")
+  else()
+    list(PREPEND CMAKE_INSTALL_RPATH "$ORIGIN/${BINTOPREFIXRELPATH}/${PREFIXTOLIBRELPATH}")
   endif()
 endif()
 
@@ -114,7 +105,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(viam-cpp-sdk)
 
-find_package(Eigen3 3.3 CONFIG REQUIRED)
+find_package(Eigen3 3.4 CONFIG REQUIRED)
 find_package(viam-cpp-sdk 0.13 CONFIG REQUIRED viamsdk)
 
 # Everything needs threads, and prefer -pthread if available
@@ -127,6 +118,7 @@ find_package(Boost CONFIG REQUIRED
     headers
 )
 
+enable_testing()
 
 #
 # Declare targets
@@ -160,25 +152,22 @@ install(
 
 add_library(viam-ur)
 
-if (VIAM_UR_DISABLE_APPIMAGE)
+# Compute the relative path from the bindir to the data
+# directory. This is relocatable such that if we later install to a
+# different prefix it will still be correct, but we need to use the
+# full paths to compute it.
+file(RELATIVE_PATH VIAM_UR_RELPATH_BINDIR_TO_DATADIR ${CMAKE_INSTALL_FULL_BINDIR} ${CMAKE_INSTALL_FULL_DATADIR})
 
-  # Compute the relative path from the bindir to the data
-  # directory. This is relocatable such that if we later install to a
-  # different prefix it will still be correct, but we need to use the
-  # full paths to compute it.
-  file(RELATIVE_PATH VIAM_UR_RELPATH_BINDIR_TO_DATADIR ${CMAKE_INSTALL_FULL_BINDIR} ${CMAKE_INSTALL_FULL_DATADIR})
+configure_file(
+  src/viam/ur/module/ur_arm_config.hpp.in
+  ${CMAKE_CURRENT_BINARY_DIR}/src/viam/ur/module/ur_arm_config.hpp
+  @ONLY
+)
 
-  configure_file(
-      src/viam/ur/module/ur_arm_config.hpp.in
-      ${CMAKE_CURRENT_BINARY_DIR}/src/viam/ur/module/ur_arm_config.hpp
-      @ONLY
-  )
-
-  target_include_directories(viam-ur
-    PRIVATE
-      ${CMAKE_CURRENT_BINARY_DIR}/src/viam/ur/module
-  )
-endif()
+target_include_directories(viam-ur
+  PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}/src/viam/ur/module
+)
 
 target_sources(viam-ur
   PRIVATE
@@ -266,33 +255,34 @@ target_link_libraries(universal-robots-test
     viam-ur
 )
 
+add_test(
+  NAME universal-robots
+  COMMAND universal-robots-test
+)
 
 
 #
 # Installation and packaging
 #
 
-if (VIAM_UR_DISABLE_APPIMAGE)
-  configure_file(
-      meta.json-no-app-image.in
-      ${CMAKE_CURRENT_BINARY_DIR}/meta.json
-      @ONLY
-  )
+configure_file(
+    meta.json.in
+    ${CMAKE_CURRENT_BINARY_DIR}/meta.json
+    @ONLY
+)
 
-  install(
-    FILES ${CMAKE_CURRENT_BINARY_DIR}/meta.json
-    DESTINATION .
-  )
+install(
+  FILES ${CMAKE_CURRENT_BINARY_DIR}/meta.json
+  DESTINATION .
+)
 
-  install(
-    DIRECTORY src/kinematics src/control
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/universal-robots
-  )
+install(
+  DIRECTORY src/kinematics src/control
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/universal-robots
+)
 
-  set(CPACK_PACKAGE_NAME "viam-universal-robots")
-  set(CPACK_PACKAGE_FILE_NAME "module")
-  set(CPACK_GENERATOR "TGZ")
-  set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY 0)
-  include(CPack)
-
-endif()
+set(CPACK_PACKAGE_NAME "viam-universal-robots")
+set(CPACK_PACKAGE_FILE_NAME "module")
+set(CPACK_GENERATOR "TGZ")
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY 0)
+include(CPack)

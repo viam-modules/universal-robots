@@ -1,4 +1,4 @@
-FROM debian:bookworm
+FROM ubuntu:jammy
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -9,7 +9,6 @@ RUN apt-get -y dist-upgrade
 RUN apt-get -y --no-install-recommends install \
     build-essential \
     ca-certificates \
-    cmake \
     curl \
     doxygen \
     g++ \
@@ -17,6 +16,7 @@ RUN apt-get -y --no-install-recommends install \
     git \
     gnupg \
     gpg \
+    jq \
     less \
     libabsl-dev \
     libboost-all-dev \
@@ -27,6 +27,7 @@ RUN apt-get -y --no-install-recommends install \
     libusb-1.0-0-dev \
     libudev-dev \
     libgtk-3-dev \
+    lsb-release \
     ninja-build \
     pkg-config \
     protobuf-compiler-grpc \
@@ -34,12 +35,21 @@ RUN apt-get -y --no-install-recommends install \
     sudo \
     wget
 
+# Install CMake 3.x from Kitware's official repository
+RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | \
+    gpg --dearmor - | \
+    tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null && \
+    echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" | \
+    tee /etc/apt/sources.list.d/kitware.list >/dev/null && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends cmake=3.30.* cmake-data=3.30.*
+
 
 RUN bash -c 'wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|apt-key add -'
-RUN apt-add-repository -y 'deb http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-19 main'
-RUN apt-add-repository -y 'deb http://apt.llvm.org/bookworm/ llvm-toolchain-bookworm-19 main'
+RUN apt-add-repository -y 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main'
+RUN apt-add-repository -y 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main'
 RUN apt-get update
-RUN apt-get -y --no-install-recommends install -t llvm-toolchain-bookworm-19 \
+RUN apt-get -y --no-install-recommends install -t llvm-toolchain-jammy-19 \
     clang-19 \
     clang-format-19 \
     clang-tidy-19 \
@@ -48,33 +58,6 @@ RUN apt-get -y --no-install-recommends install -t llvm-toolchain-bookworm-19 \
     lldb-19
 
 RUN mkdir -p /root/opt/src
-
-# Install appimage-builder deps
-RUN apt install -y \
-    binutils \
-    coreutils \
-    desktop-file-utils \
-    fakeroot \
-    fuse \
-    jq \
-    libgdk-pixbuf2.0-dev \
-    patchelf \
-    python3-pip python3-setuptools \
-    squashfs-tools \
-    strace \
-    vim \
-    util-linux zsync
-
-RUN pip3 install -U pip setuptools urllib3==1.26.12 requests==2.26.0 --break-system-packages
-
-# Install appimage-builder
-RUN pip3 install --break-system-packages git+https://github.com/viamrobotics/appimage-builder.git@viam-2025-07-22
-
-# Install Go
-RUN apt install -y golang-go
-
-# Install GTest
-RUN apt install -y libgtest-dev
 
 # Install Eigen
 RUN apt install -y libeigen3-dev
