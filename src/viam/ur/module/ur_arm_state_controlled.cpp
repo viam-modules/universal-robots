@@ -90,91 +90,27 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 }
             }
         }
-        // if (!samples[0].is_joint_space) {
-
-        //     // assume samples is a std::vector<trajectory_sample_point>
-        //     const auto& s0 = samples[0];
-
-        //     // 1. Build a UR pose from p (x, y, z, rx, ry, rz)
-        //     urcl::Pose target_pose(s0.p[0], s0.p[1], s0.p[2], s0.p[3], s0.p[4], s0.p[5]);
-
-        //     // 2. Choose motion parameters (you can adjust these)
-        //     double blend_radius = 0.0;
-        //     double acceleration = 0.25;
-        //     double velocity = 0.10;  // could also derive from s0.v if you want
-        //     std::chrono::duration<double> duration(0);
-
-        //     // 3. Create the primitive
-        //     // MoveLPrimitive moveL(target_pose, blend_radius, duration, acceleration, velocity);
-        //     if (!arm_conn_->driver->writeTrajectoryControlMessage(
-        //             urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(1), RobotReceiveTimeout::off())) {
-        //         VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false; dropping connection";
-        //         std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
-        //         return event_connection_lost_::trajectory_control_failure();
-        //     }
-        //     auto motion_primitive = std::make_shared<urcl::control::MotionPrimitive>(
-        //         urcl::control::MoveLPrimitive(target_pose, blend_radius, duration, acceleration, velocity));
-
-        //     // 4. Send it to the driver
-
-        //     arm_conn_->driver->writeMotionPrimitive(motion_primitive);
-        // }
-
-        // if (!samples[0].is_joint_space) {
-        //     const bool g_trajectory_done = false;
-        //     // Trajectory definition
-        //     // std::vector<urcl::vector6d_t> points{
-        //     //     {samples[0][0], samples[0][1], samples[0][2], samples[0][3], samples[0][4], samples[0][5]},
-        //     //     {samples[1][0], samples[1][1], samples[1][2], samples[1][3], samples[1][4], samples[1][5]}};
-        //     // std::vector<urcl::vector6d_t> points{{samples[0].p}, {samples[1].p}};
-        //     std::vector<double> motion_durations{5.0, 5.0};
-        //     std::vector<double> velocities{2.0, 2.3};
-        //     std::vector<double> accelerations{2.5, 2.5};
-        //     std::vector<double> blend_radii{0.0, 0.0};
-
-        //     // Trajectory execution of the path that goes through the points twice.
-        //     arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
-        //                                                      static_cast<int>(4));
-        //     for (size_t i = 0; i < num_samples; i++) {
-        //         // setting the cartesian parameter makes it interpret the 6d vector as a pose and use movel
-        //         arm_conn_->driver->writeTrajectoryPoint(samples[i].p, true, motion_durations[i], blend_radii[i]);
-        //     }
-
-        //     // Same motion, but parametrized with acceleration and velocity
-        //     motion_durations = {0.0, 0.0};
-        //     for (size_t i = 0; i < num_samples; i++) {
-        //         arm_conn_->driver->writeTrajectoryPoint(
-        //             samples[i].p, accelerations[i], velocities[i], true, motion_durations[i], blend_radii[i]);
-        //     }
-
-        //     while (!g_trajectory_done) {
-        //         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        //         arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_NOOP);
-        //     }
-        // }
 
         if (!samples[0].is_joint_space) {
-            // Ensure parameter vectors match the number of samples and are float
-            const size_t n = num_samples;
-
-            std::vector<float> motion_durations(n, 5.0f);
-            std::vector<float> velocities(n, 2.0f);
-            std::vector<float> accelerations(n, 2.5f);
-            std::vector<float> blend_radii(n, 0.0f);
+            VIAM_SDK_LOG(info) << "WE ARE IN NOT IN JOINT SPACE";
+            float duration = 5.0;
+            float velocity = 2.0;
+            float acceleration = 2.5;
+            float blend_radius = 0;
 
             // Start trajectory (4 was hard-coded; use n unless you truly want to send 4)
             if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
-                                                                  static_cast<int>(n))) {
+                                                                  static_cast<int>(num_samples))) {
                 VIAM_SDK_LOG(error) << "writeTrajectoryControlMessage(START) failed";
                 std::exchange(state.move_request_, {})->complete_error("failed to start trajectory");
                 return event_connection_lost_::trajectory_control_failure();
             }
 
             // First pass: duration + blend
-            for (size_t i = 0; i < n; ++i) {
+            for (size_t i = 0; i < num_samples; ++i) {
                 // interpret as Cartesian pose (movel)
                 const bool cartesian = true;
-                if (!arm_conn_->driver->writeTrajectoryPoint(samples[i].p, cartesian, motion_durations[i], blend_radii[i])) {
+                if (!arm_conn_->driver->writeTrajectoryPoint(samples[i].p, cartesian, duration, blend_radius)) {
                     VIAM_SDK_LOG(error) << "writeTrajectoryPoint (duration form) failed at i=" << i;
                     std::exchange(state.move_request_, {})->complete_error("failed to send trajectory point (duration)");
                     return event_connection_lost_::trajectory_control_failure();
@@ -182,11 +118,10 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
             }
 
             // Second pass: param by accel/vel + blend (duration 0)
-            std::fill(motion_durations.begin(), motion_durations.end(), 0.0f);
-            for (size_t i = 0; i < n; ++i) {
+            duration = 0.0;
+            for (size_t i = 0; i < num_samples; ++i) {
                 const bool cartesian = true;
-                if (!arm_conn_->driver->writeTrajectoryPoint(
-                        samples[i].p, accelerations[i], velocities[i], cartesian, motion_durations[i], blend_radii[i])) {
+                if (!arm_conn_->driver->writeTrajectoryPoint(samples[i].p, acceleration, velocity, cartesian, duration, blend_radius)) {
                     VIAM_SDK_LOG(error) << "writeTrajectoryPoint (acc/vel form) failed at i=" << i;
                     std::exchange(state.move_request_, {})->complete_error("failed to send trajectory point (acc/vel)");
                     return event_connection_lost_::trajectory_control_failure();
@@ -200,8 +135,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_NOOP);
             }
         }
-
-        // if tool
 
         VIAM_SDK_LOG(info) << "URArm trajectory sent";
 

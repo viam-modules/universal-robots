@@ -438,15 +438,6 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
 pose URArm::get_end_position(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-
-    const auto pos = current_state_->read_tcp_pose();
-    VIAM_SDK_LOG(info) << "this is the end position from the end position api";
-    VIAM_SDK_LOG(info) << "x " << pos[0];
-    VIAM_SDK_LOG(info) << "y " << pos[1];
-    VIAM_SDK_LOG(info) << "z " << pos[2];
-    VIAM_SDK_LOG(info) << "rx " << pos[3];
-    VIAM_SDK_LOG(info) << "ry " << pos[4];
-    VIAM_SDK_LOG(info) << "rz " << pos[5];
     return ur_vector_to_pose(current_state_->read_tcp_pose());
 }
 
@@ -459,27 +450,8 @@ bool URArm::is_moving() {
 void URArm::move_to_position(const pose& p, const ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-    VIAM_SDK_LOG(info) << "move_to_position via on-robot IK + movej";
+    VIAM_SDK_LOG(info) << "move_to_position via on-robot IK + movel";
 
-    // 1) Position: Viam mm -> UR m
-    // const double x = p.coordinates.x * 1e-3;
-    // const double y = p.coordinates.y * 1e-3;
-    // const double z = p.coordinates.z * 1e-3;
-
-    // 2) Orientation: (Ox,Oy,Oz, Theta_deg) -> (rx,ry,rz) in radians
-    // TODO: the way we calculate orientation needs to be fixed!
-    // double rx = 0, ry = M_PI / 2, rz = 0;  // or compute via your to_rotation_vector(...)
-
-    // 3) Motion params for movej (t=0 => use a/v)
-    // const float v = 1.2f;  // rad/s  (joint speed)
-    // const float a = 1.0f;  // rad/s^2 (joint accel)
-    // const float t = 0.0f;  // seconds (let a,v govern)
-    // const float r = 0.0f;  // rad (joint blend, usually 0 for a single target)
-
-    // here we want to use movep
-
-    // then want to use driver->writemotionprimitve
-    // need to figure out how to define motion primitive
     const auto unix_time = unix_time_iso8601();
 
     move_tool_space_(std::move(rlock), std::move(p), unix_time);
@@ -604,41 +576,8 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 
     // get current pose and add that as a starting pose
     auto current_pose = current_state_->read_tcp_pose();
-    // VIAM_SDK_LOG(info) << "this is from read tcp pose";
-    // VIAM_SDK_LOG(info) << "x " << current_pose[0];
-    // VIAM_SDK_LOG(info) << "y " << current_pose[1];
-    // VIAM_SDK_LOG(info) << "z " << current_pose[2];
-    // VIAM_SDK_LOG(info) << "rx " << current_pose[3];
-    // VIAM_SDK_LOG(info) << "ry " << current_pose[4];
-    // VIAM_SDK_LOG(info) << "rz " << current_pose[5];
-
-    // TODO: if delta between current_pose and p is below some epsilon, assume we are already there
-    //       if yes, then state so in logger and return
-
-    // create a slice of trajectory_sample_point
-    // index 0 is where we are now, index 1 is where we want to be
-    // maybe it makes more sense to just have it be slice of length one?
-
-    // movep wants us to have some kind of speed and accel
-    // the parameters in the config are for joint space movement, not EE movement.
-    // this can be converted or we just perscribe some default
-
-    // we need to convert the pose's translation to be in meters not millimeters
-    // const double x = p.coordinates.x * 1e-3;
-    // const double y = p.coordinates.y * 1e-3;
-    // const double z = p.coordinates.z * 1e-3;
-    // // we need to convert the pose's orientation to be in axis angles
-    // // TODO: ACTUALLY CONVERT OV TO AXIS ANGLES
-    // double rx = M_PI / 2, ry = 0, rz = 0;
+    // TODO: do check here to make sure that we are not already at the goal
     auto ur_pose = pose_to_ur_vector(p);
-
-    VIAM_SDK_LOG(info) << "this is the output of pose_to_ur_vector";
-    VIAM_SDK_LOG(info) << "ur_pose.x " << ur_pose[0];
-    VIAM_SDK_LOG(info) << "ur_pose.y " << ur_pose[1];
-    VIAM_SDK_LOG(info) << "ur_pose.z " << ur_pose[2];
-    VIAM_SDK_LOG(info) << "ur_pose.rx " << ur_pose[3];
-    VIAM_SDK_LOG(info) << "ur_pose.ry " << ur_pose[4];
-    VIAM_SDK_LOG(info) << "ur_pose.rz " << ur_pose[5];
 
     // create a trajectory sample point with where we want to go to
     std::vector<trajectory_sample_point> samples;
@@ -660,8 +599,6 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     };
 
     samples.push_back(point_end);
-
-    // VIAM_SDK_LOG(info) << "this is what samples is, does this make sense? " << samples;
 
     // take the list of sample points and hand that over to the ur arm
     const std::string& path = current_state_->csv_output_path();

@@ -557,25 +557,4 @@ BOOST_AUTO_TEST_CASE(test_convert_tcp_force_to_tool_frame_position_independence)
     }
 }
 
-BOOST_AUTO_TEST_CASE(test_ur_vector_to_pose) {
-    const Instance instance;
-    const vector6d_t vec_input = {0.2, 0.1, 0.03, M_PI / 2, 0, 0};
-
-    // const auto output = ur_vector_to_pose(input);
-    // VIAM_SDK_LOG(info) << "output " << output;
-
-    // const vector6d_t vec_input = {0.2, 0.1, 0.03, 1.2092, 1.2092, 1.2092};
-
-    const auto p_output = ur_vector_to_pose(vec_input);
-    VIAM_SDK_LOG(info) << "output of ur_vector_to_pose" << p_output;
-
-    const auto vec_output = pose_to_ur_vector(p_output);
-    VIAM_SDK_LOG(info) << "vec_output[0]" << vec_output[0];
-    VIAM_SDK_LOG(info) << "vec_output[1]" << vec_output[1];
-    VIAM_SDK_LOG(info) << "vec_output[2]" << vec_output[2];
-    VIAM_SDK_LOG(info) << "vec_output[3]" << vec_output[3];
-    VIAM_SDK_LOG(info) << "vec_output[4]" << vec_output[4];
-    VIAM_SDK_LOG(info) << "vec_output[5]" << vec_output[5];
-}
-
 BOOST_AUTO_TEST_SUITE_END()

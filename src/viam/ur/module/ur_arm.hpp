@@ -17,7 +17,7 @@ using namespace urcl;
 
 struct trajectory_sample_point {
     vector6d_t p;
-    vector6d_t v;  // this is 6 dim bc one for each motor
+    vector6d_t v;
     float timestep;
     bool is_joint_space;
 };
