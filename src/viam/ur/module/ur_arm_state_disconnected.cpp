@@ -162,6 +162,28 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_::handle_move_request(state_& state) const {
     if (state.move_request_) {
+        // if we switched to disconnected mode, store the remaining trajectory so it can be resumed
+        auto trajectory_end = std::chrono::steady_clock::now();
+        auto traj_duration =
+            std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(trajectory_end - state.move_request_->trajectory_start)
+                .count() /
+            1000.0;
+        const auto num_samples = state.move_request_->samples.size();
+        double time_traj = 0.0;
+        size_t traj_end_index = 0;
+        for (size_t i = 0; i < num_samples; i++) {
+            time_traj += boost::numeric_cast<double>(state.move_request_->samples[i].timestep);
+            if (time_traj > traj_duration) {
+                traj_end_index = i;
+                break;
+            }
+        }
+        state.pending_samples_from_failure.insert(
+            state.pending_samples_from_failure.end(),
+            std::make_move_iterator(state.move_request_->samples.begin() +
+                                    static_cast<std::vector<trajectory_sample_point>::difference_type>(traj_end_index)),
+            std::make_move_iterator(state.move_request_->samples.end()));
+
         const std::string error_message = "move request failed: no connection to arm; current state: " + describe();
         std::exchange(state.move_request_, {})->complete_error(error_message);
     }
