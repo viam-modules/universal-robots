@@ -5,8 +5,6 @@
 
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/test/included/unit_test.hpp>
-// #include <viam/sdk/log/logging.hpp>
-#include <viam/sdk/common/instance.hpp>
 
 #include <Eigen/Dense>
 

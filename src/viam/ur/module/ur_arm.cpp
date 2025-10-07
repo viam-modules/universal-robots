@@ -54,6 +54,11 @@ extern "C" void free_quaternion_memory(void* q);  // you already have this
 extern "C" double* axis_angle_from_quaternion(void* q);
 extern "C" void free_axis_angles_memory(void* aa);
 
+namespace {
+
+constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
+constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
+
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = std::hypot(vec[3], vec[4], vec[5]);
     if (std::isnan(norm) || (norm == 0)) {
@@ -83,12 +88,12 @@ inline double degrees_to_radians(double deg) {
 urcl::vector6d_t pose_to_ur_vector(const pose& p) {
     urcl::vector6d_t v{};
 
-    // 1) Position: mm → meters
+    // pose coordinate are in mm, convert to meters
     v[0] = p.coordinates.x / 1000.0;
     v[1] = p.coordinates.y / 1000.0;
     v[2] = p.coordinates.z / 1000.0;
 
-    // 2) Orientation vector (o_x, o_y, o_z, theta [deg]) → quaternion → axis-angle
+    // pose orientation vector is in viam format, convert to quaternion and to axis angles
     constexpr double k_angle_epsilon = 1e-12;
 
     if (std::isnan(p.theta)) {
@@ -96,7 +101,8 @@ urcl::vector6d_t pose_to_ur_vector(const pose& p) {
     }
 
     const double theta_rad = degrees_to_radians(p.theta);
-    // If angle ~ 0, the UR axis-angle vector is just (0,0,0)
+
+    // if angle ~ 0, the UR axis-angle vector is just (0,0,0)
     if (std::abs(theta_rad) < k_angle_epsilon) {
         v[3] = v[4] = v[5] = 0.0;
         return v;
@@ -147,11 +153,6 @@ urcl::vector6d_t pose_to_ur_vector(const pose& p) {
 
     return v;
 }
-
-namespace {
-
-constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
-constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 
 std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     if (!find_config_attribute<std::string>(cfg, "host")) {

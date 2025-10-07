@@ -140,7 +140,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
 
     } else if (state.move_request_->samples.empty() && state.move_request_->cancellation_request &&
                !state.move_request_->cancellation_request->issued) {
-        VIAM_SDK_LOG(info) << "else case 1";
         // We have a move request, the samples have been forwarded,
         // and cancellation is requested but has not yet been issued. Issue a cancel.
         state.move_request_->cancellation_request->issued = true;
@@ -152,12 +151,10 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
             return event_connection_lost_::trajectory_control_failure();
         }
     } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
-        VIAM_SDK_LOG(info) << "else case 2";
         // We have a move request that we haven't issued but a
         // cancel is already pending. Don't issue it, just cancel it.
         std::exchange(state.move_request_, {})->complete_cancelled();
     } else {
-        VIAM_SDK_LOG(info) << "else case 3";
         // TODO: is it assured that we have positions/velocities here?
         state.move_request_->write_joint_data(state.ephemeral_->joint_positions, state.ephemeral_->joint_velocities);
     }

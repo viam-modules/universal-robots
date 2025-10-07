@@ -21,12 +21,6 @@ struct trajectory_sample_point {
     float timestep;
     bool is_joint_space;
 };
-// movevaluep takes in:
-// pose which is 6 dimensional
-// acceleration which is a single value (tool acceleration m/s^2)
-// velocity which is a single value (tool speed m/s)
-// IT SEEMS THAT THERE IS A DEFAULT VALUE WE CAN FALL BACK ON FOR VEL AND ACCEL
-// blend radius (m) --> can assume this will always be zero, so the struct doesn't need to be populated with this
 
 template <typename Func>
 void sampling_func(std::vector<trajectory_sample_point>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
@@ -54,8 +48,6 @@ void sampling_func(std::vector<trajectory_sample_point>& samples, double duratio
     samples.push_back(f(duration_sec, step));
 }
 
-pose ur_vector_to_pose(urcl::vector6d_t vec);
-urcl::vector6d_t pose_to_ur_vector(const pose& p);
 void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples);
 void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::VectorXd>& waypoints);
 std::string waypoints_filename(const std::string& path, const std::string& unix_time);
@@ -147,7 +139,6 @@ class URArm final : public Arm, public Reconfigurable {
     void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                            std::list<Eigen::VectorXd> waypoints,
                            const std::string& unix_time_ms);
-
     void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time_ms);
 
     template <template <typename> typename lock_type>
