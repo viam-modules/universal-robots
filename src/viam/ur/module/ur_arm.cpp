@@ -604,13 +604,13 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 
     // get current pose and add that as a starting pose
     auto current_pose = current_state_->read_tcp_pose();
-    VIAM_SDK_LOG(info) << "this is from read tcp pose";
-    VIAM_SDK_LOG(info) << "x " << current_pose[0];
-    VIAM_SDK_LOG(info) << "y " << current_pose[1];
-    VIAM_SDK_LOG(info) << "z " << current_pose[2];
-    VIAM_SDK_LOG(info) << "rx " << current_pose[3];
-    VIAM_SDK_LOG(info) << "ry " << current_pose[4];
-    VIAM_SDK_LOG(info) << "rz " << current_pose[5];
+    // VIAM_SDK_LOG(info) << "this is from read tcp pose";
+    // VIAM_SDK_LOG(info) << "x " << current_pose[0];
+    // VIAM_SDK_LOG(info) << "y " << current_pose[1];
+    // VIAM_SDK_LOG(info) << "z " << current_pose[2];
+    // VIAM_SDK_LOG(info) << "rx " << current_pose[3];
+    // VIAM_SDK_LOG(info) << "ry " << current_pose[4];
+    // VIAM_SDK_LOG(info) << "rz " << current_pose[5];
 
     // TODO: if delta between current_pose and p is below some epsilon, assume we are already there
     //       if yes, then state so in logger and return
@@ -639,24 +639,27 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     VIAM_SDK_LOG(info) << "ur_pose.rx " << ur_pose[3];
     VIAM_SDK_LOG(info) << "ur_pose.ry " << ur_pose[4];
     VIAM_SDK_LOG(info) << "ur_pose.rz " << ur_pose[5];
-    // VIAM_SDK_LOG(info) << "x " << x;
-    // VIAM_SDK_LOG(info) << "y " << y;
-    // VIAM_SDK_LOG(info) << "z " << z;
-    // VIAM_SDK_LOG(info) << "rx " << rx;
-    // VIAM_SDK_LOG(info) << "ry " << ry;
-    // VIAM_SDK_LOG(info) << "rz " << rz;
 
     // create a trajectory sample point with where we want to go to
     std::vector<trajectory_sample_point> samples;
 
-    trajectory_sample_point point{
+    trajectory_sample_point point_start{
+        current_pose,        // positions
+        {0, 0, 0, 0, 0, 0},  // velocities
+        0.0,                 // step
+        false                // flag
+    };
+
+    samples.push_back(point_start);
+
+    trajectory_sample_point point_end{
         ur_pose,             // positions
         {0, 0, 0, 0, 0, 0},  // velocities
         0.0,                 // step
         false                // flag
     };
 
-    samples.push_back(point);
+    samples.push_back(point_end);
 
     // VIAM_SDK_LOG(info) << "this is what samples is, does this make sense? " << samples;
 
