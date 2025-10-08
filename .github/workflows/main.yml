@@ -10,11 +10,26 @@ on:
       - '**'
   release:
     types: [published]
+  schedule:
+    - cron: '0 10 * * *'  # 10 AM UTC daily (6 AM EDT / 5 AM EST)
+    - cron: '0 10 * * 0'  # 10 AM UTC every Sunday (weekly unconditional run)
 
 jobs:
-  main:
-    name: Main CI
-    if: github.repository_owner == 'viam-modules'
+  check-recent-commits:
+    name: Check for Recent Commits
+    runs-on: ubuntu-latest
+    outputs:
+      has_recent_commits: ${{ steps.check.outputs.has-new-commits }}
+    steps:
+      - name: Check for commits in last 24 hours
+        id: check
+        uses: adriangl/check-new-commits-action@6556947ca20c2047ed733894258186619b84d282
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          seconds: 86400
+
+  build-test-lint:
+    name: Build, Test, and Lint
     runs-on: ${{ matrix.runner }}
     container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
     strategy:
@@ -44,34 +59,135 @@ jobs:
       - name: Test
         run: make test
 
-  publish:
-    name: Publish
-    needs: [main]
-    if: startsWith(github.ref, 'refs/tags/v') && (github.repository_owner == 'viam-modules')
-    runs-on: ${{matrix.runner}}
-    container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
+  build-release-artifacts:
+    name: Build Release Artifacts
+    needs: [check-recent-commits, build-test-lint]
+    # Run on tags, manual dispatch, or scheduled builds (daily with commits, weekly unconditional).
+    # For scheduled: skip daily (Mon-Sat) runs without recent commits, always run Sunday.
+    if: |
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' &&
+       (needs.check-recent-commits.outputs.has_recent_commits == 'true' ||
+        github.event.schedule == '0 10 * * 0'))
+    runs-on: ${{ matrix.runner }}
     strategy:
-        matrix:
-          include:
-          - arch: amd64
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds in Ubuntu Jammy container
+          - platform: linux/amd64
             runner: ubuntu-latest
-            arch2: x86_64
-          - arch: arm64
+            container: ubuntu:jammy
+            setup_type: debian
+            artifact_name: module-linux-amd64
+          - platform: linux/arm64
             runner: ubuntu-4cpu-arm
-            arch2: aarch64
-          arch: [amd64, arm64]
+            container: ubuntu:jammy
+            setup_type: debian
+            artifact_name: module-linux-arm64
+          # macOS native build
+          - platform: darwin/arm64
+            runner: macos-14
+            setup_type: macos
+            artifact_name: module-darwin-arm64
+
+    # Container is only populated for Linux builds
+    container: ${{ matrix.container }}
+
     steps:
-      - uses: actions/checkout@v4
+      # Debian/Ubuntu setup: Install system dependencies
+      - name: Install system dependencies (Debian)
+        if: matrix.setup_type == 'debian'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            curl \
+            g++ \
+            git \
+            gnupg \
+            jq \
+            lsb-release \
+            ninja-build \
+            pkg-config \
+            python3 \
+            python3-pip \
+            sudo \
+            wget
+
+          # Install CMake 3.x from Kitware's official repository
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | \
+            gpg --dearmor - | \
+            tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" | \
+            tee /etc/apt/sources.list.d/kitware.list >/dev/null
+          apt-get update
+          apt-get install -y --no-install-recommends cmake=3.30.* cmake-data=3.30.*
+
+      # Debian/Ubuntu setup: Install Conan via pip (not using conan-io/setup-conan for container compatibility)
+      - name: Install Conan (Debian)
+        if: matrix.setup_type == 'debian'
+        run: |
+          python3 -m pip install conan
+          conan profile detect
+
+      # macOS setup: Install Conan via Homebrew
+      - name: Install Conan (macOS)
+        if: matrix.setup_type == 'macos'
+        run: |
+          brew install conan jq
+          conan profile detect
+
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           submodules: true
-      - name: build
-        run: |
-          make appimage-${{ matrix.arch }}
-          ARCH=${{ matrix.arch2 }} make module.tar.gz
-      - uses: viamrobotics/upload-module@v1
+          fetch-depth: 0
+
+      # Build using setup.sh and build.sh scripts
+      - name: Setup C++ SDK
+        run: ./bin/setup.sh
+
+      - name: Build module
+        run: ./bin/build.sh
+
+      # Attach module.tar.gz to workflow run
+      - name: Attach build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: module.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish to Viam Module Registry
+    needs: [build-release-artifacts]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            artifact_name: module-linux-amd64
+          - platform: linux/arm64
+            artifact_name: module-linux-arm64
+          - platform: darwin/arm64
+            artifact_name: module-darwin-arm64
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+
+      - name: Upload module to Viam
+        uses: viamrobotics/upload-module@v1
         with:
           module-path: module.tar.gz
-          platform: linux/${{ matrix.arch }}
+          platform: ${{ matrix.platform }}
           version: ${{ github.ref_name }}
           key-id: ${{ secrets.viam_key_id }}
           key-value: ${{ secrets.viam_key_value }}

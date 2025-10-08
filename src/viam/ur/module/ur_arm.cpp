@@ -282,6 +282,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
     const auto model_strings = {
         "ur3e",  //
         "ur5e",  //
+        "ur7e",  //
         "ur20"   //
     };
 
@@ -320,6 +321,8 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
             return "UR3";
         } else if (model_ == URArm::model("ur5e")) {
             return "UR5";
+        } else if (model_ == URArm::model("ur7e")) {
+            return "UR7";  // this potentially needs to be UR5
         } else if (model_ == URArm::model("ur20")) {
             return "UR20";
         } else {
@@ -449,6 +452,8 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
             return "ur3e";
         } else if (model_ == model("ur5e")) {
             return "ur5e";
+        } else if (model_ == model("ur7e")) {
+            return "ur7e";
         } else if (model_ == model("ur20")) {
             return "ur20";
         }
@@ -496,9 +501,18 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     constexpr char k_get_tcp_forces_base_key[] = "get_tcp_forces_base";
     constexpr char k_get_tcp_forces_tool_key[] = "get_tcp_forces_tool";
     constexpr char k_clear_pstop[] = "clear_pstop";
+    constexpr char k_is_controllable[] = "is_controllable_state";
+    constexpr char k_get_state_description[] = "get_state_description";
 
     // Cache TCP state to ensure atomic read of pose and forces from same timestamp
     std::optional<decltype(current_state_->read_tcp_state_snapshot())> cached_tcp_state;
+
+    // cache state descriptors to ensure atomic read from the same timestamp
+    struct controlled_info {
+        bool controlled;
+        std::string description;
+    };
+    std::optional<controlled_info> cached_controlled_info;
 
     for (const auto& kv : command) {
         if (kv.first == k_vel_key) {
@@ -538,6 +552,18 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
         } else if (kv.first == k_clear_pstop) {
             current_state_->clear_pstop();
             resp.emplace(k_clear_pstop, "protective stop cleared");
+        } else if (kv.first == k_is_controllable) {
+            if (!cached_controlled_info) {
+                cached_controlled_info = controlled_info{};
+                cached_controlled_info->controlled = current_state_->is_current_state_controlled(&cached_controlled_info->description);
+            }
+            resp.emplace(k_is_controllable, cached_controlled_info->controlled);
+        } else if (kv.first == k_get_state_description) {
+            if (!cached_controlled_info) {
+                cached_controlled_info = controlled_info{};
+                cached_controlled_info->controlled = current_state_->is_current_state_controlled(&cached_controlled_info->description);
+            }
+            resp.emplace(k_get_state_description, cached_controlled_info->description);
         } else {
             throw std::runtime_error("unsupported do_command key: " + kv.first);
         }
