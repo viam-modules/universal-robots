@@ -280,10 +280,9 @@ std::future<void> URArm::state_::enqueue_move_request(size_t current_move_epoch,
 
 bool URArm::state_::is_moving() const {
     const std::lock_guard lock{mutex_};
-    // If we have a move request, but the samples are gone, it means we
-    // sent them to the arm, so as far as we are concerned, the arm is
-    // moving, though that move might fail later.
-    return (move_request_ && move_request_->samples.empty());
+    // If we have a move request, and the start time is set, the arm is
+    // considered moving, though that move might fail later.
+    return (move_request_ && (move_request_->trajectory_start.time_since_epoch().count() != 0));
 }
 
 std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
