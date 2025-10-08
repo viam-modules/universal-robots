@@ -92,13 +92,11 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         }
 
         if (!samples[0].is_joint_space) {
-            VIAM_SDK_LOG(info) << "WE ARE IN NOT IN JOINT SPACE";
-            float duration = 5.0;
-            float velocity = 2.0;
-            float acceleration = 2.5;
-            float blend_radius = 0;
+            const float duration = 0;
+            const float velocity = 0.25f;
+            const float acceleration = 0.5f;
+            const float blend_radius = 0;
 
-            // Start trajectory (4 was hard-coded; use n unless you truly want to send 4)
             if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
                                                                   static_cast<int>(num_samples))) {
                 VIAM_SDK_LOG(error) << "writeTrajectoryControlMessage(START) failed";
@@ -106,19 +104,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 return event_connection_lost_::trajectory_control_failure();
             }
 
-            // First pass: duration + blend
-            for (size_t i = 0; i < num_samples; ++i) {
-                // interpret as Cartesian pose (movel)
-                const bool cartesian = true;
-                if (!arm_conn_->driver->writeTrajectoryPoint(samples[i].p, cartesian, duration, blend_radius)) {
-                    VIAM_SDK_LOG(error) << "writeTrajectoryPoint (duration form) failed at i=" << i;
-                    std::exchange(state.move_request_, {})->complete_error("failed to send trajectory point (duration)");
-                    return event_connection_lost_::trajectory_control_failure();
-                }
-            }
-
-            // Second pass: param by accel/vel + blend (duration 0)
-            duration = 0.0;
             for (size_t i = 0; i < num_samples; ++i) {
                 const bool cartesian = true;
                 if (!arm_conn_->driver->writeTrajectoryPoint(samples[i].p, acceleration, velocity, cartesian, duration, blend_radius)) {
@@ -126,13 +111,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     std::exchange(state.move_request_, {})->complete_error("failed to send trajectory point (acc/vel)");
                     return event_connection_lost_::trajectory_control_failure();
                 }
-            }
-
-            // Replace the infinite loop with a bounded NOOP poll or remove entirely if not required
-            for (int k = 0; k < 10; ++k) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                // Best-effort NOOP; ignore return if not critical
-                arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_NOOP);
             }
         }
 

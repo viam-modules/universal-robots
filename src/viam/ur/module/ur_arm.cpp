@@ -566,14 +566,6 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     // create a vector of trajectory sample points dictating where we want to move to
     std::vector<trajectory_sample_point> samples;
 
-    trajectory_sample_point point_start{
-        current_pose,        // positions
-        {0, 0, 0, 0, 0, 0},  // velocities
-        0.0,                 // timestep
-        false                // is joint space flag
-    };
-    samples.push_back(point_start);
-
     trajectory_sample_point point_end{
         ur_pose,             // positions
         {0, 0, 0, 0, 0, 0},  // velocities
