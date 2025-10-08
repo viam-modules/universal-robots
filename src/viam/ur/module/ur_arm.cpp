@@ -34,15 +34,20 @@
 #include "ur_arm_state.hpp"
 #include "utils.hpp"
 
-// this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
+// this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose or a pose to a UR vector
+extern "C" void* quaternion_from_orientation_vector(void* ov);
 extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
 extern "C" void free_quaternion_memory(void* q);
 
+extern "C" void* new_orientation_vector(double ox, double oy, double oz, double theta);
 extern "C" void* orientation_vector_from_quaternion(void* q);
 extern "C" void free_orientation_vector_memory(void* ov);
 
 extern "C" double* orientation_vector_get_components(void* ov);
 extern "C" void free_orientation_vector_components(double* ds);
+
+extern "C" double* axis_angle_from_quaternion(void* q);
+extern "C" void free_axis_angles_memory(void* aa);
 
 namespace {
 
@@ -69,6 +74,68 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
     auto theta = radians_to_degrees(components[3]);
 
     return {position, orientation, theta};
+}
+
+urcl::vector6d_t pose_to_ur_vector(const pose& p) {
+    urcl::vector6d_t v{};
+
+    // convert millimeters to meters
+    v[0] = p.coordinates.x / 1000.0;
+    v[1] = p.coordinates.y / 1000.0;
+    v[2] = p.coordinates.z / 1000.0;
+
+    if (std::isnan(p.theta)) {
+        throw std::invalid_argument("pose_to_ur_vector: theta is NaN");
+    }
+
+    const double theta_rad = degrees_to_radians(p.theta);
+
+    // If angle ~ 0, UR expects the axis-angle "vector" to be zero.
+    constexpr double k_angle_epsilon = 1e-12;
+    if (std::abs(theta_rad) < k_angle_epsilon) {
+        v[3] = v[4] = v[5] = 0.0;
+        return v;
+    }
+
+    // convert viam's orientation to axis angles which is what universal robots use
+    // viam orientation vector -> quaternion -> axis angle -> universal robots orientation vector
+    // create an orientation vector to use
+    auto ov = std::unique_ptr<void, decltype(&free_orientation_vector_memory)>(
+        new_orientation_vector(p.orientation.o_x, p.orientation.o_y, p.orientation.o_z, theta_rad), &free_orientation_vector_memory);
+    if (!ov) {
+        throw std::runtime_error("pose_to_ur_vector: failed to create orientation vector");
+    }
+
+    // create quaternion from the orientation vector
+    auto q =
+        std::unique_ptr<void, decltype(&free_quaternion_memory)>(quaternion_from_orientation_vector(ov.get()), &free_quaternion_memory);
+    if (!q) {
+        throw std::runtime_error("pose_to_ur_vector: failed to create quaternion");
+    }
+
+    // convert the quaternion to axis angles
+    auto aa = std::unique_ptr<double[], decltype(&free_axis_angles_memory)>(axis_angle_from_quaternion(q.get()), &free_axis_angles_memory);
+    if (!aa) {
+        throw std::runtime_error("pose_to_ur_vector: failed to compute axis-angle");
+    }
+
+    const double ax = aa[0];
+    const double ay = aa[1];
+    const double az = aa[2];
+    const double th = aa[3];
+
+    // robustness to tiny axes/angles
+    const double n = std::hypot(ax, std::hypot(ay, az));
+    if (n < k_angle_epsilon || std::abs(th) < k_angle_epsilon) {
+        v[3] = v[4] = v[5] = 0.0;
+    } else {
+        // universal robots orientation vector: r = axis * theta
+        v[3] = ax * th;
+        v[4] = ay * th;
+        v[5] = az * th;
+    }
+
+    return v;
 }
 
 std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
@@ -170,6 +237,12 @@ std::string waypoints_filename(const std::string& path, const std::string& unix_
 
 std::string trajectory_filename(const std::string& path, const std::string& unix_time) {
     constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_trajectory.csv";
+    auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
+    return (fmt % unix_time).str();
+}
+
+std::string move_to_position_trajectory_filename(const std::string& path, const std::string& unix_time) {
+    constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_move_to_position_trajectory.csv";
     auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
     return (fmt % unix_time).str();
 }
@@ -325,7 +398,7 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     write_waypoints_to_csv(filename, waypoints);
 
     // move will throw if an error occurs
-    move_(std::move(rlock), std::move(waypoints), unix_time);
+    move_joint_space_(std::move(rlock), std::move(waypoints), unix_time);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -352,7 +425,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         write_waypoints_to_csv(filename, waypoints);
 
         // move will throw if an error occurs
-        move_(std::move(rlock), std::move(waypoints), unix_time);
+        move_joint_space_(std::move(rlock), std::move(waypoints), unix_time);
     }
 }
 
@@ -366,6 +439,13 @@ bool URArm::is_moving() {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
     return current_state_->is_moving();
+}
+
+void URArm::move_to_position(const pose& p, const ProtoStruct&) {
+    std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
+    const auto unix_time = unix_time_iso8601();
+    move_tool_space_(std::move(rlock), p, unix_time);
 }
 
 URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
@@ -498,7 +578,74 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     return resp;
 }
 
-void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
+void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time) {
+    auto our_config_rlock = std::move(config_rlock);
+
+    // Capture the current movement epoch, so we can later detect if another caller
+    // slipped in while we were planning.
+    auto current_move_epoch = current_state_->get_move_epoch();
+
+    VIAM_SDK_LOG(info) << "move tool space: start unix_time_ms " << unix_time << " p: " << p;
+    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move tool space: end unix_time " << unix_time; });
+
+    // get current pose
+    auto current_pose = current_state_->read_tcp_pose();
+
+    // convert viam pose to universal robots pose
+    auto target_pose = pose_to_ur_vector(p);
+
+    // if we are already at the desired pose, there is nothing to do
+    constexpr double k_position_tolerance_m = 1e-3;       // 1 mm
+    constexpr double k_orientation_tolerance_rad = 1e-3;  // ~0.057 degrees
+    bool already_there = true;
+    for (size_t i = 0; i < 3; ++i) {  // check XYZ
+        if (std::abs(current_pose[i] - target_pose[i]) > k_position_tolerance_m) {
+            already_there = false;
+            break;
+        }
+    }
+    for (size_t i = 3; i < 6 && already_there; ++i) {  // check orientation (rx, ry, rz)
+        if (std::abs(current_pose[i] - target_pose[i]) > k_orientation_tolerance_rad) {
+            already_there = false;
+            break;
+        }
+    }
+
+    if (already_there) {
+        VIAM_SDK_LOG(info) << "Already at desired pose; skipping movement.";
+        return;
+    }
+
+    // create a vector of trajectory sample points dictating where we want to move to
+    std::vector<trajectory_sample_point> samples{{
+        target_pose,         // position
+        {0, 0, 0, 0, 0, 0},  // velocities
+        0.0,                 // timestep
+        false,               // is joint space flag
+    }};
+
+    // take the vector of sample points and hand that over to the ur arm
+    // TODO: RSDK-12185
+    const std::string& path = current_state_->csv_output_path();
+    write_trajectory_to_file(move_to_position_trajectory_filename(path, unix_time), samples);
+
+    std::ofstream ajp_of(arm_joint_positions_filename(path, unix_time));
+    ajp_of << "time_ms,read_attempt,"
+              "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
+              "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
+
+    auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
+        return current_state_->enqueue_move_request(current_move_epoch, std::move(samples), std::move(ajp_of));
+    }();
+
+    // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
+    // with the current state other than to wait on the result of this future.
+    trajectory_completion_future.get();
+}
+
+void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
+                              std::list<Eigen::VectorXd> waypoints,
+                              const std::string& unix_time) {
     auto our_config_rlock = std::move(config_rlock);
 
     // Capture the current movement epoch, so we can later detect if another caller
@@ -622,7 +769,8 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
             auto v_eigen = trajectory.getVelocity(t);
             return trajectory_sample_point{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
                                            {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
-                                           boost::numeric_cast<float>(step)};
+                                           boost::numeric_cast<float>(step),
+                                           true};
         });
     }
     VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time << " samples.size() " << samples.size() << " segments "

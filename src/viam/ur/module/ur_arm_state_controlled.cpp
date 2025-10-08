@@ -71,20 +71,46 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         auto samples = std::move(state.move_request_->samples);
         const auto num_samples = samples.size();
 
-        VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
-        if (!arm_conn_->driver->writeTrajectoryControlMessage(
-                urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
-            VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false; dropping connection";
-            std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
-            return event_connection_lost_::trajectory_control_failure();
+        if (samples[0].is_joint_space) {
+            VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
+            if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                    urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
+                VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false; dropping connection";
+                std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
+                return event_connection_lost_::trajectory_control_failure();
+            }
+
+            VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
+            for (size_t i = 0; i < num_samples; i++) {
+                if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
+                    VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false; dropping connection";
+                    std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
+                    return event_connection_lost_::trajectory_control_failure();
+                }
+            }
         }
 
-        VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
-        for (size_t i = 0; i < num_samples; i++) {
-            if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
-                VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false; dropping connection";
-                std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
+        if (!samples[0].is_joint_space && num_samples == 1) {
+            // move to position accepts a single pose as its destination therefore trajectory generation is ommitted
+            // hence the size of the samples vector will always be one until the API changes allowing a user to pass
+            // in multiple destinations the arm should visit
+            if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
+                                                                  static_cast<int>(num_samples))) {
+                VIAM_SDK_LOG(error) << "writeTrajectoryControlMessage(START) failed";
+                std::exchange(state.move_request_, {})->complete_error("failed to start trajectory");
                 return event_connection_lost_::trajectory_control_failure();
+            }
+            // velocity and acceleration are on purpose hardcoded so that we do not encounter a path sanity check error
+            const float velocity = 0.25F;
+            const float acceleration = 0.5F;
+            const float blend_radius = 0;
+            for (size_t i = 0; i < num_samples; ++i) {
+                if (!arm_conn_->driver->writeTrajectoryPoint(
+                        samples[i].p, acceleration, velocity, !samples[i].is_joint_space, samples[i].timestep, blend_radius)) {
+                    VIAM_SDK_LOG(error) << "writeTrajectoryPoint (acc/vel form) failed at i=" << i;
+                    std::exchange(state.move_request_, {})->complete_error("failed to send trajectory point (acc/vel)");
+                    return event_connection_lost_::trajectory_control_failure();
+                }
             }
         }
 
