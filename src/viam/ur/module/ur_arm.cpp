@@ -241,6 +241,12 @@ std::string trajectory_filename(const std::string& path, const std::string& unix
     return (fmt % unix_time).str();
 }
 
+std::string move_to_position_trajectory_filename(const std::string& path, const std::string& unix_time) {
+    constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_move_to_position_trajectory.csv";
+    auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
+    return (fmt % unix_time).str();
+}
+
 std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time) {
     constexpr char kArmJointPositionsCsvNameTemplate[] = "/%1%_arm_joint_positions.csv";
     auto fmt = boost::format(path + kArmJointPositionsCsvNameTemplate);
@@ -439,7 +445,7 @@ void URArm::move_to_position(const pose& p, const ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
     const auto unix_time = unix_time_iso8601();
-    move_tool_space_(std::move(rlock), std::move(p), unix_time);
+    move_tool_space_(std::move(rlock), p, unix_time);
 }
 
 URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
@@ -619,8 +625,9 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     }};
 
     // take the vector of sample points and hand that over to the ur arm
+    // TODO: RSDK-12185
     const std::string& path = current_state_->csv_output_path();
-    write_trajectory_to_file(trajectory_filename(path, unix_time), samples);
+    write_trajectory_to_file(move_to_position_trajectory_filename(path, unix_time), samples);
 
     std::ofstream ajp_of(arm_joint_positions_filename(path, unix_time));
     ajp_of << "time_ms,read_attempt,"

@@ -91,19 +91,21 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         }
 
         if (!samples[0].is_joint_space && num_samples == 1) {
+            // move to position accepts a single pose as its destination therefore trajectory generation is ommitted
+            // hence the size of the samples vector will always be one until the API changes allowing a user to pass
+            // in multiple destinations the arm should visit
             if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
                                                                   static_cast<int>(num_samples))) {
                 VIAM_SDK_LOG(error) << "writeTrajectoryControlMessage(START) failed";
                 std::exchange(state.move_request_, {})->complete_error("failed to start trajectory");
                 return event_connection_lost_::trajectory_control_failure();
             }
-            const float duration = 0;
+            // velocity and acceleration are on purpose hardcoded so that we do not encounter a path sanity check error
             const float velocity = 0.25f;
             const float acceleration = 0.5f;
             const float blend_radius = 0;
-            const bool cartesian = true;
             for (size_t i = 0; i < num_samples; ++i) {
-                if (!arm_conn_->driver->writeTrajectoryPoint(samples[i].p, acceleration, velocity, cartesian, duration, blend_radius)) {
+                if (!arm_conn_->driver->writeTrajectoryPoint(samples[i].p, acceleration, velocity, !s[i].is_joint_space, s[i].timestep, blend_radius)) {
                     VIAM_SDK_LOG(error) << "writeTrajectoryPoint (acc/vel form) failed at i=" << i;
                     std::exchange(state.move_request_, {})->complete_error("failed to send trajectory point (acc/vel)");
                     return event_connection_lost_::trajectory_control_failure();
