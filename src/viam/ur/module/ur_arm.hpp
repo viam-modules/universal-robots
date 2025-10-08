@@ -53,6 +53,7 @@ void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::
 std::string waypoints_filename(const std::string& path, const std::string& unix_time);
 std::string trajectory_filename(const std::string& path, const std::string& unix_time);
 std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
+std::string move_to_position_trajectory_filename(const std::string& path, const std::string& unix_time);
 std::string unix_time_iso8601();
 
 class URArm final : public Arm, public Reconfigurable {

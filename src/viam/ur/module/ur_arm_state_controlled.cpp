@@ -101,11 +101,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 return event_connection_lost_::trajectory_control_failure();
             }
             // velocity and acceleration are on purpose hardcoded so that we do not encounter a path sanity check error
-            const float velocity = 0.25f;
-            const float acceleration = 0.5f;
+            const float velocity = 0.25F;
+            const float acceleration = 0.5F;
             const float blend_radius = 0;
             for (size_t i = 0; i < num_samples; ++i) {
-                if (!arm_conn_->driver->writeTrajectoryPoint(samples[i].p, acceleration, velocity, !s[i].is_joint_space, s[i].timestep, blend_radius)) {
+                if (!arm_conn_->driver->writeTrajectoryPoint(
+                        samples[i].p, acceleration, velocity, !samples[i].is_joint_space, samples[i].timestep, blend_radius)) {
                     VIAM_SDK_LOG(error) << "writeTrajectoryPoint (acc/vel form) failed at i=" << i;
                     std::exchange(state.move_request_, {})->complete_error("failed to send trajectory point (acc/vel)");
                     return event_connection_lost_::trajectory_control_failure();
