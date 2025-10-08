@@ -593,13 +593,13 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     constexpr double k_orientation_tolerance_rad = 1e-3;  // ~0.057 degrees
     bool already_there = true;
     for (size_t i = 0; i < 3; ++i) {  // check XYZ
-        if (std::abs(ur_current_pose[i] - target_pose[i]) > k_position_tolerance_m) {
+        if (std::abs(current_pose[i] - target_pose[i]) > k_position_tolerance_m) {
             already_there = false;
             break;
         }
     }
     for (size_t i = 3; i < 6 && already_there; ++i) {  // check orientation (rx, ry, rz)
-        if (std::abs(ur_current_pose[i] - target_pose[i]) > k_orientation_tolerance_rad) {
+        if (std::abs(current_pose[i] - target_pose[i]) > k_orientation_tolerance_rad) {
             already_there = false;
             break;
         }
