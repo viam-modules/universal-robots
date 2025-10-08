@@ -558,21 +558,39 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 
     // get current pose
     auto current_pose = current_state_->read_tcp_pose();
+
     // convert viam pose to universal robots pose
-    auto ur_pose = pose_to_ur_vector(p);
+    auto target_pose = pose_to_ur_vector(p);
 
     // if we are already at the desired pose, there is nothing to do
+    constexpr double k_position_tolerance_m = 1e-3;       // 1 mm
+    constexpr double k_orientation_tolerance_rad = 1e-3;  // ~0.057 degrees
+    bool already_there = true;
+    for (size_t i = 0; i < 3; ++i) {  // check XYZ
+        if (std::abs(ur_current_pose[i] - target_pose[i]) > k_position_tolerance_m) {
+            already_there = false;
+            break;
+        }
+    }
+    for (size_t i = 3; i < 6 && already_there; ++i) {  // check orientation (rx, ry, rz)
+        if (std::abs(ur_current_pose[i] - target_pose[i]) > k_orientation_tolerance_rad) {
+            already_there = false;
+            break;
+        }
+    }
+
+    if (already_there) {
+        VIAM_SDK_LOG(info) << "Already at desired pose; skipping movement.";
+        return;
+    }
 
     // create a vector of trajectory sample points dictating where we want to move to
-    std::vector<trajectory_sample_point> samples;
-
-    trajectory_sample_point point_end{
-        ur_pose,             // positions
+    std::vector<trajectory_sample_point> samples{{
+        target_pose,         // position
         {0, 0, 0, 0, 0, 0},  // velocities
         0.0,                 // timestep
-        false                // is joint space flag
-    };
-    samples.push_back(point_end);
+        false,               // is joint space flag
+    }};
 
     // take the vector of sample points and hand that over to the ur arm
     const std::string& path = current_state_->csv_output_path();

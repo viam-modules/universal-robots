@@ -71,7 +71,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         auto samples = std::move(state.move_request_->samples);
         const auto num_samples = samples.size();
 
-        // if joint
         if (samples[0].is_joint_space) {
             VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
             if (!arm_conn_->driver->writeTrajectoryControlMessage(
@@ -91,21 +90,19 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
             }
         }
 
-        if (!samples[0].is_joint_space) {
-            const float duration = 0;
-            const float velocity = 0.25f;
-            const float acceleration = 0.5f;
-            const float blend_radius = 0;
-
+        if (!samples[0].is_joint_space && num_samples == 1) {
             if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
                                                                   static_cast<int>(num_samples))) {
                 VIAM_SDK_LOG(error) << "writeTrajectoryControlMessage(START) failed";
                 std::exchange(state.move_request_, {})->complete_error("failed to start trajectory");
                 return event_connection_lost_::trajectory_control_failure();
             }
-
+            const float duration = 0;
+            const float velocity = 0.25f;
+            const float acceleration = 0.5f;
+            const float blend_radius = 0;
+            const bool cartesian = true;
             for (size_t i = 0; i < num_samples; ++i) {
-                const bool cartesian = true;
                 if (!arm_conn_->driver->writeTrajectoryPoint(samples[i].p, acceleration, velocity, cartesian, duration, blend_radius)) {
                     VIAM_SDK_LOG(error) << "writeTrajectoryPoint (acc/vel form) failed at i=" << i;
                     std::exchange(state.move_request_, {})->complete_error("failed to send trajectory point (acc/vel)");
