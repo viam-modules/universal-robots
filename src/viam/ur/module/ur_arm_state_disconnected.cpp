@@ -165,6 +165,10 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
         const std::string error_message = "move request failed: no connection to arm; current state: " + describe();
         std::exchange(state.move_request_, {})->complete_error(error_message);
     }
+    // if we had any pending samples, clear them.
+    if (!state.pending_samples_from_failure.empty()) {
+        state.pending_samples_from_failure.clear();
+    }
     return std::nullopt;
 }
 
