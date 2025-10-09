@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
+#include <optional>
 #include <ranges>
 #include <stdexcept>
 
@@ -16,6 +18,32 @@
 
 namespace viam::trajex::totg {
 
+// path::options implementation
+path::options::options() : max_blend_deviation_(k_default_max_deviation), max_linear_deviation_(k_default_max_deviation) {}
+
+path::options& path::options::set_max_deviation(double deviation) {
+    return set_max_blend_deviation(deviation).set_max_linear_deviation(deviation);
+}
+
+path::options& path::options::set_max_blend_deviation(double deviation) {
+    max_blend_deviation_ = deviation;
+    return *this;
+}
+
+path::options& path::options::set_max_linear_deviation(double deviation) {
+    max_linear_deviation_ = deviation;
+    return *this;
+}
+
+double path::options::max_blend_deviation() const noexcept {
+    return max_blend_deviation_;
+}
+
+double path::options::max_linear_deviation() const noexcept {
+    return max_linear_deviation_;
+}
+
+// path::segment::linear implementation
 path::segment::linear::linear(xt::xarray<double> start, xt::xarray<double> end) : start{std::move(start)}, length{0.0} {
     const auto diff = end - this->start;
     const double norm = xt::norm_l2(diff)();
@@ -149,49 +177,216 @@ xt::xarray<double> path::segment::view::curvature(arc_length s) const {
 path::path(std::vector<positioned_segment> segments, size_t dof, arc_length length)
     : segments_{std::move(segments)}, dof_{dof}, length_{length} {}
 
-path path::create(const waypoint_accumulator& waypoints, double max_deviation) {
+path path::create(const waypoint_accumulator& waypoints, const options& opts) {
     if (waypoints.size() < 2) {
         throw std::invalid_argument{"Path requires at least 2 waypoints"};
     }
-    if (max_deviation < 0.0) {
-        throw std::invalid_argument{"Max deviation must be non-negative"};
+    if (opts.max_blend_deviation() < 0.0) {
+        throw std::invalid_argument{"Max blend deviation must be non-negative"};
+    }
+    if (opts.max_linear_deviation() < 0.0) {
+        throw std::invalid_argument{"Max linear deviation must be non-negative"};
     }
 
-    if (max_deviation > 0.0) {
-        // TODO(acm): Implement tube-based coalescing algorithm with circular blends
-        // - Iterate through waypoints
-        // - Maintain cylinder around current linear segment
-        // - Extend segment while waypoints stay within tube
-        // - Create circular blend when waypoint exits tube
-        // - Track cumulative arc length
-        throw std::runtime_error{"Circular blends not yet implemented"};
-    }
+    // TODO(acm): Revisit this algorithm, and write a more graceful one.
 
-    // Linear-only path: create linear segment between each consecutive waypoint pair
+    // Tube coalescing with direct segment construction
+    // Strategy: Scan through waypoints with locus at each potential corner.
+    // At each locus, look backward to segment start and forward to see if we can continue coalescing.
+
+    // Lambda to test if a waypoint can be coalesced (skipped)
+    // Returns true if 'locus' is within max_linear_deviation of the line from 'start' to 'next'
+    // and advances monotonically along the tube direction
+    const auto can_coalesce = [&opts](const auto& start, const auto& locus, const auto& next) -> bool {
+        const double max_deviation = opts.max_linear_deviation();
+
+        // With zero tolerance, nothing coalesces (every waypoint is a hard constraint)
+        if (max_deviation == 0.0) {
+            return false;
+        }
+
+        const auto start_to_next = next - start;
+        const auto start_to_locus = locus - start;
+
+        // Compute projection parameter t: locus = start + t * (next - start)
+        const double start_to_next_sq = xt::sum(start_to_next * start_to_next)();
+
+        // Handle exact duplicate: next == start
+        if (start_to_next_sq == 0.0) {
+            return true;  // Next is duplicate, so locus is trivially coalescable
+        }
+
+        const double start_to_locus_dot_direction = xt::sum(start_to_locus * start_to_next)();
+        const double t = start_to_locus_dot_direction / start_to_next_sq;
+
+        // Check monotonic advancement: must be between start and next
+        if (t < 0.0 || t > 1.0) {
+            return false;
+        }
+
+        // Compute perpendicular distance from locus to line
+        const auto projected_point = start + t * start_to_next;
+        const auto deviation_vector = locus - projected_point;
+        const double deviation = xt::norm_l2(deviation_vector)();
+
+        return deviation <= max_deviation;
+    };
+
+    // Helper struct to return blend geometry
+    struct blend_geometry {
+        segment::circular circular_seg;
+        double trim_distance;  // Distance trimmed from both segments
+    };
+
+    // Lambda to attempt circular blend creation at a corner
+    // Returns std::nullopt if blend cannot be created
+    const auto try_create_blend = [&opts](const xt::xarray<double>& current_pos,
+                                          const xt::xarray<double>& corner,
+                                          const xt::xarray<double>& next_waypoint) -> std::optional<blend_geometry> {
+        if (opts.max_blend_deviation() <= 0.0) {
+            return std::nullopt;
+        }
+
+        const auto incoming = corner - current_pos;
+        const auto outgoing = next_waypoint - corner;
+
+        const double incoming_norm = xt::norm_l2(incoming)();
+        const double outgoing_norm = xt::norm_l2(outgoing)();
+
+        // Need non-zero segments to compute angle
+        if (incoming_norm <= 0.0 || outgoing_norm <= 0.0) {
+            return std::nullopt;
+        }
+
+        const auto incoming_unit = incoming / incoming_norm;
+        const auto outgoing_unit = outgoing / outgoing_norm;
+
+        // Compute angle between incoming and outgoing directions
+        const double dot = xt::sum(incoming_unit * outgoing_unit)();
+        const double dot_clamped = std::clamp(dot, -1.0, 1.0);
+        const double angle = std::acos(dot_clamped);
+        const double half_angle = angle / 2.0;
+
+        // Check for degenerate cases that would cause mathematical issues
+        // tan(pi/2) is undefined (collinear waypoints going backward)
+        // Small angles would create very large radii with tiny blends
+        // TODO(acm): Explicit epsilon, scaling, etc.
+        constexpr double epsilon = 1e-6;
+        if (half_angle < epsilon || half_angle > (std::numbers::pi / 2.0 - epsilon)) {
+            return std::nullopt;
+        }
+
+        // Calculate trim distance and radius following Kunz & Stilman eq. 3-4
+        const double max_trim_from_deviation = opts.max_blend_deviation() * std::sin(half_angle) / (1.0 - std::cos(half_angle));
+
+        const double trim_distance = std::min({incoming_norm / 2.0, outgoing_norm / 2.0, max_trim_from_deviation});
+
+        // Radius from trim distance (eq. 4)
+        const double radius = trim_distance / std::tan(half_angle);
+
+        // Create circular blend segment geometry following Kunz & Stilman
+        // Equation 5: ci = qi + (ŷi+1 - ŷi)/||ŷi+1 - ŷi|| · ri/cos(αi/2)
+        const auto bisector = outgoing_unit - incoming_unit;
+        const double bisector_norm = xt::norm_l2(bisector)();
+        const auto bisector_unit = bisector / bisector_norm;
+
+        const double center_offset = radius / std::cos(half_angle);
+        const auto center = corner + (center_offset * bisector_unit);
+
+        // x̂ points from center to blend start (where circle touches incoming segment)
+        const auto blend_start = corner - (trim_distance * incoming_unit);
+        const auto x_vec = blend_start - center;
+        const auto x_unit = x_vec / xt::norm_l2(x_vec)();
+
+        // ŷ is the incoming direction (perpendicular to x by construction)
+        const auto y_unit = incoming_unit;
+
+        return blend_geometry{.circular_seg = segment::circular{center, x_unit, y_unit, radius, angle}, .trim_distance = trim_distance};
+    };
+
+    // Build segments directly via locus-based scan
     std::vector<positioned_segment> segments;
     arc_length cumulative_length{0.0};
 
-    // Iterate pairwise: track iterator to current, range-for over next elements
-    // (C++23 would have std::views::adjacent<2> or std::views::zip)
-    auto start_it = waypoints.begin();
-    for (const auto& end : waypoints | std::views::drop(1)) {
-        const auto& start = *start_it;
+    // Track where the current segment started (iterator for coalescing logic)
+    auto segment_start = waypoints.begin();
 
-        // Create linear segment (constructor computes unit_direction and length)
-        segment::linear linear_data{start, end};
+    // Track actual current configuration
+    // IMPORTANT: This must be a configuration copy, not an iterator, because after creating
+    // a circular blend, current_position is at the blend exit point - a computed position
+    // that doesn't correspond to any waypoint in the accumulator
+    xt::xarray<double> current_position = *segment_start;
 
-        // Store segment with its starting position
-        segments.push_back({.seg = segment{std::move(linear_data)}, .start = cumulative_length});
+    // Start locus at second waypoint (first potential corner)
+    for (auto locus = std::next(waypoints.begin()); locus != waypoints.end(); ++locus) {
+        auto next = std::next(locus);
 
-        cumulative_length = cumulative_length + linear_data.length;
-        ++start_it;
+        // If we're at the last waypoint, we must emit the final segment
+        const bool at_last = (next == waypoints.end());
+
+        // Check if locus can be coalesced (skipped)
+        const bool can_skip = !at_last && can_coalesce(*segment_start, *locus, *next);
+
+        if (can_skip) {
+            // Locus can be skipped, continue scanning
+            continue;
+        }
+
+        // Locus is a corner (or last waypoint) - emit segment and handle corner
+
+        // Try to create circular blend at this corner
+        const auto blend_opt = !at_last ? try_create_blend(current_position, *locus, *next) : std::nullopt;
+
+        if (blend_opt) {
+            // Blend created successfully
+            const auto& blend = *blend_opt;
+            const auto incoming = *locus - current_position;
+            const auto incoming_unit = incoming / xt::norm_l2(incoming)();
+            const auto outgoing = *next - *locus;
+            const auto outgoing_unit = outgoing / xt::norm_l2(outgoing)();
+
+            // 1. Create trimmed incoming segment
+            const auto trimmed_end = *locus - (blend.trim_distance * incoming_unit);
+            segment::linear incoming_segment{current_position, trimmed_end};
+            segments.push_back({.seg = segment{std::move(incoming_segment)}, .start = cumulative_length});
+            cumulative_length = cumulative_length + incoming_segment.length;
+
+            // 2. Create circular blend segment
+            segments.push_back({.seg = segment{blend.circular_seg}, .start = cumulative_length});
+            cumulative_length = cumulative_length + arc_length{blend.circular_seg.radius * blend.circular_seg.angle_rads};
+
+            // Update current_position to blend exit point
+            current_position = *locus + (blend.trim_distance * outgoing_unit);
+
+            // Update segment_start iterator to locus for coalescing logic
+            segment_start = locus;
+        } else {
+            // No blend created - emit linear segment from current_position to locus
+            const auto start_to_locus = *locus - current_position;
+            const double dist_sq = xt::sum(start_to_locus * start_to_locus)();
+
+            if (dist_sq > 0.0) {
+                segment::linear linear_data{current_position, *locus};
+                segments.push_back({.seg = segment{std::move(linear_data)}, .start = cumulative_length});
+                cumulative_length = cumulative_length + linear_data.length;
+            }
+
+            // Update both current_position and segment_start
+            current_position = *locus;
+            segment_start = locus;
+        }
+    }
+
+    // Validate that we created at least one segment
+    if (segments.empty()) {
+        throw std::invalid_argument{"Path requires at least one non-zero length segment"};
     }
 
     return path{std::move(segments), waypoints.dof(), cumulative_length};
 }
 
-path path::create(const xt::xarray<double>& waypoints, double max_deviation) {
-    return create(waypoint_accumulator{waypoints}, max_deviation);
+path path::create(const xt::xarray<double>& waypoints, const options& opts) {
+    return create(waypoint_accumulator{waypoints}, opts);
 }
 
 arc_length path::length() const noexcept {

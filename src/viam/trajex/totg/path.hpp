@@ -148,13 +148,46 @@ class path {
         detail data_;
     };
 
-    /// Default maximum deviation for circular blends.
-    /// 0.0 means no blending - path goes exactly through waypoints.
-    /// TODO(acm): Consider using a positive-double concept/type for this and similar parameters
-    /// (delta, epsilon, and possibly arc_length which should be non-negative)
-    static constexpr double k_default_max_deviation = 0.0;
+    /// Options for path creation with fluent interface
+    class options {
+       public:
+        /// Default maximum deviation
+        static constexpr double k_default_max_deviation = 0.0;
 
-    /// Create a path from waypoints using tube-based coalescing
+        /// Default constructor with default values
+        options();
+
+        /// Set maximum blend deviation (fluent interface)
+        /// @param deviation Maximum distance blend arc can deviate from corner
+        /// @return Reference to this options object for chaining
+        options& set_max_deviation(double deviation);
+
+        /// Set maximum blend deviation (fluent interface)
+        /// @param deviation Maximum distance blend arc can deviate from corner
+        /// @return Reference to this options object for chaining
+        /// @note Intended primarily for testing
+        options& set_max_blend_deviation(double deviation);
+
+        /// Set maximum linear deviation (fluent interface)
+        /// @param deviation Maximum distance waypoint can be from line to be coalesced
+        /// @return Reference to this options object for chaining
+        /// @note Intended primarily for testing
+        options& set_max_linear_deviation(double deviation);
+
+        /// Get maximum blend deviation
+        /// @return Maximum distance blend arc can deviate from corner
+        double max_blend_deviation() const noexcept;
+
+        /// Get maximum linear deviation
+        /// @return Maximum distance waypoint can be from line to be coalesced
+        double max_linear_deviation() const noexcept;
+
+       private:
+        double max_blend_deviation_;
+        double max_linear_deviation_;
+    };
+
+    /// Create a path from waypoints using tube-based coalescing and blending
     ///
     /// **Note**: Uses static factory pattern rather than constructor because path
     /// construction performs non-trivial computation (tube coalescing algorithm).
@@ -162,15 +195,15 @@ class path {
     /// concerns with partially-constructed objects.
     ///
     /// @param waypoints Waypoint sequence to follow
-    /// @param max_deviation Maximum deviation from waypoints for circular blends
+    /// @param opts Path creation options (coalescing and blending parameters)
     /// @return Constructed path with segments
-    [[nodiscard]] static path create(const waypoint_accumulator& waypoints, double max_deviation = k_default_max_deviation);
+    [[nodiscard]] static path create(const waypoint_accumulator& waypoints, const options& opts = options{});
 
     /// Convenience overload: create path directly from waypoint array
     /// @param waypoints 2D array (num_waypoints, dof) of waypoints
-    /// @param max_deviation Maximum deviation from waypoints for circular blends
+    /// @param opts Path creation options (coalescing and blending parameters)
     /// @return Constructed path with segments
-    [[nodiscard]] static path create(const xt::xarray<double>& waypoints, double max_deviation = k_default_max_deviation);
+    [[nodiscard]] static path create(const xt::xarray<double>& waypoints, const options& opts = options{});
 
     /// Get total arc length of path
     /// @return Total length in configuration space
