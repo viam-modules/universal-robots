@@ -14,6 +14,34 @@ project(
 #
 option(VIAM_UR_USE_WALL_WERROR "Build with -Wall and -Werror flags" ON)
 
+# Function to apply strict warning flags to a target
+function(apply_wall_werror target_name)
+  if (NOT VIAM_UR_USE_WALL_WERROR)
+    return()
+  endif()
+
+  set(GNULIKE_COMPILERS "Clang" "AppleClang" "GNU")
+  if (CMAKE_CXX_COMPILER_ID IN_LIST GNULIKE_COMPILERS)
+    target_compile_options(${target_name} PUBLIC
+      -Wall
+      -Werror
+      -Wextra
+      -pedantic
+      -Wconversion
+      -Wdouble-promotion
+      -Wenum-conversion
+      -Wnull-dereference
+      -Wunused
+      # TODO(RSDK-11300): rm after upgrading boost https://github.com/boostorg/mpl/issues/69
+      -Wno-enum-constexpr-conversion
+    )
+  elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    target_compile_options(${target_name} PRIVATE /W4 /WX)
+  else()
+    message(FATAL_ERROR "VIAM_UR_USE_WALL_ERROR is set, but not known how to enable for compiler ID ${CMAKE_CXX_COMPILER_ID}")
+  endif()
+endfunction()
+
 
 # If no build type is selected, build optimized but retain debug
 # info. This is probably the right build type for packaging and
@@ -105,6 +133,10 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(viam-cpp-sdk)
 
+# xtl and xtensor are provided by viam-cpp-sdk, just need to find them
+find_package(xtl CONFIG REQUIRED)
+find_package(xtensor CONFIG REQUIRED)
+
 find_package(Eigen3 3.4 CONFIG REQUIRED)
 find_package(viam-cpp-sdk 0.13 CONFIG REQUIRED viamsdk)
 
@@ -147,6 +179,36 @@ target_link_libraries(trajectories
 install(
   TARGETS
     trajectories
+)
+
+
+add_library(trajex)
+
+target_sources(trajex
+  PRIVATE
+    src/viam/trajex/trajex.cpp
+    src/viam/trajex/totg/path.cpp
+    src/viam/trajex/totg/trajectory.cpp
+    src/viam/trajex/totg/uniform_sampler.cpp
+    src/viam/trajex/totg/waypoint_accumulator.cpp
+)
+
+target_include_directories(trajex
+  PUBLIC
+    src
+)
+
+target_link_libraries(trajex
+  PUBLIC
+    xtensor
+    xtl
+)
+
+apply_wall_werror(trajex)
+
+install(
+  TARGETS
+    trajex
 )
 
 
@@ -194,35 +256,12 @@ target_link_libraries(viam-ur
     viam-cpp-sdk::viamsdk
 )
 
+apply_wall_werror(viam-ur)
+
 install(
   TARGETS
     viam-ur
 )
-
-# If we have opted into more extensive warnings as errors, apply them now
-if (VIAM_UR_USE_WALL_WERROR)
-  set(GNULIKE_COMPILERS "Clang" "AppleClang" "GNU")
-  if (CMAKE_CXX_COMPILER_ID IN_LIST GNULIKE_COMPILERS)
-    # TODO: Arguably, these should be `PRIVATE`.
-    target_compile_options(viam-ur PUBLIC
-      -Wall
-      -Werror
-      -Wextra
-      -pedantic
-      -Wconversion
-      -Wdouble-promotion
-      -Wenum-conversion
-      -Wnull-dereference
-      -Wunused
-      # TODO(RSDK-11300): rm after upgrading boost https://github.com/boostorg/mpl/issues/69
-      -Wno-enum-constexpr-conversion
-    )
-  elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-    target_compile_options(viam-ur PRIVATE /W4 /WX)
-  else()
-    message(FATAL_ERROR "VIAM_UR_USE_WALL_ERROR is set, but not known how to enable for compiler ID ${CMAKE_CXX_COMPILER_ID}")
-  endif()
-endif()
 
 
 add_executable(universal-robots)
@@ -258,6 +297,46 @@ target_link_libraries(universal-robots-test
 add_test(
   NAME universal-robots
   COMMAND universal-robots-test
+)
+
+add_executable(trajex-test)
+
+target_sources(trajex-test
+  PRIVATE
+    src/viam/trajex/totg/test.cpp
+)
+
+target_link_libraries(trajex-test
+  PRIVATE
+    trajex
+    Boost::boost
+)
+
+add_test(
+  NAME trajex
+  COMMAND trajex-test
+)
+
+add_executable(trajex-types-test)
+
+target_sources(trajex-types-test
+  PRIVATE
+    src/viam/trajex/types/test.cpp
+)
+
+target_include_directories(trajex-types-test
+  PRIVATE
+    src
+)
+
+target_link_libraries(trajex-types-test
+  PRIVATE
+    Boost::boost
+)
+
+add_test(
+  NAME trajex-types
+  COMMAND trajex-types-test
 )
 
 
