@@ -82,12 +82,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     namespace urtde = urcl::rtde_interface;
 
     if (!arm_conn_->safety_status_bits || !arm_conn_->robot_status_bits) {
-        VIAM_SDK_LOG(warn) << "While in state " << describe() << ", robot and safety status bits were not available; dropping connection";
+        VIAM_SDK_LOG(debug) << "While in state " << describe() << ", robot and safety status bits were not available; dropping connection";
         return event_connection_lost_::data_communication_failure();
     }
 
     if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
-        VIAM_SDK_LOG(info) << "While in state " << describe() << ", dashboard client is disconnected; dropping connection";
+        VIAM_SDK_LOG(debug) << "While in state " << describe() << ", dashboard client is disconnected; dropping connection";
         return event_connection_lost_::dashboard_communication_failure();
     }
 
@@ -113,7 +113,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
                 return event_local_mode_detected_{};
             }
         } catch (...) {
-            VIAM_SDK_LOG(warn) << "While in state " << describe()
+            VIAM_SDK_LOG(debug) << "While in state " << describe()
                                << ", could not communicate with dashboard to determine remote control state; dropping connection";
             return event_connection_lost_::dashboard_communication_failure();
         }
@@ -145,31 +145,30 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     if (stopped() && arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
         // ensure the arm is powered on
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_POWER_ON))) {
-            VIAM_SDK_LOG(info) << "While in state " << describe()
+            VIAM_SDK_LOG(debug) << "While in state " << describe()
                                << ", arm is not powered on; attempting to power on arm - ensure the dashboard is in remote mode";
             try {
                 if (!arm_conn_->dashboard->commandPowerOn()) {
-                    VIAM_SDK_LOG(warn) << "While in state " << describe() << ", unable to power on arm; dropping connection";
+                    VIAM_SDK_LOG(debug) << "While in state " << describe() << ", unable to power on arm; dropping connection";
 
                     return event_connection_lost_::dashboard_command_failure();
                 }
             } catch (...) {
-                VIAM_SDK_LOG(warn) << "While in state " << describe()
+                VIAM_SDK_LOG(debug) << "While in state " << describe()
                                    << ", could not communicate with dashboard to power on arm; dropping connection";
                 return event_connection_lost_::dashboard_communication_failure();
             }
         }
 
         try {
-            // TODO(RSDK-11645) find a way to detect if the brakes are locked
-            VIAM_SDK_LOG(info) << "While in state " << describe() << ": releasing brakes since no longer stopped";
+            VIAM_SDK_LOG(debug) << "While in state " << describe() << ": releasing brakes since no longer stopped";
             if (!arm_conn_->dashboard->commandBrakeRelease()) {
-                VIAM_SDK_LOG(warn) << "While in state " << describe()
+                VIAM_SDK_LOG(debug) << "While in state " << describe()
                                    << ", could not release brakes - ensure the dashboard is in remote mode; dropping connection";
                 return event_connection_lost_::dashboard_command_failure();
             }
         } catch (...) {
-            VIAM_SDK_LOG(warn) << "While in state " << describe()
+            VIAM_SDK_LOG(debug) << "While in state " << describe()
                                << ", could not communicate with dashboard to release brakes; dropping connection";
             return event_connection_lost_::dashboard_communication_failure();
         }
@@ -179,7 +178,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // controlling the arm directly while in local mode.
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING))) {
             arm_conn_->program_running_flag.store(false, std::memory_order_release);
-            VIAM_SDK_LOG(info) << "While in state " << describe() << ", program is not running on arm; attempting to resend program";
+            VIAM_SDK_LOG(debug) << "While in state " << describe() << ", program is not running on arm; attempting to resend program";
             try {
                 if (!arm_conn_->driver->sendRobotProgram()) {
                     VIAM_SDK_LOG(warn) << "While in state " << describe()
@@ -196,7 +195,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // "Wait" for the robot program to start running.
         //
         // TODO(RSDK-11620) Check if we still need this flag.
-        VIAM_SDK_LOG(info) << "While in state " << describe() << ", waiting for callback to toggle program state to running";
+        VIAM_SDK_LOG(debug) << "While in state " << describe() << ", waiting for callback to toggle program state to running";
         int retry_count = 100;
         while (!arm_conn_->program_running_flag.load(std::memory_order_acquire)) {
             if (retry_count <= 0) {

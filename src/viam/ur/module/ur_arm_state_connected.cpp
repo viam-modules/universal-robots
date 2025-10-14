@@ -52,16 +52,16 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     }
 
     if (!prior_robot_status_bits) {
-        VIAM_SDK_LOG(info) << "Obtained robot status bits: `" << robot_status_bits;
+        VIAM_SDK_LOG(debug) << "Obtained robot status bits: `" << robot_status_bits;
     } else if (*prior_robot_status_bits != robot_status_bits) {
-        VIAM_SDK_LOG(info) << "Updated robot status bits: `" << robot_status_bits << "` (previously `" << *prior_robot_status_bits << "`)`";
+        VIAM_SDK_LOG(debug) << "Updated robot status bits: `" << robot_status_bits << "` (previously `" << *prior_robot_status_bits << "`)`";
     }
     arm_conn_->robot_status_bits = robot_status_bits;
 
     if (!prior_safety_status_bits) {
-        VIAM_SDK_LOG(info) << "Obtained safety status bits: `" << safety_status_bits << "`";
+        VIAM_SDK_LOG(debug) << "Obtained safety status bits: `" << safety_status_bits << "`";
     } else if (*prior_safety_status_bits != safety_status_bits) {
-        VIAM_SDK_LOG(info) << "Updated safety status bits: `" << safety_status_bits << "` (previously `" << *prior_safety_status_bits
+        VIAM_SDK_LOG(debug) << "Updated safety status bits: `" << safety_status_bits << "` (previously `" << *prior_safety_status_bits
                            << "`)`";
     }
     arm_conn_->safety_status_bits = safety_status_bits;

@@ -235,7 +235,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
 }
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
-    VIAM_SDK_LOG(info) << "URArm constructor called (model: " << model_.to_string() << ")";
+    VIAM_SDK_LOG(debug) << "URArm constructor called (model: " << model_.to_string() << ")";
     const std::unique_lock wlock(config_mutex_);
     // TODO: prevent multiple calls to configure_logger
     configure_logger(cfg);
@@ -273,10 +273,10 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
         shutdown_(lock);
     });
 
-    VIAM_SDK_LOG(info) << "URArm starting up";
+    VIAM_SDK_LOG(debug) << "URArm starting up";
     current_state_ = state_::create(configured_model_type, cfg, ports_);
 
-    VIAM_SDK_LOG(info) << "URArm startup complete";
+    VIAM_SDK_LOG(debug) << "URArm startup complete";
     failure_handler.deactivate();
 }
 
@@ -505,13 +505,11 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
     // slipped in while we were planning.
     auto current_move_epoch = current_state_->get_move_epoch();
 
-    VIAM_SDK_LOG(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
-    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move: end unix_time " << unix_time; });
+    VIAM_SDK_LOG(debug) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
+    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move: end unix_time " << unix_time; });
 
     // get current joint position and add that as starting pose to waypoints
-    VIAM_SDK_LOG(info) << "move: get_joint_positions start " << unix_time;
     auto curr_joint_pos = get_joint_positions_rad_(our_config_rlock);
-    VIAM_SDK_LOG(info) << "move: get_joint_positions end " << unix_time;
     auto curr_joint_pos_rad = Eigen::Map<Eigen::VectorXd>(curr_joint_pos.data(), curr_joint_pos.size());
 
     if (const auto& threshold = current_state_->get_reject_move_request_threshold_rad()) {
@@ -534,13 +532,13 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
         }
     }
 
-    VIAM_SDK_LOG(info) << "move: compute_trajectory start " << unix_time;
+    VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
 
     if (!curr_joint_pos_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
         waypoints.emplace_front(std::move(curr_joint_pos_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
-        VIAM_SDK_LOG(info) << "arm is already at the desired joint positions";
+        VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
         return;
     }
 
@@ -577,7 +575,7 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
     // set velocity/acceleration constraints
     const auto max_velocity = Eigen::VectorXd::Constant(6, current_state_->get_speed());
     const auto max_acceleration = Eigen::VectorXd::Constant(6, current_state_->get_acceleration());
-    VIAM_SDK_LOG(info) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity[0]);
+    VIAM_SDK_LOG(debug) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity[0]);
 
     std::vector<trajectory_sample_point> samples;
 
@@ -609,7 +607,7 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
         }
 
         if (duration < k_min_timestep_sec) {
-            VIAM_SDK_LOG(info) << "duration of move is too small, assuming arm is at goal";
+            VIAM_SDK_LOG(debug) << "duration of move is too small, assuming arm is at goal";
             return;
         }
 
@@ -625,7 +623,7 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
                                            boost::numeric_cast<float>(step)};
         });
     }
-    VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time << " samples.size() " << samples.size() << " segments "
+    VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " samples.size() " << samples.size() << " segments "
                        << segments.size() - 1;
 
     const std::string& path = current_state_->csv_output_path();

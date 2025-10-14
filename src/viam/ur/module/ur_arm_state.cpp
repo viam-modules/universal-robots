@@ -65,7 +65,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     const auto module_executable_path = boost::dll::program_location();
     const auto module_executable_directory = module_executable_path.parent_path();
     auto resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "universal-robots");
-    VIAM_SDK_LOG(info) << "Universal robots module executable found in `" << module_executable_path << "; resources will be found in `"
+    VIAM_SDK_LOG(debug) << "Universal robots module executable found in `" << module_executable_path << "; resources will be found in `"
                        << resource_root << "`";
 
     // If the config contains `csv_output_path`, use that, otherwise,
@@ -81,7 +81,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
         if (!viam_module_data) {
             throw std::runtime_error("required environment variable `VIAM_MODULE_DATA` unset");
         }
-        VIAM_SDK_LOG(info) << "VIAM_MODULE_DATA: " << viam_module_data;
+        VIAM_SDK_LOG(debug) << "VIAM_MODULE_DATA: " << viam_module_data;
 
         return std::string{viam_module_data};
     }();
@@ -276,11 +276,11 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_event_handler_
 URArm::state_::arm_connection_::~arm_connection_() {
     data_package.reset();
     if (log_destructor) {
-        VIAM_SDK_LOG(info) << "destroying current UrDriver instance";
+        VIAM_SDK_LOG(debug) << "destroying current UrDriver instance";
     }
     driver.reset();
     if (log_destructor) {
-        VIAM_SDK_LOG(info) << "destroying current DashboardClient instance";
+        VIAM_SDK_LOG(debug) << "destroying current DashboardClient instance";
     }
     dashboard.reset();
 }
@@ -425,7 +425,7 @@ void URArm::state_::send_noop_() {
 }
 
 void URArm::state_::run_() {
-    VIAM_SDK_LOG(info) << "worker thread started";
+    VIAM_SDK_LOG(debug) << "worker thread started";
 
     // Periodically, collect a limited number of samples of the
     // duration of our wait latency on the condition variable. We
@@ -446,7 +446,7 @@ void URArm::state_::run_() {
 
         const auto wait_start = std::chrono::steady_clock::now();
         if (worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] { return shutdown_requested_; })) {
-            VIAM_SDK_LOG(info) << "worker thread signaled to terminate";
+            VIAM_SDK_LOG(debug) << "worker thread signaled to terminate";
             break;
         }
 
@@ -460,7 +460,7 @@ void URArm::state_::run_() {
             (*accumulator)(std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(wait_end - wait_start).count());
             if (bacc::count(*accumulator) == k_num_samples) {
                 const auto accumulated = std::exchange(accumulator, std::nullopt);
-                VIAM_SDK_LOG(info) << "URArm worker thread median wait between control cycles is " << bacc::median(*accumulated)
+                VIAM_SDK_LOG(debug) << "URArm worker thread median wait between control cycles is " << bacc::median(*accumulated)
                                    << " milliseconds, with variance " << bacc::variance(*accumulated);
             }
         }
@@ -478,9 +478,9 @@ void URArm::state_::run_() {
         }
     }
 
-    VIAM_SDK_LOG(info) << "worker thread emitting disconnection event";
+    VIAM_SDK_LOG(debug) << "worker thread emitting disconnection event";
     emit_event_(event_connection_lost_::module_shutdown());
-    VIAM_SDK_LOG(info) << "worker thread terminating";
+    VIAM_SDK_LOG(debug) << "worker thread terminating";
 }
 
 void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult trajectory_result) {
@@ -517,5 +517,5 @@ void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult tr
         }
     }
 
-    VIAM_SDK_LOG(info) << "trajectory report: " << report;
+    VIAM_SDK_LOG(debug) << "trajectory report: " << report;
 }

@@ -65,12 +65,12 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
             VIAM_SDK_LOG(warn) << "disconnected: the connection to the arm was lost due to a " << triggering_event_->describe()
                                << " event; attempting automatic recovery which may take some time";
         }
-        VIAM_SDK_LOG(info) << "disconnected: attempting recovery";
+        VIAM_SDK_LOG(debug) << "disconnected: attempting recovery";
     }
 
     arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_);
     if (reconnect_attempts % k_log_at_n_attempts == 0) {
-        VIAM_SDK_LOG(info) << "disconnected: attempting recovery: trying to connect to dashboard";
+        VIAM_SDK_LOG(debug) << "disconnected: attempting recovery: trying to connect to dashboard";
     }
     if (!arm_connection->dashboard->connect(1)) {
         std::ostringstream buffer;
@@ -79,9 +79,9 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     }
     arm_connection->log_destructor = true;
 
-    VIAM_SDK_LOG(info) << "disconnected: attempting recovery: connected to dashboard";
+    VIAM_SDK_LOG(debug) << "disconnected: attempting recovery: connected to dashboard";
 
-    VIAM_SDK_LOG(info) << "disconnected: attempting recovery: validating model";
+    VIAM_SDK_LOG(debug) << "disconnected: attempting recovery: validating model";
     std::string actual_model_type{};
     if (!arm_connection->dashboard->commandGetRobotModel(actual_model_type)) {
         throw std::runtime_error("failed to get model info of connected arm");
@@ -100,7 +100,7 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     // TODO(11619): See if we can fully eliminate use of the
     // DashboardClient and use only the `UrDriver`.
     if (arm_connection->dashboard->commandIsInRemoteControl()) {
-        VIAM_SDK_LOG(info) << "disconnected: attempting recovery: stopping any currently running program";
+        VIAM_SDK_LOG(debug) << "disconnected: attempting recovery: stopping any currently running program";
         if (!arm_connection->dashboard->commandStop()) {
             throw std::runtime_error("couldn't stop program running on arm_connection->dashboard");
         }
@@ -111,7 +111,7 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     constexpr char k_output_recipe[] = "control/rtde_output_recipe.txt";
     constexpr char k_input_recipe[] = "control/rtde_input_recipe.txt";
 
-    VIAM_SDK_LOG(info) << "disconnected: attempting recovery: instantiating new UrDriver";
+    VIAM_SDK_LOG(debug) << "disconnected: attempting recovery: instantiating new UrDriver";
     // Now the robot is ready to receive a program
     auto ur_cfg = urcl::UrDriverConfiguration{};
     ur_cfg.robot_ip = state.host_;
@@ -132,10 +132,10 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     ur_cfg.script_sender_port = state.ports_.script_sender_port;
     ur_cfg.trajectory_port = state.ports_.trajectory_port;
     ur_cfg.script_command_port = state.ports_.script_command_port;
-    VIAM_SDK_LOG(info) << "using reverse_port " << ur_cfg.reverse_port;
-    VIAM_SDK_LOG(info) << "using script_sender_port " << ur_cfg.script_sender_port;
-    VIAM_SDK_LOG(info) << "using trajectory_port " << ur_cfg.trajectory_port;
-    VIAM_SDK_LOG(info) << "using script_command_port " << ur_cfg.script_command_port;
+    VIAM_SDK_LOG(debug) << "using reverse_port " << ur_cfg.reverse_port;
+    VIAM_SDK_LOG(debug) << "using script_sender_port " << ur_cfg.script_sender_port;
+    VIAM_SDK_LOG(debug) << "using trajectory_port " << ur_cfg.trajectory_port;
+    VIAM_SDK_LOG(debug) << "using script_command_port " << ur_cfg.script_command_port;
 
     arm_connection->driver = std::make_unique<UrDriver>(ur_cfg);
 
@@ -148,15 +148,15 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     arm_connection->driver->registerTrajectoryDoneCallback(
         std::bind(&URArm::state_::trajectory_done_callback_, &state, std::placeholders::_1));
 
-    VIAM_SDK_LOG(info) << "disconnected: attempting recovery: starting RTDE communication";
+    VIAM_SDK_LOG(debug) << "disconnected: attempting recovery: starting RTDE communication";
     arm_connection->driver->startRTDECommunication();
 
-    VIAM_SDK_LOG(info) << "disconnected: attempting recovery: attempting to read a data package from the arm";
+    VIAM_SDK_LOG(debug) << "disconnected: attempting recovery: attempting to read a data package from the arm";
     if (!arm_connection->driver->getDataPackage()) {
         throw std::runtime_error("could not read data package from newly established driver connection ");
     }
 
-    VIAM_SDK_LOG(info) << "disconnected: attempting recovery: recovery appears to have been successful; transitioning to independent mode";
+    VIAM_SDK_LOG(debug) << "disconnected: attempting recovery: recovery appears to have been successful; transitioning to independent mode";
     return arm_connection;
 }
 
