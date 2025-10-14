@@ -66,7 +66,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     const auto module_executable_directory = module_executable_path.parent_path();
     auto resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "universal-robots");
     VIAM_SDK_LOG(debug) << "Universal robots module executable found in `" << module_executable_path << "; resources will be found in `"
-                       << resource_root << "`";
+                        << resource_root << "`";
 
     // If the config contains `csv_output_path`, use that, otherwise,
     // fall back to `VIAM_MODULE_DATA` as the output path, which must
@@ -461,7 +461,7 @@ void URArm::state_::run_() {
             if (bacc::count(*accumulator) == k_num_samples) {
                 const auto accumulated = std::exchange(accumulator, std::nullopt);
                 VIAM_SDK_LOG(debug) << "URArm worker thread median wait between control cycles is " << bacc::median(*accumulated)
-                                   << " milliseconds, with variance " << bacc::variance(*accumulated);
+                                    << " milliseconds, with variance " << bacc::variance(*accumulated);
             }
         }
 

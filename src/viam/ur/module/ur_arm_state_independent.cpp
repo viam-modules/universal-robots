@@ -114,7 +114,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             }
         } catch (...) {
             VIAM_SDK_LOG(debug) << "While in state " << describe()
-                               << ", could not communicate with dashboard to determine remote control state; dropping connection";
+                                << ", could not communicate with dashboard to determine remote control state; dropping connection";
             return event_connection_lost_::dashboard_communication_failure();
         }
     }
@@ -146,7 +146,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // ensure the arm is powered on
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_POWER_ON))) {
             VIAM_SDK_LOG(debug) << "While in state " << describe()
-                               << ", arm is not powered on; attempting to power on arm - ensure the dashboard is in remote mode";
+                                << ", arm is not powered on; attempting to power on arm - ensure the dashboard is in remote mode";
             try {
                 if (!arm_conn_->dashboard->commandPowerOn()) {
                     VIAM_SDK_LOG(debug) << "While in state " << describe() << ", unable to power on arm; dropping connection";
@@ -155,7 +155,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
                 }
             } catch (...) {
                 VIAM_SDK_LOG(debug) << "While in state " << describe()
-                                   << ", could not communicate with dashboard to power on arm; dropping connection";
+                                    << ", could not communicate with dashboard to power on arm; dropping connection";
                 return event_connection_lost_::dashboard_communication_failure();
             }
         }
@@ -164,12 +164,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             VIAM_SDK_LOG(debug) << "While in state " << describe() << ": releasing brakes since no longer stopped";
             if (!arm_conn_->dashboard->commandBrakeRelease()) {
                 VIAM_SDK_LOG(debug) << "While in state " << describe()
-                                   << ", could not release brakes - ensure the dashboard is in remote mode; dropping connection";
+                                    << ", could not release brakes - ensure the dashboard is in remote mode; dropping connection";
                 return event_connection_lost_::dashboard_command_failure();
             }
         } catch (...) {
             VIAM_SDK_LOG(debug) << "While in state " << describe()
-                               << ", could not communicate with dashboard to release brakes; dropping connection";
+                                << ", could not communicate with dashboard to release brakes; dropping connection";
             return event_connection_lost_::dashboard_communication_failure();
         }
 
