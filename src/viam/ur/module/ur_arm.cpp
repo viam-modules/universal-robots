@@ -235,7 +235,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
 }
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
-    VIAM_SDK_LOG(info) << "Instanciating URArm driver instance for arm model: " << model_.to_string();
+    VIAM_SDK_LOG(info) << "instantiating URArm driver for arm model: " << model_.to_string();
     const std::unique_lock wlock(config_mutex_);
     // TODO: prevent multiple calls to configure_logger
     configure_logger(cfg);
