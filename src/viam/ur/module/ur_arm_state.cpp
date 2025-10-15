@@ -248,10 +248,10 @@ bool URArm::state_::is_moving() const {
     if (!move_request_) {
         return false;
     }
-    if (const auto *v = std::get_if<std::vector<trajectory_sample_point>>(&move_request_->move_command)) {
+    if (const auto* v = std::get_if<std::vector<trajectory_sample_point>>(&move_request_->move_command)) {
         return v->empty();  // issued -> moving
     }
-    return false;           // pose_sample still pending
+    return false;  // pose_sample still pending
 }
 
 std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
