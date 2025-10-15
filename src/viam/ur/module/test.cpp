@@ -27,7 +27,7 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
         // we are not testing the behavior of the trajectory generation, so we create a simple lambda function.
         // this allows us to get a good idea of what sampling_func is doing
         sampling_func(test_samples, test_duration_sec, test_freq_hz, [](const double t, const double step) {
-            return trajectory_sample_point{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step), true};
+            return trajectory_sample_point{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
         });
         BOOST_CHECK_EQUAL(test_samples.size(), static_cast<std::size_t>(std::ceil(test_duration_sec * test_freq_hz)));
     }
@@ -38,7 +38,7 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
         const double test_freq_hz = 0.5;  // 1 sample every 2 seconds
 
         sampling_func(test_samples, test_duration_sec, test_freq_hz, [](const double t, const double step) {
-            return trajectory_sample_point{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step), true};
+            return trajectory_sample_point{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
         });
         BOOST_CHECK_EQUAL(test_samples.size(), 1);
         BOOST_CHECK_EQUAL(test_samples[0].p[0], test_duration_sec);
@@ -57,7 +57,7 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
                                         [](const double t, const double step) {
                                             BOOST_FAIL("we should never reach this");
                                             return trajectory_sample_point{
-                                                {t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step), true};
+                                                {t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
                                         }),
                           std::invalid_argument);
     }
@@ -94,10 +94,10 @@ BOOST_AUTO_TEST_CASE(test_write_waypoints_to_csv) {
 }
 
 BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
-    const std::vector<trajectory_sample_point> samples = {{{1.1, 2, 3, 4, 5, 6}, {1.2, 2, 3, 4, 5, 6}, 1.2F, true},
-                                                          {{3.1, 2, 3, 4, 5, 6}, {4.2, 2, 3, 4, 5, 6}, 0.8F, true},
-                                                          {{6.1, 2, 3, 4, 5, 6}, {7.1, 2, 3, 4, 5, 6}, 1, true},
-                                                          {{9.1, 2, 3, 4, 5, 6}, {10.1, 2, 3, 4, 5, 6}, 1, true}};
+    const std::vector<trajectory_sample_point> samples = {{{1.1, 2, 3, 4, 5, 6}, {1.2, 2, 3, 4, 5, 6}, 1.2F},
+                                                          {{3.1, 2, 3, 4, 5, 6}, {4.2, 2, 3, 4, 5, 6}, 0.8F},
+                                                          {{6.1, 2, 3, 4, 5, 6}, {7.1, 2, 3, 4, 5, 6}, 1},
+                                                          {{9.1, 2, 3, 4, 5, 6}, {10.1, 2, 3, 4, 5, 6}, 1}};
 
     const auto* const expected =
         "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n"

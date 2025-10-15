@@ -2,6 +2,7 @@
 
 #include <list>
 #include <shared_mutex>
+#include <variant>
 
 #include <Eigen/Core>
 
@@ -19,8 +20,9 @@ struct trajectory_sample_point {
     vector6d_t p;
     vector6d_t v;
     float timestep;
-    bool is_joint_space;
 };
+
+using MoveCommand = std::variant<std::vector<trajectory_sample_point>, trajectory_sample_point>;
 
 template <typename Func>
 void sampling_func(std::vector<trajectory_sample_point>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
@@ -140,6 +142,7 @@ class URArm final : public Arm, public Reconfigurable {
     void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                            std::list<Eigen::VectorXd> waypoints,
                            const std::string& unix_time_ms);
+
     void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time_ms);
 
     template <template <typename> typename lock_type>

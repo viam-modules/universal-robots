@@ -62,63 +62,74 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         return std::nullopt;
     }
 
-    if (!state.move_request_->samples.empty() && !state.move_request_->cancellation_request) {
-        // We have a move request, it has samples, and there is no pending cancel for that move. Issue the move.
-
+    if ((state.move_request_->trajectory_start.time_since_epoch().count() == 0) && !state.move_request_->cancellation_request) {
+        // We have a move request with an unsent command and no pending cancel. Issue the move.
         VIAM_SDK_LOG(info) << "URArm sending trajectory";
+        // Marking the start time indicates the trajectory has started
+        state.move_request_->trajectory_start = std::chrono::steady_clock::now();
 
-        // By moving the samples out, we indicate that the trajectory is considered started.
-        auto samples = std::move(state.move_request_->samples);
-        const auto num_samples = samples.size();
+        // Handle the move based on variant type
+        auto send_result = std::visit(
+            [&](auto&& cmd) -> std::optional<event_variant_> {
+                using T = std::decay_t<decltype(cmd)>;
+                if constexpr (std::is_same_v<T, std::vector<trajectory_sample_point>>) {
+                    // Joint space move
+                    const auto& samples = cmd;
+                    const auto num_samples = samples.size();
 
-        if (samples[0].is_joint_space) {
-            VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
-            if (!arm_conn_->driver->writeTrajectoryControlMessage(
-                    urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
-                VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false; dropping connection";
-                std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
-                return event_connection_lost_::trajectory_control_failure();
-            }
+                    VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
+                    if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
+                                                                          static_cast<int>(num_samples),
+                                                                          RobotReceiveTimeout::off())) {
+                        VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false; dropping connection";
+                        std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start message to arm");
+                        return event_connection_lost_::trajectory_control_failure();
+                    }
 
-            VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
-            for (size_t i = 0; i < num_samples; i++) {
-                if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
-                    VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false; dropping connection";
-                    std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
-                    return event_connection_lost_::trajectory_control_failure();
+                    VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
+                    for (size_t i = 0; i < num_samples; i++) {
+                        if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
+                            VIAM_SDK_LOG(error)
+                                << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false; dropping connection";
+                            std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point to arm");
+                            return event_connection_lost_::trajectory_control_failure();
+                        }
+                    }
+                } else {
+                    // Pose space move (single trajectory_sample_point)
+                    const auto& sample = cmd;
+
+                    if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START, 1)) {
+                        VIAM_SDK_LOG(error) << "writeTrajectoryControlMessage(START) failed";
+                        std::exchange(state.move_request_, {})->complete_error("failed to start trajectory");
+                        return event_connection_lost_::trajectory_control_failure();
+                    }
+
+                    // velocity and acceleration are on purpose hardcoded so that we do not encounter a path sanity check error
+                    const float velocity = 0.25F;
+                    const float acceleration = 0.5F;
+                    const float blend_radius = 0;
+                    constexpr bool is_joint_space = false;
+
+                    if (!arm_conn_->driver->writeTrajectoryPoint(
+                            sample.p, acceleration, velocity, !is_joint_space, sample.timestep, blend_radius)) {
+                        VIAM_SDK_LOG(error) << "writeTrajectoryPoint (acc/vel form) failed";
+                        std::exchange(state.move_request_, {})->complete_error("failed to send trajectory point (acc/vel)");
+                        return event_connection_lost_::trajectory_control_failure();
+                    }
                 }
-            }
-        }
+                return std::nullopt;
+            },
+            state.move_request_->move_command);
 
-        if (!samples[0].is_joint_space && num_samples == 1) {
-            // move to position accepts a single pose as its destination therefore trajectory generation is ommitted
-            // hence the size of the samples vector will always be one until the API changes allowing a user to pass
-            // in multiple destinations the arm should visit
-            if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
-                                                                  static_cast<int>(num_samples))) {
-                VIAM_SDK_LOG(error) << "writeTrajectoryControlMessage(START) failed";
-                std::exchange(state.move_request_, {})->complete_error("failed to start trajectory");
-                return event_connection_lost_::trajectory_control_failure();
-            }
-            // velocity and acceleration are on purpose hardcoded so that we do not encounter a path sanity check error
-            const float velocity = 0.25F;
-            const float acceleration = 0.5F;
-            const float blend_radius = 0;
-            for (size_t i = 0; i < num_samples; ++i) {
-                if (!arm_conn_->driver->writeTrajectoryPoint(
-                        samples[i].p, acceleration, velocity, !samples[i].is_joint_space, samples[i].timestep, blend_radius)) {
-                    VIAM_SDK_LOG(error) << "writeTrajectoryPoint (acc/vel form) failed at i=" << i;
-                    std::exchange(state.move_request_, {})->complete_error("failed to send trajectory point (acc/vel)");
-                    return event_connection_lost_::trajectory_control_failure();
-                }
-            }
+        if (send_result) {
+            return send_result;
         }
 
         VIAM_SDK_LOG(info) << "URArm trajectory sent";
 
-    } else if (state.move_request_->samples.empty() && state.move_request_->cancellation_request &&
-               !state.move_request_->cancellation_request->issued) {
-        // We have a move request, the samples have been forwarded,
+    } else if ((state.move_request_->trajectory_start.time_since_epoch().count() != 0) && state.move_request_->cancellation_request && !state.move_request_->cancellation_request->issued) {
+        // We have a move request, and the trajectory has been started,
         // and cancellation is requested but has not yet been issued. Issue a cancel.
         state.move_request_->cancellation_request->issued = true;
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
@@ -128,7 +139,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                                 << ", failed to write trajectory control cancel message; dropping connection";
             return event_connection_lost_::trajectory_control_failure();
         }
-    } else if (!state.move_request_->samples.empty() && state.move_request_->cancellation_request) {
+    } else if ((state.move_request_->trajectory_start.time_since_epoch().count() == 0) && state.move_request_->cancellation_request) {
         // We have a move request that we haven't issued but a
         // cancel is already pending. Don't issue it, just cancel it.
         std::exchange(state.move_request_, {})->complete_cancelled();

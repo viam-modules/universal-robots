@@ -224,7 +224,7 @@ size_t URArm::state_::get_move_epoch() const {
 }
 
 std::future<void> URArm::state_::enqueue_move_request(size_t current_move_epoch,
-                                                      std::vector<trajectory_sample_point>&& samples,
+                                                      MoveCommand&& move_command,
                                                       std::ofstream arm_joint_positions_stream) {
     // Use CAS to increment the epoch and detect if another move
     // operation occurred between when we obtained a value with
@@ -240,7 +240,7 @@ std::future<void> URArm::state_::enqueue_move_request(size_t current_move_epoch,
     if (move_request_) {
         throw std::runtime_error("an actuation is already in progress");
     }
-    return move_request_.emplace(std::move(samples), std::move(arm_joint_positions_stream)).completion.get_future();
+    return move_request_.emplace(std::move(move_command), std::move(arm_joint_positions_stream)).completion.get_future();
 }
 
 bool URArm::state_::is_moving() const {
@@ -248,7 +248,20 @@ bool URArm::state_::is_moving() const {
     // If we have a move request, but the samples are gone, it means we
     // sent them to the arm, so as far as we are concerned, the arm is
     // moving, though that move might fail later.
-    return (move_request_ && move_request_->samples.empty());
+    if (!move_request_) {
+        return false;
+    }
+    return std::visit(
+        [](const auto& cmd) -> bool {
+            using T = std::decay_t<decltype(cmd)>;
+            if constexpr (std::is_same_v<T, std::vector<trajectory_sample_point>>) {
+                return cmd.empty();
+            } else {
+                // For single trajectory_sample_point (pose move), it hasn't been sent yet
+                return false;
+            }
+        },
+        move_request_->move_command);
 }
 
 std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
@@ -285,9 +298,10 @@ URArm::state_::arm_connection_::~arm_connection_() {
     dashboard.reset();
 }
 
-URArm::state_::move_request::move_request(std::vector<trajectory_sample_point>&& samples, std::ofstream arm_joint_positions_stream)
-    : samples(std::move(samples)), arm_joint_positions_stream(std::move(arm_joint_positions_stream)) {
-    if (this->samples.empty()) {
+URArm::state_::move_request::move_request(MoveCommand&& move_command, std::ofstream arm_joint_positions_stream)
+    : move_command(std::move(move_command)), arm_joint_positions_stream(std::move(arm_joint_positions_stream)) {
+    if (std::holds_alternative<std::vector<trajectory_sample_point>>(this->move_command) &&
+        std::get<std::vector<trajectory_sample_point>>(this->move_command).empty()) {
         throw std::invalid_argument("no trajectory samples provided to move request");
     }
 }
