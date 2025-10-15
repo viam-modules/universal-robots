@@ -1,7 +1,12 @@
 #pragma once
 
+#include <cmath>
 #include <list>
 #include <shared_mutex>
+#include <stdexcept>
+#include <utility>
+#include <variant>
+#include <vector>
 
 #include <Eigen/Core>
 
@@ -19,8 +24,25 @@ struct trajectory_sample_point {
     vector6d_t p;
     vector6d_t v;
     float timestep;
-    bool is_joint_space;
 };
+
+// TODO: determine how to set the velocity and acceleration so they are not hardcoded
+struct pose_sample {
+    vector6d_t p;
+};
+
+using MoveCommand = std::variant<std::vector<trajectory_sample_point>, pose_sample>;
+
+inline MoveCommand make_joint_trajectory(std::vector<trajectory_sample_point> samples) {
+    if (samples.empty()) {
+        throw std::invalid_argument("joint trajectory must not be empty");
+    }
+    return MoveCommand{std::move(samples)};
+}
+
+inline MoveCommand make_single_pose(pose_sample ps) {
+    return MoveCommand{std::move(ps)};
+}
 
 template <typename Func>
 void sampling_func(std::vector<trajectory_sample_point>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
@@ -140,6 +162,7 @@ class URArm final : public Arm, public Reconfigurable {
     void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                            std::list<Eigen::VectorXd> waypoints,
                            const std::string& unix_time_ms);
+
     void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time_ms);
 
     template <template <typename> typename lock_type>

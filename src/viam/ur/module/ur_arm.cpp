@@ -77,16 +77,16 @@ pose ur_vector_to_pose(urcl::vector6d_t vec) {
 }
 
 urcl::vector6d_t pose_to_ur_vector(const pose& p) {
+    if (!std::isfinite(p.theta)) {
+        throw std::invalid_argument("pose_to_ur_vector: theta is infinite or NaN");
+    }
+
     urcl::vector6d_t v{};
 
     // convert millimeters to meters
     v[0] = p.coordinates.x / 1000.0;
     v[1] = p.coordinates.y / 1000.0;
     v[2] = p.coordinates.z / 1000.0;
-
-    if (std::isnan(p.theta)) {
-        throw std::invalid_argument("pose_to_ur_vector: theta is NaN");
-    }
 
     const double theta_rad = degrees_to_radians(p.theta);
 
@@ -125,7 +125,7 @@ urcl::vector6d_t pose_to_ur_vector(const pose& p) {
     const double th = aa[3];
 
     // robustness to tiny axes/angles
-    const double n = std::hypot(ax, std::hypot(ay, az));
+    const double n = std::hypot(ax, ay, az);
     if (n < k_angle_epsilon || std::abs(th) < k_angle_epsilon) {
         v[3] = v[4] = v[5] = 0.0;
     } else {
@@ -616,18 +616,16 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
         return;
     }
 
-    // create a vector of trajectory sample points dictating where we want to move to
-    std::vector<trajectory_sample_point> samples{{
-        target_pose,         // position
-        {0, 0, 0, 0, 0, 0},  // velocities
-        0.0,                 // timestep
-        false,               // is joint space flag
-    }};
+    // create a pose_sample for tool-space movement
+    const pose_sample ps{target_pose};
+    auto move_command = make_single_pose(ps);
 
-    // take the vector of sample points and hand that over to the ur arm
-    // TODO: RSDK-12185
+    // Write trajectory to file for debugging purposes
+    // TODO(RSDK-12185): Capture pose arm visits
+    // https://viam.atlassian.net/browse/RSDK-12185
     const std::string& path = current_state_->csv_output_path();
-    write_trajectory_to_file(move_to_position_trajectory_filename(path, unix_time), samples);
+    const trajectory_sample_point sample_for_file{target_pose, {0, 0, 0, 0, 0, 0}, 0.0F};
+    write_trajectory_to_file(move_to_position_trajectory_filename(path, unix_time), {sample_for_file});
 
     std::ofstream ajp_of(arm_joint_positions_filename(path, unix_time));
     ajp_of << "time_ms,read_attempt,"
@@ -635,7 +633,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
               "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
-        return current_state_->enqueue_move_request(current_move_epoch, std::move(samples), std::move(ajp_of));
+        return current_state_->enqueue_move_request(current_move_epoch, std::move(move_command), std::move(ajp_of));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
@@ -769,8 +767,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             auto v_eigen = trajectory.getVelocity(t);
             return trajectory_sample_point{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
                                            {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
-                                           boost::numeric_cast<float>(step),
-                                           true};
+                                           boost::numeric_cast<float>(step)};
         });
     }
     VIAM_SDK_LOG(info) << "move: compute_trajectory end " << unix_time << " samples.size() " << samples.size() << " segments "
@@ -784,8 +781,10 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
               "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
               "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
 
+    auto move_command = make_joint_trajectory(std::move(samples));
+
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
-        return current_state_->enqueue_move_request(current_move_epoch, std::move(samples), std::move(ajp_of));
+        return current_state_->enqueue_move_request(current_move_epoch, std::move(move_command), std::move(ajp_of));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
