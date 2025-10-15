@@ -645,7 +645,7 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
 
 // Define the destructor
 URArm::~URArm() {
-    VIAM_SDK_LOG(info) << "Shutting down URArm driver instance for arm model: "<< model_.to_string();
+    VIAM_SDK_LOG(info) << "Shutting down URArm driver instance for arm model: " << model_.to_string();
     const std::unique_lock wlock{config_mutex_};
     shutdown_(wlock);
 }

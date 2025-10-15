@@ -461,7 +461,7 @@ void URArm::state_::run_() {
             if (bacc::count(*accumulator) == k_num_samples) {
                 const auto accumulated = std::exchange(accumulator, std::nullopt);
                 VIAM_SDK_LOG(info) << "URArm worker thread median wait between control cycles is " << bacc::median(*accumulated)
-                                    << " milliseconds, with variance " << bacc::variance(*accumulated);
+                                   << " milliseconds, with variance " << bacc::variance(*accumulated);
             }
         }
 
@@ -518,4 +518,13 @@ void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult tr
     }
 
     VIAM_SDK_LOG(debug) << "trajectory report: " << report;
+}
+
+void URArm::state_::program_running_callback_(bool running) {
+    program_running_flag.store(running, std::memory_order_release);
+    if (running) {
+        VIAM_SDK_LOG(debug) << "UR program is running";
+        return;
+    }
+    VIAM_SDK_LOG(warn) << "UR program is not running";
 }

@@ -78,7 +78,7 @@ std::string URArm::state_::state_independent_::describe() const {
     return buffer.str();
 }
 
-std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::upgrade_downgrade(state_&) {
+std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::upgrade_downgrade(state_& state) {
     namespace urtde = urcl::rtde_interface;
 
     if (!arm_conn_->safety_status_bits || !arm_conn_->robot_status_bits) {
@@ -177,7 +177,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // This has been found to occur on some stops and when
         // controlling the arm directly while in local mode.
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING))) {
-            arm_conn_->program_running_flag.store(false, std::memory_order_release);
+            state.program_running_flag.store(false, std::memory_order_release);
             VIAM_SDK_LOG(debug) << "While in state " << describe() << ", program is not running on arm; attempting to resend program";
             try {
                 if (!arm_conn_->driver->sendRobotProgram()) {
@@ -197,7 +197,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // TODO(RSDK-11620) Check if we still need this flag.
         VIAM_SDK_LOG(debug) << "While in state " << describe() << ", waiting for callback to toggle program state to running";
         int retry_count = 100;
-        while (!arm_conn_->program_running_flag.load(std::memory_order_acquire)) {
+        while (!state.program_running_flag.load(std::memory_order_acquire)) {
             if (retry_count <= 0) {
                 VIAM_SDK_LOG(warn) << "While in state " << describe() << ", program state never loaded; dropping connection";
                 return event_connection_lost_::robot_program_failure();

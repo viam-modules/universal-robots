@@ -121,10 +121,7 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
 
     // TODO: Change how this works. It ends up logging with this
     // disconnected.cpp filename state when we have a connection.
-    ur_cfg.handle_program_state = [&running_flag = arm_connection->program_running_flag](bool running) {
-        VIAM_SDK_LOG(info) << "UR program is " << (running ? "running" : "not running");
-        running_flag.store(running, std::memory_order_release);
-    };
+    ur_cfg.handle_program_state = std::bind(&URArm::state_::program_running_callback_, &state, std::placeholders::_1);
     ur_cfg.headless_mode = true;
     ur_cfg.socket_reconnect_attempts = 1;
 
@@ -156,7 +153,8 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
         throw std::runtime_error("could not read data package from newly established driver connection ");
     }
 
-    VIAM_SDK_LOG(debug) << "While in state " << describe() << ", recovery appears to have been successful; transitioning to independent mode";
+    VIAM_SDK_LOG(debug) << "While in state " << describe()
+                        << ", recovery appears to have been successful; transitioning to independent mode";
     return arm_connection;
 }
 
