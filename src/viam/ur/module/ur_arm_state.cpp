@@ -123,7 +123,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
             if (connection_failures >= max_connection_failures) {
                 throw;
             }
-            VIAM_SDK_LOG(warn) << "Retrying after " << state->get_timeout_().count() << " milliseconds";
+            VIAM_SDK_LOG(info) << "Retrying after " << state->get_timeout_().count() << " milliseconds";
         }
         std::this_thread::sleep_for(state->get_timeout_());
     }
@@ -142,9 +142,9 @@ void URArm::state_::shutdown() {
     }();
 
     if (worker.joinable()) {
-        VIAM_SDK_LOG(info) << "URArm shutdown waiting for worker thread to terminate";
+        VIAM_SDK_LOG(debug) << "URArm shutdown waiting for worker thread to terminate";
         worker.join();
-        VIAM_SDK_LOG(info) << "worker thread terminated";
+        VIAM_SDK_LOG(debug) << "worker thread terminated";
     }
 }
 
@@ -460,7 +460,7 @@ void URArm::state_::run_() {
             (*accumulator)(std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(wait_end - wait_start).count());
             if (bacc::count(*accumulator) == k_num_samples) {
                 const auto accumulated = std::exchange(accumulator, std::nullopt);
-                VIAM_SDK_LOG(debug) << "URArm worker thread median wait between control cycles is " << bacc::median(*accumulated)
+                VIAM_SDK_LOG(info) << "URArm worker thread median wait between control cycles is " << bacc::median(*accumulated)
                                     << " milliseconds, with variance " << bacc::variance(*accumulated);
             }
         }

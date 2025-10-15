@@ -235,7 +235,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
 }
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
-    VIAM_SDK_LOG(debug) << "URArm constructor called (model: " << model_.to_string() << ")";
+    VIAM_SDK_LOG(info) << "Instanciating URArm driver instance for arm model: " << model_.to_string();
     const std::unique_lock wlock(config_mutex_);
     // TODO: prevent multiple calls to configure_logger
     configure_logger(cfg);
@@ -276,7 +276,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     VIAM_SDK_LOG(debug) << "URArm starting up";
     current_state_ = state_::create(configured_model_type, cfg, ports_);
 
-    VIAM_SDK_LOG(debug) << "URArm startup complete";
+    VIAM_SDK_LOG(info) << "URArm startup complete";
     failure_handler.deactivate();
 }
 
@@ -645,10 +645,9 @@ void URArm::move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Ei
 
 // Define the destructor
 URArm::~URArm() {
-    VIAM_SDK_LOG(warn) << "URArm destructor called, shutting down";
+    VIAM_SDK_LOG(info) << "Shutting down URArm driver instance for arm model: "<< model_.to_string();
     const std::unique_lock wlock{config_mutex_};
     shutdown_(wlock);
-    VIAM_SDK_LOG(warn) << "URArm destroyed";
 }
 
 template <template <typename> typename lock_type>
@@ -660,11 +659,9 @@ void URArm::stop_(const lock_type<std::shared_mutex>&) {
 
 void URArm::shutdown_(const std::unique_lock<std::shared_mutex>& lock) noexcept {
     try {
-        VIAM_SDK_LOG(warn) << "URArm shutdown called";
         if (current_state_) {
             const auto destroy_state = make_scope_guard([&] { current_state_.reset(); });
 
-            VIAM_SDK_LOG(info) << "URArm shutdown calling stop";
             stop_(lock);
             current_state_->shutdown();
         }
