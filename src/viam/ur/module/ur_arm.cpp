@@ -126,7 +126,8 @@ urcl::vector6d_t pose_to_ur_vector(const pose& p) {
 
     // robustness to tiny axes/angles
     const double n = std::hypot(ax, ay, az);
-    if (n < k_angle_epsilon || std::abs(th) < k_angle_epsilon) {
+    constexpr double k_axis_epsilon = 1e-8;
+    if (n < k_angle_epsilon || std::abs(th) < k_axis_epsilon) {
         v[3] = v[4] = v[5] = 0.0;
     } else {
         // universal robots orientation vector: r = axis * theta
@@ -596,21 +597,20 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 
     // if we are already at the desired pose, there is nothing to do
     constexpr double k_position_tolerance_m = 1e-3;       // 1 mm
-    constexpr double k_orientation_tolerance_rad = 1e-3;  // ~0.057 degrees
     bool already_there = true;
-    for (size_t i = 0; i < 3; ++i) {  // check XYZ
+    for (size_t i = 0; i != 3; ++i) {  // check XYZ
         if (std::abs(current_pose[i] - target_pose[i]) > k_position_tolerance_m) {
             already_there = false;
             break;
         }
     }
+    constexpr double k_orientation_tolerance_rad = 1e-3;  // ~0.057 degrees
     for (size_t i = 3; i < 6 && already_there; ++i) {  // check orientation (rx, ry, rz)
         if (std::abs(current_pose[i] - target_pose[i]) > k_orientation_tolerance_rad) {
             already_there = false;
             break;
         }
     }
-
     if (already_there) {
         VIAM_SDK_LOG(info) << "Already at desired pose; skipping movement.";
         return;
@@ -622,7 +622,6 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 
     // Write trajectory to file for debugging purposes
     // TODO(RSDK-12185): Capture pose arm visits
-    // https://viam.atlassian.net/browse/RSDK-12185
     const std::string& path = current_state_->csv_output_path();
     const trajectory_sample_point sample_for_file{target_pose, {0, 0, 0, 0, 0, 0}, 0.0F};
     write_trajectory_to_file(move_to_position_trajectory_filename(path, unix_time), {sample_for_file});

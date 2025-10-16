@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cmath>
 #include <list>
 #include <shared_mutex>
 #include <stdexcept>
@@ -26,7 +25,7 @@ struct trajectory_sample_point {
     float timestep;
 };
 
-// TODO: determine how to set the velocity and acceleration so they are not hardcoded
+// TODO(RSDK-12294): determine how to set the velocity and acceleration so they are not hardcoded
 struct pose_sample {
     vector6d_t p;
 };
