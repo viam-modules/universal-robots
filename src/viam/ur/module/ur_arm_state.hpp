@@ -149,10 +149,6 @@ class URArm::state_ {
         std::optional<std::bitset<k_num_robot_status_bits>> robot_status_bits;
         std::optional<std::bitset<k_num_safety_status_bits>> safety_status_bits;
 
-        // TODO(RSDK-11620): Check if we still need this flag. We may
-        // not, now that we examine status bits that include letting
-        // us know whether the program is running.
-        std::atomic<bool> program_running_flag{false};
         bool log_destructor{false};
     };
 
@@ -332,6 +328,12 @@ class URArm::state_ {
 
     void run_();
     void trajectory_done_callback_(control::TrajectoryResult trajectory_result);
+    void program_running_callback_(bool running);
+
+    // TODO(RSDK-11620): Check if we still need this flag. We may
+    // not, now that we examine status bits that include letting
+    // us know whether the program is running.
+    std::atomic<bool> program_running_flag{false};
 
     const std::string configured_model_type_;
     const std::string host_;

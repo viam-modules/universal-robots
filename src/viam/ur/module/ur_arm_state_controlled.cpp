@@ -65,13 +65,13 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
     if (!state.move_request_->samples.empty() && !state.move_request_->cancellation_request) {
         // We have a move request, it has samples, and there is no pending cancel for that move. Issue the move.
 
-        VIAM_SDK_LOG(info) << "URArm sending trajectory";
+        VIAM_SDK_LOG(debug) << "URArm sending trajectory";
 
         // By moving the samples out, we indicate that the trajectory is considered started.
         auto samples = std::move(state.move_request_->samples);
         const auto num_samples = samples.size();
 
-        VIAM_SDK_LOG(info) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
+        VIAM_SDK_LOG(debug) << "URArm::send_trajectory sending TRAJECTORY_START for " << num_samples << " samples";
         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                 urcl::control::TrajectoryControlMessage::TRAJECTORY_START, static_cast<int>(num_samples), RobotReceiveTimeout::off())) {
             VIAM_SDK_LOG(error) << "send_trajectory driver->writeTrajectoryControlMessage returned false; dropping connection";
@@ -79,7 +79,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
             return event_connection_lost_::trajectory_control_failure();
         }
 
-        VIAM_SDK_LOG(info) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
+        VIAM_SDK_LOG(debug) << "URArm::send_trajectory sending " << num_samples << " cubic writeTrajectorySplinePoint";
         for (size_t i = 0; i < num_samples; i++) {
             if (!arm_conn_->driver->writeTrajectorySplinePoint(samples[i].p, samples[i].v, samples[i].timestep)) {
                 VIAM_SDK_LOG(error) << "send_trajectory cubic driver->writeTrajectorySplinePoint returned false; dropping connection";
@@ -88,7 +88,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
             }
         }
 
-        VIAM_SDK_LOG(info) << "URArm trajectory sent";
+        VIAM_SDK_LOG(debug) << "URArm trajectory sent";
 
     } else if (state.move_request_->samples.empty() && state.move_request_->cancellation_request &&
                !state.move_request_->cancellation_request->issued) {
