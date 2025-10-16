@@ -199,5 +199,7 @@ jobs:
           version: ${{ github.ref_name }}
           key-id: ${{ secrets.viam_key_id }}
           key-value: ${{ secrets.viam_key_value }}
+          name: universal-robots
+          org-id: viam
           do-update: ${{ github.event_name == 'release' && !github.event.release.prerelease }}
           do-upload: ${{ github.event_name == 'release' }}
