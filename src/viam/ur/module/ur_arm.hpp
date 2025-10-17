@@ -2,10 +2,6 @@
 
 #include <list>
 #include <shared_mutex>
-#include <stdexcept>
-#include <utility>
-#include <variant>
-#include <vector>
 
 #include <Eigen/Core>
 

@@ -54,20 +54,23 @@ namespace {
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 
+// Type aliases for smart pointers managing FFI memory
+using unique_orientation_vector = std::unique_ptr<void, decltype(&free_orientation_vector_memory)>;
+using unique_quaternion = std::unique_ptr<void, decltype(&free_quaternion_memory)>;
+using unique_axis_angles = std::unique_ptr<double[], decltype(&free_axis_angles_memory)>;
+using unique_orientation_components = std::unique_ptr<double[], decltype(&free_orientation_vector_components)>;
+
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = std::hypot(vec[3], vec[4], vec[5]);
     if (std::isnan(norm) || (norm == 0)) {
         throw std::invalid_argument("Cannot normalize with NaN or zero norm");
     }
 
-    auto q = std::unique_ptr<void, decltype(&free_quaternion_memory)>(
-        quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm), &free_quaternion_memory);
+    auto q = unique_quaternion(quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm), &free_quaternion_memory);
 
-    auto ov = std::unique_ptr<void, decltype(&free_orientation_vector_memory)>(orientation_vector_from_quaternion(q.get()),
-                                                                               &free_orientation_vector_memory);
+    auto ov = unique_orientation_vector(orientation_vector_from_quaternion(q.get()), &free_orientation_vector_memory);
 
-    auto components = std::unique_ptr<double[], decltype(&free_orientation_vector_components)>(orientation_vector_get_components(ov.get()),
-                                                                                               &free_orientation_vector_components);
+    auto components = unique_orientation_components(orientation_vector_get_components(ov.get()), &free_orientation_vector_components);
 
     auto position = coordinates{1000 * vec[0], 1000 * vec[1], 1000 * vec[2]};
     auto orientation = pose_orientation{components[0], components[1], components[2]};
@@ -100,21 +103,20 @@ urcl::vector6d_t pose_to_ur_vector(const pose& p) {
     // convert viam's orientation to axis angles which is what universal robots use
     // viam orientation vector -> quaternion -> axis angle -> universal robots orientation vector
     // create an orientation vector to use
-    auto ov = std::unique_ptr<void, decltype(&free_orientation_vector_memory)>(
-        new_orientation_vector(p.orientation.o_x, p.orientation.o_y, p.orientation.o_z, theta_rad), &free_orientation_vector_memory);
+    auto ov = unique_orientation_vector(new_orientation_vector(p.orientation.o_x, p.orientation.o_y, p.orientation.o_z, theta_rad),
+                                        &free_orientation_vector_memory);
     if (!ov) {
         throw std::runtime_error("pose_to_ur_vector: failed to create orientation vector");
     }
 
     // create quaternion from the orientation vector
-    auto q =
-        std::unique_ptr<void, decltype(&free_quaternion_memory)>(quaternion_from_orientation_vector(ov.get()), &free_quaternion_memory);
+    auto q = unique_quaternion(quaternion_from_orientation_vector(ov.get()), &free_quaternion_memory);
     if (!q) {
         throw std::runtime_error("pose_to_ur_vector: failed to create quaternion");
     }
 
     // convert the quaternion to axis angles
-    auto aa = std::unique_ptr<double[], decltype(&free_axis_angles_memory)>(axis_angle_from_quaternion(q.get()), &free_axis_angles_memory);
+    auto aa = unique_axis_angles(axis_angle_from_quaternion(q.get()), &free_axis_angles_memory);
     if (!aa) {
         throw std::runtime_error("pose_to_ur_vector: failed to compute axis-angle");
     }
@@ -605,7 +607,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
         }
     }
     constexpr double k_orientation_tolerance_rad = 1e-3;  // ~0.057 degrees
-    for (size_t i = 3; i < 6 && already_there; ++i) {     // check orientation (rx, ry, rz)
+    for (size_t i = 3; i != 6 && already_there; ++i) {     // check orientation (rx, ry, rz)
         if (std::abs(current_pose[i] - target_pose[i]) > k_orientation_tolerance_rad) {
             already_there = false;
             break;
