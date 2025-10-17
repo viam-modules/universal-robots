@@ -25,23 +25,9 @@ struct trajectory_sample_point {
     float timestep;
 };
 
-// TODO(RSDK-12294): determine how to set the velocity and acceleration so they are not hardcoded
 struct pose_sample {
     vector6d_t p;
 };
-
-using MoveCommand = std::variant<std::vector<trajectory_sample_point>, pose_sample>;
-
-inline MoveCommand make_joint_trajectory(std::vector<trajectory_sample_point> samples) {
-    if (samples.empty()) {
-        throw std::invalid_argument("joint trajectory must not be empty");
-    }
-    return MoveCommand{std::move(samples)};
-}
-
-inline MoveCommand make_single_pose(pose_sample ps) {
-    return MoveCommand{std::move(ps)};
-}
 
 template <typename Func>
 void sampling_func(std::vector<trajectory_sample_point>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {

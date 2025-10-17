@@ -224,7 +224,7 @@ size_t URArm::state_::get_move_epoch() const {
 }
 
 std::future<void> URArm::state_::enqueue_move_request(size_t current_move_epoch,
-                                                      MoveCommand&& move_command,
+                                                      std::vector<trajectory_sample_point>&& samples,
                                                       std::ofstream arm_joint_positions_stream) {
     // Use CAS to increment the epoch and detect if another move
     // operation occurred between when we obtained a value with
@@ -240,7 +240,25 @@ std::future<void> URArm::state_::enqueue_move_request(size_t current_move_epoch,
     if (move_request_) {
         throw std::runtime_error("an actuation is already in progress");
     }
-    return move_request_.emplace(std::move(move_command), std::move(arm_joint_positions_stream)).completion.get_future();
+    return move_request_.emplace(std::move(samples), std::move(arm_joint_positions_stream)).completion.get_future();
+}
+
+std::future<void> URArm::state_::enqueue_move_request(size_t current_move_epoch, pose_sample ps, std::ofstream arm_joint_positions_stream) {
+    // Use CAS to increment the epoch and detect if another move
+    // operation occurred between when we obtained a value with
+    // `get_move_epoch` and when `enqueue_move_request` was called
+    // (presumably, while we were planning). If so, we have to fail
+    // this operation, since our starting waypoint information is no
+    // longer valid.
+    if (!move_epoch_.compare_exchange_strong(current_move_epoch, current_move_epoch + 1, std::memory_order_acq_rel)) {
+        throw std::runtime_error("move operation was superseded by a newer operation");
+    }
+
+    const std::lock_guard lock{mutex_};
+    if (move_request_) {
+        throw std::runtime_error("an actuation is already in progress");
+    }
+    return move_request_.emplace(std::move(ps), std::move(arm_joint_positions_stream)).completion.get_future();
 }
 
 bool URArm::state_::is_moving() const {
@@ -248,10 +266,20 @@ bool URArm::state_::is_moving() const {
     if (!move_request_) {
         return false;
     }
-    if (const auto* v = std::get_if<std::vector<trajectory_sample_point>>(&move_request_->move_command)) {
-        return v->empty();  // issued -> moving
-    }
-    return false;  // pose_sample still pending
+    return std::visit(
+        [](const auto& cmd) -> bool {
+            using T = std::decay_t<decltype(cmd)>;
+            if constexpr (std::is_same_v<T, std::vector<trajectory_sample_point>>) {
+                // If we have an empty vector of trajectory_sample_point it means we have sent them to the arm
+                // so, as far as we are concerned, the arm is moving, though it may fail later.
+                return cmd.empty();
+            } else if constexpr (std::is_same_v<T, std::optional<pose_sample>>) {
+                // If we have nullopt it means we have sent it to the arm
+                // so, as far as we are concerned, the arm is moving, though it may fail later.
+                return !cmd.has_value();
+            }
+        },
+        move_request_->move_command);
 }
 
 std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
@@ -288,7 +316,7 @@ URArm::state_::arm_connection_::~arm_connection_() {
     dashboard.reset();
 }
 
-URArm::state_::move_request::move_request(MoveCommand&& move_command, std::ofstream arm_joint_positions_stream)
+URArm::state_::move_request::move_request(move_command_data&& move_command, std::ofstream arm_joint_positions_stream)
     : move_command(std::move(move_command)), arm_joint_positions_stream(std::move(arm_joint_positions_stream)) {
     // Validate the move command based on its type
     std::visit(
@@ -298,7 +326,10 @@ URArm::state_::move_request::move_request(MoveCommand&& move_command, std::ofstr
                 if (cmd.empty()) {
                     throw std::invalid_argument("no trajectory samples provided to move request");
                 }
-            } else if constexpr (std::is_same_v<T, pose_sample>) {
+            } else if constexpr (std::is_same_v<T, std::optional<pose_sample>>) {
+                if (!cmd.has_value()) {
+                    throw std::invalid_argument("no pose provided to move request");
+                }
             }
         },
         this->move_command);

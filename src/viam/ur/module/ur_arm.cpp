@@ -596,7 +596,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     auto target_pose = pose_to_ur_vector(p);
 
     // if we are already at the desired pose, there is nothing to do
-    constexpr double k_position_tolerance_m = 1e-3;       // 1 mm
+    constexpr double k_position_tolerance_m = 1e-3;  // 1 mm
     bool already_there = true;
     for (size_t i = 0; i != 3; ++i) {  // check XYZ
         if (std::abs(current_pose[i] - target_pose[i]) > k_position_tolerance_m) {
@@ -605,7 +605,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
         }
     }
     constexpr double k_orientation_tolerance_rad = 1e-3;  // ~0.057 degrees
-    for (size_t i = 3; i < 6 && already_there; ++i) {  // check orientation (rx, ry, rz)
+    for (size_t i = 3; i < 6 && already_there; ++i) {     // check orientation (rx, ry, rz)
         if (std::abs(current_pose[i] - target_pose[i]) > k_orientation_tolerance_rad) {
             already_there = false;
             break;
@@ -618,7 +618,6 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 
     // create a pose_sample for tool-space movement
     const pose_sample ps{target_pose};
-    auto move_command = make_single_pose(ps);
 
     // Write trajectory to file for debugging purposes
     // TODO(RSDK-12185): Capture pose arm visits
@@ -632,7 +631,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
               "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
-        return current_state_->enqueue_move_request(current_move_epoch, std::move(move_command), std::move(ajp_of));
+        return current_state_->enqueue_move_request(current_move_epoch, ps, std::move(ajp_of));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
@@ -780,10 +779,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
               "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
               "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
 
-    auto move_command = make_joint_trajectory(std::move(samples));
-
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
-        return current_state_->enqueue_move_request(current_move_epoch, std::move(move_command), std::move(ajp_of));
+        return current_state_->enqueue_move_request(current_move_epoch, std::move(samples), std::move(ajp_of));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact

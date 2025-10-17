@@ -52,7 +52,11 @@ class URArm::state_ {
 
     size_t get_move_epoch() const;
 
-    std::future<void> enqueue_move_request(size_t current_move_epoch, MoveCommand&& move_command, std::ofstream arm_joint_positions_stream);
+    std::future<void> enqueue_move_request(size_t current_move_epoch,
+                                           std::vector<trajectory_sample_point>&& samples,
+                                           std::ofstream arm_joint_positions_stream);
+
+    std::future<void> enqueue_move_request(size_t current_move_epoch, pose_sample ps, std::ofstream arm_joint_positions_stream);
 
     bool is_moving() const;
     std::string describe() const;
@@ -283,7 +287,15 @@ class URArm::state_ {
     // URArm misusing it.
     struct move_request {
        public:
-        explicit move_request(MoveCommand&& move_command, std::ofstream arm_joint_positions_stream);
+        using move_command_data = std::variant<std::vector<trajectory_sample_point>, std::optional<pose_sample>>;
+
+        explicit move_request(move_command_data&& move_command, std::ofstream arm_joint_positions_stream);
+
+        explicit move_request(std::vector<trajectory_sample_point>&& tsps, std::ofstream arm_joint_positions_stream)
+            : move_request(move_command_data{std::move(tsps)}, std::move(arm_joint_positions_stream)) {}
+
+        explicit move_request(pose_sample ps, std::ofstream arm_joint_positions_stream)
+            : move_request(move_command_data{std::optional<pose_sample>{std::move(ps)}}, std::move(arm_joint_positions_stream)) {}
 
         std::shared_future<void> cancel();
 
@@ -295,7 +307,7 @@ class URArm::state_ {
 
         void write_joint_data(vector6d_t& position, vector6d_t& velocity);
 
-        MoveCommand move_command;
+        move_command_data move_command;
         std::ofstream arm_joint_positions_stream;
         std::size_t arm_joint_positions_sample{0};
         std::promise<void> completion;
