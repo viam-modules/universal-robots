@@ -297,7 +297,8 @@ URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint
         this->move_command);
 }
 
-URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream, std::vector<trajectory_sample_point>&& tsps)
+URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream,
+                                          std::vector<trajectory_sample_point>&& tsps)
     : move_request(std::move(arm_joint_positions_stream), move_command_data{std::move(tsps)}) {}
 
 URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream, pose_sample ps)

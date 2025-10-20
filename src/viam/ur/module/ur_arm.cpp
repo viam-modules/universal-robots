@@ -775,7 +775,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
               "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
-        return current_state_->enqueue_move_request(current_move_epoch, std::optional<std::ofstream>{std::move(ajp_of)}, std::move(samples));
+        return current_state_->enqueue_move_request(
+            current_move_epoch, std::optional<std::ofstream>{std::move(ajp_of)}, std::move(samples));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
