@@ -4,7 +4,6 @@
 #include <cmath>
 #include <numbers>
 #include <optional>
-#include <ranges>
 #include <stdexcept>
 
 #if __has_include(<xtensor/reducers/xnorm.hpp>)
@@ -225,7 +224,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         }
 
         // Compute perpendicular distance from locus to line
-        const auto projected_point = start + t * start_to_next;
+        const auto projected_point = start + (t * start_to_next);
         const auto deviation_vector = locus - projected_point;
         const double deviation = xt::norm_l2(deviation_vector)();
 
@@ -299,7 +298,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const auto x_unit = x_vec / xt::norm_l2(x_vec)();
 
         // ŷ is the incoming direction (perpendicular to x by construction)
-        const auto y_unit = incoming_unit;
+        const auto& y_unit = incoming_unit;
 
         return blend_geometry{.circular_seg = segment::circular{center, x_unit, y_unit, radius, angle}, .trim_distance = trim_distance};
     };
@@ -438,6 +437,17 @@ path::const_iterator path::const_iterator::operator++(int) noexcept {
     return tmp;
 }
 
+path::const_iterator& path::const_iterator::operator--() noexcept {
+    --it_;
+    return *this;
+}
+
+path::const_iterator path::const_iterator::operator--(int) noexcept {
+    auto tmp = *this;
+    --(*this);
+    return tmp;
+}
+
 bool path::const_iterator::operator==(const const_iterator& other) const noexcept {
     return it_ == other.it_;
 }
@@ -486,6 +496,171 @@ xt::xarray<double> path::tangent(arc_length s) const {
 
 xt::xarray<double> path::curvature(arc_length s) const {
     return (*this)(s).curvature(s);
+}
+
+// path::cursor implementation
+
+path::cursor::cursor(const class path* p, arc_length s)
+    : path_{p}, position_{std::clamp(s, arc_length{0.0}, p->length())}, hint_{path_->begin()} {
+    if (path_->empty()) {
+        throw std::invalid_argument{"Cannot create cursor for empty path"};
+    }
+    update_hint_();
+}
+
+const path& path::cursor::path() const noexcept {
+    return *path_;
+}
+
+arc_length path::cursor::position() const noexcept {
+    return position_;
+}
+
+path::segment::view path::cursor::operator*() const {
+    return *hint_;
+}
+
+void path::cursor::seek(arc_length s) noexcept {
+    // Overflow to ±infinity sentinels outside valid range
+    if (s < arc_length{0.0}) {
+        position_ = arc_length{-std::numeric_limits<double>::infinity()};
+    } else if (s > path_->length()) {
+        position_ = arc_length{std::numeric_limits<double>::infinity()};
+    } else {
+        position_ = s;
+    }
+
+    // Only update hint if not at sentinel
+    if (*this != end()) {
+        update_hint_();
+    }
+}
+
+void path::cursor::seek_by(arc_length delta) noexcept {
+    seek(position_ + delta);
+}
+
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static): Must be non-static for consistent cursor API
+std::default_sentinel_t path::cursor::end() const noexcept {
+    return std::default_sentinel;
+}
+
+bool operator==(const path::cursor& c, std::default_sentinel_t) noexcept {
+    return !std::isfinite(static_cast<double>(c.position_));
+}
+
+bool operator==(std::default_sentinel_t, const path::cursor& c) noexcept {
+    return !std::isfinite(static_cast<double>(c.position_));
+}
+
+xt::xarray<double> path::cursor::configuration() const {
+    // Validate cursor is not at sentinel
+    if (*this == end()) [[unlikely]] {
+        throw std::out_of_range{"Cannot query cursor at sentinel position"};
+    }
+
+    // Use hint to get segment view, delegate to view
+    auto view = *hint_;
+    return view.configuration(position_);
+}
+
+xt::xarray<double> path::cursor::tangent() const {
+    // Validate cursor is not at sentinel
+    if (*this == end()) [[unlikely]] {
+        throw std::out_of_range{"Cannot query cursor at sentinel position"};
+    }
+
+    auto view = *hint_;
+    return view.tangent(position_);
+}
+
+xt::xarray<double> path::cursor::curvature() const {
+    // Validate cursor is not at sentinel
+    if (*this == end()) [[unlikely]] {
+        throw std::out_of_range{"Cannot query cursor at sentinel position"};
+    }
+
+    auto view = *hint_;
+    return view.curvature(position_);
+}
+
+void path::cursor::update_hint_() noexcept {
+    // Dereference hint to get view for comparisons
+    auto current_view = *hint_;
+
+    // Fast path: Check if current hint is still valid
+    // This handles the common case of small sequential steps within a segment
+    if (position_ >= current_view.start() && position_ < current_view.end()) {
+        return;  // Hint still valid, O(1)
+    }
+
+    // Special case: Exactly at segment end boundary
+    // This can happen frequently during integration
+    if (position_ == current_view.end()) {
+        // Try to advance hint to next segment
+        auto next_hint = hint_;
+        ++next_hint;
+        if (next_hint != path_->end()) {
+            auto next_view = *next_hint;
+            if (position_ >= next_view.start() && position_ < next_view.end()) {
+                hint_ = next_hint;
+                return;  // Advanced to next segment, O(1)
+            }
+        }
+        // Position is exactly at path end, keep current hint
+        return;
+    }
+
+    // Check previous segment (for backward integration)
+    // Efficient thanks to bidirectional iterator!
+    if (hint_ != path_->begin()) {
+        auto prev_hint = hint_;
+        --prev_hint;
+        auto prev_view = *prev_hint;
+        if (position_ >= prev_view.start() && position_ < prev_view.end()) {
+            hint_ = prev_hint;
+            return;  // Moved to previous segment, O(1)
+        }
+    }
+
+    // Check next segment (for forward integration)
+    if (hint_ != path_->end()) {
+        auto next_hint = hint_;
+        ++next_hint;
+        if (next_hint != path_->end()) {
+            auto next_view = *next_hint;
+            if (position_ >= next_view.start() && position_ < next_view.end()) {
+                hint_ = next_hint;
+                return;  // Moved to next segment, O(1)
+            }
+        }
+    }
+
+    // Large jump - use binary search directly on segments_
+    // Find first segment that starts AFTER position (upper_bound)
+    // The segment containing position is the one before it
+    // This is O(log n) but rare in sequential traversal
+    auto seg_it = std::upper_bound(
+        path_->segments_.begin(), path_->segments_.end(), position_, [](arc_length value, const positioned_segment& entry) {
+            return value < entry.start;
+        });
+
+    // The segment containing position is before the upper_bound result
+    if (seg_it == path_->segments_.begin()) {
+        // Position is at or before first segment start (should be position == 0)
+        hint_ = path_->begin();
+    } else {
+        --seg_it;
+        // Convert internal iterator to const_iterator
+        hint_ = const_iterator{path_, seg_it};
+    }
+}
+
+path::cursor path::create_cursor(arc_length s) const {
+    if (empty()) {
+        throw std::invalid_argument{"Cannot create cursor for empty path"};
+    }
+    return cursor{this, s};
 }
 
 }  // namespace viam::trajex::totg

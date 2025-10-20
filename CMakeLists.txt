@@ -303,7 +303,17 @@ add_executable(trajex-test)
 
 target_sources(trajex-test
   PRIVATE
-    src/viam/trajex/totg/test.cpp
+    src/viam/trajex/totg/test/main.cpp
+    src/viam/trajex/totg/test/test_utils.cpp
+    src/viam/trajex/totg/test/waypoint_accumulator.cpp
+    src/viam/trajex/totg/test/path_basic.cpp
+    src/viam/trajex/totg/test/path_coalescing.cpp
+    src/viam/trajex/totg/test/path_blends.cpp
+    src/viam/trajex/totg/test/path_segments.cpp
+    src/viam/trajex/totg/test/path_cursor.cpp
+    src/viam/trajex/totg/test/trajectory.cpp
+    src/viam/trajex/totg/test/uniform_sampler.cpp
+    src/viam/trajex/totg/test/integration.cpp
 )
 
 target_link_libraries(trajex-test

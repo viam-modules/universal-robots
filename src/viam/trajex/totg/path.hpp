@@ -256,6 +256,19 @@ class path {
     /// @return Curvature vector at s
     xt::xarray<double> curvature(arc_length s) const;
 
+    /// Cursor for efficient sequential traversal (defined after const_iterator)
+    class cursor;
+
+    /// Create a cursor at specified arc length position
+    ///
+    /// Cursors provide efficient sequential traversal with O(1) amortized access via hints.
+    /// Multiple cursors can exist on the same path (e.g., for forward/backward integration).
+    ///
+    /// @param s Starting position (default: 0, path start). Clamped to [0, length].
+    /// @return Cursor positioned at s
+    /// @throws std::invalid_argument if path is empty
+    [[nodiscard]] cursor create_cursor(arc_length s = arc_length{0.0}) const;
+
    private:
     /// Internal storage: segment with its starting position on the path
     struct positioned_segment {
@@ -270,6 +283,7 @@ class path {
     arc_length length_{0.0};
 
     friend class const_iterator;
+    friend class cursor;
 };
 
 /// Forward iterator for path segments, yielding segment::view on dereference
@@ -289,7 +303,7 @@ class path {
 /// @endcode
 class path::const_iterator {
    public:
-    using iterator_category = std::forward_iterator_tag;
+    using iterator_category = std::bidirectional_iterator_tag;
     using value_type = segment::view;
     using difference_type = std::ptrdiff_t;
     using pointer = const segment::view*;
@@ -307,6 +321,12 @@ class path::const_iterator {
     /// Post-increment
     const_iterator operator++(int) noexcept;
 
+    /// Pre-decrement
+    const_iterator& operator--() noexcept;
+
+    /// Post-decrement
+    const_iterator operator--(int) noexcept;
+
     /// Equality comparison
     bool operator==(const const_iterator& other) const noexcept;
 
@@ -319,9 +339,143 @@ class path::const_iterator {
     std::vector<positioned_segment>::const_iterator it_;
 };
 
+/// Cursor for efficient sequential traversal of path with hint optimization
+///
+/// Maintains current arc length position and segment hint for O(1) amortized
+/// access during sequential traversal. Supports bidirectional traversal for
+/// forward and backward integration in TOPP algorithm.
+///
+/// **Hint optimization**: Tracks last-accessed segment to avoid binary search
+/// on sequential access. Provides O(1) amortized lookup vs O(log n) per query.
+///
+/// **Thread safety**: Not thread-safe. Each integration pass should use its own cursor.
+///
+/// **Semantics**: Cursor is a view-like object with internal state. Cursors are copyable
+/// to support snapshots (e.g., for forward/backward integration passes).
+///
+/// Example usage:
+/// @code
+///   path p = path::create(waypoints);
+///   path::cursor cursor = p.create_cursor();
+///
+///   // Forward integration
+///   while (!cursor.at_end()) {
+///       auto config = cursor.configuration();
+///       auto tangent = cursor.tangent();
+///       // ... process ...
+///       cursor.advance_by(arc_length{0.01});
+///   }
+///
+///   // Backward integration
+///   cursor = p.create_cursor(p.length());  // Start at end
+///   while (!cursor.at_start()) {
+///       auto config = cursor.configuration();
+///       cursor.advance_by(arc_length{-0.01});  // negative delta
+///   }
+/// @endcode
+class path::cursor {
+   public:
+    /// Get the path being traversed
+    /// @return Reference to the path
+    const class path& path() const noexcept;
+
+    /// Get current arc length position
+    /// @return Current position along path
+    arc_length position() const noexcept;
+
+    /// Dereference cursor to get segment view at current position
+    ///
+    /// Returns a view of the segment containing the current cursor position,
+    /// including the segment's arc length bounds on the path.
+    ///
+    /// @return View of segment at current position
+    /// @note O(1) - uses cached hint
+    segment::view operator*() const;
+
+    /// Seek to specific arc length position (absolute positioning)
+    ///
+    /// Sets cursor position to target arc length. Clamps to [0, infinity).
+    /// If target exceeds path length, cursor is set to infinity (sentinel position).
+    ///
+    /// @param s Target arc length position
+    void seek(arc_length s) noexcept;
+
+    /// Seek along path by arc length delta (relative positioning)
+    ///
+    /// Advances cursor by arc length offset. Clamps to [0, infinity).
+    /// If result exceeds path length, cursor is set to infinity (sentinel position).
+    /// Supports bidirectional traversal (positive = forward, negative = backward).
+    ///
+    /// @param delta Arc length offset
+    void seek_by(arc_length delta) noexcept;
+
+    /// Get configuration at current position
+    /// @return Configuration vector
+    /// @throws std::out_of_range if cursor is at sentinel position or before start
+    xt::xarray<double> configuration() const;
+
+    /// Get tangent at current position
+    /// @return Unit tangent vector
+    /// @throws std::out_of_range if cursor is at sentinel position or before start
+    xt::xarray<double> tangent() const;
+
+    /// Get curvature at current position
+    /// @return Curvature vector
+    /// @throws std::out_of_range if cursor is at sentinel position or before start
+    xt::xarray<double> curvature() const;
+
+    /// Get sentinel for end-of-path comparison
+    ///
+    /// Returns a sentinel value that compares equal to cursors positioned
+    /// past the end of the path. Useful for detecting when iteration should stop.
+    ///
+    /// @return Sentinel value for comparison
+    std::default_sentinel_t end() const noexcept;
+
+    /// Compare cursor with end sentinel
+    /// @return true if cursor is at sentinel position (past end or invalid)
+    friend bool operator==(const cursor& c, std::default_sentinel_t) noexcept;
+
+    /// Compare end sentinel with cursor (reversed order)
+    /// @return true if cursor is at sentinel position (past end or invalid)
+    friend bool operator==(std::default_sentinel_t, const cursor& c) noexcept;
+
+   private:
+    friend class path;
+
+    /// Construct cursor at given position
+    /// @param p Path to traverse (must outlive cursor)
+    /// @param s Initial position
+    explicit cursor(const class path* p, arc_length s);
+
+    /// Update hint to match current position
+    /// Called after position changes to maintain O(1) amortized access
+    void update_hint_() noexcept;
+
+    const class path* path_;  ///< Path being traversed
+    arc_length position_;     ///< Current position along path
+
+    /// Hint: iterator to segment containing current position
+    /// Maintained by update_hint() for O(1) amortized lookups
+    /// Invariant: If position_ ∈ [hint_->start, hint_->end), then hint_ points to correct segment
+    path::const_iterator hint_;
+};
+
 // Verify that path satisfies range concepts
 static_assert(std::ranges::range<path>);
 static_assert(std::ranges::sized_range<path>);
-static_assert(std::ranges::forward_range<path>);
+static_assert(std::ranges::bidirectional_range<path>);
+
+/// ADL-findable end sentinel for path::cursor
+///
+/// Returns a sentinel value that can be compared with cursors to detect
+/// end-of-path. This free function enables ADL and provides an alternative
+/// to the member function cursor.end().
+///
+/// @param c Cursor (unused, for ADL only)
+/// @return Sentinel value for comparison
+constexpr std::default_sentinel_t end(const path::cursor&) noexcept {
+    return std::default_sentinel;
+}
 
 }  // namespace viam::trajex::totg

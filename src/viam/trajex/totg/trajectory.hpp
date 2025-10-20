@@ -55,29 +55,54 @@ class trajectory {
         /// Maximum acceleration per DOF (units match configuration space)
         xt::xarray<double> max_acceleration;
 
-        /// Default integration step size in arc length (configuration space distance units)
-        static constexpr double k_default_delta = 0.001;
+        /// Default integration time step for phase plane integration
+        /// Paper (Table I) recommends 0.001s (1ms) as good balance of accuracy vs speed
+        static constexpr seconds k_default_delta{0.001};
 
         /// Default epsilon for numerical comparisons
         static constexpr double k_default_epsilon = 1e-6;
 
-        /// Integration step size in arc length (configuration space distance units)
-        double delta{k_default_delta};
+        /// Integration time step for phase plane integration
+        /// Smaller values → more accurate but slower computation
+        seconds delta{k_default_delta};
 
         /// Numerical comparison epsilon
         double epsilon{k_default_epsilon};
     };
 
+    /// Integration point from phase plane TOPP algorithm
+    ///
+    /// Stores (time, arc_length, velocity, acceleration) from phase plane integration.
+    /// Path geometry (q, q', q'') is queried on-demand during sampling for exact results.
+    /// This is more accurate than storing and interpolating joint-space values, since
+    /// the path knows exact circular blend geometry.
+    struct integration_point {
+        seconds time;   ///< Time at this integration point
+        arc_length s;   ///< Arc length position on path
+        double s_dot;   ///< Path velocity (ds/dt)
+        double s_ddot;  ///< Path acceleration (d²s/dt²)
+    };
+
+    /// Collection of integration points from TOPP phase plane integration
+    ///
+    /// Represents the time-parameterization of a path as a sequence of
+    /// (time, arc_length, velocity, acceleration) samples from forward/backward
+    /// integration in the phase plane.
+    using integration_points = std::vector<integration_point>;
+
     /// Create time-optimal trajectory from path
     ///
     /// Computes TOPP time-parameterization respecting velocity/acceleration limits.
+    /// If test_points are provided, bypasses TOPP for testing with known integration data.
     ///
     /// @param p Path to time-parameterize (moved into trajectory)
-    /// @param opt Trajectory generation options
+    /// @param opt Trajectory generation options (moved into trajectory)
+    /// @param test_points Optional integration points for testing (bypasses TOPP algorithm).
+    ///                    If provided, must be sorted by time with first point at t=0.
     /// @return Time-parameterized trajectory
     /// @throws std::invalid_argument if options.max_velocity/acceleration DOF doesn't match path DOF,
-    ///         or if options.delta/epsilon are non-positive
-    [[nodiscard]] static trajectory create(path p, const options& opt);
+    ///         if options.delta/epsilon are non-positive, or if test_points are invalid
+    [[nodiscard]] static trajectory create(path p, options opt, integration_points test_points = {});
 
     /// Get total duration of trajectory
     /// @return Duration
@@ -90,6 +115,14 @@ class trajectory {
     /// Get number of degrees of freedom
     /// @return Number of DOF
     size_t dof() const noexcept;
+
+    /// Get integration points from TOPP phase plane integration
+    /// @return Reference to integration points vector
+    const integration_points& get_integration_points() const noexcept;
+
+    /// Get options used to generate this trajectory
+    /// @return Reference to trajectory generation options
+    const struct options& get_options() const noexcept;
 
     /// Sample trajectory at given time
     /// @param t Time
@@ -123,25 +156,28 @@ class trajectory {
     [[nodiscard]] sampled<S> samples(S s) const;
 
     /// Create a cursor for manual sequential sampling
-    /// @return Cursor initialized to start of trajectory
+    /// @return Cursor initialized to trajectory start (t=0)
     [[nodiscard]] cursor create_cursor() const;
 
    private:
     // Private constructor - only create() can construct trajectories
-    explicit trajectory(class path p);
+    trajectory(class path p, struct options opt, integration_points points);
 
-    // TODO(acm): Store time parameterization
-    // - Could be sampled points with interpolation
-    // - Or piecewise polynomial representation
-    // - Need to support queries for position/velocity/acceleration at time t
-
-    class path path_;
-    seconds duration_{seconds{0.0}};
+    class path path_;                        ///< Geometric path
+    struct options options_;                 ///< Options used to generate this trajectory
+    integration_points integration_points_;  ///< Time parameterization from TOPP integration
+    seconds duration_{seconds{0.0}};         ///< Total trajectory duration
 };
 
 /// Cursor for efficient sequential trajectory sampling
 ///
-/// Maintains position and hint state for O(1) amortized sequential access.
+/// Maintains position and dual hint state for O(1) amortized sequential access:
+/// - Time hint: Iterator into samples_ vector for O(1) time lookups
+/// - Path hint: Embedded path::cursor for O(1) path geometry queries
+///
+/// Sequential sampling (the common case) is O(1) amortized because both hints
+/// follow along as the cursor advances through time.
+///
 /// Samplers control cursor advancement to implement different sampling strategies.
 class trajectory::cursor {
    public:
@@ -154,24 +190,66 @@ class trajectory::cursor {
     seconds time() const noexcept;
 
     /// Sample trajectory at current cursor position
+    ///
+    /// Interpolates (s, ṡ, s̈) from stored samples, then queries path for exact
+    /// geometry at interpolated arc length. Uses dual hints for O(1) amortized access.
+    ///
     /// @return Sample at current time
+    /// @throws std::out_of_range if cursor is at sentinel position or before start
     struct trajectory::sample sample() const;
 
-    /// Advance cursor to specific time
+    /// Seek cursor to specific time (absolute positioning)
+    ///
+    /// Sets cursor position to target time. Clamps to [0, infinity).
+    /// If target exceeds duration, cursor is set to infinity (sentinel position).
+    ///
     /// @param t Absolute time to move to
-    void advance_to(seconds t);
+    void seek(seconds t);
 
-    /// Advance cursor by time delta
-    /// @param dt Time offset to advance by
-    void advance_by(seconds dt);
+    /// Seek cursor by time delta (relative positioning)
+    ///
+    /// Advances cursor by time offset. Clamps to [0, infinity).
+    /// If result exceeds duration, cursor is set to infinity (sentinel position).
+    ///
+    /// @param dt Time offset to move by
+    void seek_by(seconds dt);
+
+    /// Get sentinel for end-of-trajectory comparison
+    ///
+    /// Returns a sentinel value that compares equal to cursors positioned
+    /// past the end of the trajectory. Useful for detecting when iteration
+    /// should stop.
+    ///
+    /// @return Sentinel value for comparison
+    std::default_sentinel_t end() const noexcept;
+
+    /// Compare cursor with end sentinel
+    /// @return true if cursor is at sentinel position (past end or invalid)
+    friend bool operator==(const cursor& c, std::default_sentinel_t) noexcept;
+
+    /// Compare end sentinel with cursor (reversed order)
+    /// @return true if cursor is at sentinel position (past end or invalid)
+    friend bool operator==(std::default_sentinel_t, const cursor& c) noexcept;
 
    private:
     friend class trajectory;
     explicit cursor(const class trajectory* traj);
 
+    /// Helper to update path cursor position after time hint is updated
+    void update_path_cursor_position_(seconds t);
+
     const class trajectory* traj_;
     seconds time_{seconds{0.0}};
-    // TODO(acm): Add hints for time parameterization lookup
+
+    /// Hint for O(1) amortized time lookups in integration_points_ vector
+    /// Points to the integration point at or before current time_
+    /// Maintained by seek/seek_by to avoid repeated binary searches
+    std::vector<integration_point>::const_iterator time_hint_;
+
+    /// Path cursor for O(1) amortized path geometry queries
+    /// Positioned at interpolated arc length corresponding to current time_
+    /// Invariant: After seek(), path_cursor_ is at the s corresponding to time_
+    path::cursor path_cursor_;
 };
 
 /// Implementation of trajectory::sampled range
@@ -298,6 +376,18 @@ bool trajectory::sampled<S>::iterator::operator==(const iterator& other) const n
         return current_->time == other.current_->time;
     }
     return false;
+}
+
+/// ADL-findable end sentinel for trajectory::cursor
+///
+/// Returns a sentinel value that can be compared with cursors to detect
+/// end-of-trajectory. This free function enables ADL and provides an
+/// alternative to the member function cursor.end().
+///
+/// @param c Cursor (unused, for ADL only)
+/// @return Sentinel value for comparison
+constexpr std::default_sentinel_t end(const trajectory::cursor&) noexcept {
+    return std::default_sentinel;
 }
 
 }  // namespace viam::trajex::totg

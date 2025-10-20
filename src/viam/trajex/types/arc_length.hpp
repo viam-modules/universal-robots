@@ -1,6 +1,7 @@
 #pragma once
 
 #include <compare>
+#include <ostream>
 
 namespace viam::trajex {
 
@@ -76,6 +77,11 @@ struct arc_length {
     /// Scalar multiplication (scalar * arc_length)
     friend constexpr arc_length operator*(double scalar, arc_length len) noexcept {
         return len * scalar;
+    }
+
+    /// Stream output for debugging and test output
+    friend std::ostream& operator<<(std::ostream& os, arc_length len) {
+        return os << len.value;
     }
 };
 

@@ -38,16 +38,16 @@ uniform_sampler uniform_sampler::quantized_for_trajectory(const trajectory& traj
 }
 
 std::optional<struct trajectory::sample> uniform_sampler::next(trajectory::cursor& cursor) {
-    // Check if we've exceeded trajectory duration
-    if (cursor.time() > cursor.trajectory().duration()) {
+    // Check if cursor is at end sentinel
+    if (cursor == cursor.end()) {
         return std::nullopt;
     }
 
-    // Sample at current cursor position
+    // Sample at current position (may be exactly at endpoint)
     auto sample = cursor.sample();
 
-    // Advance cursor for next call
-    cursor.advance_by(dt_);
+    // Advance cursor for next iteration (may go past duration to sentinel)
+    cursor.seek_by(dt_);
 
     return sample;
 }
