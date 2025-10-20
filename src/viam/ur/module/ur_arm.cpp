@@ -588,7 +588,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     // slipped in while we were planning.
     auto current_move_epoch = current_state_->get_move_epoch();
 
-    VIAM_SDK_LOG(info) << "move tool space: start unix_time_ms " << unix_time << " p: " << p;
+    VIAM_SDK_LOG(debug) << "move tool space: start unix_time_ms " << unix_time << " p: " << p;
     const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move tool space: end unix_time " << unix_time; });
 
     // get current pose
@@ -614,7 +614,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
         }
     }
     if (already_there) {
-        VIAM_SDK_LOG(info) << "Already at desired pose; skipping movement.";
+        VIAM_SDK_LOG(debug) << "Already at desired pose; skipping movement.";
         return;
     }
 
@@ -627,13 +627,9 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     const trajectory_sample_point sample_for_file{target_pose, {0, 0, 0, 0, 0, 0}, 0.0F};
     write_trajectory_to_file(move_to_position_trajectory_filename(path, unix_time), {sample_for_file});
 
-    std::ofstream ajp_of(arm_joint_positions_filename(path, unix_time));
-    ajp_of << "time_ms,read_attempt,"
-              "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
-              "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
-
-    auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
-        return current_state_->enqueue_move_request(current_move_epoch, ps, std::move(ajp_of));
+    // For pose-space moves, we don't log joint data since we only have the target pose
+    auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock)]() mutable {
+        return current_state_->enqueue_move_request(current_move_epoch, std::nullopt, ps);
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
@@ -776,13 +772,14 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     const std::string& path = current_state_->csv_output_path();
     write_trajectory_to_file(trajectory_filename(path, unix_time), samples);
 
+    // For joint-space moves, we log the actual joint positions/velocities during execution
     std::ofstream ajp_of(arm_joint_positions_filename(path, unix_time));
     ajp_of << "time_ms,read_attempt,"
               "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
               "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
-        return current_state_->enqueue_move_request(current_move_epoch, std::move(samples), std::move(ajp_of));
+        return current_state_->enqueue_move_request(current_move_epoch, std::optional<std::ofstream>{std::move(ajp_of)}, std::move(samples));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact

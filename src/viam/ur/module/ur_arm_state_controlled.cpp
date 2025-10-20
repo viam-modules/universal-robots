@@ -62,18 +62,16 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         return std::nullopt;
     }
 
-    auto& mr = *state.move_request_;
-
     return std::visit(
-        [this, &state, &mr](auto& cmd) -> std::optional<event_variant_> {
+        [this, &state](auto& cmd) -> std::optional<event_variant_> {
             using T = std::decay_t<decltype(cmd)>;
 
             if constexpr (std::is_same_v<T, std::vector<trajectory_sample_point>>) {
                 // Operating in joint-space
 
-                if (!cmd.empty() && !mr.cancellation_request) {
+                if (!cmd.empty() && !state.move_request_->cancellation_request) {
                     // Have samples to send, no cancellation requested
-                    VIAM_SDK_LOG(info) << "URArm sending trajectory";
+                    VIAM_SDK_LOG(debug) << "URArm sending trajectory";
 
                     auto to_send = std::move(cmd);
                     const auto num_samples = to_send.size();
@@ -93,22 +91,22 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                             return event_connection_lost_::trajectory_control_failure();
                         }
                     }
-
-                    mr.move_command = std::vector<trajectory_sample_point>{};
+                    VIAM_SDK_LOG(debug) << "URArm trajectory sent";
+                    state.move_request_->move_command = std::vector<trajectory_sample_point>{};
                     return std::nullopt;
 
-                } else if (cmd.empty() && mr.cancellation_request && !mr.cancellation_request->issued) {
+                } else if (cmd.empty() && state.move_request_->cancellation_request && !state.move_request_->cancellation_request->issued) {
                     // We have a move request, the samples have been forwarded,
                     // and cancellation is requested but has not yet been issued. Issue a cancel.
-                    mr.cancellation_request->issued = true;
+                    state.move_request_->cancellation_request->issued = true;
                     if (!arm_conn_->driver->writeTrajectoryControlMessage(
                             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
-                        mr.cancel_error("failed to send trajectory cancel");
+                        state.move_request_->cancel_error("failed to send trajectory cancel");
                         VIAM_SDK_LOG(error) << "cancel failed; dropping connection";
                         return event_connection_lost_::trajectory_control_failure();
                     }
                     return std::nullopt;
-                } else if (!cmd.empty() && mr.cancellation_request) {
+                } else if (!cmd.empty() && state.move_request_->cancellation_request) {
                     // We have a move request that we haven't issued but a
                     // cancel is already pending. Don't issue it, just cancel it.
                     std::exchange(state.move_request_, {})->complete_cancelled();
@@ -116,14 +114,14 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
 
                 } else {
                     // TODO: is it assured that we have positions/velocities here?
-                    mr.write_joint_data(state.ephemeral_->joint_positions, state.ephemeral_->joint_velocities);
+                    state.move_request_->write_joint_data(state.ephemeral_->joint_positions, state.ephemeral_->joint_velocities);
                     return std::nullopt;
                 }
 
             } else if constexpr (std::is_same_v<T, std::optional<pose_sample>>) {
                 // Operating in pose-space
 
-                if (cmd.has_value() && !mr.cancellation_request) {
+                if (cmd && !state.move_request_->cancellation_request) {
                     // Send the single pose command
                     if (!arm_conn_->driver->writeTrajectoryControlMessage(
                             urcl::control::TrajectoryControlMessage::TRAJECTORY_START, 1, RobotReceiveTimeout::off())) {
@@ -132,8 +130,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                         return event_connection_lost_::trajectory_control_failure();
                     }
 
-                    auto ps = std::move(*cmd);
-                    VIAM_SDK_LOG(info) << "URArm sending single pose (tool-space)";
+                    auto ps = std::exchange(cmd, std::nullopt);
+                    VIAM_SDK_LOG(debug) << "URArm sending single pose (tool-space)";
 
                     // TODO(RSDK-12294): determine how to set the velocity and acceleration so they are not hardcoded
                     const float velocity = 0.25F;
@@ -142,21 +140,19 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     const float blend_radius = 0;
                     const bool cartesian = true;
 
-                    if (!arm_conn_->driver->writeTrajectoryPoint(ps.p, acceleration, velocity, cartesian, timestep, blend_radius)) {
+                    if (!arm_conn_->driver->writeTrajectoryPoint(ps->p, acceleration, velocity, cartesian, timestep, blend_radius)) {
                         VIAM_SDK_LOG(error) << "single pose: writeTrajectoryPoint failed; dropping connection";
                         std::exchange(state.move_request_, {})->complete_error("failed to send single pose point");
                         return event_connection_lost_::trajectory_control_failure();
                     }
 
-                    // Mark as sent by setting to nullopt
-                    cmd = std::nullopt;
-                    VIAM_SDK_LOG(info) << "URArm single pose sent";
+                    VIAM_SDK_LOG(debug) << "URArm single pose sent";
                     return std::nullopt;
 
-                } else if (!cmd.has_value()) {
+                } else if (!cmd) {
                     // If already sent (nullopt), nothing to do
                     return std::nullopt;
-                } else if (mr.cancellation_request) {
+                } else if (state.move_request_->cancellation_request) {
                     // Check for cancellation
                     std::exchange(state.move_request_, {})->complete_cancelled();
                     return std::nullopt;
@@ -165,8 +161,11 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 // Unreachable: all cases should be handled above
                 throw std::logic_error("handle_move_request: unexpected tool-space state");
             }
+
+            // Unreachable: all move_command_data variants should be handled above
+            throw std::logic_error("handle_move_request: unexpected move_command_data type");
         },
-        mr.move_command);
+        state.move_request_->move_command);
 }
 
 std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_connection_lost_ event) {

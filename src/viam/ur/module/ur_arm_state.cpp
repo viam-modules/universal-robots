@@ -223,44 +223,6 @@ size_t URArm::state_::get_move_epoch() const {
     return move_epoch_.load(std::memory_order_acquire);
 }
 
-std::future<void> URArm::state_::enqueue_move_request(size_t current_move_epoch,
-                                                      std::vector<trajectory_sample_point>&& samples,
-                                                      std::ofstream arm_joint_positions_stream) {
-    // Use CAS to increment the epoch and detect if another move
-    // operation occurred between when we obtained a value with
-    // `get_move_epoch` and when `enqueue_move_request` was called
-    // (presumably, while we were planning). If so, we have to fail
-    // this operation, since our starting waypoint information is no
-    // longer valid.
-    if (!move_epoch_.compare_exchange_strong(current_move_epoch, current_move_epoch + 1, std::memory_order_acq_rel)) {
-        throw std::runtime_error("move operation was superseded by a newer operation");
-    }
-
-    const std::lock_guard lock{mutex_};
-    if (move_request_) {
-        throw std::runtime_error("an actuation is already in progress");
-    }
-    return move_request_.emplace(std::move(samples), std::move(arm_joint_positions_stream)).completion.get_future();
-}
-
-std::future<void> URArm::state_::enqueue_move_request(size_t current_move_epoch, pose_sample ps, std::ofstream arm_joint_positions_stream) {
-    // Use CAS to increment the epoch and detect if another move
-    // operation occurred between when we obtained a value with
-    // `get_move_epoch` and when `enqueue_move_request` was called
-    // (presumably, while we were planning). If so, we have to fail
-    // this operation, since our starting waypoint information is no
-    // longer valid.
-    if (!move_epoch_.compare_exchange_strong(current_move_epoch, current_move_epoch + 1, std::memory_order_acq_rel)) {
-        throw std::runtime_error("move operation was superseded by a newer operation");
-    }
-
-    const std::lock_guard lock{mutex_};
-    if (move_request_) {
-        throw std::runtime_error("an actuation is already in progress");
-    }
-    return move_request_.emplace(std::move(ps), std::move(arm_joint_positions_stream)).completion.get_future();
-}
-
 bool URArm::state_::is_moving() const {
     const std::lock_guard lock{mutex_};
     if (!move_request_) {
@@ -316,8 +278,8 @@ URArm::state_::arm_connection_::~arm_connection_() {
     dashboard.reset();
 }
 
-URArm::state_::move_request::move_request(move_command_data&& move_command, std::ofstream arm_joint_positions_stream)
-    : move_command(std::move(move_command)), arm_joint_positions_stream(std::move(arm_joint_positions_stream)) {
+URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream, move_command_data&& move_command)
+    : arm_joint_positions_stream(std::move(arm_joint_positions_stream)), move_command(std::move(move_command)) {
     // Validate the move command based on its type
     std::visit(
         [](const auto& cmd) {
@@ -334,6 +296,12 @@ URArm::state_::move_request::move_request(move_command_data&& move_command, std:
         },
         this->move_command);
 }
+
+URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream, std::vector<trajectory_sample_point>&& tsps)
+    : move_request(std::move(arm_joint_positions_stream), move_command_data{std::move(tsps)}) {}
+
+URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream, pose_sample ps)
+    : move_request(std::move(arm_joint_positions_stream), move_command_data{std::optional<pose_sample>{std::move(ps)}}) {}
 
 std::shared_future<void> URArm::state_::move_request::cancel() {
     if (!cancellation_request) {
@@ -376,7 +344,9 @@ void URArm::state_::move_request::cancel_error(std::string_view message) {
 }
 
 void URArm::state_::move_request::write_joint_data(vector6d_t& position, vector6d_t& velocity) {
-    ::write_joint_data(position, velocity, arm_joint_positions_stream, unix_time_iso8601(), arm_joint_positions_sample++);
+    if (arm_joint_positions_stream) {
+        ::write_joint_data(position, velocity, *arm_joint_positions_stream, unix_time_iso8601(), arm_joint_positions_sample++);
+    }
 }
 
 URArm::state_::move_request::cancellation_request::cancellation_request() {}

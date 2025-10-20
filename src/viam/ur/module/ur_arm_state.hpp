@@ -52,11 +52,8 @@ class URArm::state_ {
 
     size_t get_move_epoch() const;
 
-    std::future<void> enqueue_move_request(size_t current_move_epoch,
-                                           std::vector<trajectory_sample_point>&& samples,
-                                           std::ofstream arm_joint_positions_stream);
-
-    std::future<void> enqueue_move_request(size_t current_move_epoch, pose_sample ps, std::ofstream arm_joint_positions_stream);
+    template <typename... Args>
+    std::future<void> enqueue_move_request(size_t current_move_epoch, Args&&... args);
 
     bool is_moving() const;
     std::string describe() const;
@@ -289,13 +286,11 @@ class URArm::state_ {
        public:
         using move_command_data = std::variant<std::vector<trajectory_sample_point>, std::optional<pose_sample>>;
 
-        explicit move_request(move_command_data&& move_command, std::ofstream arm_joint_positions_stream);
+        explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream, move_command_data&& move_command);
 
-        explicit move_request(std::vector<trajectory_sample_point>&& tsps, std::ofstream arm_joint_positions_stream)
-            : move_request(move_command_data{std::move(tsps)}, std::move(arm_joint_positions_stream)) {}
+        explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream, std::vector<trajectory_sample_point>&& tsps);
 
-        explicit move_request(pose_sample ps, std::ofstream arm_joint_positions_stream)
-            : move_request(move_command_data{std::optional<pose_sample>{std::move(ps)}}, std::move(arm_joint_positions_stream)) {}
+        explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream, pose_sample ps);
 
         std::shared_future<void> cancel();
 
@@ -307,8 +302,8 @@ class URArm::state_ {
 
         void write_joint_data(vector6d_t& position, vector6d_t& velocity);
 
+        std::optional<std::ofstream> arm_joint_positions_stream;
         move_command_data move_command;
-        std::ofstream arm_joint_positions_stream;
         std::size_t arm_joint_positions_sample{0};
         std::promise<void> completion;
 
@@ -375,3 +370,22 @@ class URArm::state_ {
     };
     std::optional<struct ephemeral_> ephemeral_;
 };
+
+template <typename... Args>
+std::future<void> URArm::state_::enqueue_move_request(size_t current_move_epoch, Args&&... args) {
+    // Use CAS to increment the epoch and detect if another move
+    // operation occurred between when we obtained a value with
+    // `get_move_epoch` and when `enqueue_move_request` was called
+    // (presumably, while we were planning). If so, we have to fail
+    // this operation, since our starting waypoint information is no
+    // longer valid.
+    if (!move_epoch_.compare_exchange_strong(current_move_epoch, current_move_epoch + 1, std::memory_order_acq_rel)) {
+        throw std::runtime_error("move operation was superseded by a newer operation");
+    }
+
+    const std::lock_guard lock{mutex_};
+    if (move_request_) {
+        throw std::runtime_error("an actuation is already in progress");
+    }
+    return move_request_.emplace(std::forward<Args>(args)...).completion.get_future();
+}
