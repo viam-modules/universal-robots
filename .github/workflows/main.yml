@@ -19,10 +19,18 @@ jobs:
     name: Check for Recent Commits
     runs-on: ubuntu-latest
     outputs:
-      has_recent_commits: ${{ steps.check.outputs.has-new-commits }}
+      has_recent_commits: ${{ steps.check.outputs.has-new-commits || steps.tag-fallback.outputs.has-new-commits }}
     steps:
+      - name: Check if building from tag
+        id: tag-fallback
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          echo "Building from tag, skipping recent commits check"
+          echo "has-new-commits=false" >> $GITHUB_OUTPUT
+
       - name: Check for commits in last 24 hours
         id: check
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: adriangl/check-new-commits-action@6556947ca20c2047ed733894258186619b84d282
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -182,6 +190,9 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
+
+      - name: Extract meta.json from module archive
+        run: tar -xzf module.tar.gz meta.json
 
       - name: Upload module to Viam
         uses: viamrobotics/upload-module@v1
