@@ -399,11 +399,11 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     write_waypoints_to_csv(filename, waypoints);
 
     // move will throw if an error occurs
-    move_joint_space_(std::move(rlock), std::move(waypoints), unix_time);
+    move_joint_space_(std::move(rlock), std::move(waypoints),MoveOptions{}, unix_time);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
-                                         const MoveOptions&,
+                                         const MoveOptions& options,
                                          const viam::sdk::ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
@@ -426,7 +426,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         write_waypoints_to_csv(filename, waypoints);
 
         // move will throw if an error occurs
-        move_joint_space_(std::move(rlock), std::move(waypoints), unix_time);
+        move_joint_space_(std::move(rlock), std::move(waypoints),options, unix_time);
     }
 }
 
@@ -637,6 +637,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 
 void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                               std::list<Eigen::VectorXd> waypoints,
+                              const MoveOptions& options,
                               const std::string& unix_time) {
     auto our_config_rlock = std::move(config_rlock);
 
@@ -711,15 +712,25 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
     segments.push_back(std::move(waypoints));
 
+    auto max_velocity = current_state_->get_speed();
+    if (options.max_vel_degs_per_sec && options.max_vel_degs_per_sec.get() != 0){
+        max_velocity = degrees_to_radians(options.max_vel_degs_per_sec.get());
+    }
     // set velocity/acceleration constraints
-    const auto max_velocity = Eigen::VectorXd::Constant(6, current_state_->get_speed());
-    const auto max_acceleration = Eigen::VectorXd::Constant(6, current_state_->get_acceleration());
-    VIAM_SDK_LOG(debug) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity[0]);
+    const auto max_velocity_vec = Eigen::VectorXd::Constant(6, max_velocity);
+    
+    auto max_acceleration = current_state_->get_acceleration();
+    if (options.max_acc_degs_per_sec2 && options.max_acc_degs_per_sec2.get() != 0){
+        max_acceleration = options.max_acc_degs_per_sec2.get();
+    }
+    const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, max_acceleration);
+    
+    VIAM_SDK_LOG(info) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity_vec[0]);
 
     std::vector<trajectory_sample_point> samples;
 
     for (const auto& segment : segments) {
-        const Trajectory trajectory(Path(segment, 0.1), max_velocity, max_acceleration);
+        const Trajectory trajectory(Path(segment, 0.1), max_velocity_vec, max_acceleration_vec);
         if (!trajectory.isValid()) {
             std::stringstream buffer;
             buffer << "trajectory generation failed for path:";
