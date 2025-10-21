@@ -149,17 +149,27 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     VIAM_SDK_LOG(debug) << "URArm single pose sent";
                     return std::nullopt;
 
-                } else if (!cmd) {
-                    // If already sent (nullopt), nothing to do
+                } else if (!cmd && state.move_request_->cancellation_request && !state.move_request_->cancellation_request->issued) {
+                    // We have a move request, the samples have been forwarded,
+                    // and cancellation is requested but has not yet been issued. Issue a cancel.
+                    state.move_request_->cancellation_request->issued = true;
+                    if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                            urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
+                        state.move_request_->cancel_error("failed to send trajectory cancel");
+                        VIAM_SDK_LOG(error) << "cancel failed; dropping connection";
+                        return event_connection_lost_::trajectory_control_failure();
+                    }
                     return std::nullopt;
-                } else if (state.move_request_->cancellation_request) {
-                    // Check for cancellation
+                } else if (cmd && state.move_request_->cancellation_request) {
+                    // We have a move request that we haven't issued but a
+                    // cancel is already pending. Don't issue it, just cancel it.
                     std::exchange(state.move_request_, {})->complete_cancelled();
                     return std::nullopt;
-                }
 
-                // Unreachable: all cases should be handled above
-                throw std::logic_error("handle_move_request: unexpected tool-space state");
+                } else {
+                    // If already sent, nothing to do
+                    return std::nullopt;
+                }
             }
 
             // Unreachable: all move_command_data variants should be handled above
