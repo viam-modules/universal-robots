@@ -399,7 +399,7 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     write_waypoints_to_csv(filename, waypoints);
 
     // move will throw if an error occurs
-    move_joint_space_(std::move(rlock), std::move(waypoints),MoveOptions{}, unix_time);
+    move_joint_space_(std::move(rlock), std::move(waypoints), MoveOptions{}, unix_time);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -426,7 +426,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         write_waypoints_to_csv(filename, waypoints);
 
         // move will throw if an error occurs
-        move_joint_space_(std::move(rlock), std::move(waypoints),options, unix_time);
+        move_joint_space_(std::move(rlock), std::move(waypoints), options, unix_time);
     }
 }
 
@@ -713,18 +713,18 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     segments.push_back(std::move(waypoints));
 
     auto max_velocity = current_state_->get_speed();
-    if (options.max_vel_degs_per_sec && options.max_vel_degs_per_sec.get() > 0){
+    if (options.max_vel_degs_per_sec && options.max_vel_degs_per_sec.get() > 0) {
         max_velocity = degrees_to_radians(options.max_vel_degs_per_sec.get());
     }
     // set velocity/acceleration constraints
     const auto max_velocity_vec = Eigen::VectorXd::Constant(6, max_velocity);
-    
+
     auto max_acceleration = current_state_->get_acceleration();
-    if (options.max_acc_degs_per_sec2 && options.max_acc_degs_per_sec2.get() > 0){
+    if (options.max_acc_degs_per_sec2 && options.max_acc_degs_per_sec2.get() > 0) {
         max_acceleration = options.max_acc_degs_per_sec2.get();
     }
     const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, max_acceleration);
-    
+
     VIAM_SDK_LOG(info) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity_vec[0]);
 
     std::vector<trajectory_sample_point> samples;
