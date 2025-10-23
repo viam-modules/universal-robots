@@ -713,6 +713,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     segments.push_back(std::move(waypoints));
 
     auto max_velocity = current_state_->get_speed();
+    // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
     if (options.max_vel_degs_per_sec && options.max_vel_degs_per_sec.get() > 0) {
         max_velocity = degrees_to_radians(options.max_vel_degs_per_sec.get());
     }
@@ -720,6 +721,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     const auto max_velocity_vec = Eigen::VectorXd::Constant(6, max_velocity);
 
     auto max_acceleration = current_state_->get_acceleration();
+    // TODO(RSDK-12375) Remove 0 acc check when RDK stops sending 0 velocities
     if (options.max_acc_degs_per_sec2 && options.max_acc_degs_per_sec2.get() > 0) {
         max_acceleration = options.max_acc_degs_per_sec2.get();
     }
