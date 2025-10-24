@@ -16,9 +16,11 @@
 
 namespace viam::trajex::totg {
 
-/// Accumulator for building up a sequence of waypoints
+///
+/// Accumulator for building up a sequence of waypoints.
 ///
 /// **Lifetime requirements**: All waypoint arrays passed to this object must outlive it.
+///
 /// **Move semantics**: This class is move-only (not copyable).
 ///
 /// Usage:
@@ -26,64 +28,126 @@ namespace viam::trajex::totg {
 ///   waypoint_accumulator waypoints(initial_waypoints);
 ///   waypoints.add_waypoints(more_waypoints);
 /// @endcode
+///
 class waypoint_accumulator {
    public:
-    /// Construct with initial waypoints
+    ///
+    /// Constructs with initial waypoints.
+    ///
     /// @param waypoints 2D array (num_waypoints, num_joints)
     /// @note The waypoints array must outlive the waypoint_accumulator object
+    ///
     explicit waypoint_accumulator(const xt::xarray<double>& waypoints);
 
-    // Move-only semantics
-    waypoint_accumulator(const waypoint_accumulator&) = delete;
-    waypoint_accumulator& operator=(const waypoint_accumulator&) = delete;
+    ///
+    /// Move constructs a waypoint_accumulator.
+    ///
     waypoint_accumulator(waypoint_accumulator&&) = default;
+
+    ///
+    /// Move assigns a waypoint_accumulator.
+    ///
+    /// @return Reference to this
+    ///
     waypoint_accumulator& operator=(waypoint_accumulator&&) = default;
 
-    /// Add additional waypoints
+    // Deleted copy operations - move-only type
+    waypoint_accumulator(const waypoint_accumulator&) = delete;
+    waypoint_accumulator& operator=(const waypoint_accumulator&) = delete;
+
+    ///
+    /// Adds additional waypoints.
+    ///
     /// @param waypoints 2D array where each row is a waypoint, shape (num_waypoints, num_joints)
-    /// @return Reference to this object for method chaining
+    /// @return Reference to this for method chaining
     /// @note The waypoints array must outlive the waypoint_accumulator object
+    ///
     waypoint_accumulator& add_waypoints(const xt::xarray<double>& waypoints);
 
-    /// Get the number of degrees of freedom
+    ///
+    /// Gets the number of degrees of freedom.
+    ///
     /// @return Number of DOF
+    ///
     size_t dof() const noexcept;
 
-    /// Get the number of waypoints
+    ///
+    /// Gets the number of waypoints.
+    ///
     /// @return Total number of waypoints
+    ///
     size_t size() const noexcept;
 
-    /// Check if empty
+    ///
+    /// Checks if empty.
+    ///
     /// @return True if no waypoints
+    ///
     bool empty() const noexcept;
 
-    /// Access to waypoint views for path construction
+    ///
+    /// View type for individual waypoints.
+    ///
     using waypoint_view_t = decltype(xt::view(std::declval<const xt::xarray<double>&>(), std::declval<size_t>(), xt::all()));
+
+    ///
+    /// Iterator type for waypoint views.
+    ///
     using const_iterator = std::vector<waypoint_view_t>::const_iterator;
+
+    ///
+    /// Value type for waypoint views.
+    ///
     using value_type = waypoint_view_t;
+
+    ///
+    /// Size type.
+    ///
     using size_type = std::size_t;
 
-    /// Begin iterator (const-only container)
+    ///
+    /// Gets begin iterator.
+    ///
+    /// @return Iterator to first waypoint
+    ///
     const_iterator begin() const noexcept;
 
-    /// End iterator (const-only container)
+    ///
+    /// Gets end iterator.
+    ///
+    /// @return Iterator past last waypoint
+    ///
     const_iterator end() const noexcept;
 
-    /// Begin const iterator (same as begin() for const-only container)
+    ///
+    /// Gets const begin iterator.
+    ///
+    /// @return Const iterator to first waypoint (same as begin())
+    ///
     const_iterator cbegin() const noexcept;
 
-    /// End const iterator (same as end() for const-only container)
+    ///
+    /// Gets const end iterator.
+    ///
+    /// @return Const iterator past last waypoint (same as end())
+    ///
     const_iterator cend() const noexcept;
 
-    /// Access waypoint by index (no bounds checking)
+    ///
+    /// Accesses waypoint by index (no bounds checking).
+    ///
     /// @param i Index of waypoint
     /// @return Reference to waypoint view
+    ///
     const waypoint_view_t& operator[](size_t i) const;
 
-    /// Access waypoint by index with bounds checking
+    ///
+    /// Accesses waypoint by index with bounds checking.
+    ///
     /// @param i Index of waypoint
     /// @return Reference to waypoint view
     /// @throws std::out_of_range if i >= size()
+    ///
     const waypoint_view_t& at(size_t i) const;
 
    private:

@@ -17,7 +17,6 @@
 
 namespace viam::trajex::totg {
 
-// path::options implementation
 path::options::options() : max_blend_deviation_(k_default_max_deviation), max_linear_deviation_(k_default_max_deviation) {}
 
 path::options& path::options::set_max_deviation(double deviation) {
@@ -42,7 +41,6 @@ double path::options::max_linear_deviation() const noexcept {
     return max_linear_deviation_;
 }
 
-// path::segment::linear implementation
 path::segment::linear::linear(xt::xarray<double> start, xt::xarray<double> end) : start{std::move(start)}, length{0.0} {
     const auto diff = end - this->start;
     const double norm = xt::norm_l2(diff)();
@@ -58,7 +56,6 @@ path::segment::linear::linear(xt::xarray<double> start, xt::xarray<double> end) 
 
 path::segment::circular::circular(xt::xarray<double> center, xt::xarray<double> x, xt::xarray<double> y, double radius, double angle_rads)
     : center{std::move(center)}, x{std::move(x)}, y{std::move(y)}, radius{radius}, angle_rads{angle_rads} {
-    // Validate x and y are unit vectors
     const double x_norm = xt::norm_l2(this->x)();
     const double y_norm = xt::norm_l2(this->y)();
 
@@ -67,7 +64,6 @@ path::segment::circular::circular(xt::xarray<double> center, xt::xarray<double> 
         throw std::invalid_argument{"Circular segment: x and y must be unit vectors"};
     }
 
-    // Validate x and y are perpendicular
     const double dot_product = xt::sum(this->x * this->y)();
     // TODO(acm): Consider tighter tolerance for orthogonality
     if (std::abs(dot_product) > 1e-6) {
@@ -100,7 +96,6 @@ arc_length path::segment::view::length() const noexcept {
 xt::xarray<double> path::segment::view::configuration(arc_length s) const {
     const arc_length local_s = s - start_;
 
-    // Validate bounds
     if (local_s < arc_length{0.0} || local_s > length()) [[unlikely]] {
         throw std::out_of_range{"Arc length outside segment bounds"};
     }
@@ -126,7 +121,6 @@ xt::xarray<double> path::segment::view::configuration(arc_length s) const {
 xt::xarray<double> path::segment::view::tangent(arc_length s) const {
     const arc_length local_s = s - start_;
 
-    // Validate bounds
     if (local_s < arc_length{0.0} || local_s > length()) [[unlikely]] {
         throw std::out_of_range{"Arc length outside segment bounds"};
     }
@@ -151,7 +145,6 @@ xt::xarray<double> path::segment::view::tangent(arc_length s) const {
 xt::xarray<double> path::segment::view::curvature(arc_length s) const {
     const arc_length local_s = s - start_;
 
-    // Validate bounds
     if (local_s < arc_length{0.0} || local_s > length()) [[unlikely]] {
         throw std::out_of_range{"Arc length outside segment bounds"};
     }
@@ -189,13 +182,16 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
 
     // TODO(acm): Revisit this algorithm, and write a more graceful one.
 
-    // Tube coalescing with direct segment construction
-    // Strategy: Scan through waypoints with locus at each potential corner.
-    // At each locus, look backward to segment start and forward to see if we can continue coalescing.
+    // Build a path from waypoints using two techniques: tube coalescing to skip waypoints
+    // that lie within a tolerance tube around linear segments, and circular blends at corners
+    // to smooth transitions between non-colinear segments. Both techniques keep the path
+    // within specified deviation tolerances of the original waypoints.
+    //
+    // The algorithm scans through waypoints with a "locus" at each potential corner. At each
+    // locus, we look backward to the segment start and forward to the next waypoint to decide
+    // if the locus can be skipped (coalesced) or if it represents an actual corner that needs
+    // either a hard stop or a circular blend.
 
-    // Lambda to test if a waypoint can be coalesced (skipped)
-    // Returns true if 'locus' is within max_linear_deviation of the line from 'start' to 'next'
-    // and advances monotonically along the tube direction
     const auto can_coalesce = [&opts](const auto& start, const auto& locus, const auto& next) -> bool {
         const double max_deviation = opts.max_linear_deviation();
 
@@ -207,10 +203,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const auto start_to_next = next - start;
         const auto start_to_locus = locus - start;
 
-        // Compute projection parameter t: locus = start + t * (next - start)
         const double start_to_next_sq = xt::sum(start_to_next * start_to_next)();
 
-        // Handle exact duplicate: next == start
         if (start_to_next_sq == 0.0) {
             return true;  // Next is duplicate, so locus is trivially coalescable
         }
@@ -218,12 +212,13 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const double start_to_locus_dot_direction = xt::sum(start_to_locus * start_to_next)();
         const double t = start_to_locus_dot_direction / start_to_next_sq;
 
-        // Check monotonic advancement: must be between start and next
+        // Monotonic advancement check: reject if locus would require going backward from
+        // start or forward past next. This ensures we only skip waypoints that maintain
+        // forward progress along the segment direction.
         if (t < 0.0 || t > 1.0) {
             return false;
         }
 
-        // Compute perpendicular distance from locus to line
         const auto projected_point = start + (t * start_to_next);
         const auto deviation_vector = locus - projected_point;
         const double deviation = xt::norm_l2(deviation_vector)();
@@ -231,14 +226,15 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         return deviation <= max_deviation;
     };
 
-    // Helper struct to return blend geometry
     struct blend_geometry {
         segment::circular circular_seg;
         double trim_distance;  // Distance trimmed from both segments
     };
 
-    // Lambda to attempt circular blend creation at a corner
-    // Returns std::nullopt if blend cannot be created
+    // Try to create a circular blend arc at a corner following the algorithm from
+    // Kunz & Stilman Section IV. The blend arc is tangent to both the incoming and
+    // outgoing segments, trimming equal distances from each side. The blend keeps
+    // the path within max_blend_deviation of the original corner waypoint.
     const auto try_create_blend = [&opts](const xt::xarray<double>& current_pos,
                                           const xt::xarray<double>& corner,
                                           const xt::xarray<double>& next_waypoint) -> std::optional<blend_geometry> {
@@ -266,16 +262,19 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const double angle = std::acos(dot_clamped);
         const double half_angle = angle / 2.0;
 
-        // Check for degenerate cases that would cause mathematical issues
-        // tan(pi/2) is undefined (collinear waypoints going backward)
-        // Small angles would create very large radii with tiny blends
+        // Reject degenerate cases: very small angles would create enormous blend radii
+        // for minimal benefit, and angles near pi/2 cause tan(half_angle) to blow up.
+        // These checks prevent numerical issues and avoid creating blends that would
+        // violate the deviation constraint.
         // TODO(acm): Explicit epsilon, scaling, etc.
         constexpr double epsilon = 1e-6;
         if (half_angle < epsilon || half_angle > (std::numbers::pi / 2.0 - epsilon)) {
             return std::nullopt;
         }
 
-        // Calculate trim distance and radius following Kunz & Stilman eq. 3-4
+        // Calculate trim distance and radius following Kunz & Stilman equations 3-4.
+        // The trim distance is constrained by three limits: can't trim more than half
+        // of either segment, and can't exceed what's allowed by the deviation tolerance.
         const double max_trim_from_deviation = opts.max_blend_deviation() * std::sin(half_angle) / (1.0 - std::cos(half_angle));
 
         const double trim_distance = std::min({incoming_norm / 2.0, outgoing_norm / 2.0, max_trim_from_deviation});
@@ -283,8 +282,9 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // Radius from trim distance (eq. 4)
         const double radius = trim_distance / std::tan(half_angle);
 
-        // Create circular blend segment geometry following Kunz & Stilman
-        // Equation 5: ci = qi + (ŷi+1 - ŷi)/||ŷi+1 - ŷi|| · ri/cos(αi/2)
+        // Construct the circular arc geometry following Kunz & Stilman equation 5.
+        // The center lies along the angle bisector, and the x/y basis vectors define
+        // the plane of the circular arc with x pointing toward the blend start point.
         const auto bisector = outgoing_unit - incoming_unit;
         const double bisector_norm = xt::norm_l2(bisector)();
         const auto bisector_unit = bisector / bisector_norm;
@@ -292,72 +292,69 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const double center_offset = radius / std::cos(half_angle);
         const auto center = corner + (center_offset * bisector_unit);
 
-        // x̂ points from center to blend start (where circle touches incoming segment)
+        // x_hat points from center to blend start (where circle touches incoming segment)
         const auto blend_start = corner - (trim_distance * incoming_unit);
         const auto x_vec = blend_start - center;
         const auto x_unit = x_vec / xt::norm_l2(x_vec)();
 
-        // ŷ is the incoming direction (perpendicular to x by construction)
+        // y_hat is the incoming direction (perpendicular to x by construction)
         const auto& y_unit = incoming_unit;
 
         return blend_geometry{.circular_seg = segment::circular{center, x_unit, y_unit, radius, angle}, .trim_distance = trim_distance};
     };
 
-    // Build segments directly via locus-based scan
     std::vector<positioned_segment> segments;
     arc_length cumulative_length{0.0};
 
-    // Track where the current segment started (iterator for coalescing logic)
     auto segment_start = waypoints.begin();
 
-    // Track actual current configuration
-    // IMPORTANT: This must be a configuration copy, not an iterator, because after creating
-    // a circular blend, current_position is at the blend exit point - a computed position
-    // that doesn't correspond to any waypoint in the accumulator
+    // Track the current position on the path we're building. This must be stored as an actual
+    // configuration copy (not just an iterator) because after creating a circular blend, the
+    // current position becomes the blend exit point, which is a computed position between
+    // waypoints rather than one of the original waypoints in the accumulator.
     xt::xarray<double> current_position = *segment_start;
 
-    // Start locus at second waypoint (first potential corner)
     for (auto locus = std::next(waypoints.begin()); locus != waypoints.end(); ++locus) {
         auto next = std::next(locus);
 
         // If we're at the last waypoint, we must emit the final segment
         const bool at_last = (next == waypoints.end());
 
-        // Check if locus can be coalesced (skipped)
         const bool can_skip = !at_last && can_coalesce(*segment_start, *locus, *next);
 
         if (can_skip) {
-            // Locus can be skipped, continue scanning
             continue;
         }
 
-        // Locus is a corner (or last waypoint) - emit segment and handle corner
+        // Locus represents a corner (or the final waypoint). We need to emit the segment
+        // from current_position to this locus, and if it's a corner, decide whether to
+        // create a circular blend or stop at the hard waypoint.
 
-        // Try to create circular blend at this corner
         const auto blend_opt = !at_last ? try_create_blend(current_position, *locus, *next) : std::nullopt;
 
         if (blend_opt) {
-            // Blend created successfully
             const auto& blend = *blend_opt;
             const auto incoming = *locus - current_position;
             const auto incoming_unit = incoming / xt::norm_l2(incoming)();
             const auto outgoing = *next - *locus;
             const auto outgoing_unit = outgoing / xt::norm_l2(outgoing)();
 
-            // 1. Create trimmed incoming segment
             const auto trimmed_end = *locus - (blend.trim_distance * incoming_unit);
             segment::linear incoming_segment{current_position, trimmed_end};
             segments.push_back({.seg = segment{std::move(incoming_segment)}, .start = cumulative_length});
             cumulative_length = cumulative_length + incoming_segment.length;
 
-            // 2. Create circular blend segment
             segments.push_back({.seg = segment{blend.circular_seg}, .start = cumulative_length});
             cumulative_length = cumulative_length + arc_length{blend.circular_seg.radius * blend.circular_seg.angle_rads};
 
-            // Update current_position to blend exit point
+            // After the blend, we're positioned at the blend exit point on the outgoing segment.
+            // This position doesn't correspond to any waypoint in the accumulator, which is why
+            // current_position must be a configuration copy rather than an iterator.
             current_position = *locus + (blend.trim_distance * outgoing_unit);
 
-            // Update segment_start iterator to locus for coalescing logic
+            // Move segment_start forward for coalescing calculations. Even though current_position
+            // is between locus and next, we use locus as the reference point for determining if
+            // future waypoints can be coalesced.
             segment_start = locus;
         } else {
             // No blend created - emit linear segment from current_position to locus
@@ -370,13 +367,11 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
                 cumulative_length = cumulative_length + linear_data.length;
             }
 
-            // Update both current_position and segment_start
             current_position = *locus;
             segment_start = locus;
         }
     }
 
-    // Validate that we created at least one segment
     if (segments.empty()) {
         throw std::invalid_argument{"Path requires at least one non-zero length segment"};
     }
@@ -465,15 +460,13 @@ path::segment::view path::operator()(arc_length s) const {
         throw std::out_of_range{"Arc length exceeds path length"};
     }
 
-    // Find first segment that starts AFTER s using upper_bound
-    // upper_bound returns iterator to first element where entry.start > s
+    // Use binary search to find the segment containing s. We use upper_bound to find the
+    // first segment that starts AFTER s, then step back one position to get the segment
+    // that actually contains s. This gives O(log n) lookup for arbitrary queries.
     auto it = std::upper_bound(
         segments_.begin(), segments_.end(), s, [](arc_length value, const positioned_segment& entry) { return value < entry.start; });
 
-    // The segment containing s is the one before the iterator returned by upper_bound
     if (it == segments_.begin()) [[unlikely]] {
-        // s is before the first segment's start, which indicates a malformed path
-        // (first segment should start at arc_length 0)
         throw std::runtime_error{"Arc length before path start"};
     }
 
@@ -498,8 +491,6 @@ xt::xarray<double> path::curvature(arc_length s) const {
     return (*this)(s).curvature(s);
 }
 
-// path::cursor implementation
-
 path::cursor::cursor(const class path* p, arc_length s)
     : path_{p}, position_{std::clamp(s, arc_length{0.0}, p->length())}, hint_{path_->begin()} {
     if (path_->empty()) {
@@ -520,8 +511,11 @@ path::segment::view path::cursor::operator*() const {
     return *hint_;
 }
 
-void path::cursor::seek(arc_length s) noexcept {
-    // Overflow to ±infinity sentinels outside valid range
+path::cursor& path::cursor::seek(arc_length s) noexcept {
+    // Use +/-infinity sentinels to signal out-of-bounds positions, allowing the cursor to
+    // continue operating without throwing exceptions. This is important for algorithms that
+    // might overstep slightly and need to detect saturation. The sentinels are detectable
+    // via comparison with end().
     if (s < arc_length{0.0}) {
         position_ = arc_length{-std::numeric_limits<double>::infinity()};
     } else if (s > path_->length()) {
@@ -530,14 +524,14 @@ void path::cursor::seek(arc_length s) noexcept {
         position_ = s;
     }
 
-    // Only update hint if not at sentinel
     if (*this != end()) {
         update_hint_();
     }
+    return *this;
 }
 
-void path::cursor::seek_by(arc_length delta) noexcept {
-    seek(position_ + delta);
+path::cursor& path::cursor::seek_by(arc_length delta) noexcept {
+    return seek(position_ + delta);
 }
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static): Must be non-static for consistent cursor API
@@ -554,18 +548,15 @@ bool operator==(std::default_sentinel_t, const path::cursor& c) noexcept {
 }
 
 xt::xarray<double> path::cursor::configuration() const {
-    // Validate cursor is not at sentinel
     if (*this == end()) [[unlikely]] {
         throw std::out_of_range{"Cannot query cursor at sentinel position"};
     }
 
-    // Use hint to get segment view, delegate to view
     auto view = *hint_;
     return view.configuration(position_);
 }
 
 xt::xarray<double> path::cursor::tangent() const {
-    // Validate cursor is not at sentinel
     if (*this == end()) [[unlikely]] {
         throw std::out_of_range{"Cannot query cursor at sentinel position"};
     }
@@ -575,7 +566,6 @@ xt::xarray<double> path::cursor::tangent() const {
 }
 
 xt::xarray<double> path::cursor::curvature() const {
-    // Validate cursor is not at sentinel
     if (*this == end()) [[unlikely]] {
         throw std::out_of_range{"Cannot query cursor at sentinel position"};
     }
@@ -585,45 +575,47 @@ xt::xarray<double> path::cursor::curvature() const {
 }
 
 void path::cursor::update_hint_() noexcept {
-    // Dereference hint to get view for comparisons
+    // Maintain a hint iterator pointing to the segment containing the current position.
+    // This optimization provides O(1) amortized performance for sequential traversal
+    // (the common case during trajectory integration) by checking nearby segments before
+    // falling back to binary search for large jumps.
+
     auto current_view = *hint_;
 
-    // Fast path: Check if current hint is still valid
-    // This handles the common case of small sequential steps within a segment
+    // Most common case: position is still within the current hint segment.
     if (position_ >= current_view.start() && position_ < current_view.end()) {
-        return;  // Hint still valid, O(1)
+        return;
     }
 
-    // Special case: Exactly at segment end boundary
-    // This can happen frequently during integration
+    // Check if we're exactly at a segment boundary, which happens frequently during
+    // integration when stepping lands precisely on a segment transition.
     if (position_ == current_view.end()) {
-        // Try to advance hint to next segment
         auto next_hint = hint_;
         ++next_hint;
         if (next_hint != path_->end()) {
             auto next_view = *next_hint;
             if (position_ >= next_view.start() && position_ < next_view.end()) {
                 hint_ = next_hint;
-                return;  // Advanced to next segment, O(1)
+                return;
             }
         }
-        // Position is exactly at path end, keep current hint
         return;
     }
 
-    // Check previous segment (for backward integration)
-    // Efficient thanks to bidirectional iterator!
+    // Check adjacent segments (both directions) before resorting to binary search.
+    // This handles small steps backward (rare but possible during some algorithms)
+    // and forward steps that skip a segment (possible with larger integration steps).
+
     if (hint_ != path_->begin()) {
         auto prev_hint = hint_;
         --prev_hint;
         auto prev_view = *prev_hint;
         if (position_ >= prev_view.start() && position_ < prev_view.end()) {
             hint_ = prev_hint;
-            return;  // Moved to previous segment, O(1)
+            return;
         }
     }
 
-    // Check next segment (for forward integration)
     if (hint_ != path_->end()) {
         auto next_hint = hint_;
         ++next_hint;
@@ -631,27 +623,22 @@ void path::cursor::update_hint_() noexcept {
             auto next_view = *next_hint;
             if (position_ >= next_view.start() && position_ < next_view.end()) {
                 hint_ = next_hint;
-                return;  // Moved to next segment, O(1)
+                return;
             }
         }
     }
 
-    // Large jump - use binary search directly on segments_
-    // Find first segment that starts AFTER position (upper_bound)
-    // The segment containing position is the one before it
-    // This is O(log n) but rare in sequential traversal
+    // Position is far from the hint (large jump). Use binary search to find the correct
+    // segment. This is O(log n) but should be rare during normal sequential traversal.
     auto seg_it = std::upper_bound(
         path_->segments_.begin(), path_->segments_.end(), position_, [](arc_length value, const positioned_segment& entry) {
             return value < entry.start;
         });
 
-    // The segment containing position is before the upper_bound result
     if (seg_it == path_->segments_.begin()) {
-        // Position is at or before first segment start (should be position == 0)
         hint_ = path_->begin();
     } else {
         --seg_it;
-        // Convert internal iterator to const_iterator
         hint_ = const_iterator{path_, seg_it};
     }
 }

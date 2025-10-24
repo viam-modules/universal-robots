@@ -2,13 +2,22 @@
 
 namespace viam::trajex::types {
 
-/// Strong type for frequency in Hertz
+///
+/// Strong type for frequency in Hertz.
 ///
 /// Prevents confusion between frequency and time duration values.
+///
 struct hertz {
-    double value;  ///< Frequency value in Hz
+    ///
+    /// Frequency value in Hz.
+    ///
+    double value;
 
-    /// Construct from Hz value
+    ///
+    /// Constructs from Hz value.
+    ///
+    /// @param hz Frequency in Hz
+    ///
     explicit hertz(double hz) : value{hz} {}
 };
 

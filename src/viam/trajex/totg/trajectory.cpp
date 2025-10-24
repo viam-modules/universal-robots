@@ -13,7 +13,6 @@ namespace viam::trajex::totg {
 
 trajectory::trajectory(class path p, options opt, integration_points points)
     : path_{std::move(p)}, options_{std::move(opt)}, integration_points_{std::move(points)} {
-    // Validate path is not empty
     if (path_.empty() || path_.length() <= arc_length{0.0}) {
         throw std::invalid_argument{"Path must not be empty"};
     }
@@ -42,7 +41,6 @@ trajectory::trajectory(class path p, options opt, integration_points points)
 }
 
 trajectory trajectory::create(class path p, options opt, integration_points test_points) {
-    // Validate options
     if (opt.max_velocity.shape(0) != p.dof()) {
         throw std::invalid_argument{"max_velocity DOF doesn't match path DOF"};
     }
@@ -60,21 +58,23 @@ trajectory trajectory::create(class path p, options opt, integration_points test
     }
 
     if (test_points.empty()) {
-        // Normal path: generate fake integration points for TOPP stub
-        // TODO(acm): Replace this with real TOPP algorithm
-        // - Set up phase plane (s, s_dot) with velocity/acceleration limits
-        // - Forward integration from s=0 to find maximum velocity curve (MVC)
-        // - Backward integration from s=length to find time-optimal trajectory
+        // Production path: run the TOTG algorithm to compute time-optimal parameterization.
+        // TODO(acm): Replace this stub with real TOTG implementation (see plan.md Item 8).
+        //
+        // The TOTG algorithm uses phase plane (s, s_dot) integration per Kunz & Stilman:
+        // 1. Forward pass: integrate with maximum acceleration to build Maximum Velocity Curve (MVC)
+        // 2. Backward pass: integrate with minimum acceleration from path end to find optimal trajectory
+        // 3. Result: time parameterization respecting all velocity and acceleration constraints
+        //
+        // For now, create a fake constant-velocity trajectory to enable testing of the
+        // sampling infrastructure without requiring the full TOTG implementation.
 
-        // TEMPORARY STUB: Fake integration with zero velocity/acceleration
         const double path_length = static_cast<double>(p.length());
 
-        // Calculate fake duration assuming average max velocity
         const double sum = std::accumulate(opt.max_velocity.begin(), opt.max_velocity.end(), 0.0);
         const double avg_max_vel = opt.max_velocity.size() > 0 ? sum / static_cast<double>(opt.max_velocity.size()) : 1.0;
         const double fake_duration = (avg_max_vel > 0.0) ? path_length / avg_max_vel : 1.0;
 
-        // Generate integration points at regular intervals with zero velocity/acceleration
         const int num_steps = std::max(1, static_cast<int>(std::ceil(fake_duration / opt.delta.count())));
         const double actual_delta = fake_duration / static_cast<double>(num_steps);
 
@@ -83,7 +83,8 @@ trajectory trajectory::create(class path p, options opt, integration_points test
         auto step_indices = std::views::iota(0, num_steps + 1);
         for (int i : step_indices) {
             const double t = static_cast<double>(i) * actual_delta;
-            // Explicitly set last point to exactly path.length() to avoid floating point error
+            // Force last point to exactly path.length() to avoid floating point error accumulation
+            // during linear interpolation, which could cause queries to exceed path bounds.
             const arc_length s = (i == num_steps) ? p.length() : arc_length{path_length * (t / fake_duration)};
             test_points.push_back({
                 .time = seconds{t},
@@ -120,7 +121,6 @@ trajectory trajectory::create(class path p, options opt, integration_points test
             }
         }
 
-        // Validate last point's arc length
         if (test_points.back().s < arc_length{0.0} || test_points.back().s > p.length()) {
             throw std::invalid_argument{"Integration point arc lengths must be in [0, path.length()]"};
         }
@@ -136,10 +136,7 @@ struct trajectory::sample trajectory::sample(trajectory::seconds t) const {
         throw std::out_of_range{"Time out of trajectory bounds"};
     }
 
-    // Create a cursor, seek it to the desired time, and sample
-    auto c = create_cursor();
-    c.seek(t);
-    return c.sample();
+    return create_cursor().seek(t).sample();
 }
 
 trajectory::seconds trajectory::duration() const noexcept {
@@ -166,10 +163,6 @@ trajectory::cursor trajectory::create_cursor() const {
     return cursor{this};
 }
 
-// Note: trajectory::samples() is a template method defined in the header
-
-// trajectory::cursor implementations
-
 trajectory::cursor::cursor(const class trajectory* traj)
     : traj_{traj}, time_hint_{traj->integration_points_.begin()}, path_cursor_{traj->path_.create_cursor()} {
     // Constructor initializes cursor at trajectory start (t=0, s=0)
@@ -186,38 +179,40 @@ trajectory::seconds trajectory::cursor::time() const noexcept {
 }
 
 struct trajectory::sample trajectory::cursor::sample() const {
-    // Validate cursor is not at sentinel
     if (*this == end()) [[unlikely]] {
         throw std::out_of_range{"Cannot sample cursor at sentinel position"};
     }
 
-    // Precondition: cursor must have valid hint (maintained by seek())
     assert(time_hint_ != traj_->get_integration_points().end());
     assert(time_hint_->time <= time_);
 
-    // Use time_hint_ for O(1) lookup (positioned by seek())
-    // time_hint_ points to the integration point at or before current time_
+    // Use the time hint for O(1) lookup of the integration point at or before current time.
+    // The hint is maintained by seek() to always point to the correct interval.
     const integration_point& p0 = *time_hint_;
 
-    // Piecewise constant acceleration interpolation between integration points:
-    // Position:     s(t) = s0 + s_dot0 * dt + 0.5 * s_ddot0 * dt^2  (computed in update_path_cursor_position_)
-    // Velocity:     s_dot(t) = s_dot0 + s_ddot0 * dt
-    // Acceleration: s_ddot(t) = s_ddot0  (constant between integration points)
+    // Interpolate path space (s, s_dot, s_ddot) using piecewise constant acceleration between
+    // integration points. This is the standard kinematic model: constant acceleration
+    // produces linear velocity and quadratic position.
     const double dt = (time_ - p0.time).count();
     const double s_dot = p0.s_dot + (p0.s_ddot * dt);
     const double s_ddot = p0.s_ddot;
 
-    // Query path geometry at current path_cursor_ position
-    // path_cursor_ is already positioned at correct arc length by seek()
+    // Query the path geometry at the current arc length position. The path_cursor_ has
+    // already been positioned by update_path_cursor_position_ in seek().
     const auto q = path_cursor_.configuration();
     const auto q_prime = path_cursor_.tangent();
     const auto q_double_prime = path_cursor_.curvature();
 
-    // Apply chain rule to compute joint velocities and accelerations
-    // q_dot(t) = q'(s) * s_dot
+    // Convert from path space (s, s_dot, s_ddot) to joint space (q, q_dot, q_ddot) using the chain rule.
+    // This gives us the actual joint velocities and accelerations that result from
+    // moving along the path at the computed path velocity and acceleration.
+    //
+    // q_dot(t) = q'(s) * s_dot(t)
     const auto q_dot = q_prime * s_dot;
 
-    // q_ddot(t) = q'(s) * s_ddot + q''(s) * s_dot^2
+    // q_ddot(t) = q'(s) * s_ddot(t) + q''(s) * s_dot(t)^2
+    //
+    // The second term captures the centripetal acceleration from following a curved path.
     const auto q_ddot = q_prime * s_ddot + q_double_prime * (s_dot * s_dot);
 
     return {.time = time_, .configuration = q, .velocity = q_dot, .acceleration = q_ddot};
@@ -230,7 +225,7 @@ void trajectory::cursor::update_path_cursor_position_(seconds t) {
 
     // Interpolate arc length at time t using constant acceleration motion from time_hint_
     // s(t) = s0 + s_dot0 * dt + 0.5 * s_ddot0 * dt^2
-    // This assumes piecewise constant acceleration between TOPP integration points
+    // This assumes piecewise constant acceleration between TOTG integration points
 
     const auto& p0 = *time_hint_;
     const double dt = (t - p0.time).count();
@@ -243,28 +238,32 @@ void trajectory::cursor::update_path_cursor_position_(seconds t) {
     path_cursor_.seek(arc_length{s_interp});
 }
 
-void trajectory::cursor::seek(seconds t) {
-    // Overflow to ±infinity sentinels outside valid range
+trajectory::cursor& trajectory::cursor::seek(seconds t) {
+    // Use +/-infinity sentinels for out-of-bounds positions, matching the pattern used by
+    // path::cursor. This allows algorithms to detect when they've stepped beyond trajectory
+    // bounds without throwing exceptions on every overstep.
     if (t < seconds{0.0}) {
         time_ = seconds{-std::numeric_limits<double>::infinity()};
-        return;  // Don't update hints at sentinel
+        return *this;
     }
     if (t > traj_->duration()) {
         time_ = seconds{std::numeric_limits<double>::infinity()};
-        return;  // Don't update hints at sentinel
+        return *this;
     }
 
-    // Update time
     time_ = t;
 
-    // Precondition: time_hint_ must be valid (prevents UB in backward path)
     assert(time_hint_ != traj_->get_integration_points().end());
 
-    // Smart hint update strategy for O(1) amortized performance
-    // Maintains invariant: time_hint_->time <= time_ (verified in update_path_cursor_position_)
-    // 1. Fast path: Check if current hint is still valid
-    // 2. Check adjacent points (forward/backward by 1)
-    // 3. Fallback: Binary search for large jumps
+    // Maintain a hint iterator pointing to the integration point at or before current time.
+    // This provides O(1) amortized performance for sequential time queries (the common case
+    // during sampling) by checking nearby integration points before falling back to binary
+    // search for large time jumps.
+    //
+    // Strategy:
+    // 1. Check if current hint is still valid (small forward step within same interval)
+    // 2. Check adjacent intervals (common during uniform sampling)
+    // 3. Binary search for large jumps (rare, but handles arbitrary seeks)
 
     const auto& points = traj_->get_integration_points();
 
@@ -275,7 +274,7 @@ void trajectory::cursor::seek(seconds t) {
         if (next_hint == points.end() || t < next_hint->time) {
             // Hint is still valid, O(1)
             update_path_cursor_position_(t);
-            return;
+            return *this;
         }
     }
 
@@ -289,7 +288,7 @@ void trajectory::cursor::seek(seconds t) {
             if (next_next == points.end() || t < next_next->time) {
                 time_hint_ = next_hint;
                 update_path_cursor_position_(t);
-                return;
+                return *this;
             }
         }
     }
@@ -301,7 +300,7 @@ void trajectory::cursor::seek(seconds t) {
         if (prev_hint->time <= t && t < time_hint_->time) {
             time_hint_ = prev_hint;
             update_path_cursor_position_(t);
-            return;
+            return *this;
         }
     }
 
@@ -320,10 +319,11 @@ void trajectory::cursor::seek(seconds t) {
     }
 
     update_path_cursor_position_(t);
+    return *this;
 }
 
-void trajectory::cursor::seek_by(seconds dt) {
-    seek(time_ + dt);
+trajectory::cursor& trajectory::cursor::seek_by(seconds dt) {
+    return seek(time_ + dt);
 }
 
 // NOLINTNEXTLINE(readability-convert-member-functions-to-static): Must be non-static for consistent cursor API

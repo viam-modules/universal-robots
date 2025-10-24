@@ -5,7 +5,6 @@
 namespace viam::trajex::totg {
 
 waypoint_accumulator::waypoint_accumulator(const xt::xarray<double>& waypoints) {
-    // Validate waypoints
     if (waypoints.dimension() != 2) {
         throw std::invalid_argument{"Waypoints must be 2-dimensional"};
     }
@@ -13,25 +12,23 @@ waypoint_accumulator::waypoint_accumulator(const xt::xarray<double>& waypoints) 
         throw std::invalid_argument{"Waypoints cannot be empty"};
     }
 
-    // Extract DoF
     dof_ = waypoints.shape()[1];
 
-    // Add waypoints as views
+    // Create views into the waypoint array rather than copying. This zero-copy approach
+    // is efficient for path creation, which needs to iterate through waypoints but doesn't
+    // need to modify them. The caller must ensure the waypoint array outlives this accumulator.
     add_waypoints(waypoints);
 }
 
 waypoint_accumulator& waypoint_accumulator::add_waypoints(const xt::xarray<double>& waypoints) {
-    // Validate dimensions
     if (waypoints.dimension() != 2) {
         throw std::invalid_argument{"Waypoints must be 2-dimensional"};
     }
 
-    // Validate DoF matches
     if (waypoints.shape()[1] != dof_) {
         throw std::invalid_argument{"Waypoints dimensions must match existing DOF"};
     }
 
-    // Add each row as a view
     const size_t num_waypoints = waypoints.shape()[0];
     for (size_t i = 0; i < num_waypoints; ++i) {
         waypoints_.push_back(xt::view(waypoints, i, xt::all()));
