@@ -6,6 +6,8 @@
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/resource/resource.hpp>
 
+using urcl::vector6d_t;
+
 void configure_logger(const viam::sdk::ResourceConfig& cfg) {
     auto level_str = find_config_attribute<std::string>(cfg, "log_level").value_or("warn");
 

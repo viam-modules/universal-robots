@@ -19,10 +19,10 @@ default: module.tar.gz
 
 # format the source code
 format:
-	ls src/viam/ur/module/*.*pp | xargs clang-format-19 -i --style=file
+	ls src/viam/ur/module/*.*pp src/viam/trajex/**/*.*pp | xargs clang-format-19 -i --style=file
 
 format-check:
-	ls src/viam/ur/module/*.*pp | xargs clang-format-19 -i --style=file --dry-run --Werror
+	ls src/viam/ur/module/*.*pp src/viam/trajex/**/*.*pp | xargs clang-format-19 -i --style=file --dry-run --Werror
 
 configure:
 	cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -G Ninja
@@ -43,11 +43,12 @@ run-clang-tidy:
 	clang-tidy-19 \
         -p build \
         --config-file ./.clang-tidy \
-        --header-filter=".*/viam/ur/module/.*" \
-	./src/viam/ur/module/*.cpp
+        --header-filter=".*/viam/(ur/module|trajex)/.*" \
+	./src/viam/ur/module/*.cpp \
+	./src/viam/trajex/**/*.cpp
 
 run-clang-check:
-	clang-check-19 -p build ./src/viam/ur/module/*.cpp
+	clang-check-19 -p build ./src/viam/ur/module/*.cpp ./src/viam/trajex/**/*.cpp
 
 clean:
 	rm -rf build
