@@ -57,6 +57,9 @@ class trajectory {
         xt::xarray<double> acceleration;   ///< Acceleration at sample time
     };
 
+    // Forward declaration for observer interface
+    class integration_observer;
+
     ///
     /// Options for trajectory generation via TOTG algorithm.
     ///
@@ -94,12 +97,46 @@ class trajectory {
         /// Numerical comparison epsilon.
         ///
         double epsilon{k_default_epsilon};
+
+        ///
+        /// Observer for integration events (optional).
+        ///
+        /// Receives notifications about algorithm phases: forward/backward integration,
+        /// limit curve hits, and trajectory extension. Enables testing and streaming.
+        ///
+        trajectory::integration_observer* observer = nullptr;
+    };
+
+    ///
+    /// Position in phase plane (s, ṡ) space.
+    ///
+    /// Represents a point in the 2D phase plane used by TOTG algorithm.
+    /// Arc length s on the horizontal axis, path velocity ṡ on the vertical axis.
+    ///
+    struct phase_point {
+        arc_length s;  ///< Arc length position on path
+        double s_dot;  ///< Path velocity (ds/dt)
+    };
+
+    ///
+    /// Kinematic state during integration (position, velocity, acceleration).
+    ///
+    /// Represents the full state during phase plane integration: position and
+    /// velocity in the phase plane, plus path acceleration.
+    ///
+    /// @note: Does not inherit from `phase_point`, though it could, because it
+    ///        frustrates use of designated initializers.
+    ///
+    struct phase_state {
+        arc_length s;   ///< Arc length position on path
+        double s_dot;   ///< Path velocity (ds/dt)
+        double s_ddot;  ///< Path acceleration (d^2s/dt^2)
     };
 
     ///
     /// Integration point from phase plane TOTG algorithm.
     ///
-    /// Stores (time, arc_length, velocity, acceleration) from phase plane integration.
+    /// Stores time and kinematic state (s, ṡ, s̈) from integration.
     /// Path geometry (q, q', q'') is queried on-demand during sampling for exact results.
     /// This is more accurate than storing and interpolating joint-space values, since
     /// the path knows exact circular blend geometry.
@@ -128,13 +165,13 @@ class trajectory {
     ///
     /// @param p Path to time-parameterize (moved into trajectory)
     /// @param opt Trajectory generation options (moved into trajectory)
-    /// @param test_points Optional integration points for testing (bypasses TOTG algorithm).
-    ///                    If provided, must be sorted by time with first point at t=0.
+    /// @param points Optional integration points for testing (bypasses TOTG algorithm).
+    ///               If provided, must be sorted by time with first point at t=0.
     /// @return Time-parameterized trajectory
     /// @throws std::invalid_argument if options.max_velocity/acceleration DOF doesn't match path DOF,
     ///         if options.delta/epsilon are non-positive, or if test_points are invalid
     ///
-    [[nodiscard]] static trajectory create(path p, options opt, integration_points test_points = {});
+    [[nodiscard]] static trajectory create(path p, options opt, integration_points points = {});
 
     ///
     /// Gets total duration of trajectory.
@@ -219,8 +256,11 @@ class trajectory {
     [[nodiscard]] cursor create_cursor() const;
 
    private:
-    // Private constructor - only create() can construct trajectories
+    // Private constructor for completed trajectories with validated integration points
     trajectory(class path p, struct options opt, integration_points points);
+
+    // Private constructor for in-progress trajectory building (integration points added incrementally)
+    trajectory(class path p, struct options opt);
 
     // Geometric path
     class path path_;
@@ -233,6 +273,62 @@ class trajectory {
 
     // Total trajectory duration
     seconds duration_{seconds{0.0}};
+};
+
+///
+/// Observer for high-level trajectory integration events.
+///
+/// Receives notifications about major algorithm phases and decisions during
+/// TOTG trajectory generation. Useful for testing algorithm correctness.
+///
+class trajectory::integration_observer {
+   public:
+    ///
+    /// Destructor.
+    ///
+    virtual ~integration_observer();
+
+    ///
+    /// Called when forward integration starts or resumes.
+    ///
+    /// @param pt Phase plane position where integration starts
+    ///
+    virtual void on_started_forward_integration(phase_point pt) = 0;
+
+    ///
+    /// Called when integration detects that the next step would exceed a limit curve.
+    ///
+    /// The phase_point represents the INFEASIBLE candidate point that would exceed
+    /// the limit, not a point on the limit curve itself. The algorithm will transition
+    /// to curve following or switching point search to handle this condition.
+    ///
+    /// @param pt Phase plane position of infeasible candidate point (exceeds limit)
+    /// @param s_dot_max_acc Maximum velocity from acceleration constraints at pt.s
+    /// @param s_dot_max_vel Maximum velocity from velocity constraints at pt.s
+    ///
+    virtual void on_hit_limit_curve(phase_point pt, double s_dot_max_acc, double s_dot_max_vel) = 0;
+
+    ///
+    /// Called when backward integration starts from a switching point.
+    ///
+    /// @param pt Phase plane position of switching point
+    ///
+    virtual void on_started_backward_integration(phase_point pt) = 0;
+
+    ///
+    /// Called when trajectory has been extended with finalized integration points.
+    ///
+    /// May be called multiple times during generation as the trajectory is incrementally
+    /// built. Final call occurs when trajectory reaches path end (last s == path.length()).
+    ///
+    /// Enables streaming/incremental processing of finalized trajectory segments.
+    ///
+    /// The finalized phase plane position and duration can be obtained from
+    /// the trajectory itself (last integration point and trajectory.duration()).
+    ///
+    /// @param traj Trajectory with finalized integration points up to current position
+    ///
+    virtual void on_trajectory_extended(const trajectory& traj) = 0;
 };
 
 ///

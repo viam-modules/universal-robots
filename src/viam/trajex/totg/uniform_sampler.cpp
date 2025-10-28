@@ -49,8 +49,15 @@ std::optional<struct trajectory::sample> uniform_sampler::next(trajectory::curso
     auto sample = cursor.sample();
 
     // Advance for next iteration. If this takes us past the trajectory duration, the cursor
-    // moves to the end sentinel, and the next call to next() will return nullopt.
-    cursor.seek_by(dt_);
+    // moves to the end sentinel, and the next call to next() will return nullopt. We need to special
+    // case things near the end to ensure that we hit it exactly, but don't get stuck there.
+    const auto now = cursor.time();
+    const auto next = now + dt_;
+    if ((now != cursor.trajectory().duration()) && (next > cursor.trajectory().duration())) {
+        cursor.seek(cursor.trajectory().duration());
+    } else {
+        cursor.seek(next);
+    }
 
     return sample;
 }

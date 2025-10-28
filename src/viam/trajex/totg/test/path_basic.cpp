@@ -12,8 +12,8 @@ BOOST_AUTO_TEST_SUITE(path_tests)
 BOOST_AUTO_TEST_CASE(create_path) {
     using namespace viam::trajex::totg;
 
-    xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
-    waypoint_accumulator acc{waypoints};
+    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const waypoint_accumulator acc{waypoints};
 
     BOOST_CHECK_NO_THROW(static_cast<void>(path::create(acc)));
 }
@@ -21,8 +21,8 @@ BOOST_AUTO_TEST_CASE(create_path) {
 BOOST_AUTO_TEST_CASE(validates_max_deviation) {
     using namespace viam::trajex::totg;
 
-    xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
-    waypoint_accumulator acc{waypoints};
+    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const waypoint_accumulator acc{waypoints};
 
     // Negative blend deviation should throw
     BOOST_CHECK_THROW(static_cast<void>(path::create(acc, path::options{}.set_max_blend_deviation(-0.1))), std::invalid_argument);
@@ -35,25 +35,25 @@ BOOST_AUTO_TEST_CASE(requires_minimum_two_waypoints) {
     using namespace viam::trajex::totg;
 
     // Single waypoint should throw
-    xt::xarray<double> single = {{1.0, 2.0, 3.0}};
+    const xt::xarray<double> single = {{1.0, 2.0, 3.0}};
     BOOST_CHECK_THROW(static_cast<void>(path::create(single)), std::invalid_argument);
 
     // Two waypoints should work
-    xt::xarray<double> two = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xt::xarray<double> two = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     BOOST_CHECK_NO_THROW(static_cast<void>(path::create(two)));
 }
 
 BOOST_AUTO_TEST_CASE(create_from_array_vs_accumulator) {
     using namespace viam::trajex::totg;
 
-    xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
+    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
 
     // Create from accumulator
-    waypoint_accumulator acc{waypoints};
-    path p1 = path::create(acc);
+    const waypoint_accumulator acc{waypoints};
+    const path p1 = path::create(acc);
 
     // Create from array directly
-    path p2 = path::create(waypoints);
+    const path p2 = path::create(waypoints);
 
     // Should produce equivalent paths
     BOOST_CHECK_EQUAL(p1.dof(), p2.dof());
@@ -64,8 +64,8 @@ BOOST_AUTO_TEST_CASE(create_from_array_vs_accumulator) {
 BOOST_AUTO_TEST_CASE(path_dof_matches_waypoints) {
     using namespace viam::trajex::totg;
 
-    xt::xarray<double> waypoints = {{1.0, 2.0, 3.0, 4.0}, {5.0, 6.0, 7.0, 8.0}};
-    path p = path::create(waypoints);
+    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0, 4.0}, {5.0, 6.0, 7.0, 8.0}};
+    const path p = path::create(waypoints);
 
     BOOST_CHECK_EQUAL(p.dof(), 4);
 }
@@ -74,8 +74,8 @@ BOOST_AUTO_TEST_CASE(linear_path_length) {
     using namespace viam::trajex::totg;
 
     // Simple 3-4-5 triangle in 2D
-    xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
-    path p = path::create(waypoints);
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
+    const path p = path::create(waypoints);
 
     // Two segments: 3.0 + 4.0 = 7.0
     BOOST_CHECK_CLOSE(static_cast<double>(p.length()), 7.0, 1e-6);
@@ -84,8 +84,8 @@ BOOST_AUTO_TEST_CASE(linear_path_length) {
 BOOST_AUTO_TEST_CASE(linear_path_segment_count) {
     using namespace viam::trajex::totg;
 
-    xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}, {7.0, 8.0, 9.0}};
-    path p = path::create(waypoints);
+    const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}, {7.0, 8.0, 9.0}};
+    const path p = path::create(waypoints);
 
     // 3 waypoints => 2 segments
     BOOST_CHECK_EQUAL(p.size(), 2);
@@ -95,8 +95,8 @@ BOOST_AUTO_TEST_CASE(segment_lookup_at_start) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
-    path p = path::create(waypoints);
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
+    const path p = path::create(waypoints);
 
     // Query at start of path
     auto view = p(arc_length{0.0});
@@ -111,8 +111,8 @@ BOOST_AUTO_TEST_CASE(segment_lookup_at_boundary) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
-    path p = path::create(waypoints);
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
+    const path p = path::create(waypoints);
 
     // Query at boundary between segments (exactly at arc_length 3.0)
     auto view = p(arc_length{3.0});
@@ -127,8 +127,8 @@ BOOST_AUTO_TEST_CASE(segment_lookup_mid_segment) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
-    path p = path::create(waypoints);
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
+    const path p = path::create(waypoints);
 
     // Query in middle of first segment
     auto view = p(arc_length{1.5});
@@ -142,8 +142,8 @@ BOOST_AUTO_TEST_CASE(segment_lookup_at_end) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
-    path p = path::create(waypoints);
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}, {3.0, 4.0}};
+    const path p = path::create(waypoints);
 
     // Query at end of path
     auto view = p(arc_length{7.0});
@@ -157,8 +157,8 @@ BOOST_AUTO_TEST_CASE(segment_lookup_out_of_range) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
-    xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}};
-    path p = path::create(waypoints);
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {3.0, 0.0}};
+    const path p = path::create(waypoints);
 
     // Query beyond path length should throw
     BOOST_CHECK_THROW(p(arc_length{10.0}), std::out_of_range);
@@ -174,7 +174,7 @@ BOOST_AUTO_TEST_CASE(multiple_segments_lookup) {
     waypoints(1, 0) = 1.0;
     waypoints(2, 0) = 3.0;
     waypoints(3, 0) = 6.0;
-    path p = path::create(waypoints);
+    const path p = path::create(waypoints);
 
     BOOST_CHECK_EQUAL(p.size(), 3);
     BOOST_CHECK_CLOSE(static_cast<double>(p.length()), 6.0, 1e-6);

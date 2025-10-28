@@ -15,14 +15,17 @@
 	docker-arm64-ci \
 	docker-amd64-ci
 
+SOURCE_FILES := $(shell find src/viam/ur/module src/viam/trajex -type f \( -name '*.cpp' -o -name '*.hpp' \))
+CPP_FILES := $(filter %.cpp,$(SOURCE_FILES))
+
 default: module.tar.gz
 
 # format the source code
 format:
-	ls src/viam/ur/module/*.*pp src/viam/trajex/**/*.*pp | xargs clang-format-19 -i --style=file
+	clang-format-19 -i --style=file $(SOURCE_FILES)
 
 format-check:
-	ls src/viam/ur/module/*.*pp src/viam/trajex/**/*.*pp | xargs clang-format-19 -i --style=file --dry-run --Werror
+	clang-format-19 --style=file --dry-run --Werror $(SOURCE_FILES)
 
 configure:
 	cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -G Ninja
@@ -44,11 +47,17 @@ run-clang-tidy:
         -p build \
         --config-file ./.clang-tidy \
         --header-filter=".*/viam/(ur/module|trajex)/.*" \
-	./src/viam/ur/module/*.cpp \
-	./src/viam/trajex/**/*.cpp
+	$(CPP_FILES)
+
+run-clang-tidy-parallel:
+	run-clang-tidy-19 \
+        -p build \
+        -config-file ./.clang-tidy \
+        -header-filter=".*/viam/(ur/module|trajex)/.*" \
+	$(CPP_FILES)
 
 run-clang-check:
-	clang-check-19 -p build ./src/viam/ur/module/*.cpp ./src/viam/trajex/**/*.cpp
+	clang-check-19 -p build $(CPP_FILES)
 
 clean:
 	rm -rf build

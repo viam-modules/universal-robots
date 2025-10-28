@@ -68,7 +68,7 @@ class path {
             /// @param end Ending configuration
             /// @throws std::invalid_argument if start == end
             ///
-            linear(xt::xarray<double> start, xt::xarray<double> end);
+            linear(xt::xarray<double> start, const xt::xarray<double>& end);
 
             xt::xarray<double> start;           ///< Starting configuration
             xt::xarray<double> unit_direction;  ///< Precomputed unit direction vector (normalized end-start)

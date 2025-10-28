@@ -1,8 +1,8 @@
 // Uniform sampler tests
 // Extracted from test.cpp lines 2062-2141
 
-#include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
+#include <viam/trajex/totg/uniform_sampler.hpp>
 
 #include <boost/test/unit_test.hpp>
 

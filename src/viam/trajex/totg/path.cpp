@@ -41,7 +41,7 @@ double path::options::max_linear_deviation() const noexcept {
     return max_linear_deviation_;
 }
 
-path::segment::linear::linear(xt::xarray<double> start, xt::xarray<double> end) : start{std::move(start)}, length{0.0} {
+path::segment::linear::linear(xt::xarray<double> start, const xt::xarray<double>& end) : start{std::move(start)}, length{0.0} {
     const auto diff = end - this->start;
     const double norm = xt::norm_l2(diff)();
 
@@ -201,24 +201,32 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         }
 
         const auto start_to_next = next - start;
-        const auto start_to_locus = locus - start;
 
-        const double start_to_next_sq = xt::sum(start_to_next * start_to_next)();
-
-        if (start_to_next_sq == 0.0) {
-            return true;  // Next is duplicate, so locus is trivially coalescable
+        // Check if start and next are exactly the same position (all components identically zero)
+        if (xt::all(xt::equal(start_to_next, 0.0))) {
+            // When start == next (returning to same position), the locus represents an
+            // intentional intermediate goal that must be preserved. Cannot coalesce.
+            return false;
         }
 
+        const auto start_to_locus = locus - start;
+        const double start_to_next_sq = xt::sum(start_to_next * start_to_next)();
         const double start_to_locus_dot_direction = xt::sum(start_to_locus * start_to_next)();
-        const double t = start_to_locus_dot_direction / start_to_next_sq;
 
         // Monotonic advancement check: reject if locus would require going backward from
         // start or forward past next. This ensures we only skip waypoints that maintain
         // forward progress along the segment direction.
-        if (t < 0.0 || t > 1.0) {
+        //
+        // We check the bounds BEFORE dividing to avoid division-by-near-zero issues.
+        // Since start_to_next_sq > 0, we can multiply through the inequality:
+        //   t < 0  becomes  dot < 0
+        //   t > 1  becomes  dot > start_to_next_sq
+        if (start_to_locus_dot_direction < 0.0 || start_to_locus_dot_direction > start_to_next_sq) {
             return false;
         }
 
+        // Now safe to divide: bounds check guarantees 0 <= t <= 1
+        const double t = start_to_locus_dot_direction / start_to_next_sq;
         const auto projected_point = start + (t * start_to_next);
         const auto deviation_vector = locus - projected_point;
         const double deviation = xt::norm_l2(deviation_vector)();
@@ -314,16 +322,45 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
     // waypoints rather than one of the original waypoints in the accumulator.
     xt::xarray<double> current_position = *segment_start;
 
+    // Track waypoints we've skipped since the last segment emission. When extending the tube
+    // to a new endpoint, we must revalidate that all previously skipped waypoints remain
+    // within tolerance of the extended segment to prevent "tube drift".
+    std::vector<decltype(waypoints.begin())> skipped_since_anchor;
+
     for (auto locus = std::next(waypoints.begin()); locus != waypoints.end(); ++locus) {
         auto next = std::next(locus);
 
         // If we're at the last waypoint, we must emit the final segment
         const bool at_last = (next == waypoints.end());
 
-        const bool can_skip = !at_last && can_coalesce(*segment_start, *locus, *next);
+        // Check if we can skip this waypoint: it must pass the standard coalesce check
+        // AND all previously skipped waypoints must remain within tolerance when the
+        // tube is extended to the new endpoint (revalidation prevents drift).
+        if (!at_last && can_coalesce(*segment_start, *locus, *next)) {
+            // Revalidate all previously skipped waypoints against the extended segment
+            bool all_previous_valid = true;
+            for (auto prev_skipped : skipped_since_anchor) {
+                const auto start_to_next = *next - *segment_start;
+                const auto start_to_prev = *prev_skipped - *segment_start;
 
-        if (can_skip) {
-            continue;
+                const double start_to_next_sq = xt::sum(start_to_next * start_to_next)();
+                const double start_to_prev_dot = xt::sum(start_to_prev * start_to_next)();
+
+                const double t = start_to_prev_dot / start_to_next_sq;
+                const auto projected = *segment_start + (t * start_to_next);
+                const auto deviation_vec = *prev_skipped - projected;
+                const double deviation = xt::norm_l2(deviation_vec)();
+
+                if (deviation > opts.max_linear_deviation()) {
+                    all_previous_valid = false;
+                    break;
+                }
+            }
+
+            if (all_previous_valid) {
+                skipped_since_anchor.push_back(locus);
+                continue;
+            }
         }
 
         // Locus represents a corner (or the final waypoint). We need to emit the segment
@@ -341,11 +378,11 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
 
             const auto trimmed_end = *locus - (blend.trim_distance * incoming_unit);
             segment::linear incoming_segment{current_position, trimmed_end};
-            segments.push_back({.seg = segment{std::move(incoming_segment)}, .start = cumulative_length});
             cumulative_length = cumulative_length + incoming_segment.length;
+            segments.push_back({.seg = segment{std::move(incoming_segment)}, .start = cumulative_length});
 
-            segments.push_back({.seg = segment{blend.circular_seg}, .start = cumulative_length});
             cumulative_length = cumulative_length + arc_length{blend.circular_seg.radius * blend.circular_seg.angle_rads};
+            segments.push_back({.seg = segment{blend.circular_seg}, .start = cumulative_length});
 
             // After the blend, we're positioned at the blend exit point on the outgoing segment.
             // This position doesn't correspond to any waypoint in the accumulator, which is why
@@ -356,6 +393,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             // is between locus and next, we use locus as the reference point for determining if
             // future waypoints can be coalesced.
             segment_start = locus;
+            skipped_since_anchor.clear();
         } else {
             // No blend created - emit linear segment from current_position to locus
             const auto start_to_locus = *locus - current_position;
@@ -363,12 +401,13 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
 
             if (dist_sq > 0.0) {
                 segment::linear linear_data{current_position, *locus};
-                segments.push_back({.seg = segment{std::move(linear_data)}, .start = cumulative_length});
                 cumulative_length = cumulative_length + linear_data.length;
+                segments.push_back({.seg = segment{std::move(linear_data)}, .start = cumulative_length});
             }
 
             current_position = *locus;
             segment_start = locus;
+            skipped_since_anchor.clear();
         }
     }
 
@@ -416,7 +455,7 @@ path::const_iterator::const_iterator() noexcept : path_{nullptr} {}
 path::segment::view path::const_iterator::operator*() const {
     // Compute end: next segment's start, or path length
     auto next = std::next(it_);
-    arc_length end = (next != path_->segments_.end()) ? next->start : path_->length_;
+    const arc_length end = (next != path_->segments_.end()) ? next->start : path_->length_;
 
     return {it_->seg, it_->start, end};
 }
@@ -491,6 +530,7 @@ xt::xarray<double> path::curvature(arc_length s) const {
     return (*this)(s).curvature(s);
 }
 
+// TOOD: This clamping is sort of weird. I think it should either throw, or decay to the singular end cursor.
 path::cursor::cursor(const class path* p, arc_length s)
     : path_{p}, position_{std::clamp(s, arc_length{0.0}, p->length())}, hint_{path_->begin()} {
     if (path_->empty()) {
@@ -579,6 +619,11 @@ void path::cursor::update_hint_() noexcept {
     // This optimization provides O(1) amortized performance for sequential traversal
     // (the common case during trajectory integration) by checking nearby segments before
     // falling back to binary search for large jumps.
+    //
+    // TODO: Optimize hint update by detecting seek direction (forward vs backward from previous
+    // position). We can skip checks that won't work based on direction (e.g., don't check prev
+    // segment when moving forward), simplifying logic and improving performance for directional
+    // sequential access patterns.
 
     auto current_view = *hint_;
 

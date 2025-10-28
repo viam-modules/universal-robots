@@ -22,6 +22,7 @@ class URArm::state_ {
                     std::filesystem::path csv_output_path,
                     std::optional<double> reject_move_request_threshold_rad,
                     std::optional<double> robot_control_freq_hz,
+                    bool use_new_trajectory_planner,
                     const struct ports_& ports);
     ~state_();
 
@@ -47,6 +48,8 @@ class URArm::state_ {
 
     void set_acceleration(double acceleration);
     double get_acceleration() const;
+
+    bool use_new_trajectory_planner() const;
 
     void clear_pstop() const;
 
@@ -349,6 +352,8 @@ class URArm::state_ {
 
     std::atomic<double> speed_{0};
     std::atomic<double> acceleration_{0};
+
+    const bool use_new_trajectory_planner_;
 
     mutable std::mutex mutex_;
     state_variant_ current_state_{state_disconnected_{}};

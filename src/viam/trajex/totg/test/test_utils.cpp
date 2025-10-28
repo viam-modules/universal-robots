@@ -15,9 +15,13 @@
 namespace viam::trajex::totg::test {
 
 bool configs_close(const xt::xarray<double>& a, const xt::xarray<double>& b, double tolerance) {
-    if (a.shape(0) != b.shape(0)) return false;
+    if (a.shape(0) != b.shape(0)) {
+        return false;
+    }
     for (size_t i = 0; i < a.shape(0); ++i) {
-        if (std::abs(a(i) - b(i)) > tolerance) return false;
+        if (std::abs(a(i) - b(i)) > tolerance) {
+            return false;
+        }
     }
     return true;
 }
@@ -26,7 +30,7 @@ void verify_path_visits_waypoints(const path& p, const xt::xarray<double>& waypo
     using namespace viam::trajex;
 
     for (size_t i = 0; i < waypoints.shape(0); ++i) {
-        xt::xarray<double> waypoint = xt::view(waypoints, i, xt::all());
+        const xt::xarray<double> waypoint = xt::view(waypoints, i, xt::all());
 
         // Find minimum distance from waypoint to any point on path
         double min_distance = std::numeric_limits<double>::max();
@@ -36,11 +40,11 @@ void verify_path_visits_waypoints(const path& p, const xt::xarray<double>& waypo
         for (size_t j = 0; j <= num_samples; ++j) {
             const double fraction = static_cast<double>(j) / static_cast<double>(num_samples);
             const arc_length s{static_cast<double>(p.length()) * fraction};
-            auto config = p.configuration(s);
+            const auto config = p.configuration(s);
 
             // Compute distance
-            auto diff = waypoint - config;
-            double distance = xt::norm_l2(diff)();
+            const auto diff = waypoint - config;
+            const double distance = xt::norm_l2(diff)();
             min_distance = std::min(min_distance, distance);
         }
 

@@ -23,13 +23,11 @@ BOOST_AUTO_TEST_CASE(circular_blend_right_angle_basic) {
     using viam::trajex::arc_length;
 
     // Simple 90-degree corner with blend
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},  // Corner at 90 degrees
-        {1.0, 1.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0},
+                                          {1.0, 0.0},  // Corner at 90 degrees
+                                          {1.0, 1.0}};
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
 
     // Should have 3 segments: trimmed linear, circular blend, trimmed linear
     BOOST_CHECK_EQUAL(p.size(), 3U);
@@ -57,13 +55,11 @@ BOOST_AUTO_TEST_CASE(circular_blend_obtuse_angle) {
     using viam::trajex::arc_length;
 
     // 135-degree turn (obtuse angle)
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},  // Corner at 135 degrees
-        {0.0, 1.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0},
+                                          {1.0, 0.0},  // Corner at 135 degrees
+                                          {0.0, 1.0}};
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
 
     // Should create blend at obtuse corner
     BOOST_CHECK_EQUAL(p.size(), 3U);
@@ -83,13 +79,11 @@ BOOST_AUTO_TEST_CASE(circular_blend_acute_angle) {
     using viam::trajex::arc_length;
 
     // 45-degree turn (acute angle)
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},  // Corner at 45 degrees
-        {2.0, 1.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0},
+                                          {1.0, 0.0},  // Corner at 45 degrees
+                                          {2.0, 1.0}};
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
 
     // Should create blend at acute corner
     BOOST_CHECK_EQUAL(p.size(), 3U);
@@ -108,14 +102,12 @@ BOOST_AUTO_TEST_CASE(circular_blend_multiple_corners) {
     using viam::trajex::arc_length;
 
     // Path with two 90-degree corners
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},  // First corner
-        {1.0, 1.0},  // Second corner
-        {0.0, 1.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0},
+                                          {1.0, 0.0},  // First corner
+                                          {1.0, 1.0},  // Second corner
+                                          {0.0, 1.0}};
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
 
     // Should have: linear, blend, linear, blend, linear = 5 segments
     BOOST_CHECK_EQUAL(p.size(), 5U);
@@ -147,13 +139,9 @@ BOOST_AUTO_TEST_CASE(circular_blend_zero_deviation_no_blends) {
     using viam::trajex::arc_length;
 
     // With zero blend deviation, should get sharp corners (no blends)
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},
-        {1.0, 1.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.0));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.0));
 
     // Should have 2 linear segments, no blends
     BOOST_CHECK_EQUAL(p.size(), 2U);
@@ -173,17 +161,12 @@ BOOST_AUTO_TEST_CASE(circular_blend_preserves_coalescing) {
     using viam::trajex::arc_length;
 
     // Mix of coalesceable points and blend corners
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {0.5, 0.0},  // Should coalesce
-        {1.0, 0.0},  // Corner requiring blend
-        {1.0, 1.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0},
+                                          {0.5, 0.0},  // Should coalesce
+                                          {1.0, 0.0},  // Corner requiring blend
+                                          {1.0, 1.0}};
 
-    path p = path::create(waypoints,
-                         path::options{}
-                             .set_max_linear_deviation(0.1)
-                             .set_max_blend_deviation(0.1));
+    const path p = path::create(waypoints, path::options{}.set_max_linear_deviation(0.1).set_max_blend_deviation(0.1));
 
     // Should coalesce first segment, then blend at corner: linear, blend, linear = 3 segments
     BOOST_CHECK_EQUAL(p.size(), 3U);
@@ -196,14 +179,14 @@ BOOST_AUTO_TEST_CASE(circular_blend_insufficient_segment_length) {
     using viam::trajex::arc_length;
 
     // Corner with segments too short for requested blend
-    xt::xarray<double> waypoints = {
+    const xt::xarray<double> waypoints = {
         {0.0, 0.0},
         {0.1, 0.0},  // Very short segment
         {0.1, 0.1}   // Very short segment
     };
 
     // Request large blend that won't fit fully
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.5));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.5));
 
     // Should create a blend limited by segment length (ℓ = min(0.05, 0.05, ...))
     // Result: trimmed linear, circular blend, trimmed linear = 3 segments
@@ -220,13 +203,9 @@ BOOST_AUTO_TEST_CASE(circular_blend_collinear_no_blend) {
     using namespace viam::trajex::totg;
 
     // Collinear points should not create blend (angle is 180 degrees)
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},
-        {2.0, 0.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {2.0, 0.0}};
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
 
     // Should have 2 linear segments, no blend (points are collinear)
     BOOST_CHECK_EQUAL(p.size(), 2U);
@@ -241,13 +220,11 @@ BOOST_AUTO_TEST_CASE(circular_blend_very_sharp_angle) {
     using viam::trajex::arc_length;
 
     // Nearly 180-degree turn (very sharp bend back)
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},
-        {0.1, 0.1}  // Nearly reverses direction
+    const xt::xarray<double> waypoints = {
+        {0.0, 0.0}, {1.0, 0.0}, {0.1, 0.1}  // Nearly reverses direction
     };
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
 
     // Should create blend even for sharp angle
     BOOST_CHECK_GE(p.size(), 3U);
@@ -260,13 +237,11 @@ BOOST_AUTO_TEST_CASE(circular_blend_higher_dimensions) {
     using viam::trajex::arc_length;
 
     // 3D path with corner
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0, 0.0},
-        {1.0, 0.0, 0.0},  // Corner in XY plane
-        {1.0, 1.0, 0.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0, 0.0},
+                                          {1.0, 0.0, 0.0},  // Corner in XY plane
+                                          {1.0, 1.0, 0.0}};
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
 
     BOOST_CHECK_EQUAL(p.size(), 3U);
     BOOST_CHECK_EQUAL(p.dof(), 3U);
@@ -279,14 +254,10 @@ BOOST_AUTO_TEST_CASE(circular_blend_blend_radius_geometry) {
     using viam::trajex::arc_length;
 
     // Verify blend geometry: 90-degree corner with known max_deviation
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},
-        {1.0, 1.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
 
     const double max_dev = 0.1;
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(max_dev));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(max_dev));
 
     // For 90-degree turn using Kunz & Stilman formulas (eq. 3-4):
     // Trim: ℓ = δ * sin(α/2) / (1 - cos(α/2))
@@ -296,7 +267,7 @@ BOOST_AUTO_TEST_CASE(circular_blend_blend_radius_geometry) {
     const double expected_radius = expected_trim / std::tan(half_angle);
 
     // Path length should be: (1 - trim) + (radius * π/2) + (1 - trim)
-    const double expected_length = 2.0 * (1.0 - expected_trim) + expected_radius * M_PI / 2.0;
+    const double expected_length = (2.0 * (1.0 - expected_trim)) + ((expected_radius * M_PI) / 2.0);
     BOOST_CHECK_CLOSE(static_cast<double>(p.length()), expected_length, 0.1);  // 0.1% tolerance
 }
 
@@ -305,13 +276,13 @@ BOOST_AUTO_TEST_CASE(circular_blend_start_end_waypoints_exact) {
     using viam::trajex::arc_length;
 
     // Start and end waypoints must be exact even with blends
-    xt::xarray<double> waypoints = {
+    const xt::xarray<double> waypoints = {
         {0.5, 0.3},  // Arbitrary start
         {1.7, 0.8},  // Corner
         {2.1, 1.9}   // Arbitrary end
     };
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.2));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.2));
 
     auto config_start = p.configuration(arc_length{0.0});
     auto config_end = p.configuration(p.length());
@@ -328,15 +299,11 @@ BOOST_AUTO_TEST_CASE(circular_blend_symmetric_corners) {
     using viam::trajex::arc_length;
 
     // Symmetric path - blends should be symmetric
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},
-        {1.0, 1.0},
-        {0.0, 1.0},
-        {0.0, 0.0}  // Square path
+    const xt::xarray<double> waypoints = {
+        {0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {0.0, 1.0}, {0.0, 0.0}  // Square path
     };
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
 
     // Should have 4 corners with 4 blends: 4 linear + 4 circular = 8 segments
     // (last segment closes back to start, but no blend at start/end)
@@ -348,18 +315,16 @@ BOOST_AUTO_TEST_CASE(circular_blend_different_blend_and_linear_tolerances) {
     using viam::trajex::arc_length;
 
     // Use different tolerances for coalescing and blending
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {0.5, 0.05},  // Slightly off line
-        {1.0, 0.0},   // Corner
-        {1.0, 1.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0},
+                                          {0.5, 0.05},  // Slightly off line
+                                          {1.0, 0.0},   // Corner
+                                          {1.0, 1.0}};
 
     // Large linear deviation to coalesce, small blend deviation
-    path p = path::create(waypoints,
-                         path::options{}
-                             .set_max_linear_deviation(0.1)   // Coalesce middle point
-                             .set_max_blend_deviation(0.05)); // Small blend
+    const path p = path::create(waypoints,
+                                path::options{}
+                                    .set_max_linear_deviation(0.1)    // Coalesce middle point
+                                    .set_max_blend_deviation(0.05));  // Small blend
 
     // Middle point should coalesce, corner should blend
     BOOST_CHECK_EQUAL(p.size(), 3U);
@@ -370,16 +335,12 @@ BOOST_AUTO_TEST_CASE(circular_blend_no_coalescing_only_blending) {
     using namespace viam::trajex::totg;
 
     // Test blending without coalescing enabled
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},
-        {1.0, 1.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
 
-    path p = path::create(waypoints,
-                         path::options{}
-                             .set_max_linear_deviation(0.0)  // No coalescing
-                             .set_max_blend_deviation(0.1)); // Only blending
+    const path p = path::create(waypoints,
+                                path::options{}
+                                    .set_max_linear_deviation(0.0)   // No coalescing
+                                    .set_max_blend_deviation(0.1));  // Only blending
 
     // Should have blend at corner
     BOOST_CHECK_EQUAL(p.size(), 3U);
@@ -395,14 +356,12 @@ BOOST_AUTO_TEST_CASE(circular_blend_consecutive_corners) {
     using viam::trajex::arc_length;
 
     // Two corners very close together
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},  // First corner
-        {1.1, 0.1},  // Second corner very close
-        {1.1, 1.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0},
+                                          {1.0, 0.0},  // First corner
+                                          {1.1, 0.1},  // Second corner very close
+                                          {1.1, 1.0}};
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.05));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.05));
 
     // Should handle consecutive corners appropriately
     BOOST_CHECK_GE(p.size(), 3U);
@@ -414,13 +373,9 @@ BOOST_AUTO_TEST_CASE(circular_blend_path_continuity) {
     using viam::trajex::arc_length;
 
     // Verify path is continuous across blend boundaries
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},
-        {1.0, 1.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
 
     // Sample at segment boundaries - should be continuous
     auto it = p.begin();
@@ -446,13 +401,9 @@ BOOST_AUTO_TEST_CASE(circular_blend_tangent_continuity) {
     using viam::trajex::arc_length;
 
     // Verify tangent vectors are continuous at blend boundaries
-    xt::xarray<double> waypoints = {
-        {0.0, 0.0},
-        {1.0, 0.0},
-        {1.0, 1.0}
-    };
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
 
-    path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
 
     // Get tangents just before and just after segment boundaries
     auto it = p.begin();
@@ -466,9 +417,8 @@ BOOST_AUTO_TEST_CASE(circular_blend_tangent_continuity) {
     auto tangent2 = p.tangent(arc_length{static_cast<double>(seg2_start) + 1e-6});
 
     // Tangents should be close (C1 continuity)
-    double dot_product = xt::sum(tangent1 * tangent2)();
+    const double dot_product = xt::sum(tangent1 * tangent2)();
     BOOST_CHECK_CLOSE(dot_product, 1.0, 1.0);  // Within 1% (small angle tolerance)
 }
-
 
 BOOST_AUTO_TEST_SUITE_END()

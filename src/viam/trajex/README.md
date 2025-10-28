@@ -18,6 +18,7 @@ Given a geometric path in joint space and constraints on joint velocities and ac
 - **Joint constraints**: Respects individual joint velocity and acceleration limits
 - **Modern C++20**: Uses modern C++ features including concepts and ranges
 - **xtensor-based**: Uses xtensor for consistency with Viam C++ SDK
+- **Near-collinear point elision**: Skips circular blends for nearly collinear waypoints
 
 ## References
 
