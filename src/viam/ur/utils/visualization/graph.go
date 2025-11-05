@@ -28,6 +28,7 @@ type config struct {
 	ArmKinematicsPath string `json:"arm_kinematics_path"`
 	CachedPlanPath    string `json:"cached_plan_path"`
 	CachedOnly        bool   `json:"cached_only"`
+	CachedWindow      []int  `json:"cached_window"`
 }
 
 func loadConfig(path string) (config, error) {
@@ -196,7 +197,7 @@ func saveComparisonChartPNG(name, yLabel string, x1, y1, x2, y2 []float64) error
 	return graph.Render(chart.PNG, f)
 }
 func saveChartPNG(name, yLabel string, x1, y1 []float64) error {
-	way := chart.ContinuousSeries{Name: "Waypoints", XValues: x1, YValues: y1, Style: chart.Style{Show: true, StrokeColor: chart.ColorOrange}}
+	way := chart.ContinuousSeries{Name: "Waypoints", XValues: x1, YValues: y1, Style: chart.Style{Show: true, DotWidth: 1, DotColor: chart.ColorOrange}}
 
 	// Create title with legend information
 	titleWithLegend := fmt.Sprintf("%s (Orange: Waypoints)", name)
@@ -209,7 +210,8 @@ func saveChartPNG(name, yLabel string, x1, y1 []float64) error {
 		Height: 600,
 		Elements: []chart.Renderable{chart.LegendThin(
 			&chart.Chart{Series: []chart.Series{way}},
-			chart.Style{FillColor: chart.ColorTransparent,
+			chart.Style{
+				FillColor:       chart.ColorTransparent,
 				StrokeColor:     chart.ColorTransparent,
 				TextLineSpacing: 5,
 			}),
@@ -247,14 +249,23 @@ func plotChartsCachedData(
 	wayTime []float64,
 	waypointData [][]float64,
 	labelFunc func(int) string,
+	window []int,
 ) error {
-	fmt.Println("waytime: ", len(wayTime))
-
+	start := 0
+	end := len(wayTime) - 1
+	if len(window) == 2 {
+		if window[0] > start {
+			start = window[0]
+		}
+		if window[1] < end {
+			end = window[1]
+		}
+	}
 	for i := range waypointData {
 		name := fmt.Sprintf("%s%s_cached.png", prefix, labelFunc(i))
 		yLabel := fmt.Sprintf(yLabelFormat, labelFunc(i))
 		fmt.Println(name, ": ", len(waypointData[i]))
-		if err := saveChartPNG(name, yLabel, wayTime, waypointData[i]); err != nil {
+		if err := saveChartPNG(name, yLabel, wayTime[start:end], waypointData[i][start:end]); err != nil {
 			return err
 		}
 	}
@@ -384,7 +395,8 @@ func realmain(cfg config) error {
 		if err != nil {
 			return err
 		}
-		err = plotJointsAndPosesCachedPlan(joints, poses)
+		window := cfg.CachedWindow
+		err = plotJointsAndPosesCachedPlan(joints, poses, window)
 		if err != nil {
 			return err
 		}
@@ -476,7 +488,7 @@ func parseAndAddPosesCachedPlan(cached string, model referenceframe.Model) ([][]
 	return [][]float64{j0, j1, j2, j3, j4, j5}, [][]float64{cx, cy, cz}, nil
 }
 
-func plotJointsAndPosesCachedPlan(joints, poses [][]float64) error {
+func plotJointsAndPosesCachedPlan(joints, poses [][]float64, window []int) error {
 
 	waypointTime := []float64{}
 	for i := range len(poses[0]) {
@@ -485,7 +497,7 @@ func plotJointsAndPosesCachedPlan(joints, poses [][]float64) error {
 	// For joints, just use the index number as string
 	if err := plotChartsCachedData("joint", "Joint %s Angle (rad)", waypointTime, joints, func(i int) string {
 		return strconv.Itoa(i)
-	}); err != nil {
+	}, window); err != nil {
 		return err
 	}
 
@@ -493,7 +505,7 @@ func plotJointsAndPosesCachedPlan(joints, poses [][]float64) error {
 	suffix := []string{"X", "Y", "Z"}
 	if err := plotChartsCachedData("position_", "Position %s (mm)", waypointTime, poses, func(i int) string {
 		return suffix[i]
-	}); err != nil {
+	}, window); err != nil {
 		return err
 	}
 	return nil
