@@ -1,16 +1,16 @@
 #pragma once
 
+#include <list>
 #include <shared_mutex>
 
-#include <ur_client_library/control/trajectory_point_interface.h>
+#include <Eigen/Core>
+
 #include <ur_client_library/types.h>
 
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/reconfigurable.hpp>
-
-#include <third_party/trajectories/Path.h>
 
 using namespace viam::sdk;
 using namespace urcl;
@@ -19,6 +19,10 @@ struct trajectory_sample_point {
     vector6d_t p;
     vector6d_t v;
     float timestep;
+};
+
+struct pose_sample {
+    vector6d_t p;
 };
 
 template <typename Func>
@@ -52,23 +56,8 @@ void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::
 std::string waypoints_filename(const std::string& path, const std::string& unix_time);
 std::string trajectory_filename(const std::string& path, const std::string& unix_time);
 std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
+std::string move_to_position_trajectory_filename(const std::string& path, const std::string& unix_time);
 std::string unix_time_iso8601();
-
-// The ports that are currently in use by the underlying UR driver
-struct ports {
-    uint32_t reverse_port;
-    uint32_t script_sender_port;
-    uint32_t trajectory_port;
-    uint32_t script_command_port;
-};
-
-// We need to requisition different ports for each independent URArm instance, otherwise they will all try
-// to use the same ports and only one of them will work.
-inline auto new_ports() {
-    static std::atomic<uint32_t> port_counter(50001);
-    const auto reverse_port = port_counter.fetch_add(4);
-    return ports{reverse_port, reverse_port + 1, reverse_port + 2, reverse_port + 3};
-}
 
 class URArm final : public Arm, public Reconfigurable {
    public:
@@ -109,6 +98,11 @@ class URArm final : public Arm, public Reconfigurable {
     /// @return Pose of the end effector with respect to the arm base.
     pose get_end_position(const ProtoStruct& extra) override;
 
+    /// @brief Move the arm to a defined pose.
+    /// @param p The pose the arm will move to.
+    /// @return An error indicating if we succeeded or not.
+    void move_to_position(const pose& p, const ProtoStruct&) override;
+
     /// @brief Reports if the arm is in motion.
     bool is_moving() override;
 
@@ -128,22 +122,14 @@ class URArm final : public Arm, public Reconfigurable {
     /// contain joint waypoints
     ProtoStruct do_command(const ProtoStruct& command) override;
 
-    // --------------- UNIMPLEMENTED FUNCTIONS ---------------
-    void move_to_position(const pose&, const ProtoStruct&) override {
-        throw std::runtime_error("unimplemented");
-    }
-
+    // --------------- UNIMPLEMENTED FUNCTIONS --------------
     // the arm server within RDK will reconstruct the geometries from the kinematics and joint positions if left unimplemented
     std::vector<GeometryConfig> get_geometries(const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
     }
 
    private:
-    struct state_;
-
-    enum class UrDriverStatus : int8_t;  // Only available on 3.10/5.4
-
-    static std::string status_to_string_(UrDriverStatus status);
+    class state_;
 
     void configure_(const std::unique_lock<std::shared_mutex>& lock, const Dependencies& deps, const ResourceConfig& cfg);
 
@@ -152,25 +138,29 @@ class URArm final : public Arm, public Reconfigurable {
 
     void shutdown_(const std::unique_lock<std::shared_mutex>& lock) noexcept;
 
-    void keep_alive_();
+    vector6d_t get_joint_positions_rad_(const std::shared_lock<std::shared_mutex>&);
 
-    std::vector<double> get_joint_positions_(const std::shared_lock<std::shared_mutex>&);
+    void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
+                           std::list<Eigen::VectorXd> waypoints,
+                           const MoveOptions& options,
+                           const std::string& unix_time_ms);
 
-    void move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time_ms);
-
-    bool send_trajectory_(const std::vector<trajectory_sample_point>& samples);
-
-    void trajectory_done_cb_(control::TrajectoryResult);
-
-    URArm::UrDriverStatus read_joint_keep_alive_(bool log);
-    URArm::UrDriverStatus read_joint_keep_alive_inner_(bool log);
+    void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time_ms);
 
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
 
     const Model model_;
 
+    const struct ports_ {
+        ports_();
+
+        uint32_t reverse_port;
+        uint32_t script_sender_port;
+        uint32_t trajectory_port;
+        uint32_t script_command_port;
+    } ports_;
+
     std::shared_mutex config_mutex_;
     std::unique_ptr<state_> current_state_;
-    std::optional<ports> current_ports_;
 };
