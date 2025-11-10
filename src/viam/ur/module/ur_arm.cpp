@@ -214,7 +214,7 @@ void write_trajectory_to_file(const std::string& filepath, const std::vector<tra
     of.close();
 }
 
-void write_pose_to_file(const std::string& filepath, const pose_sample sample) {
+void write_pose_to_file(const std::string& filepath, const pose_sample& sample) {
     std::ofstream of(filepath);
     of << "x,y,z,rx,ry,rz\n";
     of << sample.p[0];
