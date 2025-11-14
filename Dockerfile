@@ -23,7 +23,6 @@ RUN apt-get -y --no-install-recommends install \
     libgrpc++-dev \
     libprotobuf-dev \
     libssl-dev \
-    libxtensor-dev \
     libusb-1.0-0-dev \
     libudev-dev \
     libgtk-3-dev \
@@ -61,6 +60,30 @@ RUN mkdir -p /root/opt/src
 
 # Install Eigen
 RUN apt install -y libeigen3-dev
+
+# Install xtl 0.8.0 (required by xtensor, header-only)
+RUN cd /root/opt/src && \
+    git clone https://github.com/xtensor-stack/xtl.git && \
+    cd xtl && \
+    git checkout 0.8.0 && \
+    cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -G Ninja && \
+    cmake --build build -- -j4 && \
+    cmake --install build --prefix /usr/local && \
+    rm -rf /root/opt/src/xtl
+
+# Install xtensor 0.26.0 (compatible with clang-19, header-only)
+RUN cd /root/opt/src && \
+    git clone https://github.com/xtensor-stack/xtensor.git && \
+    cd xtensor && \
+    git checkout 0.26.0 && \
+    cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -G Ninja && \
+    cmake --build build -- -j4 && \
+    cmake --install build --prefix /usr/local && \
+    rm -rf /root/opt/src/xtensor
 
 # Install Viam C++ SDK from source. If you change the
 # version here, change it in the top level CMakeLists.txt as well.
