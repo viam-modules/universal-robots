@@ -105,17 +105,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(viam-cpp-sdk)
 
-# xtl and xtensor are provided by viam-cpp-sdk if it was built on a
-# system that didn't provide them, but we require somewhat newer
-# versions than it currently ships when using our compiler of record
-# in our CI Docker container. That's OK. For conan (release) builds we
-# will get the newer versions from Conan. For macOS, homebrew gives us
-# what we need today. For CI, we have a docker image that installs
-# these versions or newer before building the C++ SDK, so it will use
-# those versions.
-find_package(xtl 0.8.0 CONFIG REQUIRED)
-find_package(xtensor 0.26.0 CONFIG REQUIRED)
-
 find_package(Eigen3 3.4 CONFIG REQUIRED)
 find_package(viam-cpp-sdk 0.13 CONFIG REQUIRED viamsdk)
 
