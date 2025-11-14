@@ -21,6 +21,10 @@ struct trajectory_sample_point {
     float timestep;
 };
 
+struct pose_sample {
+    vector6d_t p;
+};
+
 template <typename Func>
 void sampling_func(std::vector<trajectory_sample_point>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
     if (duration_sec <= 0.0 || sampling_frequency_hz <= 0.0) {
@@ -52,6 +56,7 @@ void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::
 std::string waypoints_filename(const std::string& path, const std::string& unix_time);
 std::string trajectory_filename(const std::string& path, const std::string& unix_time);
 std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
+std::string move_to_position_trajectory_filename(const std::string& path, const std::string& unix_time);
 std::string unix_time_iso8601();
 
 class URArm final : public Arm, public Reconfigurable {
@@ -93,6 +98,11 @@ class URArm final : public Arm, public Reconfigurable {
     /// @return Pose of the end effector with respect to the arm base.
     pose get_end_position(const ProtoStruct& extra) override;
 
+    /// @brief Move the arm to a defined pose.
+    /// @param p The pose the arm will move to.
+    /// @return An error indicating if we succeeded or not.
+    void move_to_position(const pose& p, const ProtoStruct&) override;
+
     /// @brief Reports if the arm is in motion.
     bool is_moving() override;
 
@@ -112,11 +122,7 @@ class URArm final : public Arm, public Reconfigurable {
     /// contain joint waypoints
     ProtoStruct do_command(const ProtoStruct& command) override;
 
-    // --------------- UNIMPLEMENTED FUNCTIONS ---------------
-    void move_to_position(const pose&, const ProtoStruct&) override {
-        throw std::runtime_error("unimplemented");
-    }
-
+    // --------------- UNIMPLEMENTED FUNCTIONS --------------
     // the arm server within RDK will reconstruct the geometries from the kinematics and joint positions if left unimplemented
     std::vector<GeometryConfig> get_geometries(const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
@@ -134,7 +140,12 @@ class URArm final : public Arm, public Reconfigurable {
 
     vector6d_t get_joint_positions_rad_(const std::shared_lock<std::shared_mutex>&);
 
-    void move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time_ms);
+    void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
+                           std::list<Eigen::VectorXd> waypoints,
+                           const MoveOptions& options,
+                           const std::string& unix_time_ms);
+
+    void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time_ms);
 
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
