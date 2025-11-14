@@ -139,9 +139,9 @@ func TestEvenlySpacedTimes(t *testing.T) {
 	test.That(t, times, test.ShouldResemble, []float64{1.0})
 }
 
-func TestSaveChartPNG(t *testing.T) {
+func TestsaveComparisonChartPNG(t *testing.T) {
 	name := filepath.Join(os.TempDir(), "test_chart.png")
-	err := saveChartPNG(name, "Y Axis", []float64{0, 1}, []float64{1, 2}, []float64{0, 1}, []float64{2, 3})
+	err := saveComparisonChartPNG(name, "Y Axis", []float64{0, 1}, []float64{1, 2}, []float64{0, 1}, []float64{2, 3})
 	test.That(t, err, test.ShouldBeNil)
 	_, err = os.Stat(name)
 	test.That(t, err, test.ShouldBeNil)
