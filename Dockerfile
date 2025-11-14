@@ -61,11 +61,11 @@ RUN mkdir -p /root/opt/src
 # Install Eigen
 RUN apt install -y libeigen3-dev
 
-# Install xtl 0.8.0 (required by xtensor, header-only)
+# Install xtl 0.8.1 (required by xtensor, header-only)
 RUN cd /root/opt/src && \
     git clone https://github.com/xtensor-stack/xtl.git && \
     cd xtl && \
-    git checkout 0.8.0 && \
+    git checkout 0.8.1 && \
     cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -G Ninja && \
@@ -73,11 +73,11 @@ RUN cd /root/opt/src && \
     cmake --install build --prefix /usr/local && \
     rm -rf /root/opt/src/xtl
 
-# Install xtensor 0.26.0 (compatible with clang-19, header-only)
+# Install xtensor 0.27.1 (compatible with clang-19, header-only)
 RUN cd /root/opt/src && \
     git clone https://github.com/xtensor-stack/xtensor.git && \
     cd xtensor && \
-    git checkout 0.26.0 && \
+    git checkout 0.27.1 && \
     cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -G Ninja && \
@@ -90,7 +90,7 @@ RUN cd /root/opt/src && \
 RUN cd /root/opt/src && \
     git clone https://github.com/viamrobotics/viam-cpp-sdk && \
     cd viam-cpp-sdk && \
-    git checkout releases/v0.20.0 && \
+    git checkout releases/v0.21.0 && \
     cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DVIAMCPPSDK_USE_DYNAMIC_PROTOS=ON \
