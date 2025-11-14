@@ -2,7 +2,10 @@
 
 #include <viam/trajex/types/arc_length.hpp>
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnull-dereference"
 #include <boost/test/included/unit_test.hpp>
+#pragma GCC diagnostic pop
 
 BOOST_AUTO_TEST_SUITE(arc_length_tests)
 
