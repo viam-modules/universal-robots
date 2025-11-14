@@ -279,6 +279,8 @@ target_link_libraries(universal-robots
     viam-ur
 )
 
+apply_wall_werror(universal-robots)
+
 install(
   TARGETS
     universal-robots
@@ -296,6 +298,8 @@ target_link_libraries(universal-robots-test
   PRIVATE
     viam-ur
 )
+
+apply_wall_werror(universal-robots-test)
 
 add_test(
   NAME universal-robots
@@ -325,6 +329,8 @@ target_link_libraries(trajex-test
     Boost::boost
 )
 
+apply_wall_werror(trajex-test)
+
 add_test(
   NAME trajex
   COMMAND trajex-test
@@ -346,6 +352,8 @@ target_link_libraries(trajex-types-test
   PRIVATE
     Boost::boost
 )
+
+apply_wall_werror(trajex-types-test)
 
 add_test(
   NAME trajex-types
