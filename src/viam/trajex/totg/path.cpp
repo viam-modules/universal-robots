@@ -378,11 +378,12 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
 
             const auto trimmed_end = *locus - (blend.trim_distance * incoming_unit);
             segment::linear incoming_segment{current_position, trimmed_end};
-            cumulative_length = cumulative_length + incoming_segment.length;
+            const auto linear_length = incoming_segment.length;
             segments.push_back({.seg = segment{std::move(incoming_segment)}, .start = cumulative_length});
+            cumulative_length += linear_length;
 
-            cumulative_length = cumulative_length + arc_length{blend.circular_seg.radius * blend.circular_seg.angle_rads};
             segments.push_back({.seg = segment{blend.circular_seg}, .start = cumulative_length});
+            cumulative_length += arc_length{blend.circular_seg.radius * blend.circular_seg.angle_rads};
 
             // After the blend, we're positioned at the blend exit point on the outgoing segment.
             // This position doesn't correspond to any waypoint in the accumulator, which is why
@@ -401,8 +402,9 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
 
             if (dist_sq > 0.0) {
                 segment::linear linear_data{current_position, *locus};
-                cumulative_length = cumulative_length + linear_data.length;
+                const auto linear_data_length = linear_data.length;
                 segments.push_back({.seg = segment{std::move(linear_data)}, .start = cumulative_length});
+                cumulative_length += linear_data_length;
             }
 
             current_position = *locus;
