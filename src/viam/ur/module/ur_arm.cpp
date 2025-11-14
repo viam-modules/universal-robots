@@ -242,6 +242,17 @@ void write_trajectory_to_file(const std::string& filepath, const std::vector<tra
     of.close();
 }
 
+void write_pose_to_file(const std::string& filepath, const pose_sample& sample) {
+    std::ofstream of(filepath);
+    of << "x,y,z,rx,ry,rz\n";
+    of << sample.p[0];
+    for (size_t i = 1; i < 6; i++) {
+        of << "," << sample.p[i];
+    }
+    of << "\n";
+    of.close();
+}
+
 void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::VectorXd>& waypoints) {
     unsigned i;
     std::ofstream of(filepath);
@@ -272,9 +283,9 @@ std::string trajectory_filename(const std::string& path, const std::string& unix
     return (fmt % unix_time).str();
 }
 
-std::string move_to_position_trajectory_filename(const std::string& path, const std::string& unix_time) {
-    constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_move_to_position_trajectory.csv";
-    auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
+std::string move_to_position_pose_filename(const std::string& path, const std::string& unix_time) {
+    constexpr char kPoseCsvNameTemplate[] = "/%1%_move_to_position_pose.csv";
+    auto fmt = boost::format(path + kPoseCsvNameTemplate);
     return (fmt % unix_time).str();
 }
 
@@ -647,11 +658,9 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     // create a pose_sample for tool-space movement
     const pose_sample ps{target_pose};
 
-    // Write trajectory to file for debugging purposes
-    // TODO(RSDK-12185): Capture pose arm visits
+    // Write ur pose to file for debugging purposes
     const std::string& path = current_state_->csv_output_path();
-    const trajectory_sample_point sample_for_file{target_pose, {0, 0, 0, 0, 0, 0}, 0.0F};
-    write_trajectory_to_file(move_to_position_trajectory_filename(path, unix_time), {sample_for_file});
+    write_pose_to_file(move_to_position_pose_filename(path, unix_time), ps);
 
     // For pose-space moves, we don't log joint data since we only have the target pose
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock)]() mutable {
