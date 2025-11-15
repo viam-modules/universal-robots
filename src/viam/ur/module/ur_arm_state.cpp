@@ -44,6 +44,7 @@ URArm::state_::state_(private_,
                       std::filesystem::path csv_output_path,
                       std::optional<double> reject_move_request_threshold_rad,
                       std::optional<double> robot_control_freq_hz,
+                      bool use_new_trajectory_planner,
                       const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
       host_{std::move(host)},
@@ -51,7 +52,8 @@ URArm::state_::state_(private_,
       csv_output_path_{std::move(csv_output_path)},
       robot_control_freq_hz_(robot_control_freq_hz.value_or(k_default_robot_control_freq_hz)),
       reject_move_request_threshold_rad_(std::move(reject_move_request_threshold_rad)),
-      ports_{ports} {}
+      ports_{ports},
+      use_new_trajectory_planner_(use_new_trajectory_planner) {}
 
 URArm::state_::~state_() {
     shutdown();
@@ -88,6 +90,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
 
     auto threshold = find_config_attribute<double>(config, "reject_move_request_threshold_deg");
     auto frequency = find_config_attribute<double>(config, "robot_control_freq_hz");
+    auto use_new_planner = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
 
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
@@ -96,6 +99,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           std::move(csv_output_path),
                                           std::move(threshold),
                                           std::move(frequency),
+                                          use_new_planner,
                                           ports);
 
     state->set_speed(degrees_to_radians(find_config_attribute<double>(config, "speed_degs_per_sec").value()));
@@ -217,6 +221,10 @@ void URArm::state_::set_acceleration(double acceleration) {
 
 double URArm::state_::get_acceleration() const {
     return acceleration_.load();
+}
+
+bool URArm::state_::use_new_trajectory_planner() const {
+    return use_new_trajectory_planner_;
 }
 
 size_t URArm::state_::get_move_epoch() const {

@@ -1,15 +1,15 @@
 #pragma once
 
-#include <ur_client_library/log.h>
-
 #include <optional>
 #include <sstream>
 
 #include <Eigen/Dense>
+
+#include <ur_client_library/log.h>
+#include <ur_client_library/types.h>
+
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
-
-#include "ur_arm.hpp"
 
 void configure_logger(const viam::sdk::ResourceConfig& cfg);
 
@@ -69,8 +69,8 @@ template <typename T>
     return std::forward<T>(radians) * (180.0 / M_PI);
 }
 
-Eigen::Matrix3d rotation_vector_to_matrix(const vector6d_t& tcp_pose);
+Eigen::Matrix3d rotation_vector_to_matrix(const urcl::vector6d_t& tcp_pose);
 
 Eigen::Vector3d transform_vector(const Eigen::Vector3d& vector, const Eigen::Matrix3d& rotation_matrix);
 
-vector6d_t convert_tcp_force_to_tool_frame(const vector6d_t& tcp_pose, const vector6d_t& tcp_force_base_frame);
+urcl::vector6d_t convert_tcp_force_to_tool_frame(const urcl::vector6d_t& tcp_pose, const urcl::vector6d_t& tcp_force_base_frame);

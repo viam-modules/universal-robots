@@ -4,7 +4,11 @@
 #include "utils.hpp"
 
 #include <boost/numeric/conversion/cast.hpp>
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnull-dereference"
 #include <boost/test/included/unit_test.hpp>
+#pragma GCC diagnostic pop
 
 #include <Eigen/Dense>
 

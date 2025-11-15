@@ -61,7 +61,7 @@ jobs:
       - name: Check Check
         run: make run-clang-check
       - name: Check Tidy
-        run: make run-clang-tidy
+        run: make run-clang-tidy-parallel
       - name: Build
         run: make build
       - name: Test
