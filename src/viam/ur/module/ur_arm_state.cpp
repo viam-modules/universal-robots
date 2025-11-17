@@ -41,6 +41,7 @@ URArm::state_::state_(private_,
                       std::string configured_model_type,
                       std::string host,
                       std::filesystem::path resource_root,
+                      std::filesystem::path urcl_resource_root,
                       std::filesystem::path csv_output_path,
                       std::optional<double> reject_move_request_threshold_rad,
                       std::optional<double> robot_control_freq_hz,
@@ -49,6 +50,7 @@ URArm::state_::state_(private_,
     : configured_model_type_{std::move(configured_model_type)},
       host_{std::move(host)},
       resource_root_{std::move(resource_root)},
+      urcl_resource_root_{std::move(urcl_resource_root)},
       csv_output_path_{std::move(csv_output_path)},
       robot_control_freq_hz_(robot_control_freq_hz.value_or(k_default_robot_control_freq_hz)),
       reject_move_request_threshold_rad_(std::move(reject_move_request_threshold_rad)),
@@ -69,6 +71,9 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     auto resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "universal-robots");
     VIAM_SDK_LOG(debug) << "Universal robots module executable found in `" << module_executable_path << "; resources will be found in `"
                         << resource_root << "`";
+
+    auto urcl_resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_urcl_resources);
+    VIAM_SDK_LOG(debug) << "URCL resources will be found in `" << urcl_resource_root << "`";
 
     // If the config contains `csv_output_path`, use that, otherwise,
     // fall back to `VIAM_MODULE_DATA` as the output path, which must
@@ -96,6 +101,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           std::move(configured_model_type),
                                           std::move(host),
                                           std::move(resource_root),
+                                          std::move(urcl_resource_root),
                                           std::move(csv_output_path),
                                           std::move(threshold),
                                           std::move(frequency),
@@ -205,6 +211,10 @@ const std::filesystem::path& URArm::state_::csv_output_path() const {
 
 const std::filesystem::path& URArm::state_::resource_root() const {
     return resource_root_;
+}
+
+const std::filesystem::path& URArm::state_::urcl_resource_root() const {
+    return urcl_resource_root_;
 }
 
 void URArm::state_::set_speed(double speed) {

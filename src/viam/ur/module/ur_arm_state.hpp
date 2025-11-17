@@ -19,6 +19,7 @@ class URArm::state_ {
                     std::string configured_model_type,
                     std::string host,
                     std::filesystem::path resource_root,
+                    std::filesystem::path urcl_resource_root,
                     std::filesystem::path csv_output_path,
                     std::optional<double> reject_move_request_threshold_rad,
                     std::optional<double> robot_control_freq_hz,
@@ -42,6 +43,7 @@ class URArm::state_ {
 
     const std::filesystem::path& csv_output_path() const;
     const std::filesystem::path& resource_root() const;
+    const std::filesystem::path& urcl_resource_root() const;
 
     void set_speed(double speed);
     double get_speed() const;
@@ -346,6 +348,7 @@ class URArm::state_ {
     const std::string configured_model_type_;
     const std::string host_;
     const std::filesystem::path resource_root_;
+    const std::filesystem::path urcl_resource_root_;
     const std::filesystem::path csv_output_path_;
     const double robot_control_freq_hz_;
 
