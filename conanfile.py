@@ -39,7 +39,7 @@ class universal_robots(ConanFile):
         self.requires("boost/[>=1.74.0]")
 
     def validate(self):
-        check_min_cppstd(self, 17)
+        check_min_cppstd(self, 20)
 
     def generate(self):
         tc = CMakeToolchain(self)
