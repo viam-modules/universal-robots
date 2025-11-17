@@ -404,13 +404,11 @@ enum class integration_event : std::uint8_t {
         const auto q_double_prime_after = segment_after.curvature(boundary);
 
         // Compute s_dot_max_acc on both sides
-        const auto [s_dot_max_acc_before, _1] = compute_velocity_limits(
-            q_prime_before, q_double_prime_before,
-            opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        const auto [s_dot_max_acc_before, _1] =
+            compute_velocity_limits(q_prime_before, q_double_prime_before, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        const auto [s_dot_max_acc_after, _2] = compute_velocity_limits(
-            q_prime_after, q_double_prime_after,
-            opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        const auto [s_dot_max_acc_after, _2] =
+            compute_velocity_limits(q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
         // Switching velocity is the minimum.
         // "At a discontinuity s there are two path velocity limits s_dot_max_acc(s-) and
@@ -418,31 +416,25 @@ enum class integration_event : std::uint8_t {
         const double s_dot_switching = std::min(s_dot_max_acc_before, s_dot_max_acc_after);
 
         // Compute max acceleration at switching velocity on both sides
-        const auto [_3, s_ddot_max_before] = compute_acceleration_bounds(
-            q_prime_before, q_double_prime_before, s_dot_switching,
-            opt.max_acceleration, opt.epsilon);
+        const auto [_3, s_ddot_max_before] =
+            compute_acceleration_bounds(q_prime_before, q_double_prime_before, s_dot_switching, opt.max_acceleration, opt.epsilon);
 
-        const auto [_4, s_ddot_max_after] = compute_acceleration_bounds(
-            q_prime_after, q_double_prime_after, s_dot_switching,
-            opt.max_acceleration, opt.epsilon);
+        const auto [_4, s_ddot_max_after] =
+            compute_acceleration_bounds(q_prime_after, q_double_prime_after, s_dot_switching, opt.max_acceleration, opt.epsilon);
 
         // Compute limit curve slopes using numerical approximation
-        const arc_length before_boundary = std::max(
-            boundary - arc_length{opt.epsilon}, current_segment.start());
+        const arc_length before_boundary = std::max(boundary - arc_length{opt.epsilon}, current_segment.start());
         const auto q_prime_bb = current_segment.tangent(before_boundary);
         const auto q_double_prime_bb = current_segment.curvature(before_boundary);
-        const auto [s_dot_bb, _5] = compute_velocity_limits(
-            q_prime_bb, q_double_prime_bb,
-            opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        const auto [s_dot_bb, _5] =
+            compute_velocity_limits(q_prime_bb, q_double_prime_bb, opt.max_velocity, opt.max_acceleration, opt.epsilon);
         const double slope_left = (s_dot_max_acc_before - s_dot_bb) / opt.epsilon;
 
-        const arc_length after_boundary = std::min(
-            boundary + arc_length{opt.epsilon}, segment_after.end());
+        const arc_length after_boundary = std::min(boundary + arc_length{opt.epsilon}, segment_after.end());
         const auto q_prime_aa = segment_after.tangent(after_boundary);
         const auto q_double_prime_aa = segment_after.curvature(after_boundary);
-        const auto [s_dot_aa, _6] = compute_velocity_limits(
-            q_prime_aa, q_double_prime_aa,
-            opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        const auto [s_dot_aa, _6] =
+            compute_velocity_limits(q_prime_aa, q_double_prime_aa, opt.max_velocity, opt.max_acceleration, opt.epsilon);
         const double slope_right = (s_dot_aa - s_dot_max_acc_after) / opt.epsilon;
 
         // === Apply Equation 38 ===
@@ -451,15 +443,13 @@ enum class integration_event : std::uint8_t {
         // Case A: Positive step (limit increases)
         if (s_dot_max_acc_before < s_dot_max_acc_after - opt.epsilon) {
             // Check: s_ddot_max(s-, s_dot_switching) >= d/ds s_dot_max_acc(s-)
-            const double trajectory_slope = (s_dot_switching > opt.epsilon)
-                ? (s_ddot_max_before / s_dot_switching) : 0.0;
+            const double trajectory_slope = (s_dot_switching > opt.epsilon) ? (s_ddot_max_before / s_dot_switching) : 0.0;
             is_switching_point = (trajectory_slope >= slope_left - opt.epsilon);
         }
         // Case B: Negative step (limit decreases)
         else if (s_dot_max_acc_before > s_dot_max_acc_after + opt.epsilon) {
             // Check: s_ddot_max(s+, s_dot_switching) <= d/ds s_dot_max_acc(s+)
-            const double trajectory_slope = (s_dot_switching > opt.epsilon)
-                ? (s_ddot_max_after / s_dot_switching) : 0.0;
+            const double trajectory_slope = (s_dot_switching > opt.epsilon) ? (s_ddot_max_after / s_dot_switching) : 0.0;
             is_switching_point = (trajectory_slope <= slope_right + opt.epsilon);
         }
 
