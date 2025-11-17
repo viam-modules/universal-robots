@@ -106,10 +106,6 @@ endif()
 
 include(FetchContent)
 
-# NOTE: If you change the version below, please also update
-# the file `src/control/external_control.urscript` to match.
-#
-# TODO(RSDK-11618): We should just pull that file out of the repository.
 FetchContent_Declare(
   Universal_Robots_Client_Library
   GIT_REPOSITORY https://github.com/UniversalRobots/Universal_Robots_Client_Library
@@ -223,6 +219,30 @@ add_library(viam-ur)
 # different prefix it will still be correct, but we need to use the
 # full paths to compute it.
 file(RELATIVE_PATH VIAM_UR_RELPATH_BINDIR_TO_DATADIR ${CMAKE_INSTALL_FULL_BINDIR} ${CMAKE_INSTALL_FULL_DATADIR})
+
+# Compute the relative path from the bindir to the URCL resources directory.
+# URCL installs resources to share/ur_client_library/resources (hardcoded, not
+# using CMAKE_INSTALL_DATADIR). This is relocatable even if URCL is installed
+# to a different prefix - the relative path will traverse via the common ancestor.
+
+# Determine URCL's install prefix
+if(DEFINED universal_robots_client_library_SOURCE_DIR)
+  # FetchContent case: both packages install to the same prefix
+  set(URCL_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
+else()
+  # find_package case: need to determine where URCL is installed
+  # Use the location of the imported target's library to work backwards
+  get_target_property(URCL_LOCATION ur_client_library::urcl LOCATION)
+  # Library is typically in <prefix>/lib, so go up one level
+  get_filename_component(URCL_LIB_DIR "${URCL_LOCATION}" DIRECTORY)
+  get_filename_component(URCL_INSTALL_PREFIX "${URCL_LIB_DIR}" DIRECTORY)
+endif()
+
+set(URCL_RESOURCES_DIR "${URCL_INSTALL_PREFIX}/share/ur_client_library/resources")
+
+file(RELATIVE_PATH VIAM_UR_RELPATH_BINDIR_TO_URCL_RESOURCES
+     ${CMAKE_INSTALL_FULL_BINDIR}
+     ${URCL_RESOURCES_DIR})
 
 configure_file(
   src/viam/ur/module/ur_arm_config.hpp.in
