@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,6 +30,7 @@ type config struct {
 	CachedPlanPath    string `json:"cached_plan_path"`
 	CachedOnly        bool   `json:"cached_only"`
 	CachedWindow      []int  `json:"cached_window"`
+	WaypointsOnly     bool   `json:"waypoints_only"`
 }
 
 func loadConfig(path string) (config, error) {
@@ -45,21 +47,27 @@ func loadConfig(path string) (config, error) {
 	return cfg, nil
 }
 
-func getPath(trajectoryPath, waypointPath string) (string, string, error) {
+func getTwoPaths(trajectoryPath, waypointPath string) (string, string, error) {
 	if trajectoryPath == "" || waypointPath == "" {
 		return "", "", fmt.Errorf("empty path passed in")
 	}
-	trajPath, err := homedir.Expand(trajectoryPath)
+	trajPath, err := getPath(trajectoryPath)
 	if err != nil {
 		return "", "", err
 	}
-	wpPath, err := homedir.Expand(waypointPath)
+	wpPath, err := getPath(waypointPath)
 	if err != nil {
 		return "", "", err
 	}
 	return trajPath, wpPath, nil
 }
 
+func getPath(waypointPath string) (string, error) {
+	if waypointPath == "" {
+		return "", fmt.Errorf("empty path passed in")
+	}
+	return homedir.Expand(waypointPath)
+}
 func readCSVintoDataframe(path string, headers []string) (*dataframe.DataFrame, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -77,6 +85,12 @@ func readCSVintoDataframe(path string, headers []string) (*dataframe.DataFrame, 
 			"j3":   float64(0),
 			"j4":   float64(0),
 			"j5":   float64(0),
+			"v0":   float64(0),
+			"v1":   float64(0),
+			"v2":   float64(0),
+			"v3":   float64(0),
+			"v4":   float64(0),
+			"v5":   float64(0),
 		},
 	})
 }
@@ -196,26 +210,31 @@ func saveComparisonChartPNG(name, yLabel string, x1, y1, x2, y2 []float64) error
 	defer f.Close()
 	return graph.Render(chart.PNG, f)
 }
-func saveChartPNG(name, yLabel string, x1, y1 []float64) error {
+func saveChartPNG(name, yLabel string, x1, y1 []float64, includeLegend bool) error {
 	way := chart.ContinuousSeries{Name: "Waypoints", XValues: x1, YValues: y1, Style: chart.Style{Show: true, DotWidth: 1, DotColor: chart.ColorOrange}}
 
 	// Create title with legend information
 	titleWithLegend := fmt.Sprintf("%s (Orange: Waypoints)", name)
 
-	graph := chart.Chart{
-		Title:  titleWithLegend,
-		XAxis:  chart.XAxis{Name: "Time (s)", NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
-		YAxis:  chart.YAxis{Name: yLabel, NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
-		Series: []chart.Series{way},
-		Height: 600,
-		Elements: []chart.Renderable{chart.LegendThin(
+	elements := []chart.Renderable{}
+	if includeLegend {
+		elements = append(elements, chart.LegendThin(
 			&chart.Chart{Series: []chart.Series{way}},
 			chart.Style{
 				FillColor:       chart.ColorTransparent,
 				StrokeColor:     chart.ColorTransparent,
 				TextLineSpacing: 5,
-			}),
-		},
+			}))
+	} else {
+
+	}
+	graph := chart.Chart{
+		Title:    titleWithLegend,
+		XAxis:    chart.XAxis{Name: "Time (s)", NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
+		YAxis:    chart.YAxis{Name: yLabel, NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
+		Series:   []chart.Series{way},
+		Height:   600,
+		Elements: elements,
 	}
 	f, err := os.Create(name)
 	if err != nil {
@@ -265,13 +284,49 @@ func plotChartsCachedData(
 		name := fmt.Sprintf("%s%s_cached.png", prefix, labelFunc(i))
 		yLabel := fmt.Sprintf(yLabelFormat, labelFunc(i))
 		fmt.Println(name, ": ", len(waypointData[i]))
-		if err := saveChartPNG(name, yLabel, wayTime[start:end], waypointData[i][start:end]); err != nil {
+		if err := saveChartPNG(name, yLabel, wayTime[start:end], waypointData[i][start:end], true); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+func plotWaypointsOnly(waypointDf *dataframe.DataFrame) error {
+	var waypointTime []float64
+	for i := range waypointDf.NRows() {
+		waypointTime = append(waypointTime, float64(i))
+	}
+	for i := range jointCount {
+		waypointJointValues, err := extractFloatSeries(waypointDf, fmt.Sprintf("j%d", i))
+		if err != nil {
+			return err
+		}
+		for i, num := range waypointJointValues {
+			waypointJointValues[i] = num * 180 / math.Pi
+		}
+		saveChartPNG(fmt.Sprintf("waypoints_joint%v.png", i), fmt.Sprintf("Angular Position Joint %v (deg)", i), waypointTime, waypointJointValues, false)
+
+	}
+	wx, err := extractFloatSeries(waypointDf, "x")
+	if err != nil {
+		return err
+	}
+	saveChartPNG(fmt.Sprintf("waypoints_X_pos.png"), fmt.Sprintf("X Position (mm)"), waypointTime, wx, false)
+
+	wy, err := extractFloatSeries(waypointDf, "y")
+	if err != nil {
+		return err
+	}
+	saveChartPNG(fmt.Sprintf("waypoints_Y_pos.png"), fmt.Sprintf("Y Position (mm)"), waypointTime, wy, false)
+
+	wz, err := extractFloatSeries(waypointDf, "z")
+	if err != nil {
+		return err
+	}
+	saveChartPNG(fmt.Sprintf("waypoints_Z_pos.png"), fmt.Sprintf("Z Position (mm)"), waypointTime, wz, false)
+
+	return nil
+}
 func plotJointAndPoseComparisonFromDataframes(trajDf, waypointDf *dataframe.DataFrame) error {
 	// get the time values which will determine the spacing of trajectory and waypoint data
 	trajTime, err := extractFloatSeries(trajDf, "t(s)")
@@ -290,9 +345,15 @@ func plotJointAndPoseComparisonFromDataframes(trajDf, waypointDf *dataframe.Data
 		if err != nil {
 			return err
 		}
+		for i, num := range trajJointValues {
+			trajJointValues[i] = num * 180 / math.Pi
+		}
 		waypointJointValues, err := extractFloatSeries(waypointDf, fmt.Sprintf("j%d", i))
 		if err != nil {
 			return err
+		}
+		for i, num := range waypointJointValues {
+			waypointJointValues[i] = num * 180 / math.Pi
 		}
 		allTrajectoryJointValues[i] = trajJointValues
 		allWaypointJointValues[i] = waypointJointValues
@@ -327,7 +388,7 @@ func plotJointAndPoseComparisonFromDataframes(trajDf, waypointDf *dataframe.Data
 	waypointPoses := [][]float64{wx, wy, wz}
 
 	// For joints, just use the index number as string
-	if err := plotCharts("joint", "Joint %s Angle (rad)", trajTime, waypointTime, allTrajectoryJointValues, allWaypointJointValues, func(i int) string {
+	if err := plotCharts("joint", "Joint %s Angle (deg)", trajTime, waypointTime, allTrajectoryJointValues, allWaypointJointValues, func(i int) string {
 		return strconv.Itoa(i)
 	}); err != nil {
 		return err
@@ -341,6 +402,27 @@ func plotJointAndPoseComparisonFromDataframes(trajDf, waypointDf *dataframe.Data
 		return err
 	}
 
+	return nil
+}
+
+func plotJointVelocities(trajDf *dataframe.DataFrame) error {
+	// get the time values which will determine the spacing of trajectory and waypoint data
+	trajTime, err := extractFloatSeries(trajDf, "t(s)")
+	if err != nil {
+		return err
+	}
+
+	// get the joint positions data
+	for i := range jointCount {
+		trajJointValues, err := extractFloatSeries(trajDf, fmt.Sprintf("v%d", i))
+		if err != nil {
+			return err
+		}
+		for i, num := range trajJointValues {
+			trajJointValues[i] = num * 180 / math.Pi
+		}
+		saveChartPNG(fmt.Sprintf("joint%v_velocity.png", i), fmt.Sprintf("Angular Velocity Joint %v (deg/s)", i), trajTime, trajJointValues, false)
+	}
 	return nil
 }
 
@@ -360,37 +442,9 @@ func realmain(cfg config) error {
 	if err != nil {
 		return err
 	}
-	if !cfg.CachedOnly {
-		trajectoryPath, waypointPath, err := getPath(cfg.TrajectoryCSV, cfg.WaypointsCSV)
-		if err != nil {
-			return err
-		}
 
-		// get the data frame
-		trajDf, err := readCSVintoDataframe(trajectoryPath, nil)
-		if err != nil {
-			return err
-		}
-		wayDf, err := readCSVintoDataframe(waypointPath, []string{"j0", "j1", "j2", "j3", "j4", "j5"})
-		if err != nil {
-			return err
-		}
-		// parse and perform FK to get poses for each set of joint positions
-		trajDf, err = parseAndAddPoses(trajDf, model)
-		if err != nil {
-			return err
-		}
-		wayDf, err = parseAndAddPoses(wayDf, model)
-		if err != nil {
-			return err
-		}
-		// plot joint positions and poses as .png files
-		if err := plotJointAndPoseComparisonFromDataframes(trajDf, wayDf); err != nil {
-			return err
-		}
-	}
-	cachedPath := filepath.Clean(cfg.CachedPlanPath)
-	if cachedPath != "" {
+	if cfg.CachedPlanPath != "" {
+		cachedPath := filepath.Clean(cfg.CachedPlanPath)
 		joints, poses, err := parseAndAddPosesCachedPlan(cachedPath, model)
 		if err != nil {
 			return err
@@ -400,6 +454,57 @@ func realmain(cfg config) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	if cfg.CachedOnly {
+		return nil
+	}
+
+	if cfg.WaypointsOnly {
+		waypointPath, err := getPath(cfg.WaypointsCSV)
+		if err != nil {
+			return err
+		}
+		wayDf, err := readCSVintoDataframe(waypointPath, []string{"j0", "j1", "j2", "j3", "j4", "j5"})
+		if err != nil {
+			return err
+		}
+		wayDf, err = parseAndAddPoses(wayDf, model)
+		if err != nil {
+			return err
+		}
+		return plotWaypointsOnly(wayDf)
+	}
+	trajectoryPath, waypointPath, err := getTwoPaths(cfg.TrajectoryCSV, cfg.WaypointsCSV)
+	if err != nil {
+		return err
+	}
+	// get the data frame
+	trajDf, err := readCSVintoDataframe(trajectoryPath, nil)
+	if err != nil {
+		return err
+	}
+	wayDf, err := readCSVintoDataframe(waypointPath, []string{"j0", "j1", "j2", "j3", "j4", "j5"})
+	if err != nil {
+		return err
+	}
+	// parse and perform FK to get poses for each set of joint positions
+	trajDf, err = parseAndAddPoses(trajDf, model)
+	if err != nil {
+		return err
+	}
+	wayDf, err = parseAndAddPoses(wayDf, model)
+	if err != nil {
+		return err
+	}
+	// plot joint positions and poses as .png files
+	if err := plotJointAndPoseComparisonFromDataframes(trajDf, wayDf); err != nil {
+		return err
+	}
+
+	// plot joint positions and poses as .png files
+	if err := plotJointVelocities(trajDf); err != nil {
+		return err
 	}
 
 	return nil
