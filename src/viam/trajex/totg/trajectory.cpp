@@ -1128,7 +1128,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // Special case: if both velocities are near zero (at rest), the switching point
                         // may be at nearly the same position due to numerical integration artifacts.
                         const bool both_at_rest = (std::abs(last_forward.s_dot) < traj.options_.epsilon) &&
-                                                   (std::abs(switching_point.s_dot) < traj.options_.epsilon);
+                                                  (std::abs(switching_point.s_dot) < traj.options_.epsilon);
 
                         if (!both_at_rest) {
                             // Normal case: enforce strict "down and to the right" constraint
