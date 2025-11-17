@@ -855,13 +855,22 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
 
-                    if (s_ddot_min > s_ddot_max) [[unlikely]] {
+                    if (s_ddot_min > s_ddot_max + traj.options_.epsilon) [[unlikely]] {
                         throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible"};
+                    }
+
+                    // Handle degenerate case where bounds are nearly equal (singularity/zero-acceleration point).
+                    // At such points, using the raw s_ddot_max might be slightly outside the feasible region
+                    // due to numerical errors. Clamp to the feasible range to ensure numerical stability.
+                    double s_ddot_to_use = s_ddot_max;
+                    if (s_ddot_max - s_ddot_min < traj.options_.epsilon) {
+                        // Bounds are essentially equal - use midpoint to stay safely within bounds
+                        s_ddot_to_use = (s_ddot_min + s_ddot_max) / 2.0;
                     }
 
                     // Compute candidate next point via Euler integration with maximum acceleration
                     const auto [next_s, next_s_dot] =
-                        euler_step(current_point.s, current_point.s_dot, s_ddot_max, traj.options_.delta.count());
+                        euler_step(current_point.s, current_point.s_dot, s_ddot_to_use, traj.options_.delta.count());
 
                     // Forward integration should move "up and to the right" in phase plane
                     if ((next_s <= current_point.s) || (next_s_dot < current_point.s_dot)) [[unlikely]] {
@@ -997,7 +1006,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // TODO: Investigate whether we want a richer exception type for algorithm failures.
                     // A custom exception hierarchy could distinguish between different failure modes
                     // (infeasible path, numerical issues, constraint violations) for better error handling.
-                    if (s_ddot_min > s_ddot_max) [[unlikely]] {
+                    if (s_ddot_min > s_ddot_max + traj.options_.epsilon) [[unlikely]] {
                         throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible during curve following"};
                     }
 
@@ -1115,10 +1124,22 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // - Higher s (further along path)
                         // - Lower s_dot (slower, often at rest)
                         // This ensures backward integration can increase s_dot while decreasing s.
-                        if ((switching_point.s <= last_forward.s) || (switching_point.s_dot >= last_forward.s_dot)) [[unlikely]] {
-                            throw std::runtime_error{
-                                "TOTG algorithm error: switching point must be down and to the right of last forward point "
-                                "(higher s, lower s_dot)"};
+                        // Use epsilon tolerance to handle numerical precision issues.
+                        // Special case: if both velocities are near zero (at rest), the switching point
+                        // may be at nearly the same position due to numerical integration artifacts.
+                        const bool both_at_rest = (std::abs(last_forward.s_dot) < traj.options_.epsilon) &&
+                                                   (std::abs(switching_point.s_dot) < traj.options_.epsilon);
+
+                        if (!both_at_rest) {
+                            // Normal case: enforce strict "down and to the right" constraint
+                            const bool s_invalid = (switching_point.s.value <= last_forward.s.value + traj.options_.epsilon);
+                            const bool s_dot_invalid = (switching_point.s_dot >= last_forward.s_dot - traj.options_.epsilon);
+
+                            if (s_invalid || s_dot_invalid) [[unlikely]] {
+                                throw std::runtime_error{
+                                    "TOTG algorithm error: switching point must be down and to the right of last forward point "
+                                    "(higher s, lower s_dot)"};
+                            }
                         }
 
                         if (traj.options_.observer) {
@@ -1141,20 +1162,35 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
 
-                    if (s_ddot_min > s_ddot_max) [[unlikely]] {
+                    if (s_ddot_min > s_ddot_max + traj.options_.epsilon) [[unlikely]] {
                         throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible during backward integration"};
                     }
 
+                    // Handle degenerate case where bounds are nearly equal (singularity/zero-acceleration point).
+                    // This occurs at continuous-nondifferentiable switching points where the paper (Section VII.A.2)
+                    // states that zero acceleration is optimal. Clamp to ensure numerical stability.
+                    double s_ddot_to_use = s_ddot_min;
+                    if (s_ddot_max - s_ddot_min < traj.options_.epsilon) {
+                        // Bounds are essentially equal - use midpoint to stay safely within bounds
+                        s_ddot_to_use = (s_ddot_min + s_ddot_max) / 2.0;
+                    }
+
                     // Minimum acceleration must be negative to produce backward motion (decreasing s)
-                    if (s_ddot_min >= 0.0) [[unlikely]] {
-                        throw std::runtime_error{"TOTG algorithm error: backward integration requires negative minimum acceleration"};
+                    // Allow small tolerance for numerical precision at near-zero acceleration points
+                    if (s_ddot_to_use >= -traj.options_.epsilon) {
+                        if (s_ddot_to_use > traj.options_.epsilon) {
+                            // Clearly positive - this is an error
+                            throw std::runtime_error{"TOTG algorithm error: backward integration requires negative minimum acceleration"};
+                        }
+                        // Near zero (degenerate switching point) - use small negative value to make progress
+                        s_ddot_to_use = -traj.options_.epsilon;
                     }
 
                     // Compute candidate next point via Euler integration with negative dt and minimum acceleration.
                     // Negative dt reverses time direction, reconstructing velocities that led to current point.
                     // With s_ddot_min < 0 and dt < 0, s_dot increases (up) while s decreases (left).
                     const auto [candidate_s, candidate_s_dot] =
-                        euler_step(current_point.s, current_point.s_dot, s_ddot_min, -traj.options_.delta.count());
+                        euler_step(current_point.s, current_point.s_dot, s_ddot_to_use, -traj.options_.delta.count());
 
                     // Backward integration must decrease s (move backward) and not decrease s_dot.
                     // At degenerate points (s_ddot ≈ 0), s_dot may stay constant (horizontal movement).
