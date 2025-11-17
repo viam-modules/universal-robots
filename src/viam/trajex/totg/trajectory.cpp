@@ -259,10 +259,13 @@ enum class integration_event : std::uint8_t {
     while (true) {
         auto current_segment = *cursor;
 
-        // Check 1: Interior extrema in circular segments (continuous-nondifferentiable case).
-        // Within a circular blend, a joint may reach a local extremum where f'_i(s) = 0
-        // while the segment continues curving. This creates a continuous-nondifferentiable
-        // point in the acceleration limit curve. Reference: Section VII-A case 2, equation 39.
+        // ========================================================================
+        // CASE 2: Continuous and Nondifferentiable (Section VII-A Case 2)
+        // ========================================================================
+        // Check interior of circular segments for joint extrema where f'_i(s) = 0.
+        // These create continuous but non-differentiable points in the acceleration
+        // limit curve. Reference: Equation 39.
+
         if (current_segment.is<path::segment::circular>()) {
             std::optional<arc_length> first_extremum;
             double first_extremum_velocity = 0.0;
@@ -370,66 +373,97 @@ enum class integration_event : std::uint8_t {
             }
         }
 
-        // Check 2: Segment boundary (discontinuous case)
+        // ========================================================================
+        // CASE 1: Discontinuous (Section VII-A Case 1)
+        // ========================================================================
+        // "s_dot_max_acc(s) is discontinuous if and only if the path curvature f''(s) -
+        //  as we we call it in the code q_double_prime(s) is discontinuous. For a path
+        //  generated as described in Section IV the discontinuities are exactly the points
+        //  where the path switches between a circular segment and a straight line segment.
+        //  [However,] If the path's curvature f''(s) is continuous everywhere, this case of
+        //  switching points does not happen."
+        // Reference: Equation 38.
+
         const arc_length boundary = current_segment.end();
 
-        // If this boundary is at the path end, no more interior boundaries to check
+        // If at path end, it is impossible to compare against a subsequent segment since there is none
         if (boundary >= cursor.path().length()) {
             break;
         }
 
-        // Sample geometry from segment ending at boundary
+        // Sample geometry on LEFT side of boundary
         const auto q_prime_before = current_segment.tangent(boundary);
         const auto q_double_prime_before = current_segment.curvature(boundary);
 
-        // Advance cursor to boundary (moves to next segment)
+        // Move cursor to next segment
         cursor.seek(boundary);
         auto segment_after = *cursor;
 
-        // Sample geometry from segment starting at boundary
+        // Sample geometry on RIGHT side of boundary
         const auto q_prime_after = segment_after.tangent(boundary);
         const auto q_double_prime_after = segment_after.curvature(boundary);
 
-        // Compute acceleration limit curve (s_dot_max_acc) on both sides of boundary
-        const auto [s_dot_max_acc_before, s_dot_max_vel_before] =
-            compute_velocity_limits(q_prime_before, q_double_prime_before, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        // Compute s_dot_max_acc on both sides
+        const auto [s_dot_max_acc_before, _1] = compute_velocity_limits(
+            q_prime_before, q_double_prime_before,
+            opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        const auto [s_dot_max_acc_after, s_dot_max_vel_after] =
-            compute_velocity_limits(q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        const auto [s_dot_max_acc_after, _2] = compute_velocity_limits(
+            q_prime_after, q_double_prime_after,
+            opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        // Switching velocity is the minimum of acceleration limit curve on both sides (equation 38)
+        // Switching velocity is the minimum.
+        // "At a discontinuity s there are two path velocity limits s_dot_max_acc(s-) and
+        //  s_dot_max(s+). The switching point is always at the smaller one of the two."
         const double s_dot_switching = std::min(s_dot_max_acc_before, s_dot_max_acc_after);
 
-        // Validate switching point conditions:
-        // 1. Switching velocity must be within velocity limits
-        const double s_dot_max_vel_boundary = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
-        if (s_dot_switching > s_dot_max_vel_boundary + opt.epsilon) {
-            continue;  // Switching velocity exceeds velocity limit
+        // Compute max acceleration at switching velocity on both sides
+        const auto [_3, s_ddot_max_before] = compute_acceleration_bounds(
+            q_prime_before, q_double_prime_before, s_dot_switching,
+            opt.max_acceleration, opt.epsilon);
+
+        const auto [_4, s_ddot_max_after] = compute_acceleration_bounds(
+            q_prime_after, q_double_prime_after, s_dot_switching,
+            opt.max_acceleration, opt.epsilon);
+
+        // Compute limit curve slopes using numerical approximation
+        const arc_length before_boundary = std::max(
+            boundary - arc_length{opt.epsilon}, current_segment.start());
+        const auto q_prime_bb = current_segment.tangent(before_boundary);
+        const auto q_double_prime_bb = current_segment.curvature(before_boundary);
+        const auto [s_dot_bb, _5] = compute_velocity_limits(
+            q_prime_bb, q_double_prime_bb,
+            opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        const double slope_left = (s_dot_max_acc_before - s_dot_bb) / opt.epsilon;
+
+        const arc_length after_boundary = std::min(
+            boundary + arc_length{opt.epsilon}, segment_after.end());
+        const auto q_prime_aa = segment_after.tangent(after_boundary);
+        const auto q_double_prime_aa = segment_after.curvature(after_boundary);
+        const auto [s_dot_aa, _6] = compute_velocity_limits(
+            q_prime_aa, q_double_prime_aa,
+            opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        const double slope_right = (s_dot_aa - s_dot_max_acc_after) / opt.epsilon;
+
+        // === Apply Equation 38 ===
+        bool is_switching_point = false;
+
+        // Case A: Positive step (limit increases)
+        if (s_dot_max_acc_before < s_dot_max_acc_after - opt.epsilon) {
+            // Check: s_ddot_max(s-, s_dot_switching) >= d/ds s_dot_max_acc(s-)
+            const double trajectory_slope = (s_dot_switching > opt.epsilon)
+                ? (s_ddot_max_before / s_dot_switching) : 0.0;
+            is_switching_point = (trajectory_slope >= slope_left - opt.epsilon);
+        }
+        // Case B: Negative step (limit decreases)
+        else if (s_dot_max_acc_before > s_dot_max_acc_after + opt.epsilon) {
+            // Check: s_ddot_max(s+, s_dot_switching) <= d/ds s_dot_max_acc(s+)
+            const double trajectory_slope = (s_dot_switching > opt.epsilon)
+                ? (s_ddot_max_after / s_dot_switching) : 0.0;
+            is_switching_point = (trajectory_slope <= slope_right + opt.epsilon);
         }
 
-        // 2. Must be able to reach this point from the left and continue forward
-        // Compute acceleration bounds at switching velocity on both sides
-        const auto [s_ddot_min_before, s_ddot_max_before] =
-            compute_acceleration_bounds(q_prime_before, q_double_prime_before, s_dot_switching, opt.max_acceleration, opt.epsilon);
-
-        const auto [s_ddot_min_after, s_ddot_max_after] =
-            compute_acceleration_bounds(q_prime_after, q_double_prime_after, s_dot_switching, opt.max_acceleration, opt.epsilon);
-
-        // Check that we can pass through this point in forward direction
-        // For a discontinuous switching point with piecewise-constant curvature, we need:
-        // - Positive acceleration available on both sides (can reach from left, continue on right)
-        // - The switching velocity is at the acceleration limit curve on at least one side (touching the limit)
-        const bool can_reach_from_left = s_ddot_max_before > -opt.epsilon;
-        const bool can_continue_on_right = s_ddot_max_after > -opt.epsilon;
-        const bool touches_mvc = (std::abs(s_dot_switching - s_dot_max_acc_before) < opt.epsilon) ||
-                                 (std::abs(s_dot_switching - s_dot_max_acc_after) < opt.epsilon);
-
-        // TODO: Equation 38: Validate that this discontinuity is a trajectory SINK.
-        // A discontinuity is a valid switching point only if the maximum acceleration trajectory
-        // flows into it (is a sink), not away from it (source). We check this by comparing
-        // the trajectory slope (s_ddot_max/s_dot) with the limit curve slope (d/ds s_dot_max_acc).
-
-        if (can_reach_from_left && can_continue_on_right && touches_mvc) {
+        if (is_switching_point) {
             return trajectory::phase_point{.s = boundary, .s_dot = s_dot_switching};
         }
     }
