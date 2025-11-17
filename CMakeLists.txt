@@ -204,6 +204,8 @@ target_link_libraries(trajex
   PUBLIC
     xtensor
     xtl
+  PRIVATE
+    Boost::boost
 )
 
 apply_wall_werror(trajex)
