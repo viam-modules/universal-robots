@@ -8,8 +8,6 @@ create-example-config:
 	echo '{' > config.json && \
 	echo '  "trajectory_csv": "",' >> config.json && \
 	echo '  "waypoints_csv": "",' >> config.json && \
-	echo '  "cached_plan_path": "",' >> config.json && \
-	echo '  "cached_only": false,' >> config.json && \
-	echo '  "cached_window": [],' >> config.json && \
+	echo '  "waypoints_only": false,' >> config.json && \
 	echo '  "arm_kinematics_path": ""' >> config.json && \
 	echo '}' >> config.json
