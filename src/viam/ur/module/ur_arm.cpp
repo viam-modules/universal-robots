@@ -58,7 +58,7 @@ namespace {
 
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
-constexpr double k_sampling_freq_hz = 5;
+constexpr double k_sampling_freq_hz = 25;
 
 // Convert Eigen waypoint list to xt::xarray for trajex/totg
 xt::xarray<double> eigen_waypoints_to_xarray(const std::list<Eigen::VectorXd>& waypoints) {
@@ -197,6 +197,20 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
         sstream << "attribute `robot_control_freq_hz` should be a positive number less than " << k_max_frequency
                 << ", it is : " << *frequency << " hz";
 
+        throw std::invalid_argument(sstream.str());
+    }
+
+    auto path_tolerance_deg = find_config_attribute<double>(cfg, "path_tolerance_delta_degrees");
+    if (path_tolerance_deg && (*path_tolerance_deg <= 0 || *path_tolerance_deg > 12)) {
+        std::stringstream sstream;
+        sstream << "attribute `path_tolerance_delta_degrees` must be > 0 and <= 12, it is: " << *path_tolerance_deg << " degrees";
+        throw std::invalid_argument(sstream.str());
+    }
+
+    auto colinearization_ratio = find_config_attribute<double>(cfg, "path_colinearization_ratio");
+    if (colinearization_ratio && (*colinearization_ratio < 0 || *colinearization_ratio > 2)) {
+        std::stringstream sstream;
+        sstream << "attribute `path_colinearization_ratio` must be >= 0 and <= 2, it is: " << *colinearization_ratio;
         throw std::invalid_argument(sstream.str());
     }
 
@@ -453,7 +467,8 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         for (const auto& position : positions) {
             auto next_waypoint_deg = Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
             auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg)).eval();
-            if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), k_waypoint_equivalancy_epsilon_rad))) {
+            if ((!waypoints.empty()) &&
+                ((next_waypoint_rad - waypoints.back()).lpNorm<Eigen::Infinity>() <= k_waypoint_equivalancy_epsilon_rad)) {
                 continue;
             }
             waypoints.emplace_back(std::move(next_waypoint_rad));
@@ -711,9 +726,10 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
 
-    if (!curr_joint_pos_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
+    if ((curr_joint_pos_rad - waypoints.front()).lpNorm<Eigen::Infinity>() > k_waypoint_equivalancy_epsilon_rad) {
         waypoints.emplace_front(std::move(curr_joint_pos_rad));
     }
+
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
         VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
         return;
@@ -739,7 +755,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             }
 
             const auto generation_start = std::chrono::steady_clock::now();
-            auto trajex_path = totg::path::create(trajex_waypoints, totg::path::options{}.set_max_blend_deviation(0.1));
+            auto trajex_path = totg::path::create(trajex_waypoints,
+                                                  totg::path::options{}.set_max_deviation(current_state_->get_path_tolerance_delta_rads()));
             auto trajex_trajectory = totg::trajectory::create(std::move(trajex_path), std::move(trajex_opts));
 
             auto sampler = totg::uniform_sampler::quantized_for_trajectory(trajex_trajectory, types::hertz{k_sampling_freq_hz});
@@ -763,16 +780,22 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             const auto generation_end = std::chrono::steady_clock::now();
             const auto generation_time = std::chrono::duration<double>(generation_end - generation_start).count();
 
-            VIAM_SDK_LOG(info) << "trajex/totg trajectory generated successfully, duration: " << trajex_trajectory.duration().count()
-                               << "s, samples: " << trajex_samples.size() << ", arc length: " << trajex_trajectory.path().length()
-                               << ", generation_time: " << generation_time << "s";
+            VIAM_SDK_LOG(info) << "trajex/totg trajectory generated successfully, waypoints: " << waypoints.size()
+                               << ", duration: " << trajex_trajectory.duration().count() << "s, samples: " << trajex_samples.size()
+                               << ", arc length: " << trajex_trajectory.path().length() << ", generation_time: " << generation_time << "s";
 
             return trajex_samples;
         } catch (const std::exception& e) {
-            VIAM_SDK_LOG(warn) << "trajex/totg trajectory generation failed: " << e.what();
+            VIAM_SDK_LOG(warn) << "trajex/totg trajectory generation failed, waypoints: " << waypoints.size()
+                               << ", exception: " << e.what();
             return std::nullopt;
         }
     }();
+
+    // Apply colinearization to reduce waypoints before legacy generator (if ratio configured)
+    if (auto ratio = current_state_->get_path_colinearization_ratio()) {
+        apply_colinearization(waypoints, current_state_->get_path_tolerance_delta_rads() * (*ratio));
+    }
 
     // Walk all interior points of the waypoints list, if any. If the
     // point of current interest is the cusp of a direction reversal
@@ -820,14 +843,16 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
     const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, max_acceleration);
 
-    VIAM_SDK_LOG(info) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity_vec[0]);
+    VIAM_SDK_LOG(debug) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity_vec[0]);
 
     std::vector<trajectory_sample_point> samples;
     double total_duration = 0.0;
     double total_arc_length = 0.0;
+    size_t total_waypoints = 0;
 
     for (const auto& segment : segments) {
-        const Path path(segment, 0.1);
+        total_waypoints += segment.size();
+        const Path path(segment, current_state_->get_path_tolerance_delta_rads());
         total_arc_length += path.getLength();
         const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
         if (!trajectory.isValid()) {
@@ -875,9 +900,15 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     const auto legacy_generation_time = std::chrono::duration<double>(legacy_generation_end - legacy_generation_start).count();
 
     if (current_state_->use_new_trajectory_planner()) {
-        VIAM_SDK_LOG(info) << "legacy trajectory generated successfully, duration: " << total_duration << "s, samples: " << samples.size()
-                           << ", arc length: " << total_arc_length << ", generation_time: " << legacy_generation_time << "s";
+        VIAM_SDK_LOG(info) << "legacy trajectory generated successfully, waypoints: " << total_waypoints << ", duration: " << total_duration
+                           << "s, samples: " << samples.size() << ", arc length: " << total_arc_length
+                           << ", generation_time: " << legacy_generation_time << "s";
+    } else {
+        VIAM_SDK_LOG(debug) << "legacy trajectory generated successfully, waypoints: " << total_waypoints
+                            << ", duration: " << total_duration << "s, samples: " << samples.size() << ", arc length: " << total_arc_length
+                            << ", generation_time: " << legacy_generation_time << "s";
     }
+
     VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " samples.size() " << samples.size() << " segments "
                         << segments.size() - 1;
 

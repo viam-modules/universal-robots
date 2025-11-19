@@ -12,8 +12,6 @@
 
 #include <Eigen/Dense>
 
-BOOST_AUTO_TEST_SUITE(test_1)
-
 namespace {
 
 Eigen::VectorXd makeVector(std::vector<double> data) {
@@ -21,6 +19,8 @@ Eigen::VectorXd makeVector(std::vector<double> data) {
 }
 
 }  // namespace
+
+BOOST_AUTO_TEST_SUITE(test_1)
 
 BOOST_AUTO_TEST_CASE(test_sampling_func) {
     // test a random set of samples
@@ -557,6 +557,272 @@ BOOST_AUTO_TEST_CASE(test_convert_tcp_force_to_tool_frame_position_independence)
     for (std::size_t i = 0; i < 6; ++i) {
         BOOST_CHECK_CLOSE(result_origin[i], result_displaced[i], 1e-8);
     }
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE(colinearization_tests)
+
+// Test within_colinearization_tolerance function
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_point_on_segment) {
+    // Point exactly on the line segment should be within tolerance
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const double tolerance = 0.02;  // diameter (radius = 0.01)
+
+    BOOST_CHECK(within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_point_within_tube) {
+    // Point slightly off the line but within tolerance
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({1.0, 0.005, 0.0, 0, 0, 0});  // 0.005 away
+    const double tolerance = 0.02;                                         // diameter (radius = 0.01)
+
+    BOOST_CHECK(within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_point_outside_tube) {
+    // Point outside tolerance tube
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({1.0, 0.02, 0.0, 0, 0, 0});  // 0.02 away, exceeds tolerance
+    const double tolerance = 0.02;                                        // diameter (radius = 0.01)
+
+    BOOST_CHECK(!within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_point_before_segment) {
+    // Point projects before segment start (monotonic advancement check)
+    const Eigen::VectorXd line_start = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({0.5, 0.0, 0.0, 0, 0, 0});
+    const double tolerance = 0.02;  // diameter (radius = 0.01)
+
+    BOOST_CHECK(!within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_point_after_segment) {
+    // Point projects after segment end (monotonic advancement check)
+    const Eigen::VectorXd line_start = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({2.5, 0.0, 0.0, 0, 0, 0});
+    const double tolerance = 0.02;  // diameter (radius = 0.01)
+
+    BOOST_CHECK(!within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_degenerate_segment) {
+    // Degenerate segment (start == end) should return false
+    const Eigen::VectorXd line_start = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const double tolerance = 0.02;  // diameter (radius = 0.01)
+
+    BOOST_CHECK(!within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_zero_tolerance) {
+    // Zero tolerance - only exact points on line pass
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point_on = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point_off = makeVector({1.0, 0.0001, 0.0, 0, 0, 0});
+    const double tolerance = 0.0;
+
+    BOOST_CHECK(within_colinearization_tolerance(point_on, line_start, line_end, tolerance));
+    BOOST_CHECK(!within_colinearization_tolerance(point_off, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_multi_dof) {
+    // Test with multi-DOF configuration where deviation is in different joint
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({0.0, 0.0, 2.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({0.0, 0.005, 1.0, 0, 0, 0});  // Deviation in joint 1
+    const double tolerance = 0.02;                                         // diameter (radius = 0.01)
+
+    BOOST_CHECK(within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_at_boundary) {
+    // Point exactly at tolerance boundary
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({1.0, 0.01, 0.0, 0, 0, 0});  // Exactly at tolerance
+    const double tolerance = 0.02;                                        // diameter (radius = 0.01)
+
+    BOOST_CHECK(within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+// Test apply_colinearization function
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_empty_list) {
+    // Empty list should remain unchanged
+    std::list<Eigen::VectorXd> waypoints;
+    apply_colinearization(waypoints, 0.01);
+    BOOST_CHECK_EQUAL(waypoints.size(), 0);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_single_waypoint) {
+    // Single waypoint should remain unchanged
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 0, 0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);
+    BOOST_CHECK_EQUAL(waypoints.size(), 1);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_two_waypoints) {
+    // Two waypoints should remain unchanged (nothing to coalesce)
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0, 0, 0, 0, 0}), makeVector({1.0, 0, 0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_three_points_middle_coalesced) {
+    // Three points where middle is within tolerance - should be coalesced
+    // With diameter=0.02 (radius=0.01), point at 0.005 perpendicular distance is within
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({1.0, 0.005, 0.0, 0, 0, 0}),  // Slightly off line, within tolerance
+                                            makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);  // diameter (radius = 0.01)
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+    BOOST_CHECK(waypoints.front().isApprox(makeVector({0.0, 0.0, 0.0, 0, 0, 0})));
+    BOOST_CHECK(waypoints.back().isApprox(makeVector({2.0, 0.0, 0.0, 0, 0, 0})));
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_three_points_middle_not_coalesced) {
+    // Three points where middle is outside tolerance - should not be coalesced
+    // With diameter=0.02 (radius=0.01), point at 0.02 perpendicular distance is outside
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({1.0, 0.02, 0.0, 0, 0, 0}),  // Outside tolerance
+                                            makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_multiple_points_all_coalesced) {
+    // Multiple points all within tolerance - all middle points coalesced
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({1.0, 0.005, 0.0, 0, 0, 0}),
+                                            makeVector({2.0, 0.005, 0.0, 0, 0, 0}),
+                                            makeVector({3.0, 0.005, 0.0, 0, 0, 0}),
+                                            makeVector({4.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);  // diameter (radius = 0.01)
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+    BOOST_CHECK(waypoints.front().isApprox(makeVector({0.0, 0.0, 0.0, 0, 0, 0})));
+    BOOST_CHECK(waypoints.back().isApprox(makeVector({4.0, 0.0, 0.0, 0, 0, 0})));
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_mixed_coalescing) {
+    // Some points coalesced, some not
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({1.0, 0.005, 0.0, 0, 0, 0}),  // Coalesced
+                                            makeVector({2.0, 0.02, 0.0, 0, 0, 0}),   // Not coalesced (outside tolerance)
+                                            makeVector({3.0, 0.005, 0.0, 0, 0, 0}),  // Coalesced
+                                            makeVector({4.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);  // diameter (radius = 0.01)
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_degenerate_segment) {
+    // Degenerate segment: returning to the same position creates anchor == next
+    // This represents intentional "go there and come back" movement
+    std::list<Eigen::VectorXd> waypoints = {
+        makeVector({0.0, 0.0, 0.0, 0, 0, 0}),   // A
+        makeVector({1.0, 0.0, 0.0, 0, 0, 0}),   // B
+        makeVector({0.0, 0.0, 0.0, 0, 0, 0}),   // C - back to A (degenerate: A→C has zero length conceptually)
+        makeVector({2.0, 0.0, 0.0, 0, 0, 0})};  // D
+    apply_colinearization(waypoints, 0.02);
+    // B cannot be coalesced because it projects outside A→C segment (C goes backward)
+    BOOST_CHECK_EQUAL(waypoints.size(), 4);  // All preserved due to degenerate segment
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_drift_prevented) {
+    // Test that revalidation prevents drift
+    // This is a regression test to ensure all skipped waypoints are revalidated
+    // when extending the cylinder. The implementation should prevent drift.
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),    // A
+                                            makeVector({1.0, 0.009, 0.0, 0, 0, 0}),  // B - within 0.01 of A→C
+                                            makeVector({2.0, 0.0, 0.0, 0, 0, 0}),    // C
+                                            makeVector({3.0, 0.0, 0.0, 0, 0, 0})};   // D
+    apply_colinearization(waypoints, 0.02);                                          // diameter (radius = 0.01)
+    // With the revalidation logic, B remains within tolerance even when extending to D
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);  // B and C coalesced
+    BOOST_CHECK(waypoints.front().isApprox(makeVector({0.0, 0.0, 0.0, 0, 0, 0})));
+    BOOST_CHECK(waypoints.back().isApprox(makeVector({3.0, 0.0, 0.0, 0, 0, 0})));
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_zero_tolerance) {
+    // Zero tolerance - no coalescing should occur
+    std::list<Eigen::VectorXd> waypoints = {
+        makeVector({0.0, 0.0, 0.0, 0, 0, 0}), makeVector({1.0, 0.0, 0.0, 0, 0, 0}), makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.0);
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_negative_tolerance) {
+    // Negative tolerance - no coalescing should occur
+    std::list<Eigen::VectorXd> waypoints = {
+        makeVector({0.0, 0.0, 0.0, 0, 0, 0}), makeVector({1.0, 0.0, 0.0, 0, 0, 0}), makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, -0.02);
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_diameter_interpretation) {
+    // Verify diameter interpretation: tolerance=0.02 means radius=0.01
+    // Point at perpendicular distance 0.01 should be exactly on boundary (within tolerance)
+    Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    Eigen::VectorXd point_inside = makeVector({1.0, 0.009, 0.0, 0, 0, 0});   // < radius
+    Eigen::VectorXd point_outside = makeVector({1.0, 0.011, 0.0, 0, 0, 0});  // > radius
+
+    BOOST_CHECK(within_colinearization_tolerance(point_inside, line_start, line_end, 0.02));
+    BOOST_CHECK(!within_colinearization_tolerance(point_outside, line_start, line_end, 0.02));
+}
+
+BOOST_AUTO_TEST_CASE(test_colinearization_reversal_inside_bounds) {
+    // Test reversals that stay within tolerance cylinder
+    // Waypoint reverses direction but remains within diameter bounds
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({1.0, 0.005, 0.0, 0, 0, 0}),  // Forward, within tolerance
+                                            makeVector({0.5, 0.005, 0.0, 0, 0, 0}),  // Reversal, but within tolerance of 0→2 line
+                                            makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);  // diameter=0.02 (radius=0.01)
+    // The reversal at waypoint 2 projects outside [0,1] range on the 0→3 segment
+    // so it should be preserved by the monotonic advancement check
+    BOOST_CHECK_EQUAL(waypoints.size(), 4);
+}
+
+BOOST_AUTO_TEST_CASE(test_colinearization_reversal_outside_bounds) {
+    // Test reversals that extend outside tolerance
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({1.0, 0.02, 0.0, 0, 0, 0}),  // Outside tolerance
+                                            makeVector({0.5, 0.0, 0.0, 0, 0, 0}),   // Reversal
+                                            makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);
+    // All waypoints preserved - middle point outside tolerance, reversal detected
+    BOOST_CHECK_EQUAL(waypoints.size(), 4);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_preserves_monotonicity) {
+    // Verify monotonic advancement check (projection bounds checking)
+    // Points that project before start or after end of segment must be preserved
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({0.5, 0.005, 0.0, 0, 0, 0}),  // Projects in [0,1] range
+                                            makeVector({1.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);
+    // Middle point should be coalesced (within tolerance and projects in range)
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+
+    // Now test point that projects outside range
+    waypoints = {makeVector({1.0, 0.0, 0.0, 0, 0, 0}),
+                 makeVector({0.5, 0.005, 0.0, 0, 0, 0}),  // Projects before start (backward movement)
+                 makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);
+    // Middle point preserved due to projection < 0 (monotonicity violation)
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

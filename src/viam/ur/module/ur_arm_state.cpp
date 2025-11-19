@@ -45,6 +45,8 @@ URArm::state_::state_(private_,
                       std::filesystem::path csv_output_path,
                       std::optional<double> reject_move_request_threshold_rad,
                       std::optional<double> robot_control_freq_hz,
+                      double path_tolerance_delta_rads,
+                      std::optional<double> path_colinearization_ratio,
                       bool use_new_trajectory_planner,
                       const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
@@ -55,6 +57,8 @@ URArm::state_::state_(private_,
       robot_control_freq_hz_(robot_control_freq_hz.value_or(k_default_robot_control_freq_hz)),
       reject_move_request_threshold_rad_(std::move(reject_move_request_threshold_rad)),
       ports_{ports},
+      path_tolerance_delta_rads_(path_tolerance_delta_rads),
+      path_colinearization_ratio_(path_colinearization_ratio),
       use_new_trajectory_planner_(use_new_trajectory_planner) {}
 
 URArm::state_::~state_() {
@@ -97,6 +101,11 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     auto frequency = find_config_attribute<double>(config, "robot_control_freq_hz");
     auto use_new_planner = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
 
+    auto path_tolerance_deg = find_config_attribute<double>(config, "path_tolerance_delta_degrees");
+    auto path_tolerance_rad = path_tolerance_deg ? degrees_to_radians(*path_tolerance_deg) : 0.1;
+
+    auto colinearization_ratio = find_config_attribute<double>(config, "path_colinearization_ratio");
+
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
                                           std::move(host),
@@ -105,6 +114,8 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           std::move(csv_output_path),
                                           std::move(threshold),
                                           std::move(frequency),
+                                          path_tolerance_rad,
+                                          colinearization_ratio,
                                           use_new_planner,
                                           ports);
 
@@ -231,6 +242,14 @@ void URArm::state_::set_acceleration(double acceleration) {
 
 double URArm::state_::get_acceleration() const {
     return acceleration_.load();
+}
+
+double URArm::state_::get_path_tolerance_delta_rads() const {
+    return path_tolerance_delta_rads_;
+}
+
+const std::optional<double>& URArm::state_::get_path_colinearization_ratio() const {
+    return path_colinearization_ratio_;
 }
 
 bool URArm::state_::use_new_trajectory_planner() const {
