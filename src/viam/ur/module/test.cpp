@@ -773,10 +773,10 @@ BOOST_AUTO_TEST_CASE(test_apply_colinearization_negative_tolerance) {
 BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_diameter_interpretation) {
     // Verify diameter interpretation: tolerance=0.02 means radius=0.01
     // Point at perpendicular distance 0.01 should be exactly on boundary (within tolerance)
-    Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
-    Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
-    Eigen::VectorXd point_inside = makeVector({1.0, 0.009, 0.0, 0, 0, 0});   // < radius
-    Eigen::VectorXd point_outside = makeVector({1.0, 0.011, 0.0, 0, 0, 0});  // > radius
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point_inside = makeVector({1.0, 0.009, 0.0, 0, 0, 0});   // < radius
+    const Eigen::VectorXd point_outside = makeVector({1.0, 0.011, 0.0, 0, 0, 0});  // > radius
 
     BOOST_CHECK(within_colinearization_tolerance(point_inside, line_start, line_end, 0.02));
     BOOST_CHECK(!within_colinearization_tolerance(point_outside, line_start, line_end, 0.02));
