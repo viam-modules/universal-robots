@@ -525,6 +525,65 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     return KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
 }
 
+// Unknown arm models should return an empty map. Arm models that do not have all expected parts in the map should return as much as they
+// have
+std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
+    const std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
+
+    std::map<std::string, std::vector<std::string>> arm_name_to_model_parts;
+    arm_name_to_model_parts["ur5e"] = {"base_link", "ee_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"};
+
+    const std::string model_string = [&] {
+        if (model_ == model("ur3e")) {
+            return "ur3e";
+        } else if (model_ == model("ur5e")) {
+            return "ur5e";
+        } else if (model_ == model("ur7e")) {
+            return "ur7e";
+        } else if (model_ == model("ur20")) {
+            return "ur20";
+        }
+        return "";
+    }();
+
+    if (arm_name_to_model_parts.find(model_string) == arm_name_to_model_parts.end()) {
+        return {};
+    }
+
+    std::map<std::string, mesh> result_model_parts;
+    const std::vector<std::string> parts_to_load = arm_name_to_model_parts.at(model_string);
+    constexpr char threeDModelFileTemplate[] = "3d_models/%1%/%2%.glb";
+
+    for (const std::string& part : parts_to_load) {
+        const std::filesystem::path model_file_path =
+            current_state_->resource_root() / str(boost::format(threeDModelFileTemplate) % model_string % part);
+
+        // Open the file in binary mode
+        std::ifstream model_file(model_file_path, std::ios::binary);
+        if (!model_file) {
+            continue;
+        }
+
+        // Read the entire file into a vector without computing size ahead of time
+        std::vector<char> temp_bytes(std::istreambuf_iterator<char>(model_file), {});
+        if (model_file.bad()) {
+            continue;
+        }
+
+        // Convert to unsigned char vector
+        std::vector<unsigned char> temp_bytes_unsigned(temp_bytes.begin(), temp_bytes.end());
+
+        mesh part_mesh;
+        part_mesh.data = std::move(temp_bytes_unsigned);
+        part_mesh.content_type = "model/gltf-binary";
+
+        result_model_parts[part] = std::move(part_mesh);
+    }
+
+    return result_model_parts;
+}
+
 void URArm::stop(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
