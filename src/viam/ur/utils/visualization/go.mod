@@ -13,8 +13,11 @@ require (
 )
 
 require (
+	git.sr.ht/~sbinet/gg v0.3.1 // indirect
+	github.com/ajstarks/svgo v0.0.0-20211024235047-1546f124cd8b // indirect
 	github.com/apache/thrift v0.13.0 // indirect
 	github.com/bytedance/sonic v1.13.2 // indirect
+	github.com/campoy/embedmd v1.0.0 // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/chenzhekl/goply v0.0.0-20190930133256-258c2381defd // indirect
@@ -23,9 +26,14 @@ require (
 	github.com/desertbit/timer v0.0.0-20180107155436-c41aec40b27f // indirect
 	github.com/dgottlieb/smarty-assertions v1.2.6 // indirect
 	github.com/edaniels/golog v0.0.0-20230215213219-28954395e8d0 // indirect
+	github.com/edaniels/lidario v0.0.0-20220607182921-5879aa7b96dd // indirect
 	github.com/erikstmartin/go-testdb v0.0.0-20160219214506-8d10e4a1bae5 // indirect
+	github.com/go-fonts/liberation v0.3.0 // indirect
 	github.com/go-gl/mathgl v1.0.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.0.5 // indirect
+	github.com/go-latex/latex v0.0.0-20230307184459-12ec69307ad9 // indirect
+	github.com/go-nlopt/nlopt v0.0.0-20230219125344-443d3362dcb5 // indirect
+	github.com/go-pdf/fpdf v0.6.0 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.0 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
@@ -33,6 +41,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
+	github.com/gonuts/binary v0.2.0 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
@@ -55,6 +64,7 @@ require (
 	github.com/lestrrat-go/jwx v1.2.29 // indirect
 	github.com/lestrrat-go/option v1.0.1 // indirect
 	github.com/lib/pq v1.10.9 // indirect
+	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/miekg/dns v1.1.53 // indirect
 	github.com/montanaflynn/stats v0.7.1 // indirect
@@ -94,6 +104,7 @@ require (
 	github.com/zitadel/oidc/v3 v3.37.0 // indirect
 	github.com/zitadel/schema v1.3.1 // indirect
 	github.com/ziutek/mymysql v1.5.4 // indirect
+	go-hep.org/x/hep v0.32.1 // indirect
 	go.mongodb.org/mongo-driver v1.17.1 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	go.uber.org/goleak v1.3.0 // indirect
@@ -112,6 +123,7 @@ require (
 	golang.org/x/text v0.23.0 // indirect
 	golang.org/x/tools v0.24.0 // indirect
 	gonum.org/v1/gonum v0.12.0 // indirect
+	gonum.org/v1/plot v0.12.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250106144421-5f5ef82da422 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250324211829-b45e905df463 // indirect
 	google.golang.org/grpc v1.71.0 // indirect
