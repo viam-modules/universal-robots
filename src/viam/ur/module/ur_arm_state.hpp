@@ -23,6 +23,8 @@ class URArm::state_ {
                     std::filesystem::path csv_output_path,
                     std::optional<double> reject_move_request_threshold_rad,
                     std::optional<double> robot_control_freq_hz,
+                    double path_tolerance_delta_rads,
+                    std::optional<double> path_colinearization_ratio,
                     bool use_new_trajectory_planner,
                     const struct ports_& ports);
     ~state_();
@@ -50,6 +52,9 @@ class URArm::state_ {
 
     void set_acceleration(double acceleration);
     double get_acceleration() const;
+
+    double get_path_tolerance_delta_rads() const;
+    const std::optional<double>& get_path_colinearization_ratio() const;
 
     bool use_new_trajectory_planner() const;
 
@@ -360,6 +365,9 @@ class URArm::state_ {
 
     std::atomic<double> speed_{0};
     std::atomic<double> acceleration_{0};
+
+    const double path_tolerance_delta_rads_;
+    const std::optional<double> path_colinearization_ratio_;
 
     const bool use_new_trajectory_planner_;
 
