@@ -836,8 +836,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             return all_trajex_samples;
 
         } catch (const std::exception& e) {
-            VIAM_SDK_LOG(warn) << "trajex/totg trajectory generation failed, waypoints: " << total_waypoints
-                               << ", exception: " << e.what();
+            VIAM_SDK_LOG(warn) << "trajex/totg trajectory generation failed, waypoints: " << total_waypoints << ", exception: " << e.what();
             return std::nullopt;
         }
     }();
