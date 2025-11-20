@@ -770,6 +770,10 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             return std::nullopt;
         }
 
+        size_t total_waypoints = 0;
+        double total_duration = 0.0;
+        viam::trajex::arc_length total_arc_length{0.0};
+
         try {
             using namespace viam::trajex;
 
@@ -784,9 +788,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             }
 
             std::vector<trajectory_sample_point> all_trajex_samples;
-            size_t total_waypoints = 0;
-            double total_duration = 0.0;
-            viam::trajex::arc_length total_arc_length{0.0};
 
             for (const auto& segment : segments) {
                 const auto segment_xarray = eigen_waypoints_to_xarray(segment);
