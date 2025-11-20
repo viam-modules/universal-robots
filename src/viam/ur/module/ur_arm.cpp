@@ -794,7 +794,10 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
                 auto trajex_path = totg::path::create(
                     trajex_waypoints, totg::path::options{}.set_max_deviation(current_state_->get_path_tolerance_delta_rads()));
-                auto trajex_trajectory = totg::trajectory::create(std::move(trajex_path), std::move(trajex_opts));
+
+                // Create a copy of trajex_opts for each segment since it's consumed by create()
+                totg::trajectory::options segment_opts = trajex_opts;
+                auto trajex_trajectory = totg::trajectory::create(std::move(trajex_path), std::move(segment_opts));
 
                 auto sampler = totg::uniform_sampler::quantized_for_trajectory(trajex_trajectory, types::hertz{k_sampling_freq_hz});
 
@@ -833,7 +836,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             return all_trajex_samples;
 
         } catch (const std::exception& e) {
-            VIAM_SDK_LOG(warn) << "trajex/totg trajectory generation failed, waypoints: " << waypoints.size()
+            VIAM_SDK_LOG(warn) << "trajex/totg trajectory generation failed, waypoints: " << total_waypoints
                                << ", exception: " << e.what();
             return std::nullopt;
         }
