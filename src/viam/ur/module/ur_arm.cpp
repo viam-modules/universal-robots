@@ -777,8 +777,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         try {
             using namespace viam::trajex;
 
-            const auto generation_start = std::chrono::steady_clock::now();
-
             totg::trajectory::options trajex_opts;
             trajex_opts.max_velocity = xt::xarray<double>::from_shape({6});
             trajex_opts.max_acceleration = xt::xarray<double>::from_shape({6});
@@ -788,6 +786,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             }
 
             std::vector<trajectory_sample_point> all_trajex_samples;
+
+            const auto generation_start = std::chrono::steady_clock::now();
 
             for (const auto& segment : segments) {
                 const auto segment_xarray = eigen_waypoints_to_xarray(segment);
@@ -803,7 +803,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 auto sampler = totg::uniform_sampler::quantized_for_trajectory(trajex_trajectory, types::hertz{k_sampling_freq_hz});
 
                 double previous_time = 0.0;
-                for (const auto& sample : trajex_trajectory.samples(sampler)) {
+                for (const auto& sample : trajex_trajectory.samples(sampler) | std::views::drop(1)) {
                     const double current_time = sample.time.count();
                     const float timestep = boost::numeric_cast<float>(current_time - previous_time);
 
@@ -835,7 +835,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                << ", total arc length: " << total_arc_length << ", generation_time: " << generation_time << "s";
 
             return all_trajex_samples;
-
         } catch (const std::exception& e) {
             VIAM_SDK_LOG(warn) << "trajex/totg trajectory generation failed, waypoints: " << total_waypoints << ", exception: " << e.what();
             return std::nullopt;
