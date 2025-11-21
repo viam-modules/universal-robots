@@ -735,68 +735,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         return;
     }
 
-    const auto new_trajectory = [&]() -> std::optional<std::vector<trajectory_sample_point>> {
-        if (!current_state_->use_new_trajectory_planner()) {
-            return std::nullopt;
-        }
-
-        try {
-            using namespace viam::trajex;
-
-            const auto waypoints_xarray = eigen_waypoints_to_xarray(waypoints);
-            const totg::waypoint_accumulator trajex_waypoints(waypoints_xarray);
-
-            totg::trajectory::options trajex_opts;
-            trajex_opts.max_velocity = xt::xarray<double>::from_shape({6});
-            trajex_opts.max_acceleration = xt::xarray<double>::from_shape({6});
-            for (size_t i = 0; i < 6; ++i) {
-                trajex_opts.max_velocity(i) = current_state_->get_speed();
-                trajex_opts.max_acceleration(i) = current_state_->get_acceleration();
-            }
-
-            const auto generation_start = std::chrono::steady_clock::now();
-            auto trajex_path = totg::path::create(trajex_waypoints,
-                                                  totg::path::options{}.set_max_deviation(current_state_->get_path_tolerance_delta_rads()));
-            auto trajex_trajectory = totg::trajectory::create(std::move(trajex_path), std::move(trajex_opts));
-
-            auto sampler = totg::uniform_sampler::quantized_for_trajectory(trajex_trajectory, types::hertz{k_sampling_freq_hz});
-
-            std::vector<trajectory_sample_point> trajex_samples;
-            double previous_time = 0.0;
-            for (const auto& sample : trajex_trajectory.samples(sampler)) {
-                const double current_time = sample.time.count();
-                const float timestep = boost::numeric_cast<float>(current_time - previous_time);
-
-                trajectory_sample_point point;
-                for (size_t i = 0; i < 6; ++i) {
-                    point.p[i] = sample.configuration(i);
-                    point.v[i] = sample.velocity(i);
-                }
-                point.timestep = timestep;
-
-                trajex_samples.push_back(point);
-                previous_time = current_time;
-            }
-            const auto generation_end = std::chrono::steady_clock::now();
-            const auto generation_time = std::chrono::duration<double>(generation_end - generation_start).count();
-
-            VIAM_SDK_LOG(info) << "trajex/totg trajectory generated successfully, waypoints: " << waypoints.size()
-                               << ", duration: " << trajex_trajectory.duration().count() << "s, samples: " << trajex_samples.size()
-                               << ", arc length: " << trajex_trajectory.path().length() << ", generation_time: " << generation_time << "s";
-
-            return trajex_samples;
-        } catch (const std::exception& e) {
-            VIAM_SDK_LOG(warn) << "trajex/totg trajectory generation failed, waypoints: " << waypoints.size()
-                               << ", exception: " << e.what();
-            return std::nullopt;
-        }
-    }();
-
-    // Apply colinearization to reduce waypoints before legacy generator (if ratio configured)
-    if (auto ratio = current_state_->get_path_colinearization_ratio()) {
-        apply_colinearization(waypoints, current_state_->get_path_tolerance_delta_rads() * (*ratio));
-    }
-
     // Walk all interior points of the waypoints list, if any. If the
     // point of current interest is the cusp of a direction reversal
     // w.r.t. the points immediately before and after it, then splice
@@ -814,7 +752,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     // NOTE: This assumes waypoints have been de-duplicated to avoid
     // zero-length segments that would cause numerical issues in
     // normalized() calculations.
-    const auto legacy_generation_start = std::chrono::steady_clock::now();
     std::vector<decltype(waypoints)> segments;
     for (auto where = next(begin(waypoints)); where != prev(end(waypoints)); ++where) {
         const auto segment_ab = *where - *prev(where);
@@ -827,6 +764,94 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         }
     }
     segments.push_back(std::move(waypoints));
+
+    const auto new_trajectory = [&]() -> std::optional<std::vector<trajectory_sample_point>> {
+        if (!current_state_->use_new_trajectory_planner()) {
+            return std::nullopt;
+        }
+
+        size_t total_waypoints = 0;
+        double total_duration = 0.0;
+        viam::trajex::arc_length total_arc_length{0.0};
+
+        try {
+            using namespace viam::trajex;
+
+            totg::trajectory::options trajex_opts;
+            trajex_opts.max_velocity = xt::xarray<double>::from_shape({6});
+            trajex_opts.max_acceleration = xt::xarray<double>::from_shape({6});
+            for (size_t i = 0; i < 6; ++i) {
+                trajex_opts.max_velocity(i) = current_state_->get_speed();
+                trajex_opts.max_acceleration(i) = current_state_->get_acceleration();
+            }
+
+            std::vector<trajectory_sample_point> all_trajex_samples;
+
+            const auto generation_start = std::chrono::steady_clock::now();
+
+            for (const auto& segment : segments) {
+                const auto segment_xarray = eigen_waypoints_to_xarray(segment);
+                const totg::waypoint_accumulator trajex_waypoints(segment_xarray);
+
+                auto trajex_path = totg::path::create(
+                    trajex_waypoints, totg::path::options{}.set_max_deviation(current_state_->get_path_tolerance_delta_rads()));
+
+                // Create a copy of trajex_opts for each segment since it's consumed by create()
+                totg::trajectory::options segment_opts = trajex_opts;
+                auto trajex_trajectory = totg::trajectory::create(std::move(trajex_path), std::move(segment_opts));
+
+                auto sampler = totg::uniform_sampler::quantized_for_trajectory(trajex_trajectory, types::hertz{k_sampling_freq_hz});
+
+                double previous_time = 0.0;
+                bool first_sample = true;
+                for (const auto& sample : trajex_trajectory.samples(sampler)) {
+                    if (first_sample) {  // workaround for `... | std::views::drop(1))`
+                        first_sample = false;
+                        continue;
+                    }
+                    const double current_time = sample.time.count();
+                    const float timestep = boost::numeric_cast<float>(current_time - previous_time);
+
+                    trajectory_sample_point point;
+                    for (size_t i = 0; i < 6; ++i) {
+                        point.p[i] = sample.configuration(i);
+                        point.v[i] = sample.velocity(i);
+                    }
+                    point.timestep = timestep;
+
+                    all_trajex_samples.push_back(point);
+                    previous_time = current_time;
+                }
+
+                total_waypoints += segment.size();
+                total_duration += trajex_trajectory.duration().count();
+                total_arc_length += trajex_trajectory.path().length();
+
+                VIAM_SDK_LOG(info) << "trajex/totg segment generated successfully, waypoints: " << segment.size()
+                                   << ", duration: " << trajex_trajectory.duration().count() << "s, samples: " << all_trajex_samples.size()
+                                   << ", arc length: " << trajex_trajectory.path().length();
+            }
+
+            const auto generation_end = std::chrono::steady_clock::now();
+            const auto generation_time = std::chrono::duration<double>(generation_end - generation_start).count();
+
+            VIAM_SDK_LOG(info) << "trajex/totg trajectory generated successfully, total waypoints: " << total_waypoints
+                               << ", total duration: " << total_duration << "s, total samples: " << all_trajex_samples.size()
+                               << ", total arc length: " << total_arc_length << ", generation_time: " << generation_time << "s";
+
+            return all_trajex_samples;
+        } catch (const std::exception& e) {
+            VIAM_SDK_LOG(warn) << "trajex/totg trajectory generation failed, waypoints: " << total_waypoints << ", exception: " << e.what();
+            return std::nullopt;
+        }
+    }();
+
+    // Apply colinearization to reduce waypoints before legacy generator (if ratio configured)
+    if (auto ratio = current_state_->get_path_colinearization_ratio()) {
+        apply_colinearization(waypoints, current_state_->get_path_tolerance_delta_rads() * (*ratio));
+    }
+
+    const auto legacy_generation_start = std::chrono::steady_clock::now();
 
     auto max_velocity = current_state_->get_speed();
     // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
