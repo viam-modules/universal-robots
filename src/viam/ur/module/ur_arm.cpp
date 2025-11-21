@@ -805,7 +805,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 double previous_time = 0.0;
                 bool first_sample = true;
                 for (const auto& sample : trajex_trajectory.samples(sampler)) {
-                    if (first_sample) { // workaround for `... | std::views::drop(1))`
+                    if (first_sample) {  // workaround for `... | std::views::drop(1))`
                         first_sample = false;
                         continue;
                     }
