@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <ranges>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -803,12 +804,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 auto sampler = totg::uniform_sampler::quantized_for_trajectory(trajex_trajectory, types::hertz{k_sampling_freq_hz});
 
                 double previous_time = 0.0;
-                bool first_sample = true;
-                for (const auto& sample : trajex_trajectory.samples(sampler)) {
-                    if (first_sample) {  // workaround for `... | std::views::drop(1))`
-                        first_sample = false;
-                        continue;
-                    }
+                for (const auto& sample : trajex_trajectory.samples(sampler) | std::views::drop(1)) {
                     const double current_time = sample.time.count();
                     const float timestep = boost::numeric_cast<float>(current_time - previous_time);
 
