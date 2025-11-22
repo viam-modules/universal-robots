@@ -442,7 +442,7 @@ enum class integration_event : std::uint8_t {
         bool is_switching_point = false;
 
         // Case A: Positive step (limit increases)
-        if (s_dot_max_acc_before < s_dot_max_acc_after - opt.epsilon) {
+        if (s_dot_max_acc_after - s_dot_max_acc_before > opt.epsilon) {
             // Evaluate s_ddot_max at (s-, s_dot_max_acc(s-))
             const auto [_, s_ddot_max_at_s_minus] = compute_acceleration_bounds(q_prime_before,
                                                                                 q_double_prime_before,
@@ -452,20 +452,20 @@ enum class integration_event : std::uint8_t {
 
             // s_ddot_max(s-, s_dot_max_acc(s-)) / s_dot_max_acc(s-) >= d/ds s_dot_max_acc(s-)
             const double trajectory_slope = (s_dot_max_acc_before > opt.epsilon) ? (s_ddot_max_at_s_minus / s_dot_max_acc_before) : 0.0;
-            is_switching_point = (trajectory_slope >= slope_left - opt.epsilon);
+            is_switching_point = (slope_left - trajectory_slope <= opt.epsilon);
         }
         // Case B: Negative step (limit decreases)
-        else if (s_dot_max_acc_before > s_dot_max_acc_after + opt.epsilon) {
-            // Per Equation 38: Evaluate s_ddot_max at (s+, s_dot_max_acc(s+))
+        else if (s_dot_max_acc_before - s_dot_max_acc_after > opt.epsilon) {
+            // Evaluate s_ddot_max at (s+, s_dot_max_acc(s+))
             const auto [_, s_ddot_max_at_s_plus] = compute_acceleration_bounds(q_prime_after,
                                                                                q_double_prime_after,
                                                                                s_dot_max_acc_after,  // Evaluate at s+'s own limit
                                                                                opt.max_acceleration,
                                                                                opt.epsilon);
 
-            // Check: s_ddot_max(s+, s_dot_max_acc(s+)) / s_dot_max_acc(s+) <= d/ds s_dot_max_acc(s+)
+            // s_ddot_max(s+, s_dot_max_acc(s+)) / s_dot_max_acc(s+) <= d/ds s_dot_max_acc(s+)
             const double trajectory_slope = (s_dot_max_acc_after > opt.epsilon) ? (s_ddot_max_at_s_plus / s_dot_max_acc_after) : 0.0;
-            is_switching_point = (trajectory_slope <= slope_right + opt.epsilon);
+            is_switching_point = (trajectory_slope - slope_right <= opt.epsilon);
         }
 
         if (is_switching_point) {
