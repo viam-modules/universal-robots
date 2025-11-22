@@ -9,9 +9,15 @@
 #include <boost/range/adaptors.hpp>
 
 #include <viam/trajex/totg/path.hpp>
+#include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/types/arc_length.hpp>
 
 namespace viam::trajex::totg {
+
+// Verify that trajectory::sampled satisfies range concepts (using uniform_sampler as concrete type)
+static_assert(std::ranges::range<trajectory::sampled<uniform_sampler>>);
+static_assert(std::ranges::input_range<trajectory::sampled<uniform_sampler>>);
+static_assert(std::ranges::view<trajectory::sampled<uniform_sampler>>);
 
 namespace {
 
