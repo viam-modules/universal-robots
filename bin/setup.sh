@@ -12,7 +12,7 @@ if [ ! -d "tmp_cpp_sdk/viam-cpp-sdk" ]; then
   # Clone the C++ SDK repo
   mkdir -p tmp_cpp_sdk
   pushd tmp_cpp_sdk
-  git clone https://github.com/viamrobotics/viam-cpp-sdk.git
+  git clone https://github.com/mattmacf98/viam-cpp-sdk.git
   pushd viam-cpp-sdk
 else
   pushd tmp_cpp_sdk
@@ -21,7 +21,7 @@ fi
 
 # NOTE: If you change this version, also change it in the `conanfile.py` requirements
 # and in the Dockerfile
-git checkout releases/v0.21.0
+git checkout 3d-arm-test
 
 # Export the recipe to the cache so we can skip rebuilds gracefully
 conan export .
