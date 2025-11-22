@@ -459,7 +459,7 @@ enum class integration_event : std::uint8_t {
         else if (s_dot_max_acc_before - s_dot_max_acc_after > opt.epsilon) {
             // Evaluate s_ddot_max at (s+, s_dot_max_acc(s+))
             const auto [_, s_ddot_max_at_s_plus] = compute_acceleration_bounds(q_prime_after,
-``                                                                               q_double_prime_after,
+                                                                               q_double_prime_after,
                                                                                s_dot_max_acc_after,  // Evaluate at s+'s own limit
                                                                                opt.max_acceleration,
                                                                                opt.epsilon);
