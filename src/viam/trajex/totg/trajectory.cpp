@@ -259,10 +259,13 @@ enum class integration_event : std::uint8_t {
     while (true) {
         auto current_segment = *cursor;
 
-        // Check 1: Interior extrema in circular segments (continuous-nondifferentiable case).
-        // Within a circular blend, a joint may reach a local extremum where f'_i(s) = 0
-        // while the segment continues curving. This creates a continuous-nondifferentiable
-        // point in the acceleration limit curve. Reference: Section VII-A case 2, equation 39.
+        // ========================================================================
+        // CASE 2: Continuous and Nondifferentiable (Section VII-A Case 2)
+        // ========================================================================
+        // Check interior of circular segments for joint extrema where f'_i(s) = 0.
+        // These create continuous but non-differentiable points in the acceleration
+        // limit curve. Reference: Equation 39.
+
         if (current_segment.is<path::segment::circular>()) {
             std::optional<arc_length> first_extremum;
             double first_extremum_velocity = 0.0;
@@ -370,66 +373,104 @@ enum class integration_event : std::uint8_t {
             }
         }
 
-        // Check 2: Segment boundary (discontinuous case)
+        // ========================================================================
+        // CASE 1: Discontinuous (Section VII-A Case 1)
+        // ========================================================================
+        // "s_dot_max_acc(s) is discontinuous if and only if the path curvature f''(s) -
+        //  as we we call it in the code q_double_prime(s) is discontinuous. For a path
+        //  generated as described in Section IV the discontinuities are exactly the points
+        //  where the path switches between a circular segment and a straight line segment.
+        //  [However,] If the path's curvature f''(s) is continuous everywhere, this case of
+        //  switching points does not happen."
+        // Reference: Equation 38.
+
         const arc_length boundary = current_segment.end();
 
-        // If this boundary is at the path end, no more interior boundaries to check
+        // If at path end, it is impossible to compare against a subsequent segment since there is none
         if (boundary >= cursor.path().length()) {
             break;
         }
 
-        // Sample geometry from segment ending at boundary
+        // Sample geometry on LEFT side of boundary
         const auto q_prime_before = current_segment.tangent(boundary);
         const auto q_double_prime_before = current_segment.curvature(boundary);
 
-        // Advance cursor to boundary (moves to next segment)
+        // Move cursor to next segment
         cursor.seek(boundary);
         auto segment_after = *cursor;
 
-        // Sample geometry from segment starting at boundary
+        // Sample geometry on RIGHT side of boundary
         const auto q_prime_after = segment_after.tangent(boundary);
         const auto q_double_prime_after = segment_after.curvature(boundary);
 
-        // Compute acceleration limit curve (s_dot_max_acc) on both sides of boundary
-        const auto [s_dot_max_acc_before, s_dot_max_vel_before] =
+        // Compute s_dot_max_acc on both sides
+        const auto [s_dot_max_acc_before, _1] =
             compute_velocity_limits(q_prime_before, q_double_prime_before, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        const auto [s_dot_max_acc_after, s_dot_max_vel_after] =
+        const auto [s_dot_max_acc_after, _2] =
             compute_velocity_limits(q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        // Switching velocity is the minimum of acceleration limit curve on both sides (equation 38)
-        const double s_dot_switching = std::min(s_dot_max_acc_before, s_dot_max_acc_after);
+        // Compute limit curve slopes using numerical approximation
+        const arc_length before_boundary = std::max(boundary - arc_length{opt.epsilon}, current_segment.start());
+        const auto q_prime_bb = current_segment.tangent(before_boundary);
+        const auto q_double_prime_bb = current_segment.curvature(before_boundary);
+        const auto [s_dot_max_acc_bb, _5] =
+            compute_velocity_limits(q_prime_bb, q_double_prime_bb, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        // Validate switching point conditions:
-        // 1. Switching velocity must be within velocity limits
-        const double s_dot_max_vel_boundary = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
-        if (s_dot_switching > s_dot_max_vel_boundary + opt.epsilon) {
-            continue;  // Switching velocity exceeds velocity limit
+        const double actual_step_left = (boundary - before_boundary).value;
+        if (actual_step_left < opt.epsilon * 0.5) {
+            continue;
+        }
+        // this is d/ds s_dot_max_acc(s-)
+        const double slope_left = (s_dot_max_acc_before - s_dot_max_acc_bb) / actual_step_left;
+
+        const arc_length after_boundary = std::min(boundary + arc_length{opt.epsilon}, segment_after.end());
+        const auto q_prime_ab = segment_after.tangent(after_boundary);
+        const auto q_double_prime_ab = segment_after.curvature(after_boundary);
+        const auto [s_dot_max_acc_ab, _6] =
+            compute_velocity_limits(q_prime_ab, q_double_prime_ab, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+
+        const double actual_step_right = (after_boundary - boundary).value;
+        if (actual_step_right < opt.epsilon * 0.5) {
+            continue;
+        }
+        // this is d/ds s_dot_max_acc(s+)
+        const double slope_right = (s_dot_max_acc_ab - s_dot_max_acc_after) / actual_step_right;
+
+        // === Apply Equation 38 ===
+        // A discontinuity of s_dot_max_acc(s) is a switching point if and only if:
+        // Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) ∧ s_ddot_max(s-, s_dot_max_acc(s-)) >= d/ds s_dot_max_acc(s-)]
+        // Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) ∧ s_ddot_max(s+, s_dot_max_acc(s+)) <= d/ds s_dot_max_acc(s+)]
+        bool is_switching_point = false;
+
+        // Case A: Positive step (limit increases)
+        if (s_dot_max_acc_after - s_dot_max_acc_before > opt.epsilon) {
+            // Evaluate s_ddot_max at (s-, s_dot_max_acc(s-))
+            const auto [_, s_ddot_max_at_s_minus] = compute_acceleration_bounds(q_prime_before,
+                                                                                q_double_prime_before,
+                                                                                s_dot_max_acc_before,  // Evaluate at s-'s own limit
+                                                                                opt.max_acceleration,
+                                                                                opt.epsilon);
+
+            // Check: s_ddot_max(s-, s_dot_max_acc(s-)) >= d/ds s_dot_max_acc(s-)
+            is_switching_point = (slope_left - s_ddot_max_at_s_minus <= opt.epsilon);
+        }
+        // Case B: Negative step (limit decreases)
+        else if (s_dot_max_acc_before - s_dot_max_acc_after > opt.epsilon) {
+            // Evaluate s_ddot_max at (s+, s_dot_max_acc(s+))
+            const auto [_, s_ddot_max_at_s_plus] = compute_acceleration_bounds(q_prime_after,
+                                                                               q_double_prime_after,
+                                                                               s_dot_max_acc_after,  // Evaluate at s+'s own limit
+                                                                               opt.max_acceleration,
+                                                                               opt.epsilon);
+
+            // Check: s_ddot_max(s+, s_dot_max_acc(s+)) <= d/ds s_dot_max_acc(s+)
+            is_switching_point = (s_ddot_max_at_s_plus - slope_right <= opt.epsilon);
         }
 
-        // 2. Must be able to reach this point from the left and continue forward
-        // Compute acceleration bounds at switching velocity on both sides
-        const auto [s_ddot_min_before, s_ddot_max_before] =
-            compute_acceleration_bounds(q_prime_before, q_double_prime_before, s_dot_switching, opt.max_acceleration, opt.epsilon);
-
-        const auto [s_ddot_min_after, s_ddot_max_after] =
-            compute_acceleration_bounds(q_prime_after, q_double_prime_after, s_dot_switching, opt.max_acceleration, opt.epsilon);
-
-        // Check that we can pass through this point in forward direction
-        // For a discontinuous switching point with piecewise-constant curvature, we need:
-        // - Positive acceleration available on both sides (can reach from left, continue on right)
-        // - The switching velocity is at the acceleration limit curve on at least one side (touching the limit)
-        const bool can_reach_from_left = s_ddot_max_before > -opt.epsilon;
-        const bool can_continue_on_right = s_ddot_max_after > -opt.epsilon;
-        const bool touches_mvc = (std::abs(s_dot_switching - s_dot_max_acc_before) < opt.epsilon) ||
-                                 (std::abs(s_dot_switching - s_dot_max_acc_after) < opt.epsilon);
-
-        // TODO: Equation 38: Validate that this discontinuity is a trajectory SINK.
-        // A discontinuity is a valid switching point only if the maximum acceleration trajectory
-        // flows into it (is a sink), not away from it (source). We check this by comparing
-        // the trajectory slope (s_ddot_max/s_dot) with the limit curve slope (d/ds s_dot_max_acc).
-
-        if (can_reach_from_left && can_continue_on_right && touches_mvc) {
+        if (is_switching_point) {
+            // Switching velocity is the minimum (where the discontinuity meets the feasible region)
+            const double s_dot_switching = std::min(s_dot_max_acc_before, s_dot_max_acc_after);
             return trajectory::phase_point{.s = boundary, .s_dot = s_dot_switching};
         }
     }
@@ -831,13 +872,21 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
 
-                    if (s_ddot_min > s_ddot_max) [[unlikely]] {
+                    if (s_ddot_min - s_ddot_max > traj.options_.epsilon) [[unlikely]] {
                         throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible"};
+                    }
+
+                    // Handle degenerate case where bounds are nearly equal (singularity/zero-acceleration point).
+                    // At such points, using the raw s_ddot_max might be slightly outside the feasible region
+                    // due to numerical errors.
+                    double s_ddot_to_use = s_ddot_max;
+                    if (s_ddot_max - s_ddot_min < traj.options_.epsilon) {
+                        s_ddot_to_use = std::min(s_ddot_min, s_ddot_max);
                     }
 
                     // Compute candidate next point via Euler integration with maximum acceleration
                     const auto [next_s, next_s_dot] =
-                        euler_step(current_point.s, current_point.s_dot, s_ddot_max, traj.options_.delta.count());
+                        euler_step(current_point.s, current_point.s_dot, s_ddot_to_use, traj.options_.delta.count());
 
                     // Forward integration should move "up and to the right" in phase plane
                     if ((next_s <= current_point.s) || (next_s_dot < current_point.s_dot)) [[unlikely]] {
@@ -973,7 +1022,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // TODO: Investigate whether we want a richer exception type for algorithm failures.
                     // A custom exception hierarchy could distinguish between different failure modes
                     // (infeasible path, numerical issues, constraint violations) for better error handling.
-                    if (s_ddot_min > s_ddot_max) [[unlikely]] {
+                    if (s_ddot_min > s_ddot_max + traj.options_.epsilon) [[unlikely]] {
                         throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible during curve following"};
                     }
 
@@ -1091,10 +1140,22 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // - Higher s (further along path)
                         // - Lower s_dot (slower, often at rest)
                         // This ensures backward integration can increase s_dot while decreasing s.
-                        if ((switching_point.s <= last_forward.s) || (switching_point.s_dot >= last_forward.s_dot)) [[unlikely]] {
-                            throw std::runtime_error{
-                                "TOTG algorithm error: switching point must be down and to the right of last forward point "
-                                "(higher s, lower s_dot)"};
+                        // Use epsilon tolerance to handle numerical precision issues.
+                        // Special case: if both velocities are near zero (at rest), the switching point
+                        // may be at nearly the same position due to numerical integration artifacts.
+                        const bool both_at_rest = (std::abs(last_forward.s_dot) < traj.options_.epsilon) &&
+                                                  (std::abs(switching_point.s_dot) < traj.options_.epsilon);
+
+                        if (!both_at_rest) {
+                            // Normal case: enforce strict "down and to the right" constraint
+                            const bool s_invalid = (switching_point.s.value <= last_forward.s.value + traj.options_.epsilon);
+                            const bool s_dot_invalid = (switching_point.s_dot >= last_forward.s_dot - traj.options_.epsilon);
+
+                            if (s_invalid || s_dot_invalid) [[unlikely]] {
+                                throw std::runtime_error{
+                                    "TOTG algorithm error: switching point must be down and to the right of last forward point "
+                                    "(higher s, lower s_dot)"};
+                            }
                         }
 
                         if (traj.options_.observer) {
@@ -1117,20 +1178,28 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
 
-                    if (s_ddot_min > s_ddot_max) [[unlikely]] {
+                    if (s_ddot_min > s_ddot_max + traj.options_.epsilon) [[unlikely]] {
                         throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible during backward integration"};
                     }
 
+                    double s_ddot_to_use = s_ddot_min;
+
                     // Minimum acceleration must be negative to produce backward motion (decreasing s)
-                    if (s_ddot_min >= 0.0) [[unlikely]] {
-                        throw std::runtime_error{"TOTG algorithm error: backward integration requires negative minimum acceleration"};
+                    // Allow small tolerance for numerical precision at near-zero acceleration points
+                    if (s_ddot_to_use >= -traj.options_.epsilon) {
+                        if (s_ddot_to_use > traj.options_.epsilon) {
+                            // Clearly positive - this is an error
+                            throw std::runtime_error{"TOTG algorithm error: backward integration requires negative minimum acceleration"};
+                        }
+                        // Near zero (degenerate switching point) - use small negative value to make progress
+                        s_ddot_to_use = -traj.options_.epsilon;
                     }
 
                     // Compute candidate next point via Euler integration with negative dt and minimum acceleration.
                     // Negative dt reverses time direction, reconstructing velocities that led to current point.
                     // With s_ddot_min < 0 and dt < 0, s_dot increases (up) while s decreases (left).
                     const auto [candidate_s, candidate_s_dot] =
-                        euler_step(current_point.s, current_point.s_dot, s_ddot_min, -traj.options_.delta.count());
+                        euler_step(current_point.s, current_point.s_dot, s_ddot_to_use, -traj.options_.delta.count());
 
                     // Backward integration must decrease s (move backward) and not decrease s_dot.
                     // At degenerate points (s_ddot ≈ 0), s_dot may stay constant (horizontal movement).
