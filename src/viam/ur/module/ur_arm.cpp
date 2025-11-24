@@ -14,6 +14,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include <boost/format.hpp>
@@ -59,6 +60,9 @@ namespace {
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 constexpr double k_sampling_freq_hz = 5;
+
+const std::unordered_map<std::string, std::vector<std::string>> arm_name_to_model_parts = {
+    {"ur5e", {"base_link", "ee_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}}};
 
 // Convert Eigen waypoint list to xt::xarray for trajex/totg
 xt::xarray<double> eigen_waypoints_to_xarray(const std::list<Eigen::VectorXd>& waypoints) {
@@ -531,54 +535,42 @@ std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
-    std::map<std::string, std::vector<std::string>> arm_name_to_model_parts;
-    arm_name_to_model_parts["ur5e"] = {"base_link", "ee_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"};
+    const auto model_name = model_.model_name();
 
-    const std::string model_string = [&] {
-        if (model_ == model("ur3e")) {
-            return "ur3e";
-        } else if (model_ == model("ur5e")) {
-            return "ur5e";
-        } else if (model_ == model("ur7e")) {
-            return "ur7e";
-        } else if (model_ == model("ur20")) {
-            return "ur20";
-        }
-        return "";
-    }();
-
-    if (arm_name_to_model_parts.find(model_string) == arm_name_to_model_parts.end()) {
+    const auto where = arm_name_to_model_parts.find(model_name);
+    if (where == arm_name_to_model_parts.end()) {
         return {};
     }
+    const auto& parts_to_load = where->second;
 
     std::map<std::string, mesh> result_model_parts;
-    const std::vector<std::string> parts_to_load = arm_name_to_model_parts.at(model_string);
     constexpr char threeDModelFileTemplate[] = "3d_models/%1%/%2%.glb";
 
-    for (const std::string& part : parts_to_load) {
+    for (const auto& part : parts_to_load) {
         const std::filesystem::path model_file_path =
-            current_state_->resource_root() / str(boost::format(threeDModelFileTemplate) % model_string % part);
+            current_state_->resource_root() / str(boost::format(threeDModelFileTemplate) % model_name % part);
+
+        // Check if the model file exists, if not, continue to next part
+        if (!std::filesystem::exists(model_file_path)) {
+            continue;
+        }
 
         // Open the file in binary mode
         std::ifstream model_file(model_file_path, std::ios::binary);
         if (!model_file) {
-            continue;
+            throw std::runtime_error(str(boost::format("unable to open 3d model file '%1'") % model_file_path));
         }
 
         // Read the entire file into a vector without computing size ahead of time
         std::vector<char> temp_bytes(std::istreambuf_iterator<char>(model_file), {});
         if (model_file.bad()) {
-            continue;
+            throw std::runtime_error(str(boost::format("error reading 3d model file '%1'") % model_file_path));
         }
 
         // Convert to unsigned char vector
         std::vector<unsigned char> temp_bytes_unsigned(temp_bytes.begin(), temp_bytes.end());
 
-        mesh part_mesh;
-        part_mesh.data = std::move(temp_bytes_unsigned);
-        part_mesh.content_type = "model/gltf-binary";
-
-        result_model_parts[part] = std::move(part_mesh);
+        result_model_parts.emplace(part, mesh{"model/gltf-binary", std::move(temp_bytes_unsigned)});
     }
 
     return result_model_parts;

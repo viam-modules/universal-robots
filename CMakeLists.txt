@@ -399,7 +399,7 @@ install(
 )
 
 install(
-  DIRECTORY src/kinematics src/control
+  DIRECTORY src/kinematics src/control src/3d_models
   DESTINATION ${CMAKE_INSTALL_DATADIR}/universal-robots
 )
 

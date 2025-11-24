@@ -67,8 +67,8 @@ RUN cd /root/opt/src && \
     cd xtl && \
     git checkout 0.8.1 && \
     cmake -S . -B build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -G Ninja && \
+        -DCMAKE_BUILD_TYPE=Release \
+        -G Ninja && \
     cmake --build build -- -j4 && \
     cmake --install build --prefix /usr/local && \
     rm -rf /root/opt/src/xtl
@@ -79,8 +79,8 @@ RUN cd /root/opt/src && \
     cd xtensor && \
     git checkout 0.27.1 && \
     cmake -S . -B build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -G Ninja && \
+        -DCMAKE_BUILD_TYPE=Release \
+        -G Ninja && \
     cmake --build build -- -j4 && \
     cmake --install build --prefix /usr/local && \
     rm -rf /root/opt/src/xtensor
@@ -92,12 +92,12 @@ RUN cd /root/opt/src && \
     cd viam-cpp-sdk && \
     git checkout 3d-arm-test && \
     cmake -S . -B build \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-    -DVIAMCPPSDK_USE_DYNAMIC_PROTOS=ON \
-    -DVIAMCPPSDK_OFFLINE_PROTO_GENERATION=ON \
-    -DVIAMCPPSDK_BUILD_EXAMPLES=OFF \
-    -DVIAMCPPSDK_BUILD_TESTS=OFF \
-    -G Ninja && \
+        -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+        -DVIAMCPPSDK_USE_DYNAMIC_PROTOS=ON \
+        -DVIAMCPPSDK_OFFLINE_PROTO_GENERATION=ON \
+        -DVIAMCPPSDK_BUILD_EXAMPLES=OFF \
+        -DVIAMCPPSDK_BUILD_TESTS=OFF \
+        -G Ninja && \
     cmake --build build --target all -- -j4 && \
     cmake --install build --prefix /usr/local && \
     rm -rf /root/opt/src/viam-cpp-sdk
