@@ -34,7 +34,7 @@ class universal_robots(ConanFile):
     def requirements(self):
         # NOTE: If you update the `viam-cpp-sdk` dependency here, it
         # should also be updated in `bin/setup.sh`.
-        self.requires("viam-cpp-sdk/[>=0.21.0]")
+        self.requires("viam-cpp-sdk/[>=0.23.0]")
         self.requires("eigen/[>=3.4 <5.0]")
         self.requires("boost/[>=1.74.0]")
 

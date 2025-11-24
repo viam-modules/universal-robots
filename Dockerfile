@@ -88,9 +88,9 @@ RUN cd /root/opt/src && \
 # Install Viam C++ SDK from source. If you change the
 # version here, change it in the top level CMakeLists.txt as well.
 RUN cd /root/opt/src && \
-    git clone https://github.com/mattmacf98/viam-cpp-sdk && \
+    git clone https://github.com/viamrobotics/viam-cpp-sdk && \
     cd viam-cpp-sdk && \
-    git checkout 3d-arm-test && \
+    git checkout releases/v0.23.0 && \
     cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DVIAMCPPSDK_USE_DYNAMIC_PROTOS=ON \
