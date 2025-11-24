@@ -61,9 +61,6 @@ constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 constexpr double k_sampling_freq_hz = 5;
 
-const std::unordered_map<std::string, std::vector<std::string>> arm_name_to_model_parts = {
-    {"ur5e", {"base_link", "ee_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}}};
-
 // Convert Eigen waypoint list to xt::xarray for trajex/totg
 xt::xarray<double> eigen_waypoints_to_xarray(const std::list<Eigen::VectorXd>& waypoints) {
     if (waypoints.empty()) {
@@ -355,6 +352,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
     VIAM_SDK_LOG(info) << "instantiating URArm driver for arm model: " << model_.to_string();
+    arm_name_to_model_parts_ = {{"ur5e", {"base_link", "ee_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}}};
     const std::unique_lock wlock(config_mutex_);
     // TODO: prevent multiple calls to configure_logger
     configure_logger(cfg);
@@ -537,8 +535,8 @@ std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
 
     const auto model_name = model_.model_name();
 
-    const auto where = arm_name_to_model_parts.find(model_name);
-    if (where == arm_name_to_model_parts.end()) {
+    const auto where = arm_name_to_model_parts_.find(model_name);
+    if (where == arm_name_to_model_parts_.end()) {
         return {};
     }
     const auto& parts_to_load = where->second;
@@ -552,6 +550,7 @@ std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
 
         // Check if the model file exists, if not, continue to next part
         if (!std::filesystem::exists(model_file_path)) {
+            VIAM_SDK_LOG(warn) << "3d model file '" << model_file_path << "' does not exist";
             continue;
         }
 
@@ -569,7 +568,6 @@ std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
 
         // Convert to unsigned char vector
         std::vector<unsigned char> temp_bytes_unsigned(temp_bytes.begin(), temp_bytes.end());
-
         result_model_parts.emplace(part, mesh{"model/gltf-binary", std::move(temp_bytes_unsigned)});
     }
 
