@@ -20,7 +20,7 @@ else
 fi
 
 # NOTE: If you change this version, also change it in the `conanfile.py` requirements
-# and in the Dockerfile
+# and in the Dockerfile and CMakeLists.txt
 git checkout releases/v0.23.0
 
 # Export the recipe to the cache so we can skip rebuilds gracefully
