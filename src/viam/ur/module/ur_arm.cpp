@@ -548,12 +548,6 @@ std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
         const std::filesystem::path model_file_path =
             current_state_->resource_root() / str(boost::format(threeDModelFileTemplate) % model_name % part);
 
-        // Check if the model file exists, if not, continue to next part
-        if (!std::filesystem::exists(model_file_path)) {
-            VIAM_SDK_LOG(warn) << "3d model file '" << model_file_path << "' does not exist";
-            continue;
-        }
-
         // Open the file in binary mode
         std::ifstream model_file(model_file_path, std::ios::binary);
         if (!model_file) {
