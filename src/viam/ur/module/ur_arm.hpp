@@ -7,6 +7,7 @@
 
 #include <ur_client_library/types.h>
 
+#include <viam/sdk/common/mesh.hpp>
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/registry/registry.hpp>
@@ -113,6 +114,11 @@ class URArm final : public Arm, public Reconfigurable {
     /// and the object's type indicating the file format.
     KinematicsData get_kinematics(const ProtoStruct& extra) override;
 
+    /// @brief Get the 3D models associated with the arm.
+    /// @param extra Any additional arguments to the method.
+    /// @return A map of model names to 3D models.
+    std::map<std::string, mesh> get_3d_models(const ProtoStruct& extra) override;
+
     /// @brief Stops the Arm.
     /// @param extra Extra arguments to pass to the resource's `stop` method.
     void stop(const ProtoStruct& extra) override;
@@ -164,4 +170,6 @@ class URArm final : public Arm, public Reconfigurable {
 
     std::shared_mutex config_mutex_;
     std::unique_ptr<state_> current_state_;
+
+    std::unordered_map<std::string, std::vector<std::string>> arm_name_to_model_parts_;
 };

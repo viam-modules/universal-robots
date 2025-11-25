@@ -15,6 +15,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include <boost/format.hpp>
@@ -366,6 +367,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
     VIAM_SDK_LOG(info) << "instantiating URArm driver for arm model: " << model_.to_string();
+    arm_name_to_model_parts_ = {{"ur5e", {"base_link", "ee_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}}};
     const std::unique_lock wlock(config_mutex_);
     // TODO: prevent multiple calls to configure_logger
     configure_logger(cfg);
@@ -539,6 +541,47 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
 
     // Convert to unsigned char vector
     return KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
+}
+
+// Unknown arm models should return an empty map. Arm models that do not have all expected parts in the map should return as much as they
+// have
+std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
+    const std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
+
+    const auto model_name = model_.model_name();
+
+    const auto where = arm_name_to_model_parts_.find(model_name);
+    if (where == arm_name_to_model_parts_.end()) {
+        return {};
+    }
+    const auto& parts_to_load = where->second;
+
+    std::map<std::string, mesh> result_model_parts;
+    constexpr char threeDModelFileTemplate[] = "3d_models/%1%/%2%.glb";
+
+    for (const auto& part : parts_to_load) {
+        const std::filesystem::path model_file_path =
+            current_state_->resource_root() / str(boost::format(threeDModelFileTemplate) % model_name % part);
+
+        // Open the file in binary mode
+        std::ifstream model_file(model_file_path, std::ios::binary);
+        if (!model_file) {
+            throw std::runtime_error(str(boost::format("unable to open 3d model file '%1'") % model_file_path));
+        }
+
+        // Read the entire file into a vector without computing size ahead of time
+        std::vector<char> temp_bytes(std::istreambuf_iterator<char>(model_file), {});
+        if (model_file.bad()) {
+            throw std::runtime_error(str(boost::format("error reading 3d model file '%1'") % model_file_path));
+        }
+
+        // Convert to unsigned char vector
+        std::vector<unsigned char> temp_bytes_unsigned(temp_bytes.begin(), temp_bytes.end());
+        result_model_parts.emplace(part, mesh{"model/gltf-binary", std::move(temp_bytes_unsigned)});
+    }
+
+    return result_model_parts;
 }
 
 void URArm::stop(const ProtoStruct&) {
