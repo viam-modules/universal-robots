@@ -16,6 +16,9 @@
 namespace {
 
 constexpr auto k_default_robot_control_freq_hz = 100.;
+constexpr double k_default_max_trajectory_duration_secs = 600.0;
+constexpr double k_default_trajectory_sampling_freq_hz = 10.0;
+constexpr double k_default_path_tolerance_delta_rads = 0.1;
 
 void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::string& unix_time, std::size_t attempt) {
     of << unix_time << "," << attempt << ",";
@@ -48,6 +51,8 @@ URArm::state_::state_(private_,
                       double path_tolerance_delta_rads,
                       std::optional<double> path_colinearization_ratio,
                       bool use_new_trajectory_planner,
+                      double max_trajectory_duration_secs,
+                      double trajectory_sampling_freq_hz,
                       const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
       host_{std::move(host)},
@@ -59,7 +64,9 @@ URArm::state_::state_(private_,
       ports_{ports},
       path_tolerance_delta_rads_(path_tolerance_delta_rads),
       path_colinearization_ratio_(path_colinearization_ratio),
-      use_new_trajectory_planner_(use_new_trajectory_planner) {}
+      use_new_trajectory_planner_(use_new_trajectory_planner),
+      max_trajectory_duration_secs_(max_trajectory_duration_secs),
+      trajectory_sampling_freq_hz_(trajectory_sampling_freq_hz) {}
 
 URArm::state_::~state_() {
     shutdown();
@@ -101,10 +108,16 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     auto frequency = find_config_attribute<double>(config, "robot_control_freq_hz");
     auto use_new_planner = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
 
-    auto path_tolerance_deg = find_config_attribute<double>(config, "path_tolerance_delta_degrees");
-    auto path_tolerance_rad = path_tolerance_deg ? degrees_to_radians(*path_tolerance_deg) : 0.1;
+    auto path_tolerance_deg = find_config_attribute<double>(config, "path_tolerance_delta_deg");
+    auto path_tolerance_rad = path_tolerance_deg ? degrees_to_radians(*path_tolerance_deg) : k_default_path_tolerance_delta_rads;
 
     auto colinearization_ratio = find_config_attribute<double>(config, "path_colinearization_ratio");
+
+    const double max_trajectory_duration_secs =
+        find_config_attribute<double>(config, "max_trajectory_duration_secs").value_or(k_default_max_trajectory_duration_secs);
+
+    const double trajectory_sampling_freq_hz =
+        find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(k_default_trajectory_sampling_freq_hz);
 
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
@@ -117,10 +130,12 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           path_tolerance_rad,
                                           colinearization_ratio,
                                           use_new_planner,
+                                          max_trajectory_duration_secs,
+                                          trajectory_sampling_freq_hz,
                                           ports);
 
-    state->set_speed(degrees_to_radians(find_config_attribute<double>(config, "speed_degs_per_sec").value()));
-    state->set_acceleration(degrees_to_radians(find_config_attribute<double>(config, "acceleration_degs_per_sec2").value()));
+    state->set_max_velocity(parse_and_validate_joint_limits(config, "speed_degs_per_sec"));
+    state->set_max_acceleration(parse_and_validate_joint_limits(config, "acceleration_degs_per_sec2"));
 
     // Hold the mutex while we start the worker thread. It will not be
     // able to advance, but will be ready to take over work as soon as
@@ -228,20 +243,36 @@ const std::filesystem::path& URArm::state_::urcl_resource_root() const {
     return urcl_resource_root_;
 }
 
-void URArm::state_::set_speed(double speed) {
-    speed_.store(speed);
+void URArm::state_::set_max_velocity(const vector6d_t& velocity) {
+    const std::lock_guard lock(mutex_);
+    max_velocity_ = velocity;
 }
 
-double URArm::state_::get_speed() const {
-    return speed_.load();
+void URArm::state_::set_max_velocity(double velocity) {
+    vector6d_t v;
+    v.fill(velocity);
+    set_max_velocity(v);
 }
 
-void URArm::state_::set_acceleration(double acceleration) {
-    acceleration_.store(acceleration);
+vector6d_t URArm::state_::get_max_velocity() const {
+    const std::lock_guard lock(mutex_);
+    return max_velocity_;
 }
 
-double URArm::state_::get_acceleration() const {
-    return acceleration_.load();
+void URArm::state_::set_max_acceleration(const vector6d_t& acceleration) {
+    const std::lock_guard lock(mutex_);
+    max_acceleration_ = acceleration;
+}
+
+void URArm::state_::set_max_acceleration(double acceleration) {
+    vector6d_t a;
+    a.fill(acceleration);
+    set_max_acceleration(a);
+}
+
+vector6d_t URArm::state_::get_max_acceleration() const {
+    const std::lock_guard lock(mutex_);
+    return max_acceleration_;
 }
 
 double URArm::state_::get_path_tolerance_delta_rads() const {
@@ -254,6 +285,14 @@ const std::optional<double>& URArm::state_::get_path_colinearization_ratio() con
 
 bool URArm::state_::use_new_trajectory_planner() const {
     return use_new_trajectory_planner_;
+}
+
+double URArm::state_::get_max_trajectory_duration_secs() const {
+    return max_trajectory_duration_secs_;
+}
+
+double URArm::state_::get_trajectory_sampling_freq_hz() const {
+    return trajectory_sampling_freq_hz_;
 }
 
 size_t URArm::state_::get_move_epoch() const {
