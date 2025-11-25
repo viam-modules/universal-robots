@@ -1,6 +1,7 @@
 #pragma once
 
 #include <list>
+#include <numbers>
 #include <optional>
 #include <sstream>
 
@@ -62,13 +63,16 @@ class URArmLogHandler : public urcl::LogHandler {
 
 template <typename T>
 [[nodiscard]] constexpr decltype(auto) degrees_to_radians(T&& degrees) {
-    return std::forward<T>(degrees) * (M_PI / 180.0);
+    return std::forward<T>(degrees) * (std::numbers::pi / 180.0);
 }
 
 template <typename T>
 [[nodiscard]] constexpr decltype(auto) radians_to_degrees(T&& radians) {
-    return std::forward<T>(radians) * (180.0 / M_PI);
+    return std::forward<T>(radians) * (180.0 / std::numbers::pi);
 }
+
+[[nodiscard]] urcl::vector6d_t degrees_to_radians(urcl::vector6d_t degrees);
+[[nodiscard]] urcl::vector6d_t radians_to_degrees(urcl::vector6d_t radians);
 
 Eigen::Matrix3d rotation_vector_to_matrix(const urcl::vector6d_t& tcp_pose);
 
@@ -102,3 +106,29 @@ bool within_colinearization_tolerance(const Eigen::VectorXd& point,
 /// @param tolerance Diameter of tolerance cylinder (in radians)
 ///
 void apply_colinearization(std::list<Eigen::VectorXd>& waypoints, double tolerance);
+
+///
+/// Parse and validate velocity or acceleration limits.
+///
+/// Returns a 6-element vector in radians. Input (in degrees) can be scalar
+/// (expands to 6 identical values) or 6-element array. Rejects negative values,
+/// scalar zero, or all-zero arrays.
+///
+/// @param value ProtoValue containing scalar double or 6-element array
+/// @param param_name Name of the parameter (for error messages)
+/// @return 6-element vector of limits in radians
+/// @throws std::invalid_argument if validation fails
+///
+urcl::vector6d_t parse_and_validate_joint_limits(const viam::sdk::ProtoValue& value, const std::string& param_name);
+
+///
+/// Parse and validate velocity or acceleration limits from config.
+///
+/// Extracts the named parameter from config attributes and validates it.
+///
+/// @param cfg Configuration structure to read from
+/// @param param_name Name of the parameter to read
+/// @return 6-element vector of limits in radians
+/// @throws std::invalid_argument if validation fails
+///
+urcl::vector6d_t parse_and_validate_joint_limits(const viam::sdk::ResourceConfig& cfg, const std::string& param_name);

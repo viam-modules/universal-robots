@@ -3,6 +3,7 @@
 #include <ur_client_library/log.h>
 
 #include <Eigen/Dense>
+#include <boost/format.hpp>
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/resource/resource.hpp>
 
@@ -31,6 +32,20 @@ void configure_logger(const viam::sdk::ResourceConfig& cfg) {
 
     urcl::setLogLevel(level);
     urcl::registerLogHandler(std::make_unique<URArmLogHandler>());
+}
+
+vector6d_t degrees_to_radians(vector6d_t degrees) {
+    for (auto& val : degrees) {
+        val = degrees_to_radians(val);
+    }
+    return degrees;
+}
+
+vector6d_t radians_to_degrees(vector6d_t radians) {
+    for (auto& val : radians) {
+        val = radians_to_degrees(val);
+    }
+    return radians;
 }
 
 Eigen::Matrix3d rotation_vector_to_matrix(const vector6d_t& tcp_pose) {
@@ -160,4 +175,64 @@ void apply_colinearization(std::list<Eigen::VectorXd>& waypoints, double toleran
         waypoints.erase(std::next(anchor), locus);
         anchor = locus;
     }
+}
+
+vector6d_t parse_and_validate_joint_limits(const viam::sdk::ProtoValue& value, const std::string& param_name) {
+    using boost::format;
+    using boost::str;
+    using viam::sdk::ProtoValue;
+
+    vector6d_t result;
+
+    if (const auto* scalar = value.get<double>()) {
+        const double val = *scalar;
+        if (val < 0.0) {
+            throw std::invalid_argument(str(format("`%1%` cannot be negative, got: %2%") % param_name % val));
+        }
+        if (val == 0.0) {
+            throw std::invalid_argument(str(format("`%1%` cannot be zero") % param_name));
+        }
+        result.fill(degrees_to_radians(val));
+    } else if (const auto* arr = value.get<std::vector<ProtoValue>>()) {
+        if (arr->size() != 6) {
+            throw std::invalid_argument(
+                str(format("`%1%` must be either a scalar or 6-element array, got %2% elements") % param_name % arr->size()));
+        }
+
+        bool all_zero = true;
+        for (size_t i = 0; i < 6; ++i) {
+            const auto* elem = (*arr)[i].get<double>();
+            if (!elem) {
+                throw std::invalid_argument(str(format("`%1%` array element %2% is not a number") % param_name % i));
+            }
+            const double val = *elem;
+            if (val < 0.0) {
+                throw std::invalid_argument(str(format("`%1%` element %2% cannot be negative, got: %3%") % param_name % i % val));
+            }
+            if (val != 0.0) {
+                all_zero = false;
+            }
+            result[i] = degrees_to_radians(val);
+        }
+
+        if (all_zero) {
+            throw std::invalid_argument(str(format("`%1%` cannot have all elements set to zero") % param_name));
+        }
+    } else {
+        throw std::invalid_argument(str(format("`%1%` must be either a scalar number or 6-element array") % param_name));
+    }
+
+    return result;
+}
+
+vector6d_t parse_and_validate_joint_limits(const viam::sdk::ResourceConfig& cfg, const std::string& param_name) {
+    using boost::format;
+    using boost::str;
+
+    const auto& attributes = cfg.attributes();
+    auto key = attributes.find(param_name);
+    if (key == attributes.end()) {
+        throw std::invalid_argument(str(format("`%1%` is required") % param_name));
+    }
+    return parse_and_validate_joint_limits(key->second, param_name);
 }
