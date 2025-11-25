@@ -952,7 +952,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     size_t total_waypoints = 0;
 
     for (auto& segment : segments) {
-
         // Apply colinearization to reduce waypoints
         if (auto ratio = current_state_->get_path_colinearization_ratio()) {
             apply_colinearization(segment, current_state_->get_path_tolerance_delta_rads() * (*ratio));
