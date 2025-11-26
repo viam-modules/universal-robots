@@ -194,7 +194,7 @@ enum class integration_event : std::uint8_t {
     const double numerator = -q_dot_max(limiting_joint) * q_double_prime(limiting_joint);
     const double denominator = q_prime(limiting_joint) * std::abs(q_prime(limiting_joint));
 
-    // TODO: This check can trigger even when limiting_joint was validly selected, because a joint
+    // TODO(RSDK-12759): This check can trigger even when limiting_joint was validly selected, because a joint
     // with |q'| slightly above epsilon (e.g., 1.1*epsilon) produces a denominator of |q'|^2 which
     // can be below epsilon (e.g., 1.21*epsilon^2 << epsilon for small epsilon). This represents a
     // numerically singular case where the joint is barely moving along the path (q' ≈ 0) but happens
@@ -247,7 +247,7 @@ enum class integration_event : std::uint8_t {
 // backward integration can begin. This occurs at curvature discontinuities (segment boundaries)
 // where the acceleration limit curve has a discontinuous change.
 //
-// TODO: This implementation is incomplete:
+// TODO(RSDK-12647): This implementation is incomplete:
 // We don't incorporate source/sink filtering to validate that limit curve intersections are
 // trajectory sinks (valid stopping points) rather than sources (numerical artifacts from
 // overshooting with finite dt). See paper Section VIII-A and reference Trajectory.cpp:152-191.
@@ -430,7 +430,7 @@ enum class integration_event : std::uint8_t {
         const bool touches_mvc = (std::abs(s_dot_switching - s_dot_max_acc_before) < opt.epsilon) ||
                                  (std::abs(s_dot_switching - s_dot_max_acc_after) < opt.epsilon);
 
-        // TODO: Equation 38: Validate that this discontinuity is a trajectory SINK.
+        // TODO(RSDK-12647): Equation 38: Validate that this discontinuity is a trajectory SINK.
         // A discontinuity is a valid switching point only if the maximum acceleration trajectory
         // flows into it (is a sink), not away from it (source). We check this by comparing
         // the trajectory slope (s_ddot_max/s_dot) with the limit curve slope (d/ds s_dot_max_acc).
@@ -513,7 +513,7 @@ enum class integration_event : std::uint8_t {
     arc_length before = previous_position;
     arc_length after = *escape_region_start;
 
-    // TODO: Eleminiate this hardcoded constant.
+    // TODO(RSDK-12767): Eleminiate this hardcoded constant.
     constexpr int max_bisection_iterations = 100;
     for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
         // Check convergence
@@ -560,7 +560,7 @@ enum class integration_event : std::uint8_t {
     const auto [s_dot_max_acc, s_dot_max_vel] =
         compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-    // TODO: Implement Addendum E validation - reject switching points where s_dot_max_vel > s_dot_max_acc.
+    // TODO(RSDK-12710): Implement Addendum E validation - reject switching points where s_dot_max_vel > s_dot_max_acc.
     // Per the reference implementation (Trajectory.cpp:129-133), if the velocity switching point has
     // s_dot > s_dot_max_acc, backward integration will immediately hit the acceleration limit curve,
     // causing the algorithm to fail. We should continue searching forward until finding a switching
@@ -578,7 +578,7 @@ enum class integration_event : std::uint8_t {
 // lower velocity, as this is more conservative and less likely to cause immediate limit curve hit
 // during backward integration.
 //
-// TODO: Performance optimization - bound velocity search by acceleration result.
+// TODO(RSDK-12760): Performance optimization - bound velocity search by acceleration result.
 // The reference implementation (Trajectory.cpp:129-133) demonstrates that after finding the
 // acceleration switching point, we can bound the velocity search to stop at that position.
 // This can reduce velocity search cost by 10-100x when there's an acceleration switching point nearby.
@@ -803,7 +803,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
         // moving from switching point toward start. Points are accumulated here, then reversed and
         // spliced into the main trajectory when intersection with forward trajectory is found.
         //
-        // TODO: Revisit how state is passed between integration states. Consider using stateful
+        // TODO(RSDK-12769): Revisit how state is passed between integration states. Consider using stateful
         // events that carry context, rather than state machine-scoped variables.
         std::vector<integration_point> backward_points;
 
@@ -887,7 +887,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     if ((s_dot_limit - next_s_dot) < traj.options_.epsilon) {
                         // Candidate point would hit or exceed limit curve.
                         //
-                        // TODO: For robustness (Section VIII-A of paper), we should:
+                        // TODO(RSDK-12708,RSDK-12709): For robustness (Section VIII-A of paper), we should:
                         // 1. Use bisection to find exact intersection with limit curve
                         // 2. Check if intersection point is a trajectory source or sink
                         // 3. Only transition if it's a sink (not a source due to numerical overshoot)
@@ -903,7 +903,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // Determine which limit curve we hit by comparing the two curves.
                         // The lower curve is the active constraint at this position.
                         //
-                        // TODO: When curves are within epsilon of each other, it's arbitrary whether we treat
+                        // TODO(RSDK-12762): When curves are within epsilon of each other, it's arbitrary whether we treat
                         // this as hitting the velocity curve (and potentially following it) or the acceleration
                         // curve (and searching for a switching point). Current choice: if curves are within
                         // epsilon, treat as acceleration curve hit (search for switching point). This is
@@ -976,7 +976,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
                         q_prime, q_double_prime, s_dot_max_vel, traj.options_.max_acceleration, traj.options_.epsilon);
 
-                    // TODO: Investigate whether we want a richer exception type for algorithm failures.
+                    // TODO(RSDK-12768): Investigate whether we want a richer exception type for algorithm failures.
                     // A custom exception hierarchy could distinguish between different failure modes
                     // (infeasible path, numerical issues, constraint violations) for better error handling.
                     if (s_ddot_min > s_ddot_max) [[unlikely]] {
@@ -995,7 +995,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     //
                     // Note: We use s_dot_max_vel in the slope calculations per Algorithm Step 3.
 
-                    // TODO: Revisit whether we need epsilon checks before dividing by s_dot_max_vel here. During forward
+                    // TODO(RSDK-12763): Revisit whether we need epsilon checks before dividing by s_dot_max_vel here. During forward
                     // integration following the velocity curve, s_dot_max_vel should always be positive. However, if the
                     // velocity limit itself becomes very small (e.g., tight curvature with low velocity limits), the division
                     // could become numerically unstable. For now, throw if s_dot_max_vel is near zero as a canary.
@@ -1039,7 +1039,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // Validate that tangent acceleration is within feasible bounds.
                     // If the curve's tangent falls outside our acceleration capabilities, the trajectory
                     // is infeasible at this point (algorithm error - shouldn't reach here).
-                    // TODO: Investigate whether we want a richer exception type for infeasible trajectories.
+                    // TODO(RSDK-12768): Investigate whether we want a richer exception type for infeasible trajectories.
                     // Could provide diagnostic information about which constraints failed and where.
                     if (s_ddot_curve < s_ddot_min || s_ddot_curve > s_ddot_max) [[unlikely]] {
                         throw std::runtime_error{
@@ -1442,7 +1442,7 @@ trajectory::cursor& trajectory::cursor::seek(seconds t) {
     // 2. Check adjacent intervals (common during uniform sampling)
     // 3. Binary search for large jumps (rare, but handles arbitrary seeks)
     //
-    // TODO: Optimize hint update by detecting seek direction (forward vs backward from current
+    // TODO(RSDK-12770): Optimize hint update by detecting seek direction (forward vs backward from current
     // position). We can skip checks that won't work based on direction, simplifying logic and
     // potentially improving performance for directional sequential access patterns.
 
