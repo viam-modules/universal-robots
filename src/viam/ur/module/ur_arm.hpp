@@ -22,6 +22,10 @@ struct trajectory_sample_point {
     float timestep;
 };
 
+// NOLINTNEXTLINE(misc-redundant-expression): We rely on the p and v arrays having the same size
+static_assert(std::tuple_size_v<decltype(trajectory_sample_point::p)> == std::tuple_size_v<decltype(trajectory_sample_point::v)>,
+              "trajectory_sample_point position and velocity must have the same size");
+
 struct pose_sample {
     vector6d_t p;
 };
