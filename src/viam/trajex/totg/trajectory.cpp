@@ -1139,13 +1139,10 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // On first entry to this state, validate switching point and notify observer
                     if (backward_points.size() == 1) {
                         const auto& switching_point = backward_points.back();
-                        const auto& last_forward = traj.integration_points_.back();
-
                         // Switching point must be "down and to the right" of last forward point:
                         // - Higher s (further along path)
                         // - Lower s_dot (slower, often at rest)
                         // This ensures backward integration can increase s_dot while decreasing s.
-
                         if (traj.options_.observer) {
                             traj.options_.observer->on_started_backward_integration(
                                 {.s = switching_point.s, .s_dot = switching_point.s_dot});
@@ -1179,7 +1176,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                             // Clearly positive - this is an error
                             throw std::runtime_error{"TOTG algorithm error: backward integration requires negative minimum acceleration"};
                         }
-                        // Near zero (degenerate switching point) - use zero acceleration per Kunz & Stilman Section VII-A-2.
+                        // Near zero (degenerate switching point) - use zero acceleration per Kunz & Stilman Section VII-A-2.x`
                         // Forward progress is guaranteed as long as s_dot is non-zero.
                         s_ddot_to_use = 0.0;
                     }
