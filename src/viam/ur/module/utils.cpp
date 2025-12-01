@@ -194,13 +194,13 @@ vector6d_t parse_and_validate_joint_limits(const viam::sdk::ProtoValue& value, c
         }
         result.fill(degrees_to_radians(val));
     } else if (const auto* arr = value.get<std::vector<ProtoValue>>()) {
-        if (arr->size() != 6) {
+        if (arr->size() != result.size()) {
             throw std::invalid_argument(
                 str(format("`%1%` must be either a scalar or 6-element array, got %2% elements") % param_name % arr->size()));
         }
 
         bool all_zero = true;
-        for (size_t i = 0; i < 6; ++i) {
+        for (size_t i = 0; i < result.size(); ++i) {
             const auto* elem = (*arr)[i].get<double>();
             if (!elem) {
                 throw std::invalid_argument(str(format("`%1%` array element %2% is not a number") % param_name % i));
