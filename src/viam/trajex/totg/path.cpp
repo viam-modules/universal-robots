@@ -45,7 +45,7 @@ path::segment::linear::linear(xt::xarray<double> start, const xt::xarray<double>
     const auto diff = end - this->start;
     const double norm = xt::norm_l2(diff)();
 
-    // TODO(acm): Use scale-relative tolerance instead of hardcoded absolute value
+    // TODO(RSDK-12761): Use scale-relative tolerance instead of hardcoded absolute value
     if (norm < 1e-10) {
         throw std::invalid_argument{"Linear segment: start and end must be different"};
     }
@@ -59,13 +59,13 @@ path::segment::circular::circular(xt::xarray<double> center, xt::xarray<double> 
     const double x_norm = xt::norm_l2(this->x)();
     const double y_norm = xt::norm_l2(this->y)();
 
-    // TODO(acm): Use machine epsilon based tolerance for unit vector check
+    // TODO(RSDK-12761): Use machine epsilon based tolerance for unit vector check
     if (std::abs(x_norm - 1.0) > 1e-6 || std::abs(y_norm - 1.0) > 1e-6) {
         throw std::invalid_argument{"Circular segment: x and y must be unit vectors"};
     }
 
     const double dot_product = xt::sum(this->x * this->y)();
-    // TODO(acm): Consider tighter tolerance for orthogonality
+    // TODO(RSDK-12761): Consider tighter tolerance for orthogonality
     if (std::abs(dot_product) > 1e-6) {
         throw std::invalid_argument{"Circular segment: x and y must be perpendicular"};
     }
@@ -180,7 +180,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         throw std::invalid_argument{"Max linear deviation must be non-negative"};
     }
 
-    // TODO(acm): Revisit this algorithm, and write a more graceful one.
+    // TODO(RSDK-12771): Revisit this algorithm, and write a more graceful one.
 
     // Build a path from waypoints using two techniques: tube coalescing to skip waypoints
     // that lie within a tolerance tube around linear segments, and circular blends at corners
@@ -274,7 +274,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // for minimal benefit, and angles near pi/2 cause tan(half_angle) to blow up.
         // These checks prevent numerical issues and avoid creating blends that would
         // violate the deviation constraint.
-        // TODO(acm): Explicit epsilon, scaling, etc.
+        // TODO(RSDK-12761): Explicit epsilon, scaling, etc.
         constexpr double epsilon = 1e-6;
         if (half_angle < epsilon || half_angle > (std::numbers::pi / 2.0 - epsilon)) {
             return std::nullopt;
@@ -622,7 +622,7 @@ void path::cursor::update_hint_() noexcept {
     // (the common case during trajectory integration) by checking nearby segments before
     // falling back to binary search for large jumps.
     //
-    // TODO: Optimize hint update by detecting seek direction (forward vs backward from previous
+    // TODO(RSDK-12770): Optimize hint update by detecting seek direction (forward vs backward from previous
     // position). We can skip checks that won't work based on direction (e.g., don't check prev
     // segment when moving forward), simplifying logic and improving performance for directional
     // sequential access patterns.
