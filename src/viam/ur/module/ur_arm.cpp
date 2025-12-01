@@ -256,10 +256,10 @@ void write_trajectory_to_file(const std::string& filepath, const std::vector<tra
     for (size_t i = 0; i < samples.size(); i++) {
         time_traj += samples[i].timestep;
         of << time_traj;
-        for (size_t j = 0; j < 6; j++) {
+        for (size_t j = 0; j < samples[i].p.size(); j++) {
             of << "," << samples[i].p[j];
         }
-        for (size_t j = 0; j < 6; j++) {
+        for (size_t j = 0; j < samples[i].v.size(); j++) {
             of << "," << samples[i].v[j];
         }
         of << "\n";
@@ -272,7 +272,7 @@ void write_pose_to_file(const std::string& filepath, const pose_sample& sample) 
     std::ofstream of(filepath);
     of << "x,y,z,rx,ry,rz\n";
     of << sample.p[0];
-    for (size_t i = 1; i < 6; i++) {
+    for (size_t i = 1; i < sample.p.size(); i++) {
         of << "," << sample.p[i];
     }
     of << "\n";
@@ -636,8 +636,8 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             resp.emplace(key, limits_deg[0]);
         } else {
             std::vector<ProtoValue> arr;
-            arr.reserve(6);
-            for (size_t i = 0; i < 6; ++i) {
+            arr.reserve(limits_deg.size());
+            for (size_t i = 0; i < limits_deg.size(); ++i) {
                 arr.push_back(ProtoValue{limits_deg[i]});
             }
             resp.emplace(key, arr);
@@ -847,14 +847,12 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             using namespace viam::trajex;
 
             totg::trajectory::options trajex_opts;
-            trajex_opts.max_velocity = xt::xarray<double>::from_shape({6});
-            trajex_opts.max_acceleration = xt::xarray<double>::from_shape({6});
             const auto max_vel = current_state_->get_max_velocity();
             const auto max_acc = current_state_->get_max_acceleration();
-            for (size_t i = 0; i < 6; ++i) {
-                trajex_opts.max_velocity(i) = max_vel[i];
-                trajex_opts.max_acceleration(i) = max_acc[i];
-            }
+            trajex_opts.max_velocity = xt::xarray<double>::from_shape({max_vel.size()});
+            trajex_opts.max_acceleration = xt::xarray<double>::from_shape({max_acc.size()});
+            std::ranges::copy(max_vel, trajex_opts.max_velocity.begin());
+            std::ranges::copy(max_acc, trajex_opts.max_acceleration.begin());
 
             std::vector<trajectory_sample_point> all_trajex_samples;
 
@@ -880,7 +878,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                     const float timestep = boost::numeric_cast<float>(current_time - previous_time);
 
                     trajectory_sample_point point;
-                    for (size_t i = 0; i < 6; ++i) {
+                    for (size_t i = 0; i < point.p.size(); ++i) {
                         point.p[i] = sample.configuration(i);
                         point.v[i] = sample.velocity(i);
                     }
@@ -929,20 +927,15 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     if (options.max_vel_degs_per_sec && options.max_vel_degs_per_sec.get() > 0) {
         max_velocity_vec_data.fill(degrees_to_radians(options.max_vel_degs_per_sec.get()));
     }
-    Eigen::VectorXd max_velocity_vec(6);
-    for (size_t i = 0; i < 6; ++i) {
-        max_velocity_vec[static_cast<Eigen::Index>(i)] = max_velocity_vec_data[i];
-    }
+    Eigen::VectorXd max_velocity_vec = Eigen::Map<const Eigen::VectorXd>(max_velocity_vec_data.data(), max_velocity_vec_data.size());
 
     auto max_acceleration_vec_data = current_state_->get_max_acceleration();
     // TODO(RSDK-12375) Remove 0 acc check when RDK stops sending 0 velocities
     if (options.max_acc_degs_per_sec2 && options.max_acc_degs_per_sec2.get() > 0) {
         max_acceleration_vec_data.fill(options.max_acc_degs_per_sec2.get());
     }
-    Eigen::VectorXd max_acceleration_vec(6);
-    for (size_t i = 0; i < 6; ++i) {
-        max_acceleration_vec[static_cast<Eigen::Index>(i)] = max_acceleration_vec_data[i];
-    }
+    Eigen::VectorXd max_acceleration_vec =
+        Eigen::Map<const Eigen::VectorXd>(max_acceleration_vec_data.data(), max_acceleration_vec_data.size());
 
     VIAM_SDK_LOG(debug) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity_vec[0]);
 
@@ -966,7 +959,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             buffer << "trajectory generation failed for path:";
             for (const auto& position : segment) {
                 buffer << "{";
-                for (Eigen::Index j = 0; j < 6; j++) {
+                for (Eigen::Index j = 0; j < position.size(); j++) {
                     buffer << position[j] << " ";
                 }
                 buffer << "}";

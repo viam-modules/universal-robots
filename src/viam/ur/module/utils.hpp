@@ -10,8 +10,11 @@
 #include <ur_client_library/log.h>
 #include <ur_client_library/types.h>
 
+#include <tuple>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
+
+inline constexpr auto k_ur_arm_dof = std::tuple_size_v<urcl::vector6d_t>;
 
 void configure_logger(const viam::sdk::ResourceConfig& cfg);
 

@@ -22,6 +22,9 @@ struct trajectory_sample_point {
     float timestep;
 };
 
+static_assert(std::tuple_size_v<decltype(trajectory_sample_point::p)> == std::tuple_size_v<decltype(trajectory_sample_point::v)>,
+              "trajectory_sample_point position and velocity must have the same size");
+
 struct pose_sample {
     vector6d_t p;
 };
