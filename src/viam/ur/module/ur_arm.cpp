@@ -3,15 +3,16 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <boost/format/format_fwd.hpp>
 #include <chrono>
 #include <cmath>
 #include <exception>
+#include <fstream>
 #include <future>
 #include <iterator>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <ranges>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -20,9 +21,11 @@
 
 #include <boost/format.hpp>
 #include <boost/io/ostream_joiner.hpp>
+#include <boost/json.hpp>
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/algorithm.hpp>
+#include <boost/range/combine.hpp>
 
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/log/logging.hpp>
@@ -311,6 +314,12 @@ std::string arm_joint_positions_filename(const std::string& path, const std::str
     return (fmt % unix_time).str();
 }
 
+std::string failed_trajectory_filename(const std::string& path, const std::string& unix_time) {
+    constexpr char kFailedTrajectoryJsonNameTemplate[] = "/%1%_failed_trajectory.json";
+    auto fmt = boost::format(path + kFailedTrajectoryJsonNameTemplate);
+    return (fmt % unix_time).str();
+}
+
 std::string unix_time_iso8601() {
     namespace chrono = std::chrono;
     std::stringstream stream;
@@ -329,6 +338,33 @@ std::string unix_time_iso8601() {
     stream << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
 
     return stream.str();
+}
+
+std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>& waypoints,
+                                                const Eigen::VectorXd& max_velocity_vec,
+                                                const Eigen::VectorXd& max_acceleration_vec,
+                                                double path_tolerance_delta_rads) {
+    namespace json = boost::json;
+
+    json::object root;
+    root["timestamp"] = unix_time_iso8601();
+    root["path_tolerance_delta_rads"] = path_tolerance_delta_rads;
+
+    json::array max_vel_array;
+    std::copy(max_velocity_vec.cbegin(), max_velocity_vec.cend(), std::back_inserter(max_vel_array));
+    root["max_velocity_vec_rads_per_sec"] = std::move(max_vel_array);
+
+    json::array max_acc_array;
+    std::copy(max_acceleration_vec.cbegin(), max_acceleration_vec.cend(), std::back_inserter(max_acc_array));
+    root["max_acceleration_vec_rads_per_sec2"] = std::move(max_acc_array);
+
+    json::array waypoints_array(waypoints.size(), json::array());
+    for (const auto& [waypoint, json_waypoint] : boost::combine(waypoints, waypoints_array)) {
+        std::copy(waypoint.cbegin(), waypoint.cend(), std::back_inserter(json_waypoint.as_array()));
+    }
+    root["waypoints_rads"] = std::move(waypoints_array);
+
+    return json::serialize(root);
 }
 
 const ModelFamily& URArm::model_family() {
@@ -920,16 +956,20 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         total_arc_length += path.getLength();
         const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
         if (!trajectory.isValid()) {
-            std::stringstream buffer;
-            buffer << "trajectory generation failed for path:";
-            for (const auto& position : segment) {
-                buffer << "{";
-                for (Eigen::Index j = 0; j < 6; j++) {
-                    buffer << position[j] << " ";
-                }
-                buffer << "}";
-            }
-            throw std::runtime_error(buffer.str());
+            // When the trajectory cannot be generated save the all the waypoints, velocity, acceleration and path tolerance in a
+            // JSON. We should be able to feed it back to the trajectory generator and confirm it is failing
+            const std::string json_content = serialize_failed_trajectory_to_json(
+                segment, max_velocity_vec, max_acceleration_vec, current_state_->get_path_tolerance_delta_rads());
+
+            last_failed_trajectory_json_ = json_content;
+
+            const std::string& path_dir = current_state_->csv_output_path();
+            const std::string filename = failed_trajectory_filename(path_dir, unix_time);
+            std::ofstream json_file(filename);
+            json_file << json_content;
+            json_file.close();
+
+            throw std::runtime_error(std::format("trajectory generation failed - details saved to: {}", filename));
         }
 
         const double duration = trajectory.getDuration();

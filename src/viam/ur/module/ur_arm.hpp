@@ -59,7 +59,12 @@ std::string waypoints_filename(const std::string& path, const std::string& unix_
 std::string trajectory_filename(const std::string& path, const std::string& unix_time);
 std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
 std::string move_to_position_pose_filename(const std::string& path, const std::string& unix_time);
+std::string failed_trajectory_filename(const std::string& path, const std::string& unix_time);
 std::string unix_time_iso8601();
+std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>& waypoints,
+                                                const Eigen::VectorXd& max_velocity_vec,
+                                                const Eigen::VectorXd& max_acceleration_vec,
+                                                double path_tolerance_delta_rads);
 
 class URArm final : public Arm, public Reconfigurable {
    public:
@@ -172,4 +177,7 @@ class URArm final : public Arm, public Reconfigurable {
     std::unique_ptr<state_> current_state_;
 
     std::unordered_map<std::string, std::vector<std::string>> arm_name_to_model_parts_;
+
+    // Cached last failed trajectory
+    std::string last_failed_trajectory_json_;
 };

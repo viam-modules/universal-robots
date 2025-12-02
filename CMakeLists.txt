@@ -144,6 +144,7 @@ find_package(Threads REQUIRED)
 find_package(Boost CONFIG REQUIRED
   COMPONENTS
     headers
+    json
 )
 
 enable_testing()
@@ -279,6 +280,7 @@ target_link_libraries(viam-ur
     trajex
     urcl
     viam-cpp-sdk::viamsdk
+    Boost::json
 )
 
 apply_wall_werror(viam-ur)

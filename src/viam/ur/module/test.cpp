@@ -3,6 +3,7 @@
 #include "ur_arm.hpp"
 #include "utils.hpp"
 
+#include <boost/json.hpp>
 #include <boost/numeric/conversion/cast.hpp>
 
 #pragma GCC diagnostic push
@@ -11,6 +12,13 @@
 #pragma GCC diagnostic pop
 
 #include <Eigen/Dense>
+
+#include <third_party/trajectories/Path.h>
+#include <third_party/trajectories/Trajectory.h>
+
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 namespace {
 
@@ -823,6 +831,76 @@ BOOST_AUTO_TEST_CASE(test_apply_colinearization_preserves_monotonicity) {
     apply_colinearization(waypoints, 0.02);
     // Middle point preserved due to projection < 0 (monotonicity violation)
     BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE(failed_trajectory_tests)
+
+BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
+    namespace json = boost::json;
+    const std::list<Eigen::VectorXd> waypoints = {
+        makeVector({-4.69128, -2.91963, -2.26317, 0.489444, 1.56107, 1.59114}),
+        makeVector({-4.69117, -2.91964, -2.26309, 0.489552, 1.56106, 1.59116}),
+        makeVector({-4.70382, -2.91788, -2.26929, 0.482124, 1.56016, 1.5789}),
+        makeVector({-4.70963, -2.91635, -2.27192, 0.475846, 1.5592, 1.5733}),
+        makeVector({-4.72595, -2.91965, -2.28115, 0.48728, 1.55764, 1.55699}),
+        makeVector({-4.73848, -2.91581, -2.28515, 0.472227, 1.55893, 1.54486}),
+        makeVector({-4.82513, -2.90866, -2.31311, 0.440307, 1.56338, 1.45867}),
+        makeVector({-4.88347, -2.90632, -2.32819, 0.425642, 1.55701, 1.40029}),
+        makeVector({-4.92608, -2.90817, -2.33889, 0.432907, 1.55442, 1.35774}),
+        makeVector({-5.01661, -2.91314, -2.35718, 0.457662, 1.55075, 1.26755}),
+        makeVector({-5.064311111111, -2.914144444, -2.3635444442, 0.46559444448, 1.54814444446, 1.22006}),
+    };
+
+    const double k_tolerance = 5e-18;
+    const Path path(waypoints, k_tolerance);
+
+    // Create trajectory with normal velocity/acceleration constraints
+    const auto max_velocity_vec = Eigen::VectorXd::Constant(6, 1.0);
+    const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, 1.0);
+
+    const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+
+    BOOST_REQUIRE(!trajectory.isValid());
+    const std::string k_test_path = std::filesystem::temp_directory_path();
+    const std::string k_timestamp = unix_time_iso8601();
+    const std::string k_filename = failed_trajectory_filename(k_test_path, k_timestamp);
+    BOOST_TEST_MESSAGE(" Filename : " << k_filename);
+
+    std::string json_content = serialize_failed_trajectory_to_json(waypoints, max_velocity_vec, max_acceleration_vec, k_tolerance);
+
+    // Write the failed trajectory JSON
+    std::ofstream json_file(k_filename);
+    json_file << json_content;
+    json_file.close();
+
+    std::ifstream readback(k_filename);
+    BOOST_CHECK(readback.good());
+
+    std::stringstream buffer;
+    buffer << readback.rdbuf();
+    readback.close();
+
+    auto readback_parsed = json::parse(buffer.str()).as_object();
+
+    BOOST_REQUIRE(readback_parsed.contains("timestamp"));
+    BOOST_REQUIRE(readback_parsed.contains("path_tolerance_delta_rads"));
+    BOOST_REQUIRE(readback_parsed.contains("max_velocity_vec_rads_per_sec"));
+    BOOST_REQUIRE(readback_parsed.contains("max_acceleration_vec_rads_per_sec2"));
+    BOOST_REQUIRE(readback_parsed.contains("waypoints_rads"));
+
+    BOOST_REQUIRE(readback_parsed["timestamp"].is_string());
+    BOOST_REQUIRE(readback_parsed["path_tolerance_delta_rads"].is_double());
+    BOOST_REQUIRE(readback_parsed["max_velocity_vec_rads_per_sec"].is_array());
+    BOOST_REQUIRE(readback_parsed["max_acceleration_vec_rads_per_sec2"].is_array());
+    BOOST_REQUIRE(readback_parsed["waypoints_rads"].is_array());
+
+    BOOST_REQUIRE_EQUAL(readback_parsed["max_velocity_vec_rads_per_sec"].as_array().size(), 6);
+    BOOST_REQUIRE_EQUAL(readback_parsed["max_acceleration_vec_rads_per_sec2"].as_array().size(), 6);
+    BOOST_REQUIRE_EQUAL(readback_parsed["waypoints_rads"].as_array().size(), waypoints.size());
+
+    BOOST_REQUIRE_CLOSE(readback_parsed["path_tolerance_delta_rads"].as_double(), k_tolerance, 1e-10);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
