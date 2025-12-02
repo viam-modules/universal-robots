@@ -92,9 +92,9 @@ BOOST_AUTO_TEST_CASE(tube_coalescing_all_within_tolerance) {
     // All intermediate waypoints within tolerance tube
     const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.05}, {2.0, -0.05}, {3.0, 0.03}, {4.0, 0.0}};
 
-    const path p = path::create(waypoints, path::options{}.set_max_linear_deviation(0.1));  // All deviations < 0.1
+    const path p = path::create(waypoints, path::options{}.set_max_linear_deviation(0.2));
 
-    // All intermediate points within tube, should coalesce to single segment
+    // All intermediate points within tolerance, should coalesce to single segment
     BOOST_CHECK_EQUAL(p.size(), 1U);
     BOOST_CHECK_CLOSE(static_cast<double>(p.length()), 4.0, 0.1);  // Approximately straight line
 }
@@ -184,9 +184,9 @@ BOOST_AUTO_TEST_CASE(tube_coalescing_zigzag_pattern) {
                                           {3.0, 0.05},   // Above
                                           {4.0, 0.0}};
 
-    const path p = path::create(waypoints, path::options{}.set_max_linear_deviation(0.1));  // All deviations within tolerance
+    const path p = path::create(waypoints, path::options{}.set_max_linear_deviation(0.2));
 
-    // All intermediate points within tube, should coalesce to single segment
+    // All intermediate points within tolerance, should coalesce to single segment
     BOOST_CHECK_EQUAL(p.size(), 1U);
 }
 
@@ -505,20 +505,16 @@ BOOST_AUTO_TEST_CASE(tube_coalescing_near_collinear_accumulating_error) {
                                           {4.0, -0.01},  // Slightly below
                                           {5.0, 0.0}};
 
-    // With tolerance 0.02, all should coalesce to single segment
-    const path p1 = path::create(waypoints, path::options{}.set_max_linear_deviation(0.02));
+    // With tolerance 0.04, all should coalesce to single segment
+    const path p1 = path::create(waypoints, path::options{}.set_max_linear_deviation(0.04));
     BOOST_CHECK_EQUAL(p1.size(), 1U);
 
-    // With tight tolerance 0.005, none should coalesce
-    const path p2 = path::create(waypoints, path::options{}.set_max_linear_deviation(0.005));
+    // With tight tolerance 0.01, none should coalesce
+    const path p2 = path::create(waypoints, path::options{}.set_max_linear_deviation(0.01));
     BOOST_CHECK_EQUAL(p2.size(), 5U);
 
-    // With medium tolerance 0.015, some points coalesce but not all
-    // (1,0.01) is within 0.015 of (0,0)→(2,-0.01) line: distance ≈ 0.01
-    // (2,-0.01) becomes new anchor
-    // (3,0.01) vs (2,-0.01)→(4,-0.01): perpendicular distance ≈ 0.02 > 0.015
-    // So (3,0.01) is kept
-    const path p3 = path::create(waypoints, path::options{}.set_max_linear_deviation(0.015));
+    // With medium tolerance 0.03, some points coalesce but not all
+    const path p3 = path::create(waypoints, path::options{}.set_max_linear_deviation(0.03));
     BOOST_CHECK_EQUAL(p3.size(), 3U);
 }
 
@@ -796,6 +792,18 @@ BOOST_AUTO_TEST_CASE(tube_coalescing_drift_revalidation) {
     // Expected: 2 linear segments + 1 circular blend = 3 segments
     BOOST_CHECK_EQUAL(p3.size(), 3U);
     verify_path_visits_waypoints(p3, waypoints, tol);
+}
+
+BOOST_AUTO_TEST_CASE(diameter_interpretation_validation) {
+    using namespace viam::trajex::totg;
+
+    // Waypoint at deviation 0.15 with tolerance 0.2 should NOT coalesce
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.15}, {2.0, 0.0}};
+
+    const path p = path::create(waypoints, path::options{}.set_max_linear_deviation(0.2));
+
+    // Middle point outside tolerance → should NOT coalesce
+    BOOST_CHECK_EQUAL(p.size(), 2U);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -200,6 +200,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             return false;
         }
 
+        const double radius = max_deviation / 2.0;
+
         const auto start_to_next = next - start;
 
         // Check if start and next are exactly the same position (all components identically zero)
@@ -231,7 +233,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const auto deviation_vector = locus - projected_point;
         const double deviation = xt::norm_l2(deviation_vector)();
 
-        return deviation <= max_deviation;
+        return deviation <= radius;
     };
 
     struct blend_geometry {
@@ -338,6 +340,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // tube is extended to the new endpoint (revalidation prevents drift).
         if (!at_last && can_coalesce(*segment_start, *locus, *next)) {
             // Revalidate all previously skipped waypoints against the extended segment
+            const double radius = opts.max_linear_deviation() / 2.0;
             bool all_previous_valid = true;
             for (auto prev_skipped : skipped_since_anchor) {
                 const auto start_to_next = *next - *segment_start;
@@ -351,7 +354,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
                 const auto deviation_vec = *prev_skipped - projected;
                 const double deviation = xt::norm_l2(deviation_vec)();
 
-                if (deviation > opts.max_linear_deviation()) {
+                if (deviation > radius) {
                     all_previous_valid = false;
                     break;
                 }
