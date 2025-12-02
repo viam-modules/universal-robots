@@ -1,7 +1,10 @@
 #pragma once
 
+#include <cmath>
 #include <compare>
 #include <ostream>
+
+#include <viam/trajex/types/epsilon.hpp>
 
 namespace viam::trajex {
 
@@ -11,18 +14,23 @@ namespace viam::trajex {
 /// Provides type safety to prevent mixing arc length with other double quantities
 /// (time, angles, etc.). Supports explicit conversion and arithmetic operations.
 ///
-struct arc_length {
-    ///
-    /// Arc length value.
-    ///
-    double value;
-
+class arc_length {
+   public:
     ///
     /// Constructs from raw double value.
     ///
     /// @param v Arc length value
     ///
-    explicit constexpr arc_length(double v) noexcept : value{v} {}
+    explicit constexpr arc_length(double v) noexcept : value_{v} {}
+
+    ///
+    /// Constructs from epsilon tolerance.
+    ///
+    /// Allows using epsilon as a dimensional quantity for numerical exploration.
+    ///
+    /// @param eps Epsilon tolerance value
+    ///
+    explicit constexpr arc_length(class epsilon epsilon) noexcept : arc_length{static_cast<double>(epsilon)} {}
 
     ///
     /// Converts to double explicitly.
@@ -30,7 +38,7 @@ struct arc_length {
     /// @return Arc length as double
     ///
     explicit constexpr operator double() const noexcept {
-        return value;
+        return value_;
     }
 
     // clang-format off
@@ -41,63 +49,13 @@ struct arc_length {
     // clang-format on
 
     ///
-    /// Adds arc lengths.
-    ///
-    /// @param other Arc length to add
-    /// @return Sum of arc lengths
-    ///
-    constexpr arc_length operator+(arc_length other) const noexcept {
-        return arc_length{value + other.value};
-    }
-
-    ///
-    /// Subtracts arc lengths.
-    ///
-    /// @param other Arc length to subtract
-    /// @return Difference of arc lengths
-    ///
-    constexpr arc_length operator-(arc_length other) const noexcept {
-        return arc_length{value - other.value};
-    }
-
-    ///
-    /// Multiplies arc length by scalar.
-    ///
-    /// @param scalar Scalar multiplier
-    /// @return Scaled arc length
-    ///
-    constexpr arc_length operator*(double scalar) const noexcept {
-        return arc_length{value * scalar};
-    }
-
-    ///
-    /// Divides arc length by scalar.
-    ///
-    /// @param scalar Scalar divisor
-    /// @return Scaled arc length
-    ///
-    constexpr arc_length operator/(double scalar) const noexcept {
-        return arc_length{value / scalar};
-    }
-
-    ///
-    /// Divides arc length by arc length (yields dimensionless ratio).
-    ///
-    /// @param other Arc length divisor
-    /// @return Dimensionless ratio
-    ///
-    constexpr double operator/(arc_length other) const noexcept {
-        return value / other.value;
-    }
-
-    ///
     /// Compound addition.
     ///
     /// @param other Arc length to add
     /// @return Reference to this
     ///
     constexpr arc_length& operator+=(arc_length other) noexcept {
-        value += other.value;
+        value_ += static_cast<double>(other);
         return *this;
     }
 
@@ -108,7 +66,7 @@ struct arc_length {
     /// @return Reference to this
     ///
     constexpr arc_length& operator-=(arc_length other) noexcept {
-        value -= other.value;
+        value_ -= static_cast<double>(other);
         return *this;
     }
 
@@ -119,7 +77,7 @@ struct arc_length {
     /// @return Reference to this
     ///
     constexpr arc_length& operator*=(double scalar) noexcept {
-        value *= scalar;
+        value_ *= scalar;
         return *this;
     }
 
@@ -130,31 +88,108 @@ struct arc_length {
     /// @return Reference to this
     ///
     constexpr arc_length& operator/=(double scalar) noexcept {
-        value /= scalar;
+        value_ /= scalar;
         return *this;
     }
 
     ///
-    /// Multiplies scalar by arc length (commutative).
+    /// Unary negation.
     ///
-    /// @param scalar Scalar multiplier
-    /// @param len Arc length
-    /// @return Scaled arc length
+    /// @return Negated arc length
     ///
-    friend constexpr arc_length operator*(double scalar, arc_length len) noexcept {
-        return len * scalar;
+    constexpr arc_length operator-() const noexcept {
+        return arc_length{-value_};
     }
 
-    ///
-    /// Streams arc length for debugging and test output.
-    ///
-    /// @param os Output stream
-    /// @param len Arc length to output
-    /// @return Reference to output stream
-    ///
-    friend std::ostream& operator<<(std::ostream& os, arc_length len) {
-        return os << len.value;
-    }
+   private:
+    double value_;
 };
+
+///
+/// Adds arc lengths.
+///
+/// @param lhs Left arc length
+/// @param rhs Right arc length
+/// @return Sum of arc lengths
+///
+constexpr arc_length operator+(arc_length lhs, arc_length rhs) noexcept {
+    return lhs += rhs;
+}
+
+///
+/// Subtracts arc lengths.
+///
+/// @param lhs Left arc length
+/// @param rhs Right arc length
+/// @return Difference of arc lengths
+///
+constexpr arc_length operator-(arc_length lhs, arc_length rhs) noexcept {
+    return lhs -= rhs;
+}
+
+///
+/// Multiplies arc length by scalar.
+///
+/// @param len Arc length
+/// @param scalar Scalar multiplier
+/// @return Scaled arc length
+///
+constexpr arc_length operator*(arc_length len, double scalar) noexcept {
+    return len *= scalar;
+}
+
+///
+/// Multiplies scalar by arc length (commutative).
+///
+/// @param scalar Scalar multiplier
+/// @param len Arc length
+/// @return Scaled arc length
+///
+constexpr arc_length operator*(double scalar, arc_length len) noexcept {
+    return len *= scalar;
+}
+
+///
+/// Divides arc length by scalar.
+///
+/// @param len Arc length
+/// @param scalar Scalar divisor
+/// @return Scaled arc length
+///
+constexpr arc_length operator/(arc_length len, double scalar) noexcept {
+    return len /= scalar;
+}
+
+///
+/// Divides arc length by arc length (yields dimensionless ratio).
+///
+/// @param lhs Numerator arc length
+/// @param rhs Denominator arc length
+/// @return Dimensionless ratio
+///
+constexpr double operator/(arc_length lhs, arc_length rhs) noexcept {
+    return static_cast<double>(lhs) / static_cast<double>(rhs);
+}
+
+///
+/// Streams arc length for debugging and test output.
+///
+/// @param os Output stream
+/// @param len Arc length to output
+/// @return Reference to output stream
+///
+inline std::ostream& operator<<(std::ostream& os, arc_length len) {
+    return os << static_cast<double>(len);
+}
+
+///
+/// Returns absolute value of arc length.
+///
+/// @param len Arc length
+/// @return Absolute arc length
+///
+inline arc_length abs(arc_length len) noexcept {
+    return arc_length{std::abs(static_cast<double>(len))};
+}
 
 }  // namespace viam::trajex
