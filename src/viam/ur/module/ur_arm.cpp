@@ -390,7 +390,7 @@ std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>
     root["waypoints_rads"] = std::move(waypoints_array);
 
     json::StreamWriterBuilder writer;
-    writer["indentation"] = "\t";
+    writer["indentation"] = " ";
 
     return json::writeString(writer, root);
 }
