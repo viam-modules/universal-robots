@@ -866,7 +866,6 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     const std::string k_test_path = std::filesystem::temp_directory_path();
     const std::string k_timestamp = unix_time_iso8601();
     const std::string k_filename = failed_trajectory_filename(k_test_path, k_timestamp);
-    BOOST_TEST_MESSAGE(" Filename : " << k_filename);
 
     std::string json_content = serialize_failed_trajectory_to_json(waypoints, max_velocity_vec, max_acceleration_vec, k_tolerance);
 
