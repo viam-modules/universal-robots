@@ -133,8 +133,7 @@ FetchContent_MakeAvailable(viam-cpp-sdk)
 find_package(xtl CONFIG REQUIRED)
 find_package(xtensor CONFIG REQUIRED)
 
-find_package(PkgConfig  REQUIRED)
-pkg_check_modules(JSONCPP jsoncpp REQUIRED)
+find_package(jsoncpp CONFIG REQUIRED)
 
 find_package(Eigen3 CONFIG REQUIRED)
 find_package(viam-cpp-sdk 0.23 CONFIG REQUIRED viamsdk)
@@ -276,14 +275,13 @@ target_compile_definitions(viam-ur
     BOOST_DLL_USE_STD_FS
 )
 
-
 target_link_libraries(viam-ur
   PUBLIC
     trajectories
     trajex
     urcl
     viam-cpp-sdk::viamsdk
-    ${JSONCPP_LIBRARIES}
+    jsoncpp_lib
 )
 
 apply_wall_werror(viam-ur)
