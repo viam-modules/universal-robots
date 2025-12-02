@@ -63,7 +63,11 @@ namespace {
 
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
-constexpr double k_sampling_freq_hz = 25;
+
+constexpr double k_min_duration_secs = 0.1;
+constexpr double k_max_duration_secs = 3600.0;
+constexpr double k_min_sampling_freq_hz = 1.0;
+constexpr double k_max_sampling_freq_hz = 500.0;
 
 // Convert Eigen waypoint list to xt::xarray for trajex/totg
 xt::xarray<double> eigen_waypoints_to_xarray(const std::list<Eigen::VectorXd>& waypoints) {
@@ -178,45 +182,51 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     if (!find_config_attribute<std::string>(cfg, "host")) {
         throw std::invalid_argument("attribute `host` is required");
     }
-    if (!find_config_attribute<double>(cfg, "speed_degs_per_sec")) {
-        throw std::invalid_argument("attribute `speed_degs_per_sec` is required");
+
+    parse_and_validate_joint_limits(cfg, "speed_degs_per_sec");
+    parse_and_validate_joint_limits(cfg, "acceleration_degs_per_sec2");
+
+    auto max_duration = find_config_attribute<double>(cfg, "max_trajectory_duration_secs");
+    if (max_duration && (*max_duration < k_min_duration_secs || *max_duration > k_max_duration_secs)) {
+        throw std::invalid_argument(
+            boost::str(boost::format("attribute `max_trajectory_duration_secs` should be between %1% and %2%, it is: %3% seconds") %
+                       k_min_duration_secs % k_max_duration_secs % *max_duration));
     }
-    if (!find_config_attribute<double>(cfg, "acceleration_degs_per_sec2")) {
-        throw std::invalid_argument("attribute `acceleration_degs_per_sec2` is required");
+
+    auto sampling_freq = find_config_attribute<double>(cfg, "trajectory_sampling_freq_hz");
+    if (sampling_freq && (*sampling_freq < k_min_sampling_freq_hz || *sampling_freq > k_max_sampling_freq_hz)) {
+        throw std::invalid_argument(
+            boost::str(boost::format("attribute `trajectory_sampling_freq_hz` should be between %1% and %2%, it is: %3% Hz") %
+                       k_min_sampling_freq_hz % k_max_sampling_freq_hz % *sampling_freq));
     }
 
     auto threshold = find_config_attribute<double>(cfg, "reject_move_request_threshold_deg");
     constexpr double k_min_threshold = 0.0;
     constexpr double k_max_threshold = 360.0;
     if (threshold && (*threshold < k_min_threshold || *threshold > k_max_threshold)) {
-        std::stringstream sstream;
-        sstream << "attribute `reject_move_request_threshold_deg` should be between " << k_min_threshold << " and " << k_max_threshold
-                << ", it is : " << *threshold << " degrees";
-        throw std::invalid_argument(sstream.str());
+        throw std::invalid_argument(
+            boost::str(boost::format("attribute `reject_move_request_threshold_deg` should be between %1% and %2%, it is: %3% degrees") %
+                       k_min_threshold % k_max_threshold % *threshold));
     }
 
     auto frequency = find_config_attribute<double>(cfg, "robot_control_freq_hz");
     constexpr double k_max_frequency = 1000.;
     if (frequency && (*frequency <= 0. || *frequency >= k_max_frequency)) {
-        std::stringstream sstream;
-        sstream << "attribute `robot_control_freq_hz` should be a positive number less than " << k_max_frequency
-                << ", it is : " << *frequency << " hz";
-
-        throw std::invalid_argument(sstream.str());
+        throw std::invalid_argument(
+            boost::str(boost::format("attribute `robot_control_freq_hz` should be a positive number less than %1%, it is: %2% Hz") %
+                       k_max_frequency % *frequency));
     }
 
-    auto path_tolerance_deg = find_config_attribute<double>(cfg, "path_tolerance_delta_degrees");
+    auto path_tolerance_deg = find_config_attribute<double>(cfg, "path_tolerance_delta_deg");
     if (path_tolerance_deg && (*path_tolerance_deg <= 0 || *path_tolerance_deg > 12)) {
-        std::stringstream sstream;
-        sstream << "attribute `path_tolerance_delta_degrees` must be > 0 and <= 12, it is: " << *path_tolerance_deg << " degrees";
-        throw std::invalid_argument(sstream.str());
+        throw std::invalid_argument(boost::str(
+            boost::format("attribute `path_tolerance_delta_deg` must be > 0 and <= 12, it is: %1% degrees") % *path_tolerance_deg));
     }
 
     auto colinearization_ratio = find_config_attribute<double>(cfg, "path_colinearization_ratio");
     if (colinearization_ratio && (*colinearization_ratio < 0 || *colinearization_ratio > 2)) {
-        std::stringstream sstream;
-        sstream << "attribute `path_colinearization_ratio` must be >= 0 and <= 2, it is: " << *colinearization_ratio;
-        throw std::invalid_argument(sstream.str());
+        throw std::invalid_argument(
+            boost::str(boost::format("attribute `path_colinearization_ratio` must be >= 0 and <= 2, it is: %1%") % *colinearization_ratio));
     }
 
     return {};
@@ -249,10 +259,10 @@ void write_trajectory_to_file(const std::string& filepath, const std::vector<tra
     for (size_t i = 0; i < samples.size(); i++) {
         time_traj += samples[i].timestep;
         of << time_traj;
-        for (size_t j = 0; j < 6; j++) {
+        for (size_t j = 0; j < samples[i].p.size(); j++) {
             of << "," << samples[i].p[j];
         }
-        for (size_t j = 0; j < 6; j++) {
+        for (size_t j = 0; j < samples[i].v.size(); j++) {
             of << "," << samples[i].v[j];
         }
         of << "\n";
@@ -265,7 +275,7 @@ void write_pose_to_file(const std::string& filepath, const pose_sample& sample) 
     std::ofstream of(filepath);
     of << "x,y,z,rx,ry,rz\n";
     of << sample.p[0];
-    for (size_t i = 1; i < 6; i++) {
+    for (size_t i = 1; i < sample.p.size(); i++) {
         of << "," << sample.p[i];
     }
     of << "\n";
@@ -639,6 +649,8 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     // `::move_` loads from these values independently.
     constexpr char k_vel_key[] = "set_vel";
     constexpr char k_acc_key[] = "set_acc";
+    constexpr char k_vel_degs_key[] = "set_vel_degs_per_sec";
+    constexpr char k_acc_degs_key[] = "set_accel_degs_per_sec2";
     constexpr char k_get_tcp_forces_base_key[] = "get_tcp_forces_base";
     constexpr char k_get_tcp_forces_tool_key[] = "get_tcp_forces_tool";
     constexpr char k_clear_pstop[] = "clear_pstop";
@@ -655,15 +667,28 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     };
     std::optional<controlled_info> cached_controlled_info;
 
+    const auto add_limits_response = [&resp](const std::string& key, const ProtoValue& original_value, const vector6d_t& limits_deg) {
+        if (original_value.get<double>()) {
+            resp.emplace(key, limits_deg[0]);
+        } else {
+            std::vector<ProtoValue> arr;
+            arr.reserve(limits_deg.size());
+            for (size_t i = 0; i < limits_deg.size(); ++i) {
+                arr.push_back(ProtoValue{limits_deg[i]});
+            }
+            resp.emplace(key, arr);
+        }
+    };
+
     for (const auto& kv : command) {
-        if (kv.first == k_vel_key) {
-            const double val = *kv.second.get<double>();
-            current_state_->set_speed(degrees_to_radians(val));
-            resp.emplace(k_vel_key, val);
-        } else if (kv.first == k_acc_key) {
-            const double val = *kv.second.get<double>();
-            current_state_->set_acceleration(degrees_to_radians(val));
-            resp.emplace(k_acc_key, val);
+        if (kv.first == k_vel_key || kv.first == k_vel_degs_key) {
+            const auto limits_rad = parse_and_validate_joint_limits(kv.second, kv.first);
+            current_state_->set_max_velocity(limits_rad);
+            add_limits_response(kv.first, kv.second, radians_to_degrees(limits_rad));
+        } else if (kv.first == k_acc_key || kv.first == k_acc_degs_key) {
+            const auto limits_rad = parse_and_validate_joint_limits(kv.second, kv.first);
+            current_state_->set_max_acceleration(limits_rad);
+            add_limits_response(kv.first, kv.second, radians_to_degrees(limits_rad));
         } else if (kv.first == k_get_tcp_forces_base_key) {
             if (!cached_tcp_state) {
                 cached_tcp_state = current_state_->read_tcp_state_snapshot();
@@ -858,12 +883,12 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             using namespace viam::trajex;
 
             totg::trajectory::options trajex_opts;
-            trajex_opts.max_velocity = xt::xarray<double>::from_shape({6});
-            trajex_opts.max_acceleration = xt::xarray<double>::from_shape({6});
-            for (size_t i = 0; i < 6; ++i) {
-                trajex_opts.max_velocity(i) = current_state_->get_speed();
-                trajex_opts.max_acceleration(i) = current_state_->get_acceleration();
-            }
+            const auto max_vel = current_state_->get_max_velocity();
+            const auto max_acc = current_state_->get_max_acceleration();
+            trajex_opts.max_velocity = xt::xarray<double>::from_shape({max_vel.size()});
+            trajex_opts.max_acceleration = xt::xarray<double>::from_shape({max_acc.size()});
+            std::ranges::copy(max_vel, trajex_opts.max_velocity.begin());
+            std::ranges::copy(max_acc, trajex_opts.max_acceleration.begin());
 
             std::vector<trajectory_sample_point> all_trajex_samples;
 
@@ -880,7 +905,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 totg::trajectory::options segment_opts = trajex_opts;
                 auto trajex_trajectory = totg::trajectory::create(std::move(trajex_path), std::move(segment_opts));
 
-                auto sampler = totg::uniform_sampler::quantized_for_trajectory(trajex_trajectory, types::hertz{k_sampling_freq_hz});
+                auto sampler = totg::uniform_sampler::quantized_for_trajectory(
+                    trajex_trajectory, types::hertz{current_state_->get_trajectory_sampling_freq_hz()});
 
                 double previous_time = 0.0;
                 for (const auto& sample : trajex_trajectory.samples(sampler) | std::views::drop(1)) {
@@ -888,7 +914,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                     const float timestep = boost::numeric_cast<float>(current_time - previous_time);
 
                     trajectory_sample_point point;
-                    for (size_t i = 0; i < 6; ++i) {
+                    for (size_t i = 0; i < point.p.size(); ++i) {
                         point.p[i] = sample.configuration(i);
                         point.v[i] = sample.velocity(i);
                     }
@@ -902,9 +928,18 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 total_duration += trajex_trajectory.duration().count();
                 total_arc_length += trajex_trajectory.path().length();
 
+                if (total_duration > current_state_->get_max_trajectory_duration_secs()) {
+                    throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
+                }
+
                 VIAM_SDK_LOG(info) << "trajex/totg segment generated successfully, waypoints: " << segment.size()
                                    << ", duration: " << trajex_trajectory.duration().count() << "s, samples: " << all_trajex_samples.size()
                                    << ", arc length: " << trajex_trajectory.path().length();
+            }
+
+            if (total_duration < k_min_timestep_sec) {
+                VIAM_SDK_LOG(debug) << "duration of move is too small, assuming arm is at goal";
+                return std::vector<trajectory_sample_point>{};
             }
 
             const auto generation_end = std::chrono::steady_clock::now();
@@ -921,27 +956,21 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         }
     }();
 
-    // Apply colinearization to reduce waypoints before legacy generator (if ratio configured)
-    if (auto ratio = current_state_->get_path_colinearization_ratio()) {
-        apply_colinearization(waypoints, current_state_->get_path_tolerance_delta_rads() * (*ratio));
-    }
-
     const auto legacy_generation_start = std::chrono::steady_clock::now();
 
-    auto max_velocity = current_state_->get_speed();
+    auto max_velocity_vec_data = current_state_->get_max_velocity();
     // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
     if (options.max_vel_degs_per_sec && options.max_vel_degs_per_sec.get() > 0) {
-        max_velocity = degrees_to_radians(options.max_vel_degs_per_sec.get());
+        max_velocity_vec_data.fill(degrees_to_radians(options.max_vel_degs_per_sec.get()));
     }
-    // set velocity/acceleration constraints
-    const auto max_velocity_vec = Eigen::VectorXd::Constant(6, max_velocity);
+    const auto max_velocity_vec = Eigen::Map<const Eigen::VectorXd>(max_velocity_vec_data.data(), max_velocity_vec_data.size());
 
-    auto max_acceleration = current_state_->get_acceleration();
+    auto max_acceleration_vec_data = current_state_->get_max_acceleration();
     // TODO(RSDK-12375) Remove 0 acc check when RDK stops sending 0 velocities
     if (options.max_acc_degs_per_sec2 && options.max_acc_degs_per_sec2.get() > 0) {
-        max_acceleration = options.max_acc_degs_per_sec2.get();
+        max_acceleration_vec_data.fill(options.max_acc_degs_per_sec2.get());
     }
-    const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, max_acceleration);
+    const auto max_acceleration_vec = Eigen::Map<const Eigen::VectorXd>(max_acceleration_vec_data.data(), max_acceleration_vec_data.size());
 
     VIAM_SDK_LOG(debug) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity_vec[0]);
 
@@ -950,7 +979,12 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     double total_arc_length = 0.0;
     size_t total_waypoints = 0;
 
-    for (const auto& segment : segments) {
+    for (auto& segment : segments) {
+        // Apply colinearization to reduce waypoints
+        if (auto ratio = current_state_->get_path_colinearization_ratio()) {
+            apply_colinearization(segment, current_state_->get_path_tolerance_delta_rads() * (*ratio));
+        }
+
         total_waypoints += segment.size();
         const Path path(segment, current_state_->get_path_tolerance_delta_rads());
         total_arc_length += path.getLength();
@@ -978,21 +1012,14 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             throw std::runtime_error("trajectory.getDuration() was not a finite number");
         }
 
-        // TODO(RSDK-11069): Make this configurable
-        // https://viam.atlassian.net/browse/RSDK-11069
-        if (duration > 600) {  // if the duration is longer than 10 minutes
-            throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
-        }
-
-        if (duration < k_min_timestep_sec) {
-            VIAM_SDK_LOG(debug) << "duration of move is too small, assuming arm is at goal";
-            return;
-        }
-
         total_duration += duration;
+        if (total_duration > current_state_->get_max_trajectory_duration_secs()) {
+            throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
+        }
+
         trajectory.outputPhasePlaneTrajectory();
 
-        sampling_func(samples, duration, k_sampling_freq_hz, [&](const double t, const double step) {
+        sampling_func(samples, duration, current_state_->get_trajectory_sampling_freq_hz(), [&](const double t, const double step) {
             auto p_eigen = trajectory.getPosition(t);
             auto v_eigen = trajectory.getVelocity(t);
             return trajectory_sample_point{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
@@ -1000,6 +1027,12 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                            boost::numeric_cast<float>(step)};
         });
     }
+
+    if (total_duration < k_min_timestep_sec) {
+        VIAM_SDK_LOG(debug) << "duration of move is too small, assuming arm is at goal";
+        return;
+    }
+
     const auto legacy_generation_end = std::chrono::steady_clock::now();
     const auto legacy_generation_time = std::chrono::duration<double>(legacy_generation_end - legacy_generation_start).count();
 
