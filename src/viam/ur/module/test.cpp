@@ -3,7 +3,6 @@
 #include "ur_arm.hpp"
 #include "utils.hpp"
 
-#include <boost/json.hpp>
 #include <boost/numeric/conversion/cast.hpp>
 
 #pragma GCC diagnostic push
@@ -12,6 +11,8 @@
 #pragma GCC diagnostic pop
 
 #include <Eigen/Dense>
+
+#include <json/json.h>
 
 #include <third_party/trajectories/Path.h>
 #include <third_party/trajectories/Trajectory.h>
@@ -838,7 +839,7 @@ BOOST_AUTO_TEST_SUITE_END()
 BOOST_AUTO_TEST_SUITE(failed_trajectory_tests)
 
 BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
-    namespace json = boost::json;
+    namespace json = Json;
     const std::list<Eigen::VectorXd> waypoints = {
         makeVector({-4.69128, -2.91963, -2.26317, 0.489444, 1.56107, 1.59114}),
         makeVector({-4.69117, -2.91964, -2.26309, 0.489552, 1.56106, 1.59116}),
@@ -850,7 +851,7 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
         makeVector({-4.88347, -2.90632, -2.32819, 0.425642, 1.55701, 1.40029}),
         makeVector({-4.92608, -2.90817, -2.33889, 0.432907, 1.55442, 1.35774}),
         makeVector({-5.01661, -2.91314, -2.35718, 0.457662, 1.55075, 1.26755}),
-        makeVector({-5.064311111111, -2.914144444, -2.3635444442, 0.46559444448, 1.54814444446, 1.22006}),
+        makeVector({-5.064311111111, -2.914144444, -2.3635444442, 1.2345678901234567, 1.54814444446, 1.22006}),
     };
 
     const double k_tolerance = 5e-18;
@@ -881,25 +882,27 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     buffer << readback.rdbuf();
     readback.close();
 
-    auto readback_parsed = json::parse(buffer.str()).as_object();
+    json::Value readback_parsed;
+    json::CharReaderBuilder reader;
+    BOOST_REQUIRE(json::parseFromStream(reader, buffer, &readback_parsed, NULL));
 
-    BOOST_REQUIRE(readback_parsed.contains("timestamp"));
-    BOOST_REQUIRE(readback_parsed.contains("path_tolerance_delta_rads"));
-    BOOST_REQUIRE(readback_parsed.contains("max_velocity_vec_rads_per_sec"));
-    BOOST_REQUIRE(readback_parsed.contains("max_acceleration_vec_rads_per_sec2"));
-    BOOST_REQUIRE(readback_parsed.contains("waypoints_rads"));
+    BOOST_REQUIRE(readback_parsed.isMember("timestamp"));
+    BOOST_REQUIRE(readback_parsed.isMember("path_tolerance_delta_rads"));
+    BOOST_REQUIRE(readback_parsed.isMember("max_velocity_vec_rads_per_sec"));
+    BOOST_REQUIRE(readback_parsed.isMember("max_acceleration_vec_rads_per_sec2"));
+    BOOST_REQUIRE(readback_parsed.isMember("waypoints_rads"));
 
-    BOOST_REQUIRE(readback_parsed["timestamp"].is_string());
-    BOOST_REQUIRE(readback_parsed["path_tolerance_delta_rads"].is_double());
-    BOOST_REQUIRE(readback_parsed["max_velocity_vec_rads_per_sec"].is_array());
-    BOOST_REQUIRE(readback_parsed["max_acceleration_vec_rads_per_sec2"].is_array());
-    BOOST_REQUIRE(readback_parsed["waypoints_rads"].is_array());
+    BOOST_REQUIRE(readback_parsed["timestamp"].isString());
+    BOOST_REQUIRE(readback_parsed["path_tolerance_delta_rads"].isDouble());
+    BOOST_REQUIRE(readback_parsed["max_velocity_vec_rads_per_sec"].isArray());
+    BOOST_REQUIRE(readback_parsed["max_acceleration_vec_rads_per_sec2"].isArray());
+    BOOST_REQUIRE(readback_parsed["waypoints_rads"].isArray());
 
-    BOOST_REQUIRE_EQUAL(readback_parsed["max_velocity_vec_rads_per_sec"].as_array().size(), 6);
-    BOOST_REQUIRE_EQUAL(readback_parsed["max_acceleration_vec_rads_per_sec2"].as_array().size(), 6);
-    BOOST_REQUIRE_EQUAL(readback_parsed["waypoints_rads"].as_array().size(), waypoints.size());
+    BOOST_REQUIRE_EQUAL(readback_parsed["max_velocity_vec_rads_per_sec"].size(), 6);
+    BOOST_REQUIRE_EQUAL(readback_parsed["max_acceleration_vec_rads_per_sec2"].size(), 6);
+    BOOST_REQUIRE_EQUAL(readback_parsed["waypoints_rads"].size(), waypoints.size());
 
-    BOOST_REQUIRE_CLOSE(readback_parsed["path_tolerance_delta_rads"].as_double(), k_tolerance, 1e-10);
+    BOOST_REQUIRE_CLOSE(readback_parsed["path_tolerance_delta_rads"].asDouble(), k_tolerance, 1e-10);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

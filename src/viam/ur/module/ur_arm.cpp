@@ -3,13 +3,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <boost/format/format_fwd.hpp>
 #include <chrono>
 #include <cmath>
 #include <exception>
 #include <fstream>
 #include <future>
+#include <iomanip>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -19,9 +20,10 @@
 #include <unordered_map>
 #include <utility>
 
+#include <json/json.h>
+
 #include <boost/format.hpp>
 #include <boost/io/ostream_joiner.hpp>
-#include <boost/json.hpp>
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/algorithm.hpp>
@@ -354,27 +356,43 @@ std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>
                                                 const Eigen::VectorXd& max_velocity_vec,
                                                 const Eigen::VectorXd& max_acceleration_vec,
                                                 double path_tolerance_delta_rads) {
-    namespace json = boost::json;
+    namespace json = Json;
 
-    json::object root;
+    json::Value root;
     root["timestamp"] = unix_time_iso8601();
     root["path_tolerance_delta_rads"] = path_tolerance_delta_rads;
 
-    json::array max_vel_array;
-    std::copy(max_velocity_vec.cbegin(), max_velocity_vec.cend(), std::back_inserter(max_vel_array));
+    json::Value max_vel_array(json::arrayValue);
+    std::ranges::for_each(max_velocity_vec, [&](double item) {
+        std::stringstream ss;
+        ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
+        max_vel_array.append(ss.str());
+    });
     root["max_velocity_vec_rads_per_sec"] = std::move(max_vel_array);
 
-    json::array max_acc_array;
-    std::copy(max_acceleration_vec.cbegin(), max_acceleration_vec.cend(), std::back_inserter(max_acc_array));
+    json::Value max_acc_array(json::arrayValue);
+    std::ranges::for_each(max_acceleration_vec, [&](double item) {
+        std::stringstream ss;
+        ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
+        max_acc_array.append(ss.str());
+    });
     root["max_acceleration_vec_rads_per_sec2"] = std::move(max_acc_array);
 
-    json::array waypoints_array(waypoints.size(), json::array());
+    json::Value waypoints_array(json::arrayValue);
+    waypoints_array.resize((json::ArrayIndex)waypoints.size());
     for (const auto& [waypoint, json_waypoint] : boost::combine(waypoints, waypoints_array)) {
-        std::copy(waypoint.cbegin(), waypoint.cend(), std::back_inserter(json_waypoint.as_array()));
+        std::ranges::for_each(waypoint, [&](double item) {
+            std::stringstream ss;
+            ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
+            json_waypoint.append(ss.str());
+        });
     }
     root["waypoints_rads"] = std::move(waypoints_array);
 
-    return json::serialize(root);
+    json::StreamWriterBuilder writer;
+    writer["indentation"] = "\t";
+
+    return json::writeString(writer, root);
 }
 
 const ModelFamily& URArm::model_family() {
