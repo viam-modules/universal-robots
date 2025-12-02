@@ -1013,8 +1013,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             const std::string json_content = serialize_failed_trajectory_to_json(
                 segment, max_velocity_vec, max_acceleration_vec, current_state_->get_path_tolerance_delta_rads());
 
-            last_failed_trajectory_json_ = json_content;
-
             const std::string& path_dir = current_state_->csv_output_path();
             const std::string filename = failed_trajectory_filename(path_dir, unix_time);
             std::ofstream json_file(filename);

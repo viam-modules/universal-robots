@@ -181,7 +181,4 @@ class URArm final : public Arm, public Reconfigurable {
     std::unique_ptr<state_> current_state_;
 
     std::unordered_map<std::string, std::vector<std::string>> arm_name_to_model_parts_;
-
-    // Cached last failed trajectory
-    std::string last_failed_trajectory_json_;
 };
