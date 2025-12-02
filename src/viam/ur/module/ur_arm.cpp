@@ -377,7 +377,10 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
     VIAM_SDK_LOG(info) << "instantiating URArm driver for arm model: " << model_.to_string();
-    arm_name_to_model_parts_ = {{"ur5e", {"base_link", "ee_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}}};
+    arm_name_to_model_parts_ = {
+        {"ur5e", {"base_link", "ee_link", "shoulder_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}},
+        {"ur20", {"base_link", "wrist_3_link", "shoulder_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}},
+    };
     const std::unique_lock wlock(config_mutex_);
     // TODO: prevent multiple calls to configure_logger
     configure_logger(cfg);
