@@ -161,7 +161,7 @@ enum class integration_event : std::uint8_t {
         s_ddot_max = std::min(s_ddot_min, s_ddot_max);
     }
 
-    if (s_ddot_min - s_ddot_max > epsilon) { // s_ddot_min is greater than s_ddot_max by epsilon
+    if (s_ddot_min - s_ddot_max > epsilon) {  // s_ddot_min is greater than s_ddot_max by epsilon
         throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible"};
     }
 
