@@ -444,7 +444,7 @@ class trajectory::cursor {
 /// Range over trajectory samples using a sampler strategy.
 ///
 template <typename S>
-class trajectory::sampled {
+class trajectory::sampled : public std::ranges::view_interface<trajectory::sampled<S>> {
    public:
     ///
     /// Iterator over trajectory samples.

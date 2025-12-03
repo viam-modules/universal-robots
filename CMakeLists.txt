@@ -106,10 +106,6 @@ endif()
 
 include(FetchContent)
 
-# NOTE: If you change the version below, please also update
-# the file `src/control/external_control.urscript` to match.
-#
-# TODO(RSDK-11618): We should just pull that file out of the repository.
 FetchContent_Declare(
   Universal_Robots_Client_Library
   GIT_REPOSITORY https://github.com/UniversalRobots/Universal_Robots_Client_Library
@@ -122,7 +118,7 @@ FetchContent_MakeAvailable(Universal_Robots_Client_Library)
 FetchContent_Declare(
   viam-cpp-sdk
   GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-  GIT_TAG releases/v0.21.0 # Keep in sync with Dockerfile
+  GIT_TAG releases/v0.23.0 # Keep in sync with Dockerfile
   GIT_SHALLOW TRUE
   SYSTEM
   # Without this patch command, using this as a SYSTEM package results
@@ -137,8 +133,10 @@ FetchContent_MakeAvailable(viam-cpp-sdk)
 find_package(xtl CONFIG REQUIRED)
 find_package(xtensor CONFIG REQUIRED)
 
+find_package(jsoncpp CONFIG REQUIRED)
+
 find_package(Eigen3 CONFIG REQUIRED)
-find_package(viam-cpp-sdk 0.21 CONFIG REQUIRED viamsdk)
+find_package(viam-cpp-sdk 0.23 CONFIG REQUIRED viamsdk)
 
 # Everything needs threads, and prefer -pthread if available
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -224,6 +222,30 @@ add_library(viam-ur)
 # full paths to compute it.
 file(RELATIVE_PATH VIAM_UR_RELPATH_BINDIR_TO_DATADIR ${CMAKE_INSTALL_FULL_BINDIR} ${CMAKE_INSTALL_FULL_DATADIR})
 
+# Compute the relative path from the bindir to the URCL resources directory.
+# URCL installs resources to share/ur_client_library/resources (hardcoded, not
+# using CMAKE_INSTALL_DATADIR). This is relocatable even if URCL is installed
+# to a different prefix - the relative path will traverse via the common ancestor.
+
+# Determine URCL's install prefix
+if(DEFINED universal_robots_client_library_SOURCE_DIR)
+  # FetchContent case: both packages install to the same prefix
+  set(URCL_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
+else()
+  # find_package case: need to determine where URCL is installed
+  # Use the location of the imported target's library to work backwards
+  get_target_property(URCL_LOCATION ur_client_library::urcl LOCATION)
+  # Library is typically in <prefix>/lib, so go up one level
+  get_filename_component(URCL_LIB_DIR "${URCL_LOCATION}" DIRECTORY)
+  get_filename_component(URCL_INSTALL_PREFIX "${URCL_LIB_DIR}" DIRECTORY)
+endif()
+
+set(URCL_RESOURCES_DIR "${URCL_INSTALL_PREFIX}/share/ur_client_library/resources")
+
+file(RELATIVE_PATH VIAM_UR_RELPATH_BINDIR_TO_URCL_RESOURCES
+     ${CMAKE_INSTALL_FULL_BINDIR}
+     ${URCL_RESOURCES_DIR})
+
 configure_file(
   src/viam/ur/module/ur_arm_config.hpp.in
   ${CMAKE_CURRENT_BINARY_DIR}/src/viam/ur/module/ur_arm_config.hpp
@@ -259,6 +281,7 @@ target_link_libraries(viam-ur
     trajex
     urcl
     viam-cpp-sdk::viamsdk
+    jsoncpp_lib
 )
 
 apply_wall_werror(viam-ur)
@@ -379,7 +402,7 @@ install(
 )
 
 install(
-  DIRECTORY src/kinematics src/control
+  DIRECTORY src/kinematics src/control src/3d_models
   DESTINATION ${CMAKE_INSTALL_DATADIR}/universal-robots
 )
 

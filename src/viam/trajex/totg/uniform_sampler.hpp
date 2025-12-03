@@ -70,4 +70,7 @@ class uniform_sampler {
     trajectory::seconds dt_;
 };
 
+// Verify that uniform_sampler satisfies the sampler concept
+static_assert(trajectory_details::sampler<uniform_sampler, trajectory::cursor, struct trajectory::sample>);
+
 }  // namespace viam::trajex::totg

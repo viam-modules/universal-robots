@@ -1,5 +1,7 @@
 #pragma once
 
+#include <list>
+#include <numbers>
 #include <optional>
 #include <sstream>
 
@@ -8,8 +10,11 @@
 #include <ur_client_library/log.h>
 #include <ur_client_library/types.h>
 
+#include <tuple>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
+
+inline constexpr auto k_ur_arm_dof = std::tuple_size_v<urcl::vector6d_t>;
 
 void configure_logger(const viam::sdk::ResourceConfig& cfg);
 
@@ -61,16 +66,72 @@ class URArmLogHandler : public urcl::LogHandler {
 
 template <typename T>
 [[nodiscard]] constexpr decltype(auto) degrees_to_radians(T&& degrees) {
-    return std::forward<T>(degrees) * (M_PI / 180.0);
+    return std::forward<T>(degrees) * (std::numbers::pi / 180.0);
 }
 
 template <typename T>
 [[nodiscard]] constexpr decltype(auto) radians_to_degrees(T&& radians) {
-    return std::forward<T>(radians) * (180.0 / M_PI);
+    return std::forward<T>(radians) * (180.0 / std::numbers::pi);
 }
+
+[[nodiscard]] urcl::vector6d_t degrees_to_radians(urcl::vector6d_t degrees);
+[[nodiscard]] urcl::vector6d_t radians_to_degrees(urcl::vector6d_t radians);
 
 Eigen::Matrix3d rotation_vector_to_matrix(const urcl::vector6d_t& tcp_pose);
 
 Eigen::Vector3d transform_vector(const Eigen::Vector3d& vector, const Eigen::Matrix3d& rotation_matrix);
 
 urcl::vector6d_t convert_tcp_force_to_tool_frame(const urcl::vector6d_t& tcp_pose, const urcl::vector6d_t& tcp_force_base_frame);
+
+///
+/// Check if point is within tolerance cylinder around line segment.
+///
+/// @param point Point to test
+/// @param line_start Start of line segment
+/// @param line_end End of line segment
+/// @param tolerance Diameter of tolerance cylinder
+/// @return true if point is within tolerance, false otherwise
+///
+bool within_colinearization_tolerance(const Eigen::VectorXd& point,
+                                      const Eigen::VectorXd& line_start,
+                                      const Eigen::VectorXd& line_end,
+                                      double tolerance);
+
+///
+/// Apply colinearization to waypoint list, removing redundant waypoints.
+///
+/// Implements waypoint coalescing by extending a tolerance cylinder from each
+/// anchor waypoint, removing intermediate waypoints that remain within
+/// tolerance of the straight-line segment. When extending the cylinder, all
+/// previously skipped waypoints are revalidated to prevent drift.
+///
+/// @param waypoints List of waypoints to coalesce (modified in-place)
+/// @param tolerance Diameter of tolerance cylinder (in radians)
+///
+void apply_colinearization(std::list<Eigen::VectorXd>& waypoints, double tolerance);
+
+///
+/// Parse and validate velocity or acceleration limits.
+///
+/// Returns a 6-element vector in radians. Input (in degrees) can be scalar
+/// (expands to 6 identical values) or 6-element array. Rejects negative values,
+/// scalar zero, or all-zero arrays.
+///
+/// @param value ProtoValue containing scalar double or 6-element array
+/// @param param_name Name of the parameter (for error messages)
+/// @return 6-element vector of limits in radians
+/// @throws std::invalid_argument if validation fails
+///
+urcl::vector6d_t parse_and_validate_joint_limits(const viam::sdk::ProtoValue& value, const std::string& param_name);
+
+///
+/// Parse and validate velocity or acceleration limits from config.
+///
+/// Extracts the named parameter from config attributes and validates it.
+///
+/// @param cfg Configuration structure to read from
+/// @param param_name Name of the parameter to read
+/// @return 6-element vector of limits in radians
+/// @throws std::invalid_argument if validation fails
+///
+urcl::vector6d_t parse_and_validate_joint_limits(const viam::sdk::ResourceConfig& cfg, const std::string& param_name);
