@@ -425,7 +425,7 @@ enum class integration_event : std::uint8_t {
 
         // Compute limit curve slopes using numerical approximation
         const arc_length before_boundary = std::max(boundary - arc_length{opt.epsilon}, current_segment.start());
-        const double actual_step_left = (boundary - before_boundary).value_;
+        const double actual_step_left = static_cast<double>(boundary - before_boundary);
         if (actual_step_left < opt.epsilon * 0.5) {
             continue;
         }
@@ -437,7 +437,7 @@ enum class integration_event : std::uint8_t {
         const double slope_left = (s_dot_max_acc_before - s_dot_max_acc_bb) / actual_step_left;
 
         const arc_length after_boundary = std::min(boundary + arc_length{opt.epsilon}, segment_after.end());
-        const double actual_step_right = (after_boundary - boundary).value_;
+        const double actual_step_right = static_cast<double>(after_boundary - boundary);
         if (actual_step_right < opt.epsilon * 0.5) {
             continue;
         }
