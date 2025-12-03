@@ -32,6 +32,7 @@ RUN apt-get -y --no-install-recommends install \
     protobuf-compiler-grpc \
     software-properties-common \
     sudo \
+    libjsoncpp-dev \
     wget
 
 # Install CMake 3.x from Kitware's official repository

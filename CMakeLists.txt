@@ -133,6 +133,8 @@ FetchContent_MakeAvailable(viam-cpp-sdk)
 find_package(xtl CONFIG REQUIRED)
 find_package(xtensor CONFIG REQUIRED)
 
+find_package(jsoncpp CONFIG REQUIRED)
+
 find_package(Eigen3 CONFIG REQUIRED)
 find_package(viam-cpp-sdk 0.23 CONFIG REQUIRED viamsdk)
 
@@ -279,6 +281,7 @@ target_link_libraries(viam-ur
     trajex
     urcl
     viam-cpp-sdk::viamsdk
+    jsoncpp_lib
 )
 
 apply_wall_werror(viam-ur)

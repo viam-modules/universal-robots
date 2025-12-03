@@ -6,23 +6,28 @@
 #include <chrono>
 #include <cmath>
 #include <exception>
+#include <fstream>
 #include <future>
+#include <iomanip>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <ranges>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
 
+#include <json/json.h>
+
 #include <boost/format.hpp>
 #include <boost/io/ostream_joiner.hpp>
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/algorithm.hpp>
+#include <boost/range/combine.hpp>
 
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/log/logging.hpp>
@@ -321,6 +326,12 @@ std::string arm_joint_positions_filename(const std::string& path, const std::str
     return (fmt % unix_time).str();
 }
 
+std::string failed_trajectory_filename(const std::string& path, const std::string& unix_time) {
+    constexpr char kFailedTrajectoryJsonNameTemplate[] = "/%1%_failed_trajectory.json";
+    auto fmt = boost::format(path + kFailedTrajectoryJsonNameTemplate);
+    return (fmt % unix_time).str();
+}
+
 std::string unix_time_iso8601() {
     namespace chrono = std::chrono;
     std::stringstream stream;
@@ -339,6 +350,52 @@ std::string unix_time_iso8601() {
     stream << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
 
     return stream.str();
+}
+
+std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>& waypoints,
+                                                const Eigen::VectorXd& max_velocity_vec,
+                                                const Eigen::VectorXd& max_acceleration_vec,
+                                                double path_tolerance_delta_rads) {
+    namespace json = Json;
+
+    json::Value root;
+    root["timestamp"] = unix_time_iso8601();
+    root["path_tolerance_delta_rads"] = path_tolerance_delta_rads;
+
+    json::Value max_vel_array(json::arrayValue);
+    std::ranges::for_each(max_velocity_vec, [&](double item) {
+        std::stringstream ss;
+        ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
+        max_vel_array.append(ss.str());
+    });
+    root["max_velocity_vec_rads_per_sec"] = std::move(max_vel_array);
+
+    json::Value max_acc_array(json::arrayValue);
+    std::ranges::for_each(max_acceleration_vec, [&](double item) {
+        std::stringstream ss;
+        ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
+        max_acc_array.append(ss.str());
+    });
+    root["max_acceleration_vec_rads_per_sec2"] = std::move(max_acc_array);
+
+    json::Value waypoints_array(json::arrayValue);
+    waypoints_array.resize((json::ArrayIndex)waypoints.size());
+    for (const auto& [waypoint, json_waypoint] : boost::combine(waypoints, waypoints_array)) {
+        std::ranges::for_each(waypoint, [&](double item) {
+            std::stringstream ss;
+            ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
+            // NOLINTBEGIN(clang-analyzer-core.CallAndMessage): json_waypoint is initialized as a nullValue and then
+            // lazily initialzed
+            json_waypoint.append(ss.str());
+            // NOLINTEND(clang-analyzer-core.CallAndMessage)
+        });
+    }
+    root["waypoints_rads"] = std::move(waypoints_array);
+
+    json::StreamWriterBuilder writer;
+    writer["indentation"] = " ";
+
+    return json::writeString(writer, root);
 }
 
 const ModelFamily& URArm::model_family() {
@@ -962,16 +1019,18 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         total_arc_length += path.getLength();
         const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
         if (!trajectory.isValid()) {
-            std::stringstream buffer;
-            buffer << "trajectory generation failed for path:";
-            for (const auto& position : segment) {
-                buffer << "{";
-                for (Eigen::Index j = 0; j < position.size(); j++) {
-                    buffer << position[j] << " ";
-                }
-                buffer << "}";
-            }
-            throw std::runtime_error(buffer.str());
+            // When the trajectory cannot be generated save the all the waypoints, velocity, acceleration and path tolerance in a
+            // JSON. We should be able to feed it back to the trajectory generator and confirm it is failing
+            const std::string json_content = serialize_failed_trajectory_to_json(
+                segment, max_velocity_vec, max_acceleration_vec, current_state_->get_path_tolerance_delta_rads());
+
+            const std::string& path_dir = current_state_->csv_output_path();
+            const std::string filename = failed_trajectory_filename(path_dir, unix_time);
+            std::ofstream json_file(filename);
+            json_file << json_content;
+            json_file.close();
+
+            throw std::runtime_error(boost::str(boost::format("trajectory generation failed - details saved to: %1") % filename));
         }
 
         const double duration = trajectory.getDuration();
