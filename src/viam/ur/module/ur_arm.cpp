@@ -865,8 +865,13 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 const auto segment_xarray = eigen_waypoints_to_xarray(segment);
                 const totg::waypoint_accumulator trajex_waypoints(segment_xarray);
 
-                auto trajex_path = totg::path::create(
-                    trajex_waypoints, totg::path::options{}.set_max_deviation(current_state_->get_path_tolerance_delta_rads()));
+                auto path_opts = totg::path::options{}.set_max_blend_deviation(current_state_->get_path_tolerance_delta_rads());
+
+                if (auto ratio = current_state_->get_path_colinearization_ratio()) {
+                    path_opts.set_max_linear_deviation(current_state_->get_path_tolerance_delta_rads() * (*ratio));
+                }
+
+                auto trajex_path = totg::path::create(trajex_waypoints, path_opts);
 
                 // Create a copy of trajex_opts for each segment since it's consumed by create()
                 totg::trajectory::options segment_opts = trajex_opts;
