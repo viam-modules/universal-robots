@@ -384,6 +384,8 @@ std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>
         std::ranges::for_each(waypoint, [&](double item) {
             std::stringstream ss;
             ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
+            // NOLINTNEXTLINE(clang-analyzer-core.CallAndMessage): json_waypoint is initialized as a nullValue and then lazily initialzed as
+            // an arrayValue
             json_waypoint.append(ss.str());
         });
     }
