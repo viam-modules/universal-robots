@@ -425,7 +425,7 @@ enum class integration_event : std::uint8_t {
 
         // Compute limit curve slopes using numerical approximation
         const arc_length before_boundary = std::max(boundary - arc_length{opt.epsilon}, current_segment.start());
-        const double actual_step_left = (boundary - before_boundary).value;
+        const double actual_step_left = (boundary - before_boundary).value_;
         if (actual_step_left < opt.epsilon * 0.5) {
             continue;
         }
@@ -437,7 +437,7 @@ enum class integration_event : std::uint8_t {
         const double slope_left = (s_dot_max_acc_before - s_dot_max_acc_bb) / actual_step_left;
 
         const arc_length after_boundary = std::min(boundary + arc_length{opt.epsilon}, segment_after.end());
-        const double actual_step_right = (after_boundary - boundary).value;
+        const double actual_step_right = (after_boundary - boundary).value_;
         if (actual_step_right < opt.epsilon * 0.5) {
             continue;
         }
@@ -890,7 +890,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                     // Compute candidate next point via Euler integration with maximum acceleration
                     const auto [next_s, next_s_dot] =
-                        euler_step(current_point.s, current_point.s_dot, s_ddot_to_use, traj.options_.delta.count(), traj.options_.epsilon);
+                        euler_step(current_point.s, current_point.s_dot, s_ddot_max, traj.options_.delta.count(), traj.options_.epsilon);
 
                     // Forward integration should move "up and to the right" in phase plane
                     if ((next_s <= current_point.s) || (next_s_dot < current_point.s_dot)) [[unlikely]] {
