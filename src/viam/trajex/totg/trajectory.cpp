@@ -156,6 +156,15 @@ enum class integration_event : std::uint8_t {
         s_ddot_max = std::min(s_ddot_max, max_from_joint);
     }
 
+    // Handle degenerate case where bounds are nearly equal (singularity/zero-acceleration point).
+    if (s_ddot_max - s_ddot_min < epsilon) {
+        s_ddot_max = std::min(s_ddot_min, s_ddot_max);
+    }
+
+    if (s_ddot_min - s_ddot_max > epsilon) { // s_ddot_min is greater than s_ddot_max by epsilon
+        throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible"};
+    }
+
     return result{s_ddot_min, s_ddot_max};
 }
 
@@ -261,16 +270,16 @@ enum class integration_event : std::uint8_t {
 // Takes path::cursor by value (cheap copy) to seed forward search from current position.
 [[gnu::pure]] trajectory::phase_point find_acceleration_switching_point(path::cursor cursor, const trajectory::options& opt) {
     // Walk forward through segments, checking interior extrema first, then boundaries
+
+    // Note: We search for VII-A Case 2 before Case 1. This is because Case 1 occurs when we switch between a circular segment
+    // and a straight line segment while Case 2 manifests on the interior of a circular segment. Therefore if there exists a
+    // Case 2 switching point it will be fulfilled before Case 1 and the earlier switching point is the one we wish to use.
     while (true) {
         auto current_segment = *cursor;
 
-        // ========================================================================
-        // CASE 2: Continuous and Nondifferentiable (Section VII-A Case 2)
-        // ========================================================================
-        // Check interior of circular segments for joint extrema where f'_i(s) = 0.
-        // These create continuous but non-differentiable points in the acceleration
-        // limit curve. Reference: Equation 39.
-
+        // Examine the current segment for switching points where the path velocity limit curve, s_dot_max_acc(s),
+        // is continuous, but not differentiable, per VII-A Case 2 in the paper (Equation 39). These
+        // switching points occur on the interior of circular segments for joint extrema where f'_i(s) = 0.
         if (current_segment.is<path::segment::circular>()) {
             std::optional<arc_length> first_extremum;
             double first_extremum_velocity = 0.0;
@@ -378,16 +387,9 @@ enum class integration_event : std::uint8_t {
             }
         }
 
-        // ========================================================================
-        // CASE 1: Discontinuous (Section VII-A Case 1)
-        // ========================================================================
-        // "s_dot_max_acc(s) is discontinuous if and only if the path curvature f''(s) -
-        //  as we we call it in the code q_double_prime(s) is discontinuous. For a path
-        //  generated as described in Section IV the discontinuities are exactly the points
-        //  where the path switches between a circular segment and a straight line segment.
-        //  [However,] If the path's curvature f''(s) is continuous everywhere, this case of
-        //  switching points does not happen."
-        // Reference: Equation 38.
+        // Examine the transition from a circular segment into a straight line segment where
+        // the path velocity limit curve is discontinuous if and only if the path curvature
+        // f''(s), is discontinuous, per VII-A Case 1 in the paper (Equation 40).
 
         const arc_length boundary = current_segment.end();
 
@@ -396,7 +398,7 @@ enum class integration_event : std::uint8_t {
             break;
         }
 
-        // Sample geometry on LEFT side of boundary
+        // Sample geometry BEFORE we cross the boundary
         const auto q_prime_before = current_segment.tangent(boundary);
         const auto q_double_prime_before = current_segment.curvature(boundary);
 
@@ -404,7 +406,7 @@ enum class integration_event : std::uint8_t {
         cursor.seek(boundary);
         auto segment_after = *cursor;
 
-        // Sample geometry on RIGHT side of boundary
+        // Sample geometry AFTER we cross the boundary
         const auto q_prime_after = segment_after.tangent(boundary);
         const auto q_double_prime_after = segment_after.curvature(boundary);
 
@@ -417,32 +419,30 @@ enum class integration_event : std::uint8_t {
 
         // Compute limit curve slopes using numerical approximation
         const arc_length before_boundary = std::max(boundary - arc_length{opt.epsilon}, current_segment.start());
-        const auto q_prime_bb = current_segment.tangent(before_boundary);
-        const auto q_double_prime_bb = current_segment.curvature(before_boundary);
-        const auto [s_dot_max_acc_bb, _5] =
-            compute_velocity_limits(q_prime_bb, q_double_prime_bb, opt.max_velocity, opt.max_acceleration, opt.epsilon);
-
         const double actual_step_left = (boundary - before_boundary).value;
         if (actual_step_left < opt.epsilon * 0.5) {
             continue;
         }
-        // this is d/ds s_dot_max_acc(s-)
+        const auto q_prime_bb = current_segment.tangent(before_boundary);
+        const auto q_double_prime_bb = current_segment.curvature(before_boundary);
+        const auto [s_dot_max_acc_bb, _5] =
+            compute_velocity_limits(q_prime_bb, q_double_prime_bb, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        // This is d/ds s_dot_max_acc(s-)
         const double slope_left = (s_dot_max_acc_before - s_dot_max_acc_bb) / actual_step_left;
 
         const arc_length after_boundary = std::min(boundary + arc_length{opt.epsilon}, segment_after.end());
-        const auto q_prime_ab = segment_after.tangent(after_boundary);
-        const auto q_double_prime_ab = segment_after.curvature(after_boundary);
-        const auto [s_dot_max_acc_ab, _6] =
-            compute_velocity_limits(q_prime_ab, q_double_prime_ab, opt.max_velocity, opt.max_acceleration, opt.epsilon);
-
         const double actual_step_right = (after_boundary - boundary).value;
         if (actual_step_right < opt.epsilon * 0.5) {
             continue;
         }
-        // this is d/ds s_dot_max_acc(s+)
+        const auto q_prime_ab = segment_after.tangent(after_boundary);
+        const auto q_double_prime_ab = segment_after.curvature(after_boundary);
+        const auto [s_dot_max_acc_ab, _6] =
+            compute_velocity_limits(q_prime_ab, q_double_prime_ab, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+        // This is d/ds s_dot_max_acc(s+)
         const double slope_right = (s_dot_max_acc_ab - s_dot_max_acc_after) / actual_step_right;
 
-        // === Apply Equation 38 ===
+        // Apply Equation 38
         // A discontinuity of s_dot_max_acc(s) is a switching point if and only if:
         // Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) ∧ s_ddot_max(s-, s_dot_max_acc(s-)) >= d/ds s_dot_max_acc(s-)]
         // Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) ∧ s_ddot_max(s+, s_dot_max_acc(s+)) <= d/ds s_dot_max_acc(s+)]
@@ -471,6 +471,11 @@ enum class integration_event : std::uint8_t {
 
             // Check: s_ddot_max(s+, s_dot_max_acc(s+)) <= d/ds s_dot_max_acc(s+)
             is_switching_point = (s_ddot_max_at_s_plus - slope_right <= opt.epsilon);
+        } else {
+            // Should s_dot_max_acc_before and s_dot_max_acc_after be within epsilon of each other, then
+            // there is no perceived discontinuity. Therefore, equation 38 cannot be fulfilled and we
+            // proceed onwards.
+            continue;
         }
 
         if (is_switching_point) {
@@ -876,18 +881,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                     const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
-
-                    if (s_ddot_min - s_ddot_max > traj.options_.epsilon) [[unlikely]] {
-                        throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible"};
-                    }
-
-                    // Handle degenerate case where bounds are nearly equal (singularity/zero-acceleration point).
-                    // At such points, using the raw s_ddot_max might be slightly outside the feasible region
-                    // due to numerical errors.
-                    double s_ddot_to_use = s_ddot_max;
-                    if (s_ddot_max - s_ddot_min < traj.options_.epsilon) {
-                        s_ddot_to_use = std::min(s_ddot_min, s_ddot_max);
-                    }
 
                     // Compute candidate next point via Euler integration with maximum acceleration
                     const auto [next_s, next_s_dot] =
