@@ -243,9 +243,8 @@ enum class integration_event : std::uint8_t {
     const double s_dot_new = s_dot + (s_ddot * dt);
     const arc_length s_new = s + arc_length{(s_dot * dt) + (0.5 * s_ddot * dt * dt)};
 
-    // If s_dot * dt and s_ddot * dt^2 are less than epsilon, we won't move.
-    [[unlikely]] if (std::abs(s_dot * dt) < epsilon && std::abs(0.5 * s_ddot * dt * dt) < epsilon) {
-        throw std::runtime_error{"Euler step will not make sufficient forward progress - s_dot and s_ddot are too small relative to dt"};
+    if ((s_new - s) < (epsilon * boost::sign(dt))) [[unlikely]] {
+        throw std::runtime_error{"Euler step will not make sufficient forward progress - the change in s_new relative to s was too small"};
     }
 
     return result{s_new, s_dot_new};
@@ -424,6 +423,8 @@ enum class integration_event : std::uint8_t {
             compute_velocity_limits(q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
         // Compute limit curve slopes using numerical approximation
+        // TODO(RSDK-12850): Investigate computing numerical derivatives versus epsilon
+        // TODO(RSDK-12851): Decide if it is safe to move onto the next switching point
         const arc_length before_boundary = std::max(boundary - arc_length{opt.epsilon}, current_segment.start());
         const double actual_step_left = static_cast<double>(boundary - before_boundary);
         if (actual_step_left < opt.epsilon * 0.5) {
@@ -1026,9 +1027,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // TODO(RSDK-12768): Investigate whether we want a richer exception type for algorithm failures.
                     // A custom exception hierarchy could distinguish between different failure modes
                     // (infeasible path, numerical issues, constraint violations) for better error handling.
-                    if (s_ddot_min - s_ddot_max > traj.options_.epsilon) [[unlikely]] {
-                        throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible during curve following"};
-                    }
 
                     // Check exit conditions by comparing acceleration bounds with curve slope.
                     // The ratio s_ddot / s_dot gives the slope of a trajectory in phase plane:
@@ -1168,10 +1166,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                     const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
-
-                    if (s_ddot_min - s_ddot_max > traj.options_.epsilon) [[unlikely]] {
-                        throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible during backward integration"};
-                    }
 
                     double s_ddot_to_use = s_ddot_min;
 
