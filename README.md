@@ -14,8 +14,8 @@ This model can be used to control a universal robots arm from a machine running 
 ```json
 {
     "host": <arm ip address string>,
-    "speed_degs_per_sec": <float>,
-    "acceleration_degs_per_sec2": <float>
+    "speed_degs_per_sec": <float or 6-element array>,
+    "acceleration_degs_per_sec2": <float or 6-element array>
 }
 ```
 
@@ -26,14 +26,17 @@ The following attributes are available for `viam:universal-robots` arms:
 | Name | Type | Inclusion | Description |
 | ---- | ---- | --------- | ----------- |
 | `host` | string | **Required** | The IP address of the robot arm on your network. Find this when setting up your UR5e. |
-| `speed_degs_per_sec` | float | **Required** | Set the maximum desired speed of the arm joints in degrees per second. |
-| `acceleration_degs_per_sec2` | float | **Required** | Set the maximum desired acceleration of the arm joints. |
-| `reject_move_request_threshold_deg` | float | Not Required | Rejects move requests when the difference between the current position and first waypoint is above threshold |
-| `robot_control_freq_hz` | float | Not Required | Sets the processing frequency for communication with the arm in cycles/second. If the machine running this model is using WiFi, we recommend configuring this to a lower frequency, such as 10 Hz. **Default 100 Hz** |
+| `speed_degs_per_sec` | float or array | **Required** | Set the maximum desired speed of the arm joints in degrees per second. Can be a single value (applied to all joints) or a 6-element array for per-joint limits. |
+| `acceleration_degs_per_sec2` | float or array | **Required** | Set the maximum desired acceleration of the arm joints. Can be a single value (applied to all joints) or a 6-element array for per-joint limits. |
+| `max_trajectory_duration_secs` | float | Optional | Maximum allowed trajectory duration in seconds. Trajectories exceeding this duration will be rejected. **Default 600s** (range: 0.1 - 3600) |
+| `trajectory_sampling_freq_hz` | float | Optional | Sampling frequency for trajectory generation in Hz. Higher values produce smoother trajectories but require more computation. **Default 10 Hz** (range: 1 - 500) |
+| `path_tolerance_delta_deg` | float | Optional | Tolerance for path waypoint deviations in degrees. Used during trajectory generation to smooth paths while staying within tolerance. **Default 5.73 degrees** (0.1 radians) (range: > 0, <= 12) |
+| `reject_move_request_threshold_deg` | float | Optional | Rejects move requests when the difference between the current position and first waypoint is above threshold |
+| `robot_control_freq_hz` | float | Optional | Sets the processing frequency for communication with the arm in cycles/second. If the machine running this model is using WiFi, we recommend configuring this to a lower frequency, such as 10 Hz. **Default 100 Hz** |
 
-### Example configuration:
+### Example configurations:
 
-#### using a wired ethernet connection on the same network as the arm
+#### Basic configuration with wired ethernet connection
 ```json
 {
     "host": "10.1.10.84",
@@ -41,7 +44,8 @@ The following attributes are available for `viam:universal-robots` arms:
     "acceleration_degs_per_sec2": 8
 }
 ```
-#### using a WiFi connection on the same network as the arm
+
+#### WiFi connection with lower control frequency
 ```json
 {
     "host": "10.1.10.84",
@@ -51,26 +55,58 @@ The following attributes are available for `viam:universal-robots` arms:
 }
 ```
 
-### DoCommand
-
-#### set_acc DoCommand
-
-`set_acc` will update the `acceleration_degs_per_sec2` maximum acceleration for joints, in deg/sec^2. The value will reset back to the configured maximum when the arm is reconfigured.
-
+#### Per-joint velocity and acceleration limits
 ```json
 {
-  "set_acc": <float>
+    "host": "10.1.10.84",
+    "speed_degs_per_sec": [90, 90, 120, 180, 180, 180],
+    "acceleration_degs_per_sec2": [6, 6, 8, 10, 10, 10]
 }
 ```
 
-#### set_vel DoCommand
+#### Custom trajectory generation parameters
+```json
+{
+    "host": "10.1.10.84",
+    "speed_degs_per_sec": 120,
+    "acceleration_degs_per_sec2": 8,
+    "max_trajectory_duration_secs": 300,
+    "trajectory_sampling_freq_hz": 25
+}
+```
 
-`set_vel` will update the `speed_degs_per_sec` maximum speed for joints, in deg/sec. The value will reset back to the configured maximum when the arm is reconfigured.
+### DoCommand
+
+#### set_vel / set_vel_degs_per_sec DoCommand
+
+`set_vel` or `set_vel_degs_per_sec` will update the `speed_degs_per_sec` maximum speed for joints, in deg/sec. Accepts either a single value (applied to all joints) or a 6-element array for per-joint limits. The value will reset back to the configured maximum when the arm is reconfigured.
 
 ```json
 {
-  "set_vel": <float>
+  "set_vel": <float or 6-element array>
 }
+```
+
+Examples:
+```json
+{"set_vel": 100}
+{"set_vel_degs_per_sec": [90, 90, 120, 180, 180, 180]}
+```
+
+#### set_acc / set_accel_degs_per_sec2 DoCommand
+
+`set_acc` or `set_accel_degs_per_sec2` will update the `acceleration_degs_per_sec2` maximum acceleration for joints, in deg/sec^2. Accepts either a single value (applied to all joints) or a 6-element array for per-joint limits. The value will reset back to the configured maximum when the arm is reconfigured.
+
+```json
+{
+  "set_acc": <float or 6-element array>
+}
+```
+
+Examples:
+```json
+{"set_acc": 8}
+{"set_accel_degs_per_sec2": [6, 6, 8, 10, 10, 10]}
 ```
 
 #### get_tcp_forces_{base,tool} DoCommand

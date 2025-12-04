@@ -21,7 +21,6 @@ class trajectory;
 ///
 /// Geometric path through configuration space with linear segments and circular blends.
 ///
-/// Created via path::create() from waypoints using tube-based coalescing algorithm.
 /// Provides queries for segment lookup and arc length parameterization.
 ///
 /// **Ownership**: Owns all segment data. Safe to use after source waypoints are destroyed.
@@ -253,9 +252,9 @@ class path {
         options& set_max_blend_deviation(double deviation);
 
         ///
-        /// Sets maximum linear deviation.
+        /// Sets maximum linear deviation for coalescing.
         ///
-        /// @param deviation Maximum distance waypoint can be from line to be coalesced
+        /// @param deviation Maximum deviation for waypoint coalescing
         /// @return Reference to this for method chaining
         /// @note Intended primarily for testing
         ///
@@ -271,7 +270,7 @@ class path {
         ///
         /// Gets maximum linear deviation.
         ///
-        /// @return Maximum distance waypoint can be from line to be coalesced
+        /// @return Maximum deviation for waypoint coalescing
         ///
         double max_linear_deviation() const noexcept;
 
@@ -281,12 +280,7 @@ class path {
     };
 
     ///
-    /// Creates a path from waypoints using tube-based coalescing and blending.
-    ///
-    /// Uses static factory pattern rather than constructor because path
-    /// construction performs non-trivial computation (tube coalescing algorithm).
-    /// This makes the computational cost explicit and avoids exception safety
-    /// concerns with partially-constructed objects.
+    /// Creates a path from a waypoints accumulator.
     ///
     /// @param waypoints Waypoint sequence to follow
     /// @param opts Path creation options (coalescing and blending parameters)

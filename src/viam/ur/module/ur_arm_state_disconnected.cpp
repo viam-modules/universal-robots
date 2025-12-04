@@ -107,7 +107,7 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     }
 
     // locations of files necessary to build module, specified as relative paths
-    constexpr char k_script_file[] = "control/external_control.urscript";
+    constexpr char k_script_file[] = "external_control.urscript";
     constexpr char k_output_recipe[] = "control/rtde_output_recipe.txt";
     constexpr char k_input_recipe[] = "control/rtde_input_recipe.txt";
 
@@ -115,9 +115,9 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     // Now the robot is ready to receive a program
     auto ur_cfg = urcl::UrDriverConfiguration{};
     ur_cfg.robot_ip = state.host_;
-    ur_cfg.script_file = state.resource_root_ / k_script_file;
-    ur_cfg.output_recipe_file = state.resource_root_ / k_output_recipe;
-    ur_cfg.input_recipe_file = state.resource_root_ / k_input_recipe;
+    ur_cfg.script_file = state.urcl_resource_root() / k_script_file;
+    ur_cfg.output_recipe_file = state.resource_root() / k_output_recipe;
+    ur_cfg.input_recipe_file = state.resource_root() / k_input_recipe;
 
     // TODO: Change how this works. It ends up logging with this
     // disconnected.cpp filename state when we have a connection.
