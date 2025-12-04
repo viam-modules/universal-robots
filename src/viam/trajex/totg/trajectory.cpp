@@ -644,13 +644,14 @@ enum class integration_event : std::uint8_t {
         const auto [s_dot_max_acc, s_dot_max_vel] =
             compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        // TODO: Implement Addendum E validation - reject switching points where s_dot_max_vel > s_dot_max_acc.
+        // Reject switching points where s_dot_max_vel > s_dot_max_acc.
         // Per the reference implementation (Trajectory.cpp:129-133), if the velocity switching point has
         // s_dot > s_dot_max_acc, backward integration will immediately hit the acceleration limit curve,
         // causing the algorithm to fail. We should continue searching forward until finding a switching
         // point where s_dot_max_vel <= s_dot_max_acc + epsilon.
-
-        continuous_switching_point = trajectory::phase_point{.s = after, .s_dot = s_dot_max_vel};
+        if (s_dot_max_vel - s_dot_max_acc <= epsilon) {
+            continuous_switching_point = trajectory::phase_point{.s = after, .s_dot = s_dot_max_vel};
+        } 
     }
 
     // Phase 4: Return whichever switching point comes first.
