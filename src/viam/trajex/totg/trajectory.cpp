@@ -465,8 +465,13 @@ enum class integration_event : std::uint8_t {
 
         // Only check boundaries ahead of our starting position
         if (boundary <= cursor.position()) {
-            boundary_cursor.seek(boundary);
-            continue;
+            // This boundary is behind our search position, skip to next segment
+            if (boundary < cursor.path().length()) {
+                boundary_cursor.seek(boundary);  // Move to next segment
+                // The *boundary_cursor dereference will now give the next segment
+                continue;
+            }
+            break;  // We've reached the end
         }
 
         // Sample geometry from segment ending at boundary
@@ -482,15 +487,18 @@ enum class integration_event : std::uint8_t {
         const auto q_double_prime_after = segment_after.curvature(boundary);
 
         // Compute velocity limits on both sides
-        const auto [s_dot_max_acc_before, s_dot_max_vel_before] =
+        const auto [_1, s_dot_max_vel_before] =
             compute_velocity_limits(q_prime_before, q_double_prime_before, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        const auto [s_dot_max_acc_after, s_dot_max_vel_after] =
+        const auto [_2, s_dot_max_vel_after] =
             compute_velocity_limits(q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        // Skip if velocity limits are degenerate on either side
+        // If velocity limit is degenerate (near zero) on either side, this is a switching point where we must come to rest
         if (std::abs(s_dot_max_vel_before) < opt.epsilon || std::abs(s_dot_max_vel_after) < opt.epsilon) {
-            continue;
+            // Must stop at this boundary (or nearly so)
+            const double switching_velocity = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
+            discontinuous_switching_point = trajectory::phase_point{.s = boundary, .s_dot = switching_velocity};
+            break;  // This is the first (most constraining) discontinuous point
         }
 
         // Compute curve slopes on both sides (equation 37)
@@ -511,11 +519,13 @@ enum class integration_event : std::uint8_t {
         // (s_ddot_min(s-, s_dot_max_vel(s-)) / s_dot >= d/ds s_dot_max_vel(s-))  (41)
         // AND
         // (s_ddot_min(s+, s_dot_max_vel(s+)) / s_dot <= d/ds s_dot_max_vel(s+))  (42)
+        // NOTE: the LHS of the equations needed a s_dot denominator since without it the units
+        // are m/s^2, while the RHS units are 1/s.
         const double trajectory_slope_before = s_ddot_min_before / s_dot_max_vel_before;
         const double trajectory_slope_after = s_ddot_min_after / s_dot_max_vel_after;
 
-        const bool condition_41 = (trajectory_slope_before >= curve_slope_before - opt.epsilon);
-        const bool condition_42 = (trajectory_slope_after <= curve_slope_after + opt.epsilon);
+        const bool condition_41 = (curve_slope_before - trajectory_slope_before <= opt.epsilon);
+        const bool condition_42 = (trajectory_slope_after - curve_slope_after <= opt.epsilon);
 
         if (condition_41 && condition_42) {
             // Valid discontinuous switching point found
@@ -541,8 +551,8 @@ enum class integration_event : std::uint8_t {
     while (search_cursor.position() < search_limit) {
         // Advance cursor by step size
         const arc_length next_position = search_cursor.position() + arc_length{step_size};
-        if (next_position >= search_limit) {
-            break;  // Reached search limit without finding escape
+        if (next_position > search_limit) {
+            break;  // Exceeded search limit without finding escape
         }
         search_cursor.seek(next_position);
 
@@ -581,7 +591,7 @@ enum class integration_event : std::uint8_t {
     }
 
     // Phase 3: Bisection refinement to find exact continuous switching point (if escape region found).
-    if (escape_region_start.has_value()) {
+    if (escape_region_start) {
         // We know escape is possible somewhere in the last step [previous_position, escape_region_start].
         // Bisect over this interval to find the exact location where the escape condition becomes true.
         arc_length before = previous_position;
@@ -647,25 +657,34 @@ enum class integration_event : std::uint8_t {
     // If both exist, return the one with smaller s (earlier along the path).
     // If only one exists, return that one.
     // If neither exists, return end of path.
-    if (discontinuous_switching_point.has_value() && continuous_switching_point.has_value()) {
-        // Both types found - return whichever is earlier
-        if (discontinuous_switching_point->s < continuous_switching_point->s) {
-            return *discontinuous_switching_point;
-        } else if (continuous_switching_point->s < discontinuous_switching_point->s) {
-            return *continuous_switching_point;
-        } else {
-            // Same location (within epsilon) - use whichever has lower velocity (more conservative)
-            return (discontinuous_switching_point->s_dot < continuous_switching_point->s_dot) ? *discontinuous_switching_point
-                                                                                              : *continuous_switching_point;
-        }
-    } else if (discontinuous_switching_point.has_value() && !continuous_switching_point.has_value()) {
-        return *discontinuous_switching_point;
-    } else if (continuous_switching_point.has_value() && !discontinuous_switching_point.has_value()) {
-        return *continuous_switching_point;
-    } else {
-        // No switching point found - return end of path
-        return trajectory::phase_point{.s = path_length, .s_dot = 0.0};
+    if (discontinuous_switching_point && continuous_switching_point) {
+        return select_switching_point(*discontinuous_switching_point, *continuous_switching_point, opt.epsilon);
     }
+    if (discontinuous_switching_point) {
+        return *discontinuous_switching_point;
+    }
+    if (continuous_switching_point) {
+        return *continuous_switching_point;
+    }
+    // No switching point found - return end of path
+    return trajectory::phase_point{.s = path_length, .s_dot = 0.0};
+}
+
+// Selects between two switching points: returns the earlier one, or if at the same location
+// (within epsilon), returns the one with lower velocity (more conservative).
+[[gnu::const]] trajectory::phase_point select_switching_point(const trajectory::phase_point& sp1,
+                                                              const trajectory::phase_point& sp2,
+                                                              double epsilon) {
+    const auto s_difference = std::abs(static_cast<double>(sp1.s - sp2.s));
+    const bool at_same_location = (s_difference < epsilon);
+
+    if (at_same_location) {
+        // Same location (within epsilon) - use whichever has lower velocity (more conservative)
+        return (sp1.s_dot < sp2.s_dot) ? sp1 : sp2;
+    }
+
+    // Return whichever comes first along the path
+    return (sp1.s < sp2.s) ? sp1 : sp2;
 }
 
 // Unified switching point search that calls both acceleration and velocity searches.
@@ -689,18 +708,7 @@ enum class integration_event : std::uint8_t {
     auto accel_sp = find_acceleration_switching_point(cursor, opt);
     auto vel_sp = find_velocity_switching_point(cursor, opt);
 
-    // Determine if switching points are at distinct locations
-    const auto s_difference = std::abs(static_cast<double>(accel_sp.s - vel_sp.s));
-    const bool at_same_location = (s_difference < opt.epsilon);
-
-    if (at_same_location) {
-        // Both switching points at same location (within epsilon)
-        // Use whichever has lower velocity (more conservative)
-        return (accel_sp.s_dot < vel_sp.s_dot) ? accel_sp : vel_sp;
-    }
-
-    // Return whichever comes first along the path
-    return (accel_sp.s < vel_sp.s) ? accel_sp : vel_sp;
+    return select_switching_point(accel_sp, vel_sp, opt.epsilon);
 }
 
 }  // namespace
