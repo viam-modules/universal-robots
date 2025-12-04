@@ -439,6 +439,23 @@ enum class integration_event : std::uint8_t {
     return trajectory::phase_point{.s = cursor.path().length(), .s_dot = 0.0};
 }
 
+// Selects between two switching points: returns the earlier one, or if at the same location
+// (within epsilon), returns the one with lower velocity (more conservative).
+[[gnu::const]] trajectory::phase_point select_switching_point(const trajectory::phase_point& sp1,
+                                                              const trajectory::phase_point& sp2,
+                                                              double epsilon) {
+    const auto s_difference = std::abs(static_cast<double>(sp1.s - sp2.s));
+    const bool at_same_location = (s_difference < epsilon);
+
+    if (at_same_location) {
+        // Same location (within epsilon) - use whichever has lower velocity (more conservative)
+        return (sp1.s_dot < sp2.s_dot) ? sp1 : sp2;
+    }
+
+    // Return whichever comes first along the path
+    return (sp1.s < sp2.s) ? sp1 : sp2;
+}
+
 // Searches for a velocity switching point where escape from velocity curve becomes possible.
 // Implements both continuous (equation 40) and discontinuous (equations 41-42) cases from Section VII-B.
 // Returns the switching point on velocity curve. If no escape point found, returns end of path.
@@ -502,6 +519,7 @@ enum class integration_event : std::uint8_t {
         }
 
         // Compute curve slopes on both sides (equation 37)
+        // TODO(RSDK-12847): Investigate the correctness of equations 41 and 42; document any findings.
         const double curve_slope_before =
             compute_velocity_limit_derivative(q_prime_before, q_double_prime_before, opt.max_velocity, opt.epsilon);
 
@@ -530,6 +548,7 @@ enum class integration_event : std::uint8_t {
         if (condition_41 && condition_42) {
             // Valid discontinuous switching point found
             // Switching velocity is the minimum of velocity limits on both sides
+            // TODO(RSDK-12848): Investigate the correctness of taking the minimum of these two switching points.
             const double switching_velocity = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
 
             // Record first discontinuous switching point, but don't return yet - need to check continuous cases too
@@ -649,9 +668,9 @@ enum class integration_event : std::uint8_t {
         // s_dot > s_dot_max_acc, backward integration will immediately hit the acceleration limit curve,
         // causing the algorithm to fail. We should continue searching forward until finding a switching
         // point where s_dot_max_vel <= s_dot_max_acc + epsilon.
-        if (s_dot_max_vel - s_dot_max_acc <= epsilon) {
+        if (s_dot_max_vel - s_dot_max_acc <= opt.epsilon) {
             continuous_switching_point = trajectory::phase_point{.s = after, .s_dot = s_dot_max_vel};
-        } 
+        }
     }
 
     // Phase 4: Return whichever switching point comes first.
@@ -669,23 +688,6 @@ enum class integration_event : std::uint8_t {
     }
     // No switching point found - return end of path
     return trajectory::phase_point{.s = path_length, .s_dot = 0.0};
-}
-
-// Selects between two switching points: returns the earlier one, or if at the same location
-// (within epsilon), returns the one with lower velocity (more conservative).
-[[gnu::const]] trajectory::phase_point select_switching_point(const trajectory::phase_point& sp1,
-                                                              const trajectory::phase_point& sp2,
-                                                              double epsilon) {
-    const auto s_difference = std::abs(static_cast<double>(sp1.s - sp2.s));
-    const bool at_same_location = (s_difference < epsilon);
-
-    if (at_same_location) {
-        // Same location (within epsilon) - use whichever has lower velocity (more conservative)
-        return (sp1.s_dot < sp2.s_dot) ? sp1 : sp2;
-    }
-
-    // Return whichever comes first along the path
-    return (sp1.s < sp2.s) ? sp1 : sp2;
 }
 
 // Unified switching point search that calls both acceleration and velocity searches.
