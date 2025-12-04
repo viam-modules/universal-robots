@@ -37,6 +37,7 @@ class universal_robots(ConanFile):
         self.requires("viam-cpp-sdk/[>=0.23.0]")
         self.requires("eigen/[>=3.4 <5.0]")
         self.requires("boost/[>=1.74.0]")
+        self.requires("jsoncpp/[>=1.9.5]")
 
     def validate(self):
         check_min_cppstd(self, 20)
