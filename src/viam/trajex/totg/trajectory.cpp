@@ -243,7 +243,11 @@ enum class integration_event : std::uint8_t {
     const double s_dot_new = s_dot + (s_ddot * dt);
     const arc_length s_new = s + arc_length{(s_dot * dt) + (0.5 * s_ddot * dt * dt)};
 
-    if ((s_new - s) < (epsilon * boost::sign(dt))) [[unlikely]] {
+    // Check that the step makes sufficient progress in the direction indicated by dt's sign.
+    // For positive dt (forward integration), s_new - s should be >= epsilon.
+    // For negative dt (backward integration), s_new - s should be >= -epsilon (i.e., |s_new - s| >= epsilon).
+    const double dt_sign = (dt > 0.0) ? 1.0 : ((dt < 0.0) ? -1.0 : 0.0);
+    if ((s_new - s) < (epsilon * dt_sign)) [[unlikely]] {
         throw std::runtime_error{"Euler step will not make sufficient forward progress - the change in s_new relative to s was too small"};
     }
 
