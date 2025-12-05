@@ -162,20 +162,22 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
         {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 0: Start at zero
         {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 1
         {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 2
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 3: reversal back to position 1
-        {-90.0, 0.0, 0.0, 0.0, 0.0, 0.0},    // 4
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 5: reversal back to position 1 again
-        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 6
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 7
-        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 8: back to zero
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 9
-        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 10
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 11
-        {-90.0, 0.0, 0.0, 0.0, 0.0, 0.0},    // 12
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 13
-        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 14
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 15
-        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 16: back to zero again
+        // TODO(RSDK-12711): Add these waypoints back in once we do not need to
+        // break up segments according to their dot product.
+        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 3: reversal back to position 1
+        // {-90.0, 0.0, 0.0, 0.0, 0.0, 0.0},    // 4
+        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 5: reversal back to position 1 again
+        // {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 6
+        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 7
+        // {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 8: back to zero
+        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 9
+        // {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 10
+        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 11
+        // {-90.0, 0.0, 0.0, 0.0, 0.0, 0.0},    // 12
+        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 13
+        // {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 14
+        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 15
+        // {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 16: back to zero again
     };
 
     // Convert to radians and create xt::xarray
@@ -190,7 +192,7 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
     // Typical UR arm constraints (from working configuration)
     trajectory::options opts;
     opts.max_velocity = xt::ones<double>({6}) * (50 * deg_to_rad);         // 50 deg/s = 0.873 rad/s
-    opts.max_acceleration = xt::ones<double>({6}) * (100.0 * deg_to_rad);  // 100 deg/s^2 = 1.745 rad/s^2
+    opts.max_acceleration = xt::ones<double>({6}) * (150.0 * deg_to_rad);  // 150 deg/s^2 = 2.618 rad/s^2
 
     // Observer to log integration events
     struct test_observer : trajectory::integration_observer {

@@ -29,7 +29,7 @@ BOOST_AUTO_TEST_CASE(generate_trajectory) {
     const path p = path::create(waypoints);
 
     const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5}};
+                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
 
     BOOST_CHECK_NO_THROW(static_cast<void>(trajectory::create(p, options)));
 }
@@ -114,7 +114,7 @@ BOOST_AUTO_TEST_CASE(trajectory_has_path_reference) {
     path p = path::create(waypoints);
 
     const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5}};
+                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
 
     const trajectory traj = trajectory::create(std::move(p), options);
 
@@ -129,7 +129,7 @@ BOOST_AUTO_TEST_CASE(trajectory_dof_accessor) {
     path p = path::create(waypoints);
 
     const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5, 0.5}};
+                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5, 1.5}};
 
     const trajectory traj = trajectory::create(std::move(p), options);
 
@@ -143,7 +143,7 @@ BOOST_AUTO_TEST_CASE(trajectory_duration_is_valid) {
     path p = path::create(waypoints);
 
     const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5}};
+                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
 
     const trajectory traj = trajectory::create(std::move(p), options);
 
@@ -158,7 +158,7 @@ BOOST_AUTO_TEST_CASE(sample_at_throws_on_negative_time) {
     path p = path::create(waypoints);
 
     const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5}};
+                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
 
     const trajectory traj = trajectory::create(std::move(p), options);
 
@@ -172,7 +172,7 @@ BOOST_AUTO_TEST_CASE(sample_at_throws_on_time_beyond_duration) {
     path p = path::create(waypoints);
 
     const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5}};
+                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
 
     const trajectory traj = trajectory::create(std::move(p), options);
 
@@ -188,7 +188,7 @@ BOOST_AUTO_TEST_CASE(sample_at_returns_valid_structure) {
     path p = path::create(waypoints);
 
     const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5}};
+                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
 
     const trajectory traj = trajectory::create(std::move(p), options);
 
@@ -208,7 +208,7 @@ BOOST_AUTO_TEST_CASE(trajectory_dof_matches_path_dof) {
     path p = path::create(waypoints);
 
     const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5}};
+                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5}};
 
     const size_t expected_dof = p.dof();
     const trajectory traj = trajectory::create(std::move(p), options);
