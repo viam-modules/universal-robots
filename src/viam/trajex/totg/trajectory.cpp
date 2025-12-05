@@ -447,9 +447,9 @@ enum class integration_event : std::uint8_t {
 
 // Selects between two switching points: returns the earlier one, or if at the same location
 // (within epsilon), returns the one with lower velocity (more conservative).
-[[gnu::const]] trajectory::phase_point select_switching_point(const trajectory::phase_point& sp1,
-                                                              const trajectory::phase_point& sp2,
-                                                              double epsilon) {
+[[gnu::pure]] trajectory::phase_point select_switching_point(const trajectory::phase_point& sp1,
+                                                             const trajectory::phase_point& sp2,
+                                                             double epsilon) {
     const auto s_difference = std::abs(static_cast<double>(sp1.s - sp2.s));
     const bool at_same_location = (s_difference < epsilon);
 
