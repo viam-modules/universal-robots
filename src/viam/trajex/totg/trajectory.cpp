@@ -168,8 +168,9 @@ enum class integration_event : std::uint8_t {
 
     // Handle degenerate case where bounds are nearly equal (singularity/zero-acceleration point).
     if (s_ddot_max - s_ddot_min < epsilon) {
-        s_ddot_max = std::min(s_ddot_min, s_ddot_max);
+        s_ddot_min = s_ddot_max = std::min(s_ddot_min, s_ddot_max);
     }
+    assert(s_ddot_min <= s_ddot_max);
 
     return result{s_ddot_min, s_ddot_max};
 }
