@@ -162,13 +162,13 @@ enum class integration_event : std::uint8_t {
         s_ddot_max = std::min(s_ddot_max, max_from_joint);
     }
 
+    if (s_ddot_min - s_ddot_max > epsilon) [[unlikely]] {  // s_ddot_min is greater than s_ddot_max by epsilon
+        throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible"};
+    }
+
     // Handle degenerate case where bounds are nearly equal (singularity/zero-acceleration point).
     if (s_ddot_max - s_ddot_min < epsilon) {
         s_ddot_max = std::min(s_ddot_min, s_ddot_max);
-    }
-
-    if (s_ddot_min - s_ddot_max > epsilon) {  // s_ddot_min is greater than s_ddot_max by epsilon
-        throw std::runtime_error{"TOTG algorithm error: acceleration bounds are infeasible"};
     }
 
     return result{s_ddot_min, s_ddot_max};
@@ -247,7 +247,7 @@ enum class integration_event : std::uint8_t {
     // For positive dt (forward integration), s_new - s should be >= epsilon.
     // For negative dt (backward integration), s_new - s should be >= -epsilon (i.e., |s_new - s| >= epsilon).
     const double dt_sign = std::copysign(1.0, dt);
-    if ((s_new - s) < arc_length{epsilon * dt_sign}) [[unlikely]] {
+    if (dt_sign * (s_new - s) < arc_length{epsilon}) [[unlikely]] {
         throw std::runtime_error{"Euler step will not make sufficient forward progress - the change in s_new relative to s was too small"};
     }
 
@@ -280,7 +280,7 @@ enum class integration_event : std::uint8_t {
 [[gnu::pure]] trajectory::phase_point find_acceleration_switching_point(path::cursor cursor, const trajectory::options& opt) {
     // Walk forward through segments, checking interior extrema first, then boundaries
 
-    // Note: We search for VII-A Case 2 before Case 1. This is because Case 1 occurs when we switch between a circular segment
+    // Note: We search for VII-A Case 2 before Case 1 because Case 1 occurs when we switch between a circular segment
     // and a straight line segment while Case 2 manifests on the interior of a circular segment. Therefore if there exists a
     // Case 2 switching point it will be fulfilled before Case 1 and the earlier switching point is the one we wish to use.
     while (true) {
