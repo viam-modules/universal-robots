@@ -60,6 +60,7 @@ BOOST_AUTO_TEST_CASE(validates_acceleration_dof) {
 }
 
 BOOST_AUTO_TEST_CASE(custom_integration_parameters) {
+    using namespace viam::trajex;
     using namespace viam::trajex::totg;
 
     const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
@@ -68,7 +69,7 @@ BOOST_AUTO_TEST_CASE(custom_integration_parameters) {
     const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
                                       .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5},
                                       .delta = trajectory::seconds{0.0005},
-                                      .epsilon = 1e-9};
+                                      .epsilon = epsilon{1e-9}};
 
     BOOST_CHECK_NO_THROW(static_cast<void>(trajectory::create(p, options)));
 }
@@ -89,15 +90,15 @@ BOOST_AUTO_TEST_CASE(validates_delta_positive) {
 }
 
 BOOST_AUTO_TEST_CASE(validates_epsilon_positive) {
+    using namespace viam::trajex;
     using namespace viam::trajex::totg;
 
     const xt::xarray<double> waypoints = {{1.0, 2.0, 3.0}, {4.0, 5.0, 6.0}};
     const path p = path::create(waypoints);
 
     const trajectory::options options{
-        .max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-        .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5},
-        .epsilon = -1e-6  // Invalid
+        .max_velocity = xt::xarray<double>{1.0, 1.0, 1.0}, .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5}, .epsilon = epsilon{-1e-6}
+        // Invalid
     };
 
     BOOST_CHECK_THROW(static_cast<void>(trajectory::create(p, options)), std::invalid_argument);
@@ -235,8 +236,8 @@ BOOST_AUTO_TEST_CASE(sample_at_start) {
     // Create trajectory with known integration points
     // Simple constant velocity: s_dot = 1.0, duration = 1.0s
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
 
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -258,8 +259,8 @@ BOOST_AUTO_TEST_CASE(sample_at_end) {
 
     // Create trajectory with known integration points
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
 
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -277,8 +278,8 @@ BOOST_AUTO_TEST_CASE(sample_before_start_throws) {
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
 
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -291,8 +292,8 @@ BOOST_AUTO_TEST_CASE(sample_after_end_throws) {
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
 
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -310,8 +311,8 @@ BOOST_AUTO_TEST_CASE(constant_velocity_linear_path) {
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{2.0}, .s = arc_length{2.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{2.0}, .s = arc_length{2.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
 
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -341,8 +342,8 @@ BOOST_AUTO_TEST_CASE(constant_acceleration_linear_path) {
     const double t_end = std::sqrt(2.0);  // Time to reach s=2 with a=2
 
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 0.0, .s_ddot = 2.0},
-        {.time = trajectory::seconds{t_end}, .s = arc_length{2.0}, .s_dot = 2.0 * t_end, .s_ddot = 2.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{0.0}, .s_ddot = arc_acceleration{2.0}},
+        {.time = trajectory::seconds{t_end}, .s = arc_length{2.0}, .s_dot = 2.0 * arc_velocity{t_end}, .s_ddot = arc_acceleration{2.0}}};
 
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -375,8 +376,8 @@ BOOST_AUTO_TEST_CASE(parabolic_interpolation_midpoint) {
     // 4 = 0 + 0*2 + 0.5*s_ddot*4 -> s_ddot = 2.0
     // At t=1 (midpoint): s = 0 + 0 + 0.5*2*1 = 1.0, s_dot = 0 + 2*1 = 2.0
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 0.0, .s_ddot = 2.0},
-        {.time = trajectory::seconds{2.0}, .s = arc_length{4.0}, .s_dot = 4.0, .s_ddot = 2.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{0.0}, .s_ddot = arc_acceleration{2.0}},
+        {.time = trajectory::seconds{2.0}, .s = arc_length{4.0}, .s_dot = arc_velocity{4.0}, .s_ddot = arc_acceleration{2.0}}};
 
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -399,8 +400,8 @@ BOOST_AUTO_TEST_CASE(cursor_maintains_position_across_samples) {
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
 
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -426,8 +427,8 @@ BOOST_AUTO_TEST_CASE(cursor_seek_updates_position) {
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
 
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -456,8 +457,8 @@ BOOST_AUTO_TEST_CASE(cursor_seek_by_advances_position) {
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{2.0}, .s = arc_length{2.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{2.0}, .s = arc_length{2.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
 
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -494,8 +495,10 @@ BOOST_AUTO_TEST_CASE(cursor_seek_within_current_integration_point) {
     // Create 6 integration points at t=0, 1, 2, 3, 4, 5 (must end at path.length() = 5.0)
     std::vector<trajectory::integration_point> points;
     for (int i = 0; i <= 5; ++i) {
-        points.push_back(
-            {.time = trajectory::seconds{static_cast<double>(i)}, .s = arc_length{static_cast<double>(i)}, .s_dot = 1.0, .s_ddot = 0.0});
+        points.push_back({.time = trajectory::seconds{static_cast<double>(i)},
+                          .s = arc_length{static_cast<double>(i)},
+                          .s_dot = arc_velocity{1.0},
+                          .s_ddot = arc_acceleration{0.0}});
     }
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -527,8 +530,10 @@ BOOST_AUTO_TEST_CASE(cursor_seek_to_adjacent_integration_points) {
     // Create 6 integration points at t=0, 1, 2, 3, 4, 5 (must end at path.length() = 5.0)
     std::vector<trajectory::integration_point> points;
     for (int i = 0; i <= 5; ++i) {
-        points.push_back(
-            {.time = trajectory::seconds{static_cast<double>(i)}, .s = arc_length{static_cast<double>(i)}, .s_dot = 1.0, .s_ddot = 0.0});
+        points.push_back({.time = trajectory::seconds{static_cast<double>(i)},
+                          .s = arc_length{static_cast<double>(i)},
+                          .s_dot = arc_velocity{1.0},
+                          .s_ddot = arc_acceleration{0.0}});
     }
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -560,8 +565,10 @@ BOOST_AUTO_TEST_CASE(cursor_seek_large_jump) {
     // Create 7 integration points at t=0, 1, 2, 3, 4, 5, 6 (must end at path.length() = 6.0)
     std::vector<trajectory::integration_point> points;
     for (int i = 0; i <= 6; ++i) {
-        points.push_back(
-            {.time = trajectory::seconds{static_cast<double>(i)}, .s = arc_length{static_cast<double>(i)}, .s_dot = 1.0, .s_ddot = 0.0});
+        points.push_back({.time = trajectory::seconds{static_cast<double>(i)},
+                          .s = arc_length{static_cast<double>(i)},
+                          .s_dot = arc_velocity{1.0},
+                          .s_ddot = arc_acceleration{0.0}});
     }
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
@@ -623,9 +630,15 @@ BOOST_AUTO_TEST_CASE(trajectory_sampling_on_circular_blend) {
     // Sample on the circular blend at constant velocity
     const double blend_mid_s = static_cast<double>((blend_start + blend_end) / 2.0);
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{blend_mid_s}, .s = arc_length{blend_mid_s}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{static_cast<double>(p.length())}, .s = p.length(), .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{blend_mid_s},
+         .s = arc_length{blend_mid_s},
+         .s_dot = arc_velocity{1.0},
+         .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{static_cast<double>(p.length())},
+         .s = p.length(),
+         .s_dot = arc_velocity{1.0},
+         .s_ddot = arc_acceleration{0.0}}};
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
     // Sample at blend_mid_s (on circular segment)
@@ -657,8 +670,8 @@ BOOST_AUTO_TEST_CASE(cursor_seek_to_negative_time_becomes_sentinel) {
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{2.0}, .s = arc_length{2.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{2.0}, .s = arc_length{2.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
     auto cursor = traj.create_cursor();
@@ -681,8 +694,8 @@ BOOST_AUTO_TEST_CASE(cursor_seek_beyond_duration_becomes_sentinel) {
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{2.0}, .s = arc_length{2.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{2.0}, .s = arc_length{2.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
     auto cursor = traj.create_cursor();
@@ -705,8 +718,8 @@ BOOST_AUTO_TEST_CASE(cursor_seek_by_from_sentinel_state) {
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{2.0}, .s = arc_length{2.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{2.0}, .s = arc_length{2.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
     auto cursor = traj.create_cursor();

@@ -25,9 +25,9 @@ trajectory create_trajectory_with_integration_points(path p, std::vector<traject
 BOOST_AUTO_TEST_SUITE(end_to_end_tests)
 
 BOOST_AUTO_TEST_CASE(waypoints_to_samples_smoke_test) {
+    using namespace viam::trajex;
     using namespace viam::trajex::totg;
     using namespace viam::trajex::totg::test;
-    using viam::trajex::arc_length;
 
     // 1. Create waypoints
     const xt::xarray<double> waypoints = {
@@ -44,9 +44,9 @@ BOOST_AUTO_TEST_CASE(waypoints_to_samples_smoke_test) {
     // 3. Create trajectory with known integration points for testing
     // Simple constant velocity trajectory
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{2.0}, .s = arc_length{2.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{2.0}, .s = arc_length{2.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
     // 4. Verify trajectory has correct duration
@@ -83,6 +83,7 @@ BOOST_AUTO_TEST_CASE(waypoints_to_samples_smoke_test) {
 }
 
 BOOST_AUTO_TEST_CASE(cursor_manual_sampling) {
+    using namespace viam::trajex;
     using namespace viam::trajex::totg;
     using namespace viam::trajex::totg::test;
     using viam::trajex::arc_length;
@@ -92,8 +93,8 @@ BOOST_AUTO_TEST_CASE(cursor_manual_sampling) {
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{1.0}, .s = arc_length{std::sqrt(2.0)}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{1.0}, .s = arc_length{std::sqrt(2.0)}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
     // Create cursor
@@ -113,6 +114,7 @@ BOOST_AUTO_TEST_CASE(cursor_manual_sampling) {
 }
 
 BOOST_AUTO_TEST_CASE(quantized_sampler_end_to_end) {
+    using namespace viam::trajex;
     using namespace viam::trajex::totg;
     using namespace viam::trajex::totg::test;
     using viam::trajex::arc_length;
@@ -127,8 +129,8 @@ BOOST_AUTO_TEST_CASE(quantized_sampler_end_to_end) {
     path p = path::create(waypoints);
 
     std::vector<trajectory::integration_point> points = {
-        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = 1.0, .s_ddot = 0.0},
-        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = 1.0, .s_ddot = 0.0}};
+        {.time = trajectory::seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}},
+        {.time = trajectory::seconds{1.0}, .s = arc_length{1.0}, .s_dot = arc_velocity{1.0}, .s_ddot = arc_acceleration{0.0}}};
     const trajectory traj = create_trajectory_with_integration_points(std::move(p), std::move(points));
 
     BOOST_REQUIRE_EQUAL(traj.duration().count(), 1.0);
@@ -199,7 +201,9 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
         void on_started_forward_integration(trajectory::phase_point pt) override {
             std::cout << "[FORWARD START] s=" << pt.s << " s_dot=" << pt.s_dot << "\n";
         }
-        void on_hit_limit_curve(trajectory::phase_point pt, double s_dot_max_acc, double s_dot_max_vel) override {
+        void on_hit_limit_curve(trajectory::phase_point pt,
+                                viam::trajex::arc_velocity s_dot_max_acc,
+                                viam::trajex::arc_velocity s_dot_max_vel) override {
             std::cout << "[HIT LIMIT] s=" << pt.s << " s_dot=" << pt.s_dot << " acc_limit=" << s_dot_max_acc
                       << " vel_limit=" << s_dot_max_vel << "\n";
         }

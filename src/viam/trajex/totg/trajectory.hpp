@@ -9,6 +9,10 @@
 #endif
 
 #include <viam/trajex/totg/path.hpp>
+#include <viam/trajex/types/arc_acceleration.hpp>
+#include <viam/trajex/types/arc_length.hpp>
+#include <viam/trajex/types/arc_velocity.hpp>
+#include <viam/trajex/types/epsilon.hpp>
 
 namespace viam::trajex::totg {
 
@@ -84,7 +88,7 @@ class trajectory {
         ///
         /// Default epsilon for numerical comparisons.
         ///
-        static constexpr double k_default_epsilon = 1e-6;
+        static constexpr class epsilon k_default_epsilon{1e-6};
 
         ///
         /// Integration time step for phase plane integration.
@@ -96,7 +100,7 @@ class trajectory {
         ///
         /// Numerical comparison epsilon.
         ///
-        double epsilon{k_default_epsilon};
+        class epsilon epsilon{k_default_epsilon};
 
         ///
         /// Observer for integration events (optional).
@@ -114,8 +118,8 @@ class trajectory {
     /// Arc length s on the horizontal axis, path velocity ṡ on the vertical axis.
     ///
     struct phase_point {
-        arc_length s;  ///< Arc length position on path
-        double s_dot;  ///< Path velocity (ds/dt)
+        arc_length s;        ///< Arc length position on path
+        arc_velocity s_dot;  ///< Path velocity (ds/dt)
     };
 
     ///
@@ -128,9 +132,9 @@ class trajectory {
     ///        frustrates use of designated initializers.
     ///
     struct phase_state {
-        arc_length s;   ///< Arc length position on path
-        double s_dot;   ///< Path velocity (ds/dt)
-        double s_ddot;  ///< Path acceleration (d^2s/dt^2)
+        arc_length s;             ///< Arc length position on path
+        arc_velocity s_dot;       ///< Path velocity (ds/dt)
+        arc_acceleration s_ddot;  ///< Path acceleration (d^2s/dt^2)
     };
 
     ///
@@ -142,10 +146,10 @@ class trajectory {
     /// the path knows exact circular blend geometry.
     ///
     struct integration_point {
-        seconds time;   ///< Time at this integration point
-        arc_length s;   ///< Arc length position on path
-        double s_dot;   ///< Path velocity (ds/dt)
-        double s_ddot;  ///< Path acceleration (d^2s/dt^2)
+        seconds time;             ///< Time at this integration point
+        arc_length s;             ///< Arc length position on path
+        arc_velocity s_dot;       ///< Path velocity (ds/dt)
+        arc_acceleration s_ddot;  ///< Path acceleration (d^2s/dt^2)
     };
 
     ///
@@ -306,7 +310,7 @@ class trajectory::integration_observer {
     /// @param s_dot_max_acc Maximum velocity from acceleration constraints at pt.s
     /// @param s_dot_max_vel Maximum velocity from velocity constraints at pt.s
     ///
-    virtual void on_hit_limit_curve(phase_point pt, double s_dot_max_acc, double s_dot_max_vel) = 0;
+    virtual void on_hit_limit_curve(phase_point pt, arc_velocity s_dot_max_acc, arc_velocity s_dot_max_vel) = 0;
 
     ///
     /// Called when backward integration starts from a switching point.
