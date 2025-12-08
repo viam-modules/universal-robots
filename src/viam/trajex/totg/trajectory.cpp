@@ -10,6 +10,7 @@
 #include <boost/range/adaptors.hpp>
 
 #include <viam/trajex/totg/path.hpp>
+#include <viam/trajex/totg/private/phase_plane_slope.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/types/arc_operations.hpp>
 #include "viam/trajex/types/arc_acceleration.hpp"
@@ -185,10 +186,10 @@ enum class integration_event : std::uint8_t {
 // This is d/ds s_dot_max_vel(s), which tells us the slope of the velocity limit curve.
 // Used in Algorithm Step 3 to determine if we can leave the curve or must search for switching points.
 // See Kunz & Stilman equation 37.
-[[gnu::pure]] double compute_velocity_limit_derivative(const xt::xarray<double>& q_prime,
-                                                       const xt::xarray<double>& q_double_prime,
-                                                       const xt::xarray<double>& q_dot_max,
-                                                       class epsilon epsilon) {
+[[gnu::pure]] auto compute_velocity_limit_derivative(const xt::xarray<double>& q_prime,
+                                                     const xt::xarray<double>& q_double_prime,
+                                                     const xt::xarray<double>& q_dot_max,
+                                                     class epsilon epsilon) {
     // Find which joint is the limiting constraint (has minimum q_dot_max / |q'|)
     double min_limit = std::numeric_limits<double>::infinity();
     size_t limiting_joint = 0;
@@ -234,7 +235,7 @@ enum class integration_event : std::uint8_t {
             "velocity limit curve derivative is numerically undefined (joint barely moving along path)"};
     }
 
-    return numerator / denominator;
+    return phase_plane_slope{numerator / denominator};
 }
 
 // Performs a single Euler integration step in phase plane (s, s_dot).
@@ -446,7 +447,7 @@ enum class integration_event : std::uint8_t {
         const auto [s_dot_max_acc_bb, _5] =
             compute_velocity_limits(q_prime_bb, q_double_prime_bb, opt.max_velocity, opt.max_acceleration, opt.epsilon);
         // This is d/ds s_dot_max_acc(s-)
-        const double slope_left = (s_dot_max_acc_before - s_dot_max_acc_bb) / actual_step_left;
+        const auto slope_left = (s_dot_max_acc_before - s_dot_max_acc_bb) / actual_step_left;
 
         const auto after_boundary = std::min(boundary + arc_length{opt.epsilon}, segment_after.end());
         const auto actual_step_right = after_boundary - boundary;
@@ -458,7 +459,7 @@ enum class integration_event : std::uint8_t {
         const auto [s_dot_max_acc_ab, _6] =
             compute_velocity_limits(q_prime_ab, q_double_prime_ab, opt.max_velocity, opt.max_acceleration, opt.epsilon);
         // This is d/ds s_dot_max_acc(s+)
-        const double slope_right = (s_dot_max_acc_ab - s_dot_max_acc_after) / actual_step_right;
+        const auto slope_right = (s_dot_max_acc_ab - s_dot_max_acc_after) / actual_step_right;
 
         // Apply Equation 38
         // A discontinuity of s_dot_max_acc(s) is a switching point if and only if:
@@ -588,10 +589,10 @@ enum class integration_event : std::uint8_t {
 
         // Compute curve slopes on both sides (equation 37)
         // TODO(RSDK-12847): Investigate the correctness of equations 41 and 42; document any findings.
-        const double curve_slope_before =
+        const auto curve_slope_before =
             compute_velocity_limit_derivative(q_prime_before, q_double_prime_before, opt.max_velocity, opt.epsilon);
 
-        const double curve_slope_after =
+        const auto curve_slope_after =
             compute_velocity_limit_derivative(q_prime_after, q_double_prime_after, opt.max_velocity, opt.epsilon);
 
         // Compute minimum accelerations at velocity limits on both sides
@@ -607,8 +608,8 @@ enum class integration_event : std::uint8_t {
         // (s_ddot_min(s+, s_dot_max_vel(s+)) / s_dot <= d/ds s_dot_max_vel(s+))  (42)
         // NOTE: the LHS of the equations needed a s_dot denominator since without it the units
         // are m/s^2, while the RHS units are 1/s.
-        const double trajectory_slope_before = s_ddot_min_before / s_dot_max_vel_before;
-        const double trajectory_slope_after = s_ddot_min_after / s_dot_max_vel_after;
+        const auto trajectory_slope_before = s_ddot_min_before / s_dot_max_vel_before;
+        const auto trajectory_slope_after = s_ddot_min_after / s_dot_max_vel_after;
 
         const bool condition_41 = (curve_slope_before - trajectory_slope_before <= opt.epsilon);
         const bool condition_42 = (trajectory_slope_after - curve_slope_after <= opt.epsilon);
@@ -656,7 +657,7 @@ enum class integration_event : std::uint8_t {
             continue;  // Skip positions with degenerate velocity limits
         }
 
-        const double curve_slope = compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
+        const auto curve_slope = compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
 
         // Compute minimum acceleration at velocity limit (equation 40 condition)
         const auto [s_ddot_min, s_ddot_max] =
@@ -664,7 +665,7 @@ enum class integration_event : std::uint8_t {
 
         // Escape condition: trajectory slope (s_ddot_min / s_dot) is less than or equal to curve slope.
         // This means applying minimum acceleration would cause trajectory to drop below velocity limit.
-        const double trajectory_slope = s_ddot_min / s_dot_max_vel;
+        const auto trajectory_slope = s_ddot_min / s_dot_max_vel;
 
         if (trajectory_slope - curve_slope <= opt.epsilon) {
             // Found escape region - record where we first detected it
@@ -707,12 +708,12 @@ enum class integration_event : std::uint8_t {
                 continue;
             }
 
-            const double curve_slope = compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
+            const auto curve_slope = compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
 
             const auto [s_ddot_min, s_ddot_max] =
                 compute_acceleration_bounds(q_prime, q_double_prime, s_dot_max_vel, opt.max_acceleration, opt.epsilon);
 
-            const double trajectory_slope = s_ddot_min / s_dot_max_vel;
+            const auto trajectory_slope = s_ddot_min / s_dot_max_vel;
 
             if (trajectory_slope - curve_slope <= opt.epsilon) {
                 // Midpoint satisfies escape condition - narrow to [before, mid]
@@ -1144,7 +1145,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                     // Compute the slope of the velocity limit curve in phase plane (eq 37).
                     // This is d/ds s_dot_max_vel(s), telling us how the velocity limit changes along the path.
-                    const double curve_slope =
+                    const auto curve_slope =
                         compute_velocity_limit_derivative(q_prime, q_double_prime, traj.options_.max_velocity, traj.options_.epsilon);
 
                     // Compute feasible acceleration bounds at the velocity limit per paper Algorithm Step 3.
