@@ -23,8 +23,7 @@ class phase_plane_slope {
     explicit constexpr phase_plane_slope(double v) noexcept : value_{v} {}
 
     // Constructs from epsilon tolerance.
-    explicit constexpr phase_plane_slope(class epsilon epsilon) noexcept
-        : phase_plane_slope{static_cast<double>(epsilon)} {}
+    explicit constexpr phase_plane_slope(class epsilon epsilon) noexcept : phase_plane_slope{static_cast<double>(epsilon)} {}
 
     // Converts to double explicitly.
     explicit constexpr operator double() const noexcept {
