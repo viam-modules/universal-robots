@@ -1017,7 +1017,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                     // Compute candidate next point via Euler integration with maximum acceleration
                     const auto [next_s, next_s_dot] =
-                        euler_step(current_point.s, current_point.s_dot, s_ddot_max, traj.options_.delta.count(), traj.options_.epsilon);
+                        euler_step(current_point.s, current_point.s_dot, s_ddot_max, traj.options_.delta, traj.options_.epsilon);
 
                     // Forward integration should move "up and to the right" in phase plane
                     if ((next_s <= current_point.s) || (next_s_dot < current_point.s_dot)) [[unlikely]] {
@@ -1567,7 +1567,7 @@ struct trajectory::sample trajectory::cursor::sample() const {
     // q_ddot(t) = q'(s) * s_ddot(t) + q''(s) * s_dot(t)^2
     //
     // The second term captures the centripetal acceleration from following a curved path.
-    const auto q_ddot = q_prime * s_ddot + q_double_prime * (s_dot * s_dot);
+    const auto q_ddot = (q_prime * static_cast<double>(s_ddot)) + q_double_prime * (s_dot * s_dot);
 
     return {.time = time_, .configuration = q, .velocity = q_dot, .acceleration = q_ddot};
 }
