@@ -477,7 +477,7 @@ enum class integration_event : std::uint8_t {
                                                                                 opt.epsilon);
 
             // Check: s_ddot_max(s-, s_dot_max_acc(s-)) >= d/ds s_dot_max_acc(s-)
-            is_switching_point = (slope_left - s_ddot_max_at_s_minus <= opt.epsilon);
+            is_switching_point = (slope_left - (s_ddot_max_at_s_minus / s_dot_max_acc_before) <= opt.epsilon);
         }
         // Case B: Negative step (limit decreases)
         else if (s_dot_max_acc_before - s_dot_max_acc_after > opt.epsilon) {
@@ -489,7 +489,7 @@ enum class integration_event : std::uint8_t {
                                                                                opt.epsilon);
 
             // Check: s_ddot_max(s+, s_dot_max_acc(s+)) <= d/ds s_dot_max_acc(s+)
-            is_switching_point = (s_ddot_max_at_s_plus - slope_right <= opt.epsilon);
+            is_switching_point = ((s_ddot_max_at_s_plus / s_dot_max_acc_after) - slope_right <= opt.epsilon);
         } else {
             // Should s_dot_max_acc_before and s_dot_max_acc_after be within epsilon of each other, then
             // there is no perceived discontinuity. Therefore, equation 38 cannot be fulfilled and we
@@ -915,12 +915,12 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
             const auto s_offset = backward_s - pt0.s;
             const auto interpolation_factor = s_offset / s_range;
-            const auto forward_s_dot_interp = pt0.s_dot + (interpolation_factor * s_range);
+            const auto forward_s_dot_interp = pt0.s_dot + (interpolation_factor * ((pt1.s_dot - pt0.s_dot)));
 
             // Intersection occurs if backward's s_dot exceeds forward's interpolated s_dot.
             // Backward integration starts with low s_dot and increases as s decreases, eventually
             // crossing above the forward trajectory's s_dot at the same s position.
-            if (backward_s_dot > forward_s_dot_interp + traj.options_.epsilon) {
+            if (backward_s_dot - forward_s_dot_interp > traj.options_.epsilon) {
                 // Intersection found - return index of pt0 (start of bracketing interval)
                 return std::distance(forward_points.begin(), pt0_it);
             }
@@ -1178,7 +1178,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                             "TOTG algorithm error: cannot evaluate curve exit conditions with near-zero velocity limit"};
                     }
 
-                    if ((curve_slope - (s_ddot_max / s_dot_max_vel)) > traj.options_.epsilon) {
+                    if ((curve_slope - (s_ddot_max / current_point.s_dot)) > traj.options_.epsilon) {
                         // Maximum acceleration trajectory curves away from the limit curve (less steeply upward).
                         // The trajectory's slope (s_ddot_max / s_dot) is less than the limit curve's slope,
                         // meaning we're moving upward more slowly than the curve, effectively dropping below it.
@@ -1187,7 +1187,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         break;
                     }
 
-                    if (((s_ddot_min / s_dot_max_vel) - curve_slope) > traj.options_.epsilon) {
+                    if (((s_ddot_min / current_point.s_dot) - curve_slope) > traj.options_.epsilon) {
                         // Trapped on limit curve with no way to escape via normal acceleration.
                         // Search forward for a switching point where backward integration can begin.
                         // The unified search checks for both acceleration discontinuities and velocity
@@ -1373,12 +1373,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     }
 
                     if (intersection_index.has_value()) {
-                        // Found intersection - accept candidate point before splicing
-                        integration_point next_point{.time = current_point.time + traj.options_.delta,  // Placeholder, fixed during splice
-                                                     .s = candidate_s,
-                                                     .s_dot = candidate_s_dot,
-                                                     .s_ddot = s_ddot_min};
-                        backward_points.push_back(std::move(next_point));
+                        // Found intersection - the candidate point crossed above the forward trajectory in the phase plane. Note that we
+                        // do not include it in the backward trajectory.
 
                         // Splice backward trajectory into forward trajectory at intersection point.
                         // The backward trajectory has lower velocities than the over-optimistic forward,
@@ -1567,8 +1563,12 @@ struct trajectory::sample trajectory::cursor::sample() const {
 
     // q_ddot(t) = q'(s) * s_ddot(t) + q''(s) * s_dot(t)^2
     //
-    // The second term captures the centripetal acceleration from following a curved path.
-    const auto q_ddot = (q_prime * static_cast<double>(s_ddot)) + q_double_prime * (s_dot * s_dot);
+    // The second term captures the centripetal acceleration from
+    // following a curved path. We cast s_dot to double here, loosing
+    // dimensional safety, because we don't have a strong type for
+    // v^2. That's OK, it is fairly clear what is going on.
+    const auto s_dot_double = static_cast<double>(s_dot);
+    const auto q_ddot = (q_prime * static_cast<double>(s_ddot)) + q_double_prime * (s_dot_double * s_dot_double);
 
     return {.time = time_, .configuration = q, .velocity = q_dot, .acceleration = q_ddot};
 }
