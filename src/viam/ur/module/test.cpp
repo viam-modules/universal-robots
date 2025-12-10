@@ -131,28 +131,31 @@ using namespace std::chrono_literals;
 
 BOOST_AUTO_TEST_CASE(test_waypoints_filename) {
     const std::string k_path = "/home/user";
+    const std::string k_resource_name = "test_arm";
     const auto timestamp = unix_time_iso8601();
-    const auto path = k_path + "/" + timestamp + "_waypoints.csv";
+    const auto path = k_path + "/" + timestamp + "_" + k_resource_name + "_waypoints.csv";
 
-    auto x = waypoints_filename(k_path, timestamp);
+    auto x = waypoints_filename(k_path, k_resource_name, timestamp);
     BOOST_CHECK_EQUAL(x, path);
 }
 
 BOOST_AUTO_TEST_CASE(test_trajectory_filename) {
     const std::string k_path = "/home/user";
+    const std::string k_resource_name = "test_arm";
     const auto timestamp = unix_time_iso8601();
-    const auto path = k_path + "/" + timestamp + "_trajectory.csv";
+    const auto path = k_path + "/" + timestamp + "_" + k_resource_name + "_trajectory.csv";
 
-    auto x = trajectory_filename(k_path, timestamp);
+    auto x = trajectory_filename(k_path, k_resource_name, timestamp);
     BOOST_CHECK_EQUAL(x, path);
 }
 
 BOOST_AUTO_TEST_CASE(test_arm_joint_positions_filename) {
     const std::string k_path = "/home/user";
+    const std::string k_resource_name = "test_arm";
     const auto timestamp = unix_time_iso8601();
-    const auto path = k_path + "/" + timestamp + "_arm_joint_positions.csv";
+    const auto path = k_path + "/" + timestamp + "_" + k_resource_name + "_arm_joint_positions.csv";
 
-    auto x = arm_joint_positions_filename(k_path, timestamp);
+    auto x = arm_joint_positions_filename(k_path, k_resource_name, timestamp);
     BOOST_CHECK_EQUAL(x, path);
 }
 
@@ -865,8 +868,9 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
 
     BOOST_REQUIRE(!trajectory.isValid());
     const std::string k_test_path = std::filesystem::temp_directory_path();
+    const std::string k_resource_name = "test_arm";
     const std::string k_timestamp = unix_time_iso8601();
-    const std::string k_filename = failed_trajectory_filename(k_test_path, k_timestamp);
+    const std::string k_filename = failed_trajectory_filename(k_test_path, k_resource_name, k_timestamp);
 
     const std::string json_content = serialize_failed_trajectory_to_json(waypoints, max_velocity_vec, max_acceleration_vec, k_tolerance);
 

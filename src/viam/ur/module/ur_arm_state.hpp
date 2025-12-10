@@ -17,6 +17,7 @@ class URArm::state_ {
    public:
     explicit state_(private_,
                     std::string configured_model_type,
+                    std::string resource_name,
                     std::string host,
                     std::filesystem::path resource_root,
                     std::filesystem::path urcl_resource_root,
@@ -32,7 +33,7 @@ class URArm::state_ {
                     const struct ports_& ports);
     ~state_();
 
-    static std::unique_ptr<state_> create(std::string configured_model_type, const ResourceConfig& config, const struct ports_& ports);
+    static std::unique_ptr<state_> create(std::string configured_model_type, std::string resource_name, const ResourceConfig& config, const struct ports_& ports);
     void shutdown();
 
     struct tcp_state_snapshot {
@@ -50,6 +51,7 @@ class URArm::state_ {
     const std::filesystem::path& resource_root() const;
     const std::filesystem::path& urcl_resource_root() const;
 
+    const std::string& resource_name() const;
     bool telemetry_output_path_append_traceid() const;
 
     void set_max_velocity(const vector6d_t& velocity);
@@ -361,6 +363,7 @@ class URArm::state_ {
     std::atomic<bool> program_running_flag{false};
 
     const std::string configured_model_type_;
+    const std::string resource_name_;
     const std::string host_;
     const std::filesystem::path resource_root_;
     const std::filesystem::path urcl_resource_root_;

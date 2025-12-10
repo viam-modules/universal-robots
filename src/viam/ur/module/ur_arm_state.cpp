@@ -88,6 +88,7 @@ void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& 
 
 URArm::state_::state_(private_,
                       std::string configured_model_type,
+                      std::string resource_name,
                       std::string host,
                       std::filesystem::path resource_root,
                       std::filesystem::path urcl_resource_root,
@@ -102,6 +103,7 @@ URArm::state_::state_(private_,
                       bool telemetry_output_path_append_traceid,
                       const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
+      resource_name_{std::move(resource_name)},
       host_{std::move(host)},
       resource_root_{std::move(resource_root)},
       urcl_resource_root_{std::move(urcl_resource_root)},
@@ -121,6 +123,7 @@ URArm::state_::~state_() {
 }
 
 std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_model_type,
+                                                     std::string resource_name,
                                                      const ResourceConfig& config,
                                                      const struct ports_& ports) {
     auto host = find_config_attribute<std::string>(config, "host").value();
@@ -172,6 +175,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
 
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
+                                          std::move(resource_name),
                                           std::move(host),
                                           std::move(resource_root),
                                           std::move(urcl_resource_root),
@@ -329,6 +333,10 @@ const std::filesystem::path& URArm::state_::resource_root() const {
 
 const std::filesystem::path& URArm::state_::urcl_resource_root() const {
     return urcl_resource_root_;
+}
+
+const std::string& URArm::state_::resource_name() const {
+    return resource_name_;
 }
 
 bool URArm::state_::telemetry_output_path_append_traceid() const {
