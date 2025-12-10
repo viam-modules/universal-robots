@@ -922,7 +922,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
             const auto s_offset = backward_s - pt0.s;
             const auto interpolation_factor = s_offset / s_range;
-            const auto forward_s_dot_interp = pt0.s_dot + (interpolation_factor * ((pt1.s_dot - pt0.s_dot)));
+            const auto forward_s_dot_interp = pt0.s_dot + (interpolation_factor * (pt1.s_dot - pt0.s_dot));
 
             // Intersection occurs if backward's s_dot exceeds forward's interpolated s_dot.
             // Backward integration starts with low s_dot and increases as s decreases, eventually
