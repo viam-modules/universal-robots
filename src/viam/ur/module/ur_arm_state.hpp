@@ -20,7 +20,7 @@ class URArm::state_ {
                     std::string host,
                     std::filesystem::path resource_root,
                     std::filesystem::path urcl_resource_root,
-                    std::filesystem::path csv_output_path,
+                    std::filesystem::path telemetry_output_dir,
                     std::optional<double> reject_move_request_threshold_rad,
                     std::optional<double> robot_control_freq_hz,
                     double path_tolerance_delta_rads,
@@ -45,7 +45,7 @@ class URArm::state_ {
     vector6d_t read_tcp_forces_at_base() const;
     tcp_state_snapshot read_tcp_state_snapshot() const;
 
-    const std::filesystem::path& csv_output_path() const;
+    const std::filesystem::path& telemetry_output_dir() const;
     const std::filesystem::path& resource_root() const;
     const std::filesystem::path& urcl_resource_root() const;
 
@@ -361,7 +361,7 @@ class URArm::state_ {
     const std::string host_;
     const std::filesystem::path resource_root_;
     const std::filesystem::path urcl_resource_root_;
-    const std::filesystem::path csv_output_path_;
+    const std::filesystem::path telemetry_output_dir_;
     const double robot_control_freq_hz_;
 
     // If this field ever becomes mutable, the accessors for it must
