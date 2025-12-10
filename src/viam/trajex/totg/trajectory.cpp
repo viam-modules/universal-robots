@@ -636,8 +636,15 @@ enum class integration_event : std::uint8_t {
 
     auto search_cursor = cursor;  // this creates a copy of cursor but preserves the pattern above of having a `boundary_cursor`
     while (search_cursor.position() < search_limit) {
-        // Advance cursor by step size
-        const auto next_position = search_cursor.position() + opt.delta;
+        // Advance cursor by step size.
+        //
+        // NOTE: The use of `opt.delta` here is definitely cheating:
+        // it is a duration, not a distance, hence the need to convert
+        // to arc_length. However, we haven't found a better way to
+        // identify what the right space delta is. Since `opt.delta`
+        // is at least configurable, this doesn't seem to unreasonable
+        // as a starting point.
+        const auto next_position = search_cursor.position() + arc_length{opt.delta.count()};
         if (next_position > search_limit) {
             break;  // Exceeded search limit without finding escape
         }
