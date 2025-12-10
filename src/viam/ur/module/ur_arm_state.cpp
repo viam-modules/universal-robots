@@ -14,6 +14,7 @@
 #include <boost/algorithm/string/split.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
 
+#include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
 
 #include "ur_arm_config.hpp"
@@ -308,7 +309,18 @@ std::filesystem::path URArm::state_::telemetry_output_path() const {
     }
 
     // Append trace-id as a subdirectory
-    return telemetry_output_path_ / *trace_id;
+    auto result = telemetry_output_path_ / *trace_id;
+
+    // Ensure the directory exists before returning
+    std::error_code ec;
+    std::filesystem::create_directories(result, ec);
+    if (ec) {
+        VIAM_SDK_LOG(warn) << "Failed to create telemetry output directory '" << result << "': " << ec.message()
+                           << " - falling back to base path";
+        return telemetry_output_path_;
+    }
+
+    return result;
 }
 
 const std::filesystem::path& URArm::state_::resource_root() const {
