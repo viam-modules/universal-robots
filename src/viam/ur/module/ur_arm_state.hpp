@@ -33,7 +33,10 @@ class URArm::state_ {
                     const struct ports_& ports);
     ~state_();
 
-    static std::unique_ptr<state_> create(std::string configured_model_type, std::string resource_name, const ResourceConfig& config, const struct ports_& ports);
+    static std::unique_ptr<state_> create(std::string configured_model_type,
+                                          std::string resource_name,
+                                          const ResourceConfig& config,
+                                          const struct ports_& ports);
     void shutdown();
 
     struct tcp_state_snapshot {
