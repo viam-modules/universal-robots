@@ -33,6 +33,7 @@ The following attributes are available for `viam:universal-robots` arms:
 | `path_tolerance_delta_deg` | float | Optional | Tolerance for path waypoint deviations in degrees. Used during trajectory generation to smooth paths while staying within tolerance. **Default 5.73 degrees** (0.1 radians) (range: > 0, <= 12) |
 | `reject_move_request_threshold_deg` | float | Optional | Rejects move requests when the difference between the current position and first waypoint is above threshold |
 | `robot_control_freq_hz` | float | Optional | Sets the processing frequency for communication with the arm in cycles/second. If the machine running this model is using WiFi, we recommend configuring this to a lower frequency, such as 10 Hz. **Default 100 Hz** |
+| `telemetry_output_path` | string | Optional | Path for writing telemetry data files (waypoints, trajectories, joint positions, failure diagnostics). Files are written in CSV and JSON formats with ISO8601 timestamps. **Default: VIAM_MODULE_DATA environment variable** |
 
 ### Example configurations:
 

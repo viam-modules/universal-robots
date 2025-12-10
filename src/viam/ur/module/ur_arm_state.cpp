@@ -1,14 +1,20 @@
 #include "ur_arm_state.hpp"
 
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/median.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
 #include <boost/accumulators/statistics/variance.hpp>
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/split.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
+
+#include <viam/sdk/rpc/grpc_context_observer.hpp>
 
 #include "ur_arm_config.hpp"
 #include "utils.hpp"
@@ -19,6 +25,45 @@ constexpr auto k_default_robot_control_freq_hz = 100.;
 constexpr double k_default_max_trajectory_duration_secs = 600.0;
 constexpr double k_default_trajectory_sampling_freq_hz = 10.0;
 constexpr double k_default_path_tolerance_delta_rads = 0.1;
+
+// Extracts trace-id from W3C Trace Context traceparent header.
+// Format: <version>-<trace-id>-<parent-id>-<trace-flags>
+// Example: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
+// Returns std::nullopt if parsing fails or format is invalid.
+std::optional<std::string> extract_trace_id_from_traceparent(std::string_view traceparent) {
+    std::vector<std::string_view> parts;
+    boost::split(parts, traceparent, boost::is_any_of("-"));
+
+    // W3C Trace Context format requires exactly 4 components
+    if (parts.size() != 4) {
+        return std::nullopt;
+    }
+
+    // Validate version field (parts[0]) - should be "00" for current spec
+    if (parts[0] != "00") {
+        return std::nullopt;
+    }
+
+    // Validate trace-id (parts[1]) - must be 32 hex characters
+    if (parts[1].size() != 32) {
+        return std::nullopt;
+    }
+
+    // Validate parent-id (parts[2]) - must be 16 hex characters
+    if (parts[2].size() != 16) {
+        return std::nullopt;
+    }
+
+    // Validate trace-flags (parts[3]) - must be 2 hex characters
+    if (parts[3].size() != 2) {
+        return std::nullopt;
+    }
+
+    // Could add validation that characters are actually hex, but not strictly necessary
+    // since an invalid trace-id subdirectory name is harmless
+
+    return std::string(parts[1]);
+}
 
 void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::string& unix_time, std::size_t attempt) {
     of << unix_time << "," << attempt << ",";
@@ -237,8 +282,33 @@ URArm::state_::tcp_state_snapshot URArm::state_::read_tcp_state_snapshot() const
     return {ephemeral_->tcp_state, ephemeral_->tcp_forces};
 }
 
-const std::filesystem::path& URArm::state_::telemetry_output_path() const {
-    return telemetry_output_path_;
+std::filesystem::path URArm::state_::telemetry_output_path() const {
+    // If trace-id appending is not enabled, return the base path
+    if (!telemetry_output_path_append_traceid_) {
+        return telemetry_output_path_;
+    }
+
+    // Try to get the trace-id from the current gRPC context
+    const auto& observer = viam::sdk::GrpcContextObserver::current();
+    if (!observer) {
+        // No gRPC context available, return base path
+        return telemetry_output_path_;
+    }
+
+    const auto traceparent_values = observer->get_client_metadata_field_values("traceparent");
+    if (traceparent_values.empty()) {
+        // No traceparent header, return base path
+        return telemetry_output_path_;
+    }
+
+    const auto trace_id = extract_trace_id_from_traceparent(traceparent_values[0]);
+    if (!trace_id) {
+        // Failed to parse trace-id, return base path
+        return telemetry_output_path_;
+    }
+
+    // Append trace-id as a subdirectory
+    return telemetry_output_path_ / *trace_id;
 }
 
 const std::filesystem::path& URArm::state_::resource_root() const {
