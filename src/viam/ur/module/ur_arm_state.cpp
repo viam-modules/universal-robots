@@ -45,7 +45,7 @@ URArm::state_::state_(private_,
                       std::string host,
                       std::filesystem::path resource_root,
                       std::filesystem::path urcl_resource_root,
-                      std::filesystem::path telemetry_output_dir,
+                      std::filesystem::path telemetry_output_path,
                       std::optional<double> reject_move_request_threshold_rad,
                       std::optional<double> robot_control_freq_hz,
                       double path_tolerance_delta_rads,
@@ -53,12 +53,13 @@ URArm::state_::state_(private_,
                       bool use_new_trajectory_planner,
                       double max_trajectory_duration_secs,
                       double trajectory_sampling_freq_hz,
+                      bool telemetry_output_path_append_traceid,
                       const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
       host_{std::move(host)},
       resource_root_{std::move(resource_root)},
       urcl_resource_root_{std::move(urcl_resource_root)},
-      telemetry_output_dir_{std::move(telemetry_output_dir)},
+      telemetry_output_path_{std::move(telemetry_output_path)},
       robot_control_freq_hz_(robot_control_freq_hz.value_or(k_default_robot_control_freq_hz)),
       reject_move_request_threshold_rad_(std::move(reject_move_request_threshold_rad)),
       ports_{ports},
@@ -66,7 +67,8 @@ URArm::state_::state_(private_,
       path_colinearization_ratio_(path_colinearization_ratio),
       use_new_trajectory_planner_(use_new_trajectory_planner),
       max_trajectory_duration_secs_(max_trajectory_duration_secs),
-      trajectory_sampling_freq_hz_(trajectory_sampling_freq_hz) {}
+      trajectory_sampling_freq_hz_(trajectory_sampling_freq_hz),
+      telemetry_output_path_append_traceid_(telemetry_output_path_append_traceid) {}
 
 URArm::state_::~state_() {
     shutdown();
@@ -86,11 +88,11 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     auto urcl_resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_urcl_resources);
     VIAM_SDK_LOG(debug) << "URCL resources will be found in `" << urcl_resource_root << "`";
 
-    // If the config contains `telemetry_output_dir`, use that, otherwise,
-    // fall back to `VIAM_MODULE_DATA` as the output directory, which must
+    // If the config contains `telemetry_output_path`, use that, otherwise,
+    // fall back to `VIAM_MODULE_DATA` as the output path, which must
     // be set.
-    auto telemetry_output_dir = [&] {
-        auto path = find_config_attribute<std::string>(config, "telemetry_output_dir");
+    auto telemetry_output_path = [&] {
+        auto path = find_config_attribute<std::string>(config, "telemetry_output_path");
         if (path) {
             return path.value();
         }
@@ -119,12 +121,15 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     const double trajectory_sampling_freq_hz =
         find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(k_default_trajectory_sampling_freq_hz);
 
+    const bool telemetry_output_path_append_traceid =
+        find_config_attribute<bool>(config, "telemetry_output_path_append_traceid").value_or(false);
+
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
                                           std::move(host),
                                           std::move(resource_root),
                                           std::move(urcl_resource_root),
-                                          std::move(telemetry_output_dir),
+                                          std::move(telemetry_output_path),
                                           std::move(threshold),
                                           std::move(frequency),
                                           path_tolerance_rad,
@@ -132,6 +137,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           use_new_planner,
                                           max_trajectory_duration_secs,
                                           trajectory_sampling_freq_hz,
+                                          telemetry_output_path_append_traceid,
                                           ports);
 
     state->set_max_velocity(parse_and_validate_joint_limits(config, "speed_degs_per_sec"));
@@ -231,8 +237,8 @@ URArm::state_::tcp_state_snapshot URArm::state_::read_tcp_state_snapshot() const
     return {ephemeral_->tcp_state, ephemeral_->tcp_forces};
 }
 
-const std::filesystem::path& URArm::state_::telemetry_output_dir() const {
-    return telemetry_output_dir_;
+const std::filesystem::path& URArm::state_::telemetry_output_path() const {
+    return telemetry_output_path_;
 }
 
 const std::filesystem::path& URArm::state_::resource_root() const {
@@ -241,6 +247,10 @@ const std::filesystem::path& URArm::state_::resource_root() const {
 
 const std::filesystem::path& URArm::state_::urcl_resource_root() const {
     return urcl_resource_root_;
+}
+
+bool URArm::state_::telemetry_output_path_append_traceid() const {
+    return telemetry_output_path_append_traceid_;
 }
 
 void URArm::state_::set_max_velocity(const vector6d_t& velocity) {

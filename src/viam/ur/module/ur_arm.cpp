@@ -231,6 +231,12 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
             boost::str(boost::format("attribute `path_colinearization_ratio` must be >= 0 and <= 2, it is: %1%") % *colinearization_ratio));
     }
 
+    // Validate telemetry_output_path is a string if present
+    find_config_attribute<std::string>(cfg, "telemetry_output_path");
+
+    // Validate telemetry_output_path_append_traceid is a bool if present
+    find_config_attribute<bool>(cfg, "telemetry_output_path_append_traceid");
+
     return {};
 }
 
@@ -520,7 +526,7 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     waypoints.emplace_back(std::move(next_waypoint_rad));
 
     const auto unix_time = unix_time_iso8601();
-    const auto filename = waypoints_filename(current_state_->telemetry_output_dir(), unix_time);
+    const auto filename = waypoints_filename(current_state_->telemetry_output_path(), unix_time);
 
     write_waypoints_to_csv(filename, waypoints);
 
@@ -548,7 +554,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         }
 
         const auto unix_time = unix_time_iso8601();
-        const auto filename = waypoints_filename(current_state_->telemetry_output_dir(), unix_time);
+        const auto filename = waypoints_filename(current_state_->telemetry_output_path(), unix_time);
 
         write_waypoints_to_csv(filename, waypoints);
 
@@ -803,7 +809,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     const pose_sample ps{target_pose};
 
     // Write ur pose to file for debugging purposes
-    const std::string& path = current_state_->telemetry_output_dir();
+    const std::string& path = current_state_->telemetry_output_path();
     write_pose_to_file(move_to_position_pose_filename(path, unix_time), ps);
 
     // For pose-space moves, we don't log joint data since we only have the target pose
@@ -1024,7 +1030,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             const std::string json_content = serialize_failed_trajectory_to_json(
                 segment, max_velocity_vec, max_acceleration_vec, current_state_->get_path_tolerance_delta_rads());
 
-            const std::string& path_dir = current_state_->telemetry_output_dir();
+            const std::string& path_dir = current_state_->telemetry_output_path();
             const std::string filename = failed_trajectory_filename(path_dir, unix_time);
             std::ofstream json_file(filename);
             json_file << json_content;
@@ -1076,7 +1082,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " samples.size() " << samples.size() << " segments "
                         << segments.size() - 1;
 
-    const std::string& path = current_state_->telemetry_output_dir();
+    const std::string& path = current_state_->telemetry_output_path();
     write_trajectory_to_file(trajectory_filename(path, unix_time), samples);
 
     // For joint-space moves, we log the actual joint positions/velocities during execution
