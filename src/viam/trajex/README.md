@@ -50,12 +50,12 @@ Behavior`s, and will be similarly identified in the source code.
   RHS of the inequalities should say `vel`, not `acc`.
 
 - **Correction 3: Eq. 38**: Two of the expressions are missing "dots",
-  since there is no max_acc for s, only for s_dot.
+  since there is no `max_acc` for `s`, only for `s_dot`.
 
 - **Correction 4: Eq 38**: The equation is not dimensionally sound,
-  since the result of the s_dot_dot_max function is an acceleration
+  since the result of the `s_dot_dot_max` function is an acceleration
   term, but it is compared to a slope in the phase plane. Instead, we
-  interpret these equations more like VI.3, where there is an s_dot in
+  interpret these equations more like VI.3, where there is an `s_dot` in
   the denominator, which renders it dimensionally sound.
 
 - **Correction 5: Eq. 40**: As noted in the `-Revised` paper above, on
