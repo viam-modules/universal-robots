@@ -937,6 +937,11 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
         // State transition function - validates and performs state transitions based on events
         const auto transition = [](integration_state current_state, integration_event event) -> integration_state {
+            // Handle self-transition uniformly for all states
+            if (event == integration_event::k_none) [[likely]] {
+                return current_state;
+            }
+
             switch (current_state) {
                 case integration_state::k_forward_accelerating:
                     switch (event) {
@@ -981,6 +986,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
         // State machine for integration algorithm
         integration_state state = integration_state::k_forward_accelerating;
+        integration_event event = integration_event::k_none;
 
         // Create path cursor for querying geometry during integration
         path::cursor path_cursor = traj.path_.create_cursor();
@@ -993,19 +999,21 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
         // events that carry context, rather than state machine-scoped variables.
         std::vector<integration_point> backward_points;
 
+        // Observer latch for detecting state transitions. When a state change is detected,
+        // this latch gets armed with the observer pointer. Each state case checks and clears
+        // the latch on entry using std::exchange, calling the observer only on actual transitions.
+        // Initialize with the observer so the initial state entry is reported.
+        auto* observer_latch = traj.options_.observer;
+
         // Integration loop runs until we've covered the entire path.
         // Loop exits when last integration point reaches path end exactly.
         while (traj.integration_points_.back().s != traj.path_.length()) {
-            integration_event event = integration_event::k_none;
-
             switch (state) {
                 case integration_state::k_forward_accelerating: {
-                    // On first entry to this state, notify observer we're starting forward integration
-                    if (traj.integration_points_.size() == 1) {
-                        // Only initial point exists - this is the very start of trajectory generation
-                        if (traj.options_.observer) {
-                            traj.options_.observer->on_started_forward_integration({.s = arc_length{0.0}, .s_dot = arc_velocity{0.0}});
-                        }
+                    // On entry to this state (detected via observer latch), notify observer
+                    if (auto* observer = std::exchange(observer_latch, nullptr)) {
+                        const auto& current_point = traj.integration_points_.back();
+                        observer->on_started_forward_integration({.s = current_point.s, .s_dot = current_point.s_dot});
                     }
 
                     // Starting point is the last integration point (known to be feasible)
@@ -1130,6 +1138,13 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 }
 
                 case integration_state::k_forward_following_velocity_curve: {
+                    // On entry to this state (detected via observer latch), notify observer we're
+                    // starting forward integration along the velocity limit curve.
+                    if (auto* observer = std::exchange(observer_latch, nullptr)) {
+                        const auto& current_point = traj.integration_points_.back();
+                        observer->on_started_forward_integration({.s = current_point.s, .s_dot = current_point.s_dot});
+                    }
+
                     // Algorithm Step 3: Analyze velocity limit curve and decide whether to escape,
                     // follow tangentially, or search for switching point.
                     //
@@ -1271,7 +1286,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // that decelerates to meet constraints. Uses minimum (negative) acceleration to move
                     // "up and left" in phase plane: s decreases, s_dot increases.
 
-                    // On first entry to this state, validate switching point and notify observer
+                    // On first entry to this state (detected by single point in backward_points),
+                    // validate that the switching point is geometrically correct.
                     if (backward_points.size() == 1) {
                         const auto& switching_point = backward_points.back();
                         const auto& last_forward = traj.integration_points_.back();
@@ -1284,11 +1300,12 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                                 "TOTG algorithm error: switching point must be down and to the right of last forward point "
                                 "(higher s, lower s_dot)"};
                         }
+                    }
 
-                        if (traj.options_.observer) {
-                            traj.options_.observer->on_started_backward_integration(
-                                {.s = switching_point.s, .s_dot = switching_point.s_dot});
-                        }
+                    // On entry to this state (detected via observer latch), notify observer
+                    if (auto* observer = std::exchange(observer_latch, nullptr)) {
+                        const auto& switching_point = backward_points.back();
+                        observer->on_started_backward_integration({.s = switching_point.s, .s_dot = switching_point.s_dot});
                     }
 
                     // Starting point is the last backward integration point. On first entry to this state,
@@ -1445,8 +1462,11 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 }
             }
 
-            if (event != integration_event::k_none) {
-                state = transition(state, event);
+            // Processes the current event, applying it to the state machine. Computes state transition,
+            // arms observer latch if state changes, updates state, and resets event to k_none.
+            if (const auto new_state = transition(state, std::exchange(event, integration_event::k_none)); new_state != state) {
+                state = new_state;
+                observer_latch = traj.options_.observer;
             }
         }
 
