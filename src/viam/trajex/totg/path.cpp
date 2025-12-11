@@ -94,6 +94,7 @@ arc_length path::segment::view::length() const noexcept {
 }
 
 xt::xarray<double> path::segment::view::configuration(arc_length s) const {
+    // `Correction 1`: Need to offset before Kunz & Stilman equation 7.
     const arc_length local_s = s - start_;
 
     if (local_s < arc_length{0.0} || local_s > length()) [[unlikely]] {
@@ -108,9 +109,7 @@ xt::xarray<double> path::segment::view::configuration(arc_length s) const {
                 // Linear interpolation: config = start + local_s * unit_direction
                 return seg_data.start + (static_cast<double>(local_s) * seg_data.unit_direction);
             } else if constexpr (std::is_same_v<T, segment::circular>) {
-                // Circular arc configuration (Equation 7 from Kunz & Stilman):
-                // config = center + radius * (x * cos(angle) + y * sin(angle))
-                // angle = arc_length / radius (radians)
+                // Circular arc configuration - Kunz & Stilman equation 7:
                 const double angle = static_cast<double>(local_s) / seg_data.radius;
                 return seg_data.center + (seg_data.radius * (seg_data.x * std::cos(angle) + seg_data.y * std::sin(angle)));
             }
@@ -119,6 +118,7 @@ xt::xarray<double> path::segment::view::configuration(arc_length s) const {
 }
 
 xt::xarray<double> path::segment::view::tangent(arc_length s) const {
+    // `Correction 1`: Need to offset before Kunz & Stilman equation 8.
     const arc_length local_s = s - start_;
 
     if (local_s < arc_length{0.0} || local_s > length()) [[unlikely]] {
@@ -133,8 +133,7 @@ xt::xarray<double> path::segment::view::tangent(arc_length s) const {
                 // Linear segment: constant unit tangent
                 return seg_data.unit_direction;
             } else if constexpr (std::is_same_v<T, segment::circular>) {
-                // Circular arc unit tangent (Equation 8 from Kunz & Stilman):
-                // tangent = -x * sin(angle) + y * cos(angle)
+                // Circular arc unit tangent - Kunz & Stilman equation 8:
                 const double angle = static_cast<double>(local_s) / seg_data.radius;
                 return (-seg_data.x * std::sin(angle)) + (seg_data.y * std::cos(angle));
             }
@@ -143,6 +142,7 @@ xt::xarray<double> path::segment::view::tangent(arc_length s) const {
 }
 
 xt::xarray<double> path::segment::view::curvature(arc_length s) const {
+    // `Correction 1`: Need to offset before Kunz & Stilman equation 9.
     const arc_length local_s = s - start_;
 
     if (local_s < arc_length{0.0} || local_s > length()) [[unlikely]] {
@@ -157,8 +157,7 @@ xt::xarray<double> path::segment::view::curvature(arc_length s) const {
                 // Linear segment: zero curvature vector
                 return xt::zeros<double>({seg_data.start.shape(0)});
             } else if constexpr (std::is_same_v<T, segment::circular>) {
-                // Circular arc curvature vector (Equation 9 from Kunz & Stilman):
-                // curvature = -(1/radius) * (x * cos(angle) + y * sin(angle))
+                // Circular arc curvature vector - Kunz & Stilman equation 9:
                 const double angle = static_cast<double>(local_s) / seg_data.radius;
                 return (-(1.0 / seg_data.radius)) * (seg_data.x * std::cos(angle) + seg_data.y * std::sin(angle));
             }
@@ -266,7 +265,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const auto incoming_unit = incoming / incoming_norm;
         const auto outgoing_unit = outgoing / outgoing_norm;
 
-        // Compute angle between incoming and outgoing directions
+        // Compute angle between incoming and outgoing directions; Kunz & Stilman equation 2.
         const double dot = xt::sum(incoming_unit * outgoing_unit)();
         const double dot_clamped = std::clamp(dot, -1.0, 1.0);
         const double angle = std::acos(dot_clamped);
@@ -276,7 +275,10 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // for minimal benefit, and angles near pi/2 cause tan(half_angle) to blow up.
         // These checks prevent numerical issues and avoid creating blends that would
         // violate the deviation constraint.
-        // TODO(RSDK-12761): Explicit epsilon, scaling, etc.
+        //
+        // TODO(RSDK-12761): Explicit epsilon, scaling, etc. Also, it
+        // isn't clear that it is OK to omit the blend, because we end
+        // up with a discontinuity.
         constexpr double epsilon = 1e-6;
         if (half_angle < epsilon || half_angle > (std::numbers::pi / 2.0 - epsilon)) {
             return std::nullopt;
@@ -286,13 +288,10 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // The trim distance is constrained by three limits: can't trim more than half
         // of either segment, and can't exceed what's allowed by the deviation tolerance.
         const double max_trim_from_deviation = opts.max_blend_deviation() * std::sin(half_angle) / (1.0 - std::cos(half_angle));
-
         const double trim_distance = std::min({incoming_norm / 2.0, outgoing_norm / 2.0, max_trim_from_deviation});
-
-        // Radius from trim distance (eq. 4)
         const double radius = trim_distance / std::tan(half_angle);
 
-        // Construct the circular arc geometry following Kunz & Stilman equation 5.
+        // Construct the circular arc geometry following Kunz & Stilman equation 5-6.
         // The center lies along the angle bisector, and the x/y basis vectors define
         // the plane of the circular arc with x pointing toward the blend start point.
         const auto bisector = outgoing_unit - incoming_unit;
