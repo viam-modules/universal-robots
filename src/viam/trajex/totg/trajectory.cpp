@@ -130,7 +130,6 @@ enum class integration_event : std::uint8_t {
 
 // Computes the feasible range of path acceleration (s_ddot) given current path velocity (s_dot)
 // and joint acceleration limits. The path acceleration must satisfy joint constraints in all DOF.
-// Using chain rule q''(t) = q'(s)*s_ddot + q''(s)*s_dot^2, we solve for s_ddot bounds.
 // See Kunz & Stilman equations 22-23.
 [[gnu::pure]] auto compute_acceleration_bounds(const xt::xarray<double>& q_prime,
                                                const xt::xarray<double>& q_double_prime,
@@ -145,7 +144,7 @@ enum class integration_event : std::uint8_t {
     arc_acceleration s_ddot_min{-std::numeric_limits<double>::infinity()};
     arc_acceleration s_ddot_max{std::numeric_limits<double>::infinity()};
 
-    // Each joint independently constrains the feasible range of path acceleration (equations 22-23).
+    // Each joint independently constrains the feasible range of path acceleration.
     // From the chain rule q''(t) = q'(s)*s_ddot + q''(s)*s_dot^2, we can solve for s_ddot given
     // the constraint -q_ddot_max <= q''(t) <= q_ddot_max. The centripetal term q''(s)*s_dot^2 is
     // already "using up" part of the acceleration budget at the current path velocity, which tightens
@@ -206,8 +205,6 @@ enum class integration_event : std::uint8_t {
         }
     }
 
-    // Compute derivative for the limiting joint (equation 37)
-    // d/ds s_dot_max_vel = -(q_dot_max_i * q''_i) / (q'_i * |q'_i|)
     const double numerator = -q_dot_max(limiting_joint) * q_double_prime(limiting_joint);
     const double denominator = q_prime(limiting_joint) * std::abs(q_prime(limiting_joint));
 
@@ -222,10 +219,9 @@ enum class integration_event : std::uint8_t {
     // fact that it's the "limiting joint" may be an artifact rather than a real constraint.
     //
     // This needs investigation:
-    // 1. Check reference implementation (src/third_party/trajectories/) for how it handles this case
-    // 2. Consider whether limiting joint selection should filter out near-singular joints
-    // 3. Determine correct behavior: throw, return infinity with sign, or use different epsilon threshold
-    // 4. May need tighter check: |denominator| < epsilon^2 to match the q' filter tolerance
+    // 1. Consider whether limiting joint selection should filter out near-singular joints
+    // 2. Determine correct behavior: throw, return infinity with sign, or use different epsilon threshold
+    // 3. May need tighter check: |denominator| < epsilon^2 to match the q' filter tolerance
     //
     // For now, throw to make this case visible during testing rather than silently returning an
     // incorrect value that could cause incorrect curve-following behavior.
@@ -262,7 +258,11 @@ enum class integration_event : std::uint8_t {
     return result{s_new, s_dot_new};
 }
 
-// Validates if a segment boundary is a valid acceleration switching point per equation 38.
+// Validates if a segment boundary is a valid acceleration switching point per
+// Kunz & Stilman equations 38 and 39, along with `Correction 3` to get the dots
+// in the right places, and `Correction 4` (dividing by s_dot) to obtain dimensional
+// consistency.
+//
 // A boundary is valid if the phase trajectory slopes on both sides bracket the acceleration
 // limit curve slope change across the discontinuity, and the switching velocity is within
 // the velocity limit.
@@ -271,11 +271,6 @@ enum class integration_event : std::uint8_t {
 // When forward integration hits the acceleration limit curve, we must find a point where
 // backward integration can begin. This occurs at curvature discontinuities (segment boundaries)
 // where the acceleration limit curve has a discontinuous change.
-//
-// TODO(RSDK-12647): This implementation is incomplete:
-// We don't incorporate source/sink filtering to validate that limit curve intersections are
-// trajectory sinks (valid stopping points) rather than sources (numerical artifacts from
-// overshooting with finite dt). See paper Section VIII-A and reference Trajectory.cpp:152-191.
 //
 // At each segment boundary, we:
 // 1. Sample geometry from both adjacent segments at the exact boundary arc length
@@ -295,7 +290,7 @@ enum class integration_event : std::uint8_t {
         auto current_segment = *cursor;
 
         // Examine the current segment for switching points where the path velocity limit curve, s_dot_max_acc(s),
-        // is continuous, but not differentiable, per VII-A Case 2 in the paper (Equation 39). These
+        // is continuous, but not differentiable, per VII-A Case 2 in the paper (Kunz & Stilman equation 39). These
         // switching points occur on the interior of circular segments for joint extrema where f'_i(s) = 0.
         if (current_segment.is<path::segment::circular>()) {
             std::optional<arc_length> first_extremum;
@@ -406,7 +401,7 @@ enum class integration_event : std::uint8_t {
 
         // Examine the transition from a circular segment into a straight line segment where
         // the path velocity limit curve is discontinuous if and only if the path curvature
-        // f''(s), is discontinuous, per VII-A Case 1 in the paper (Equation 40).
+        // VII-A Case 1 : f''(s), is discontinuous, per Kunz & Stilman equation 40, with `Correction 5`.
 
         const auto boundary = current_segment.end();
 
@@ -461,7 +456,7 @@ enum class integration_event : std::uint8_t {
         // This is d/ds s_dot_max_acc(s+)
         const auto slope_right = (s_dot_max_acc_ab - s_dot_max_acc_after) / actual_step_right;
 
-        // Apply Equation 38
+        // Apply Kunz & Stilman equation 38
         // A discontinuity of s_dot_max_acc(s) is a switching point if and only if:
         // Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) ∧ s_ddot_max(s-, s_dot_max_acc(s-)) >= d/ds s_dot_max_acc(s-)]
         // Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) ∧ s_ddot_max(s+, s_dot_max_acc(s+)) <= d/ds s_dot_max_acc(s+)]
@@ -526,7 +521,9 @@ enum class integration_event : std::uint8_t {
 }
 
 // Searches for a velocity switching point where escape from velocity curve becomes possible.
-// Implements both continuous (equation 40) and discontinuous (equations 41-42) cases from Section VII-B.
+// Implements both continuous (equation 40) and discontinuous (Kunz & Stilman equations 41-42,
+// with `Correction 6`) cases from Section VII-B.
+//
 // Returns the switching point on velocity curve. If no escape point found, returns end of path.
 // Takes path::cursor by value (cheap copy) to seed forward search from current position.
 [[gnu::pure]] trajectory::phase_point find_velocity_switching_point(path::cursor cursor, const trajectory::options& opt) {
@@ -535,7 +532,7 @@ enum class integration_event : std::uint8_t {
     std::optional<trajectory::phase_point> discontinuous_switching_point;
     std::optional<trajectory::phase_point> continuous_switching_point;
 
-    // Phase 1: Check for discontinuous switching points at segment boundaries (equations 41-42).
+    // Phase 1: Check for discontinuous switching points at segment boundaries (Kunz & Stilman equations 41-42).
     // Section VII-B case 2: f''_i(s) being discontinuous is a necessary condition for
     // s_ddot_min(s, s_dot_max_vel(s)) being discontinuous.
     // We need to check ALL boundaries to find the earliest one, not return immediately.
@@ -587,8 +584,7 @@ enum class integration_event : std::uint8_t {
             break;  // This is the first (most constraining) discontinuous point
         }
 
-        // Compute curve slopes on both sides (equation 37)
-        // TODO(RSDK-12847): Investigate the correctness of equations 41 and 42; document any findings.
+        // TODO(RSDK-12847): Investigate the correctness of Kunz & Stilman equations 41 and 42; document any findings.
         const auto curve_slope_before =
             compute_velocity_limit_derivative(q_prime_before, q_double_prime_before, opt.max_velocity, opt.epsilon);
 
@@ -602,10 +598,10 @@ enum class integration_event : std::uint8_t {
         const auto [s_ddot_min_after, s_ddot_max_after] =
             compute_acceleration_bounds(q_prime_after, q_double_prime_after, s_dot_max_vel_after, opt.max_acceleration, opt.epsilon);
 
-        // Check equations 41 and 42:
-        // (s_ddot_min(s-, s_dot_max_vel(s-)) / s_dot >= d/ds s_dot_max_vel(s-))  (41)
+        // Check Kunz & Stilman equations 41 and 42:
+        // (s_ddot_min(s-, s_dot_max_vel(s-)) / s_dot >= d/ds s_dot_max_vel(s-))
         // AND
-        // (s_ddot_min(s+, s_dot_max_vel(s+)) / s_dot <= d/ds s_dot_max_vel(s+))  (42)
+        // (s_ddot_min(s+, s_dot_max_vel(s+)) / s_dot <= d/ds s_dot_max_vel(s+))
         // NOTE: the LHS of the equations needed a s_dot denominator since without it the units
         // are m/s^2, while the RHS units are 1/s.
         const auto trajectory_slope_before = s_ddot_min_before / s_dot_max_vel_before;
@@ -626,7 +622,7 @@ enum class integration_event : std::uint8_t {
         }
     }
 
-    // Phase 2: Coarse forward search for continuous escape condition (equation 40).
+    // Phase 2: Coarse forward search for continuous escape condition (Kunz & Stilman equation 40).
     // Walk along the velocity limit curve until we find a point where s_ddot_min/s_dot <= curve_slope,
     // indicating the trajectory can drop below the curve and resume normal acceleration.
     // If we already found a discontinuous switching point, we can bound the search to stop there.
@@ -738,11 +734,13 @@ enum class integration_event : std::uint8_t {
         const auto [s_dot_max_acc, s_dot_max_vel] =
             compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        // Reject switching points where s_dot_max_vel > s_dot_max_acc.
-        // Per the reference implementation (Trajectory.cpp:129-133), if the velocity switching point has
-        // s_dot > s_dot_max_acc, backward integration will immediately hit the acceleration limit curve,
-        // causing the algorithm to fail. We should continue searching forward until finding a switching
-        // point where s_dot_max_vel <= s_dot_max_acc + epsilon.
+        // `Divergent Behavior 2`: Reject switching points where s_dot_max_vel > s_dot_max_acc.
+        //
+        // If the velocity switching point has s_dot > s_dot_max_acc,
+        // backward integration will immediately hit the acceleration
+        // limit curve, causing the algorithm to fail. We should
+        // continue searching forward until finding a switching point
+        // where s_dot_max_vel <= s_dot_max_acc + epsilon.
         if (s_dot_max_vel - s_dot_max_acc <= opt.epsilon) {
             continuous_switching_point = trajectory::phase_point{.s = after, .s_dot = s_dot_max_vel};
         }
@@ -766,7 +764,7 @@ enum class integration_event : std::uint8_t {
 }
 
 // Unified switching point search that calls both acceleration and velocity searches.
-// Per the reference implementation and paper, we must search for BOTH types of switching points
+// Per the paper, we must search for BOTH types of switching points
 // and return whichever comes first along the path. The curves can cross, so even if we hit the
 // acceleration curve, the velocity switching point might come before the acceleration switching point.
 //
@@ -775,12 +773,14 @@ enum class integration_event : std::uint8_t {
 // during backward integration.
 //
 // TODO(RSDK-12760): Performance optimization - bound velocity search by acceleration result.
-// The reference implementation (Trajectory.cpp:129-133) demonstrates that after finding the
-// acceleration switching point, we can bound the velocity search to stop at that position.
-// This can reduce velocity search cost by 10-100x when there's an acceleration switching point nearby.
-// For now, we call both independently, but we should pass acceleration result to velocity search.
 //
-// Takes path::cursor by value (cheap copy) to seed forward search from current position.
+// TODO(RSDK-12819): It is not entirely clear that separately
+// searching for (filtered) acceleration switching points and then
+// separately searching for (filtered) velocity switching points and
+// taking the earlier one is entirely equivalent to searching once on
+// the combined limit curve, since there could be curve crossings,
+// which represent discontinuities on the limit curve. How should we
+// handle those?
 [[gnu::pure]] trajectory::phase_point find_switching_point(path::cursor cursor, const trajectory::options& opt) {
     // Always search for both types of switching points
     auto accel_sp = find_acceleration_switching_point(cursor, opt);
@@ -1165,8 +1165,10 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     const auto [s_dot_max_acc, s_dot_max_vel] = compute_velocity_limits(
                         q_prime, q_double_prime, traj.options_.max_velocity, traj.options_.max_acceleration, traj.options_.epsilon);
 
-                    // Compute the slope of the velocity limit curve in phase plane (eq 37).
-                    // This is d/ds s_dot_max_vel(s), telling us how the velocity limit changes along the path.
+                    // Compute the slope of the velocity limit curve in phase plane. This is d/ds s_dot_max_vel(s),
+                    // telling us how the velocity limit changes along the path.
+                    //
+                    // Selecting the velocity limit derivative here is `Correction 2`.
                     const auto curve_slope =
                         compute_velocity_limit_derivative(q_prime, q_double_prime, traj.options_.max_velocity, traj.options_.epsilon);
 
@@ -1175,16 +1177,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
                         q_prime, q_double_prime, s_dot_max_vel, traj.options_.max_acceleration, traj.options_.epsilon);
 
-                    // TODO(RSDK-12768): Investigate whether we want a richer exception type for algorithm failures.
-                    // A custom exception hierarchy could distinguish between different failure modes
-                    // (infeasible path, numerical issues, constraint violations) for better error handling.
-
-                    // Check exit conditions by comparing acceleration bounds with curve slope.
-                    // The ratio s_ddot / s_dot gives the slope of a trajectory in phase plane:
-                    // ds_dot/ds = (ds_dot/dt)/(ds/dt) = s_ddot/s_dot (from chain rule in phase plane).
-                    // We compare this with the limit curve's slope to determine if we can escape or must search.
-                    //
-                    // Three cases (from paper Section VI, step 3):
+                    // Three cases (from Kunz & Stilman Section VI.3):
                     // 1. s_ddot_max / s_dot < curve_slope - epsilon: Can escape (trajectory curves below limit)
                     // 2. s_ddot_min / s_dot > curve_slope + epsilon: Must search (trapped on curve)
                     // 3. Otherwise: Follow curve tangentially
@@ -1196,6 +1189,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // velocity limit itself becomes very small (e.g., tight curvature with low velocity limits), the division
                     // could become numerically unstable. For now, throw if s_dot_max_vel is near zero as a canary.
                     if (s_dot_max_vel < traj.options_.epsilon) [[unlikely]] {
+                        // TODO(RSDK-12768): Investigate whether we want a richer exception type for algorithm failures.
+                        // A custom exception hierarchy could distinguish between different failure modes
+                        // (infeasible path, numerical issues, constraint violations) for better error handling.
                         throw std::runtime_error{
                             "TOTG algorithm error: cannot evaluate curve exit conditions with near-zero velocity limit"};
                     }
@@ -1442,8 +1438,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         break;
                     }
 
-                    // Candidate exceeding limit curve is an algorithm error - trajectory is infeasible.
-                    // Note: Being AT the limit (within epsilon) is allowed - only EXCEEDING it is rejected.
+                    // `Divergent Behavior 3`: Candidate exceeding limit curve is an algorithm error - trajectory is
+                    // infeasible. Being at the limit (within epsilon) is allowed - only exceeding it is rejected.
                     if ((candidate_s_dot - s_dot_limit) > traj.options_.epsilon) [[unlikely]] {
                         throw std::runtime_error{
                             "TOTG algorithm error: backward integration exceeded limit curve - trajectory is infeasible"};
@@ -1582,19 +1578,20 @@ struct trajectory::sample trajectory::cursor::sample() const {
     const auto q_double_prime = path_cursor_.curvature();
 
     // Convert from path space (s, s_dot, s_ddot) to joint space (q, q_dot, q_ddot) using the chain rule.
+    //
     // This gives us the actual joint velocities and accelerations that result from
     // moving along the path at the computed path velocity and acceleration.
-    //
-    // q_dot(t) = q'(s) * s_dot(t)
+
+    // Kunz & Stilman equation 11
     const auto q_dot = q_prime * static_cast<double>(s_dot);
 
-    // q_ddot(t) = q'(s) * s_ddot(t) + q''(s) * s_dot(t)^2
-    //
     // The second term captures the centripetal acceleration from
     // following a curved path. We cast s_dot to double here, loosing
     // dimensional safety, because we don't have a strong type for
     // v^2. That's OK, it is fairly clear what is going on.
     const auto s_dot_double = static_cast<double>(s_dot);
+
+    // Kunz & Stilman equation 12
     const auto q_ddot = (q_prime * static_cast<double>(s_ddot)) + q_double_prime * (s_dot_double * s_dot_double);
 
     return {.time = time_, .configuration = q, .velocity = q_dot, .acceleration = q_ddot};
