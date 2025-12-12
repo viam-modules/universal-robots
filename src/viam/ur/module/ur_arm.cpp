@@ -232,7 +232,17 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     }
 
     // Validate telemetry_output_path is a string if present
-    find_config_attribute<std::string>(cfg, "telemetry_output_path");
+    const auto telemetry_output_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
+
+    // Also validate that `csv_output_path`, if present, is a string.
+    //
+    // TODO(RSDK-12929): When `csv_output_path` is removed, actively reject it (don't ignore it).
+    const auto csv_output_path = find_config_attribute<std::string>(cfg, "csv_output_path");
+    if (csv_output_path) {
+        if (telemetry_output_path) {
+            throw std::invalid_argument("Only one of `csv_output_path` (deprecated) or `telemetry_output_path` may be specified");
+        }
+    }
 
     // Validate telemetry_output_path_append_traceid is a bool if present
     find_config_attribute<bool>(cfg, "telemetry_output_path_append_traceid");
@@ -390,8 +400,7 @@ std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>
         std::ranges::for_each(waypoint, [&](double item) {
             std::stringstream ss;
             ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
-            // NOLINTBEGIN(clang-analyzer-core.CallAndMessage): json_waypoint is initialized as a nullValue and then
-            // lazily initialzed
+            // NOLINTBEGIN(clang-analyzer-core.CallAndMessage): json_waypoint is initialized as a nullValue and then lazily initialized
             json_waypoint.append(ss.str());
             // NOLINTEND(clang-analyzer-core.CallAndMessage)
         });

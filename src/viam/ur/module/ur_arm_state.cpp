@@ -146,6 +146,14 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
             return path.value();
         }
 
+        // TODO(RSDK-12929): When `csv_output_path` is removed, delete this.
+        path = find_config_attribute<std::string>(config, "csv_output_path");
+        if (path) {
+            VIAM_SDK_LOG(warn) << "The `csv_output_path` configuration parameter is deprecated and will be removed; please use "
+                                  "`telemetry_output_path` instead";
+            return path.value();
+        }
+
         auto* const viam_module_data = std::getenv("VIAM_MODULE_DATA");  // NOLINT: Yes, we know getenv isn't thread safe
         if (!viam_module_data) {
             throw std::runtime_error("required environment variable `VIAM_MODULE_DATA` unset");
