@@ -231,6 +231,22 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
             boost::str(boost::format("attribute `path_colinearization_ratio` must be >= 0 and <= 2, it is: %1%") % *colinearization_ratio));
     }
 
+    // Validate telemetry_output_path is a string if present
+    const auto telemetry_output_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
+
+    // Also validate that `csv_output_path`, if present, is a string.
+    //
+    // TODO(RSDK-12929): When `csv_output_path` is removed, actively reject it (don't ignore it).
+    const auto csv_output_path = find_config_attribute<std::string>(cfg, "csv_output_path");
+    if (csv_output_path) {
+        if (telemetry_output_path) {
+            throw std::invalid_argument("Only one of `csv_output_path` (deprecated) or `telemetry_output_path` may be specified");
+        }
+    }
+
+    // Validate telemetry_output_path_append_traceid is a bool if present
+    find_config_attribute<bool>(cfg, "telemetry_output_path_append_traceid");
+
     return {};
 }
 
@@ -302,34 +318,34 @@ void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::
     of.close();
 }
 
-std::string waypoints_filename(const std::string& path, const std::string& unix_time) {
-    constexpr char kWaypointsCsvNameTemplate[] = "/%1%_waypoints.csv";
+std::string waypoints_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
+    constexpr char kWaypointsCsvNameTemplate[] = "/%1%_%2%_waypoints.csv";
     auto fmt = boost::format(path + kWaypointsCsvNameTemplate);
-    return (fmt % unix_time).str();
+    return (fmt % unix_time % resource_name).str();
 }
 
-std::string trajectory_filename(const std::string& path, const std::string& unix_time) {
-    constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_trajectory.csv";
+std::string trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
+    constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_%2%_trajectory.csv";
     auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
-    return (fmt % unix_time).str();
+    return (fmt % unix_time % resource_name).str();
 }
 
-std::string move_to_position_pose_filename(const std::string& path, const std::string& unix_time) {
-    constexpr char kPoseCsvNameTemplate[] = "/%1%_move_to_position_pose.csv";
+std::string move_to_position_pose_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
+    constexpr char kPoseCsvNameTemplate[] = "/%1%_%2%_move_to_position_pose.csv";
     auto fmt = boost::format(path + kPoseCsvNameTemplate);
-    return (fmt % unix_time).str();
+    return (fmt % unix_time % resource_name).str();
 }
 
-std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time) {
-    constexpr char kArmJointPositionsCsvNameTemplate[] = "/%1%_arm_joint_positions.csv";
+std::string arm_joint_positions_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
+    constexpr char kArmJointPositionsCsvNameTemplate[] = "/%1%_%2%_arm_joint_positions.csv";
     auto fmt = boost::format(path + kArmJointPositionsCsvNameTemplate);
-    return (fmt % unix_time).str();
+    return (fmt % unix_time % resource_name).str();
 }
 
-std::string failed_trajectory_filename(const std::string& path, const std::string& unix_time) {
-    constexpr char kFailedTrajectoryJsonNameTemplate[] = "/%1%_failed_trajectory.json";
+std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
+    constexpr char kFailedTrajectoryJsonNameTemplate[] = "/%1%_%2%_failed_trajectory.json";
     auto fmt = boost::format(path + kFailedTrajectoryJsonNameTemplate);
-    return (fmt % unix_time).str();
+    return (fmt % unix_time % resource_name).str();
 }
 
 std::string unix_time_iso8601() {
@@ -384,8 +400,7 @@ std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>
         std::ranges::for_each(waypoint, [&](double item) {
             std::stringstream ss;
             ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
-            // NOLINTBEGIN(clang-analyzer-core.CallAndMessage): json_waypoint is initialized as a nullValue and then
-            // lazily initialzed
+            // NOLINTBEGIN(clang-analyzer-core.CallAndMessage): json_waypoint is initialized as a nullValue and then lazily initialized
             json_waypoint.append(ss.str());
             // NOLINTEND(clang-analyzer-core.CallAndMessage)
         });
@@ -474,7 +489,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     });
 
     VIAM_SDK_LOG(debug) << "URArm starting up";
-    current_state_ = state_::create(configured_model_type, cfg, ports_);
+    current_state_ = state_::create(configured_model_type, name(), cfg, ports_);
 
     VIAM_SDK_LOG(info) << "URArm startup complete";
     failure_handler.deactivate();
@@ -520,7 +535,7 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     waypoints.emplace_back(std::move(next_waypoint_rad));
 
     const auto unix_time = unix_time_iso8601();
-    const auto filename = waypoints_filename(current_state_->csv_output_path(), unix_time);
+    const auto filename = waypoints_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
 
     write_waypoints_to_csv(filename, waypoints);
 
@@ -548,7 +563,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         }
 
         const auto unix_time = unix_time_iso8601();
-        const auto filename = waypoints_filename(current_state_->csv_output_path(), unix_time);
+        const auto filename = waypoints_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
 
         write_waypoints_to_csv(filename, waypoints);
 
@@ -803,8 +818,8 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     const pose_sample ps{target_pose};
 
     // Write ur pose to file for debugging purposes
-    const std::string& path = current_state_->csv_output_path();
-    write_pose_to_file(move_to_position_pose_filename(path, unix_time), ps);
+    const std::string& path = current_state_->telemetry_output_path();
+    write_pose_to_file(move_to_position_pose_filename(path, current_state_->resource_name(), unix_time), ps);
 
     // For pose-space moves, we don't log joint data since we only have the target pose
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock)]() mutable {
@@ -1024,8 +1039,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             const std::string json_content = serialize_failed_trajectory_to_json(
                 segment, max_velocity_vec, max_acceleration_vec, current_state_->get_path_tolerance_delta_rads());
 
-            const std::string& path_dir = current_state_->csv_output_path();
-            const std::string filename = failed_trajectory_filename(path_dir, unix_time);
+            const std::string& path_dir = current_state_->telemetry_output_path();
+            const std::string filename = failed_trajectory_filename(path_dir, current_state_->resource_name(), unix_time);
             std::ofstream json_file(filename);
             json_file << json_content;
             json_file.close();
@@ -1076,11 +1091,11 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " samples.size() " << samples.size() << " segments "
                         << segments.size() - 1;
 
-    const std::string& path = current_state_->csv_output_path();
-    write_trajectory_to_file(trajectory_filename(path, unix_time), samples);
+    const std::string& path = current_state_->telemetry_output_path();
+    write_trajectory_to_file(trajectory_filename(path, current_state_->resource_name(), unix_time), samples);
 
     // For joint-space moves, we log the actual joint positions/velocities during execution
-    std::ofstream ajp_of(arm_joint_positions_filename(path, unix_time));
+    std::ofstream ajp_of(arm_joint_positions_filename(path, current_state_->resource_name(), unix_time));
     ajp_of << "time_ms,read_attempt,"
               "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
               "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";

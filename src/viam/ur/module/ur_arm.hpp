@@ -59,11 +59,11 @@ void sampling_func(std::vector<trajectory_sample_point>& samples, double duratio
 void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples);
 void write_pose_to_file(const std::string& filepath, const pose_sample& sample);
 void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::VectorXd>& waypoints);
-std::string waypoints_filename(const std::string& path, const std::string& unix_time);
-std::string trajectory_filename(const std::string& path, const std::string& unix_time);
-std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
-std::string move_to_position_pose_filename(const std::string& path, const std::string& unix_time);
-std::string failed_trajectory_filename(const std::string& path, const std::string& unix_time);
+std::string waypoints_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
+std::string trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
+std::string arm_joint_positions_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
+std::string move_to_position_pose_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
+std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string unix_time_iso8601();
 std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>& waypoints,
                                                 const Eigen::VectorXd& max_velocity_vec,
