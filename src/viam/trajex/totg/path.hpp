@@ -254,6 +254,8 @@ class path {
         ///
         /// Sets maximum linear deviation for coalescing.
         ///
+        /// This is `Divergent Behavior 3`: the Kunz & Stilman paper does not include this pass.
+        ///
         /// @param deviation Maximum deviation for waypoint coalescing
         /// @return Reference to this for method chaining
         /// @note Intended primarily for testing
