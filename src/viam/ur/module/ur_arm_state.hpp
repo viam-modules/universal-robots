@@ -17,15 +17,26 @@ class URArm::state_ {
    public:
     explicit state_(private_,
                     std::string configured_model_type,
+                    std::string resource_name,
                     std::string host,
                     std::filesystem::path resource_root,
-                    std::filesystem::path csv_output_path,
+                    std::filesystem::path urcl_resource_root,
+                    std::filesystem::path telemetry_output_path,
                     std::optional<double> reject_move_request_threshold_rad,
                     std::optional<double> robot_control_freq_hz,
+                    double path_tolerance_delta_rads,
+                    std::optional<double> path_colinearization_ratio,
+                    bool use_new_trajectory_planner,
+                    double max_trajectory_duration_secs,
+                    double trajectory_sampling_freq_hz,
+                    bool telemetry_output_path_append_traceid,
                     const struct ports_& ports);
     ~state_();
 
-    static std::unique_ptr<state_> create(std::string configured_model_type, const ResourceConfig& config, const struct ports_& ports);
+    static std::unique_ptr<state_> create(std::string configured_model_type,
+                                          std::string resource_name,
+                                          const ResourceConfig& config,
+                                          const struct ports_& ports);
     void shutdown();
 
     struct tcp_state_snapshot {
@@ -39,14 +50,28 @@ class URArm::state_ {
     vector6d_t read_tcp_forces_at_base() const;
     tcp_state_snapshot read_tcp_state_snapshot() const;
 
-    const std::filesystem::path& csv_output_path() const;
+    std::filesystem::path telemetry_output_path() const;
     const std::filesystem::path& resource_root() const;
+    const std::filesystem::path& urcl_resource_root() const;
 
-    void set_speed(double speed);
-    double get_speed() const;
+    const std::string& resource_name() const;
+    bool telemetry_output_path_append_traceid() const;
 
-    void set_acceleration(double acceleration);
-    double get_acceleration() const;
+    void set_max_velocity(const vector6d_t& velocity);
+    void set_max_velocity(double velocity);
+    vector6d_t get_max_velocity() const;
+
+    void set_max_acceleration(const vector6d_t& acceleration);
+    void set_max_acceleration(double acceleration);
+    vector6d_t get_max_acceleration() const;
+
+    double get_path_tolerance_delta_rads() const;
+    const std::optional<double>& get_path_colinearization_ratio() const;
+
+    bool use_new_trajectory_planner() const;
+
+    double get_max_trajectory_duration_secs() const;
+    double get_trajectory_sampling_freq_hz() const;
 
     void clear_pstop() const;
 
@@ -341,9 +366,11 @@ class URArm::state_ {
     std::atomic<bool> program_running_flag{false};
 
     const std::string configured_model_type_;
+    const std::string resource_name_;
     const std::string host_;
     const std::filesystem::path resource_root_;
-    const std::filesystem::path csv_output_path_;
+    const std::filesystem::path urcl_resource_root_;
+    const std::filesystem::path telemetry_output_path_;
     const double robot_control_freq_hz_;
 
     // If this field ever becomes mutable, the accessors for it must
@@ -352,8 +379,16 @@ class URArm::state_ {
 
     const struct ports_ ports_;
 
-    std::atomic<double> speed_{0};
-    std::atomic<double> acceleration_{0};
+    vector6d_t max_velocity_;
+    vector6d_t max_acceleration_;
+
+    const double path_tolerance_delta_rads_;
+    const std::optional<double> path_colinearization_ratio_;
+
+    const bool use_new_trajectory_planner_;
+    const double max_trajectory_duration_secs_;
+    const double trajectory_sampling_freq_hz_;
+    const bool telemetry_output_path_append_traceid_;
 
     mutable std::mutex mutex_;
     state_variant_ current_state_{state_disconnected_{}};

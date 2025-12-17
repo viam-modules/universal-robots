@@ -4,11 +4,22 @@
 #include "utils.hpp"
 
 #include <boost/numeric/conversion/cast.hpp>
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnull-dereference"
 #include <boost/test/included/unit_test.hpp>
+#pragma GCC diagnostic pop
 
 #include <Eigen/Dense>
 
-BOOST_AUTO_TEST_SUITE(test_1)
+#include <json/json.h>
+
+#include <third_party/trajectories/Path.h>
+#include <third_party/trajectories/Trajectory.h>
+
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 
 namespace {
 
@@ -17,6 +28,8 @@ Eigen::VectorXd makeVector(std::vector<double> data) {
 }
 
 }  // namespace
+
+BOOST_AUTO_TEST_SUITE(test_1)
 
 BOOST_AUTO_TEST_CASE(test_sampling_func) {
     // test a random set of samples
@@ -118,28 +131,31 @@ using namespace std::chrono_literals;
 
 BOOST_AUTO_TEST_CASE(test_waypoints_filename) {
     const std::string k_path = "/home/user";
+    const std::string k_resource_name = "test_arm";
     const auto timestamp = unix_time_iso8601();
-    const auto path = k_path + "/" + timestamp + "_waypoints.csv";
+    const auto path = k_path + "/" + timestamp + "_" + k_resource_name + "_waypoints.csv";
 
-    auto x = waypoints_filename(k_path, timestamp);
+    auto x = waypoints_filename(k_path, k_resource_name, timestamp);
     BOOST_CHECK_EQUAL(x, path);
 }
 
 BOOST_AUTO_TEST_CASE(test_trajectory_filename) {
     const std::string k_path = "/home/user";
+    const std::string k_resource_name = "test_arm";
     const auto timestamp = unix_time_iso8601();
-    const auto path = k_path + "/" + timestamp + "_trajectory.csv";
+    const auto path = k_path + "/" + timestamp + "_" + k_resource_name + "_trajectory.csv";
 
-    auto x = trajectory_filename(k_path, timestamp);
+    auto x = trajectory_filename(k_path, k_resource_name, timestamp);
     BOOST_CHECK_EQUAL(x, path);
 }
 
 BOOST_AUTO_TEST_CASE(test_arm_joint_positions_filename) {
     const std::string k_path = "/home/user";
+    const std::string k_resource_name = "test_arm";
     const auto timestamp = unix_time_iso8601();
-    const auto path = k_path + "/" + timestamp + "_arm_joint_positions.csv";
+    const auto path = k_path + "/" + timestamp + "_" + k_resource_name + "_arm_joint_positions.csv";
 
-    auto x = arm_joint_positions_filename(k_path, timestamp);
+    auto x = arm_joint_positions_filename(k_path, k_resource_name, timestamp);
     BOOST_CHECK_EQUAL(x, path);
 }
 
@@ -553,6 +569,344 @@ BOOST_AUTO_TEST_CASE(test_convert_tcp_force_to_tool_frame_position_independence)
     for (std::size_t i = 0; i < 6; ++i) {
         BOOST_CHECK_CLOSE(result_origin[i], result_displaced[i], 1e-8);
     }
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE(colinearization_tests)
+
+// Test within_colinearization_tolerance function
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_point_on_segment) {
+    // Point exactly on the line segment should be within tolerance
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const double tolerance = 0.02;  // diameter (radius = 0.01)
+
+    BOOST_CHECK(within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_point_within_tube) {
+    // Point slightly off the line but within tolerance
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({1.0, 0.005, 0.0, 0, 0, 0});  // 0.005 away
+    const double tolerance = 0.02;                                         // diameter (radius = 0.01)
+
+    BOOST_CHECK(within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_point_outside_tube) {
+    // Point outside tolerance tube
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({1.0, 0.02, 0.0, 0, 0, 0});  // 0.02 away, exceeds tolerance
+    const double tolerance = 0.02;                                        // diameter (radius = 0.01)
+
+    BOOST_CHECK(!within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_point_before_segment) {
+    // Point projects before segment start (monotonic advancement check)
+    const Eigen::VectorXd line_start = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({0.5, 0.0, 0.0, 0, 0, 0});
+    const double tolerance = 0.02;  // diameter (radius = 0.01)
+
+    BOOST_CHECK(!within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_point_after_segment) {
+    // Point projects after segment end (monotonic advancement check)
+    const Eigen::VectorXd line_start = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({2.5, 0.0, 0.0, 0, 0, 0});
+    const double tolerance = 0.02;  // diameter (radius = 0.01)
+
+    BOOST_CHECK(!within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_degenerate_segment) {
+    // Degenerate segment (start == end) should return false
+    const Eigen::VectorXd line_start = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const double tolerance = 0.02;  // diameter (radius = 0.01)
+
+    BOOST_CHECK(!within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_zero_tolerance) {
+    // Zero tolerance - only exact points on line pass
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point_on = makeVector({1.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point_off = makeVector({1.0, 0.0001, 0.0, 0, 0, 0});
+    const double tolerance = 0.0;
+
+    BOOST_CHECK(within_colinearization_tolerance(point_on, line_start, line_end, tolerance));
+    BOOST_CHECK(!within_colinearization_tolerance(point_off, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_multi_dof) {
+    // Test with multi-DOF configuration where deviation is in different joint
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({0.0, 0.0, 2.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({0.0, 0.005, 1.0, 0, 0, 0});  // Deviation in joint 1
+    const double tolerance = 0.02;                                         // diameter (radius = 0.01)
+
+    BOOST_CHECK(within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_at_boundary) {
+    // Point exactly at tolerance boundary
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point = makeVector({1.0, 0.01, 0.0, 0, 0, 0});  // Exactly at tolerance
+    const double tolerance = 0.02;                                        // diameter (radius = 0.01)
+
+    BOOST_CHECK(within_colinearization_tolerance(point, line_start, line_end, tolerance));
+}
+
+// Test apply_colinearization function
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_empty_list) {
+    // Empty list should remain unchanged
+    std::list<Eigen::VectorXd> waypoints;
+    apply_colinearization(waypoints, 0.01);
+    BOOST_CHECK_EQUAL(waypoints.size(), 0);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_single_waypoint) {
+    // Single waypoint should remain unchanged
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 0, 0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);
+    BOOST_CHECK_EQUAL(waypoints.size(), 1);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_two_waypoints) {
+    // Two waypoints should remain unchanged (nothing to coalesce)
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0, 0, 0, 0, 0}), makeVector({1.0, 0, 0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_three_points_middle_coalesced) {
+    // Three points where middle is within tolerance - should be coalesced
+    // With diameter=0.02 (radius=0.01), point at 0.005 perpendicular distance is within
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({1.0, 0.005, 0.0, 0, 0, 0}),  // Slightly off line, within tolerance
+                                            makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);  // diameter (radius = 0.01)
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+    BOOST_CHECK(waypoints.front().isApprox(makeVector({0.0, 0.0, 0.0, 0, 0, 0})));
+    BOOST_CHECK(waypoints.back().isApprox(makeVector({2.0, 0.0, 0.0, 0, 0, 0})));
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_three_points_middle_not_coalesced) {
+    // Three points where middle is outside tolerance - should not be coalesced
+    // With diameter=0.02 (radius=0.01), point at 0.02 perpendicular distance is outside
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({1.0, 0.02, 0.0, 0, 0, 0}),  // Outside tolerance
+                                            makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_multiple_points_all_coalesced) {
+    // Multiple points all within tolerance - all middle points coalesced
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({1.0, 0.005, 0.0, 0, 0, 0}),
+                                            makeVector({2.0, 0.005, 0.0, 0, 0, 0}),
+                                            makeVector({3.0, 0.005, 0.0, 0, 0, 0}),
+                                            makeVector({4.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);  // diameter (radius = 0.01)
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+    BOOST_CHECK(waypoints.front().isApprox(makeVector({0.0, 0.0, 0.0, 0, 0, 0})));
+    BOOST_CHECK(waypoints.back().isApprox(makeVector({4.0, 0.0, 0.0, 0, 0, 0})));
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_mixed_coalescing) {
+    // Some points coalesced, some not
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({1.0, 0.005, 0.0, 0, 0, 0}),  // Coalesced
+                                            makeVector({2.0, 0.02, 0.0, 0, 0, 0}),   // Not coalesced (outside tolerance)
+                                            makeVector({3.0, 0.005, 0.0, 0, 0, 0}),  // Coalesced
+                                            makeVector({4.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);  // diameter (radius = 0.01)
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_degenerate_segment) {
+    // Degenerate segment: returning to the same position creates anchor == next
+    // This represents intentional "go there and come back" movement
+    std::list<Eigen::VectorXd> waypoints = {
+        makeVector({0.0, 0.0, 0.0, 0, 0, 0}),   // A
+        makeVector({1.0, 0.0, 0.0, 0, 0, 0}),   // B
+        makeVector({0.0, 0.0, 0.0, 0, 0, 0}),   // C - back to A (degenerate: A→C has zero length conceptually)
+        makeVector({2.0, 0.0, 0.0, 0, 0, 0})};  // D
+    apply_colinearization(waypoints, 0.02);
+    // B cannot be coalesced because it projects outside A→C segment (C goes backward)
+    BOOST_CHECK_EQUAL(waypoints.size(), 4);  // All preserved due to degenerate segment
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_drift_prevented) {
+    // Test that revalidation prevents drift
+    // This is a regression test to ensure all skipped waypoints are revalidated
+    // when extending the cylinder. The implementation should prevent drift.
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),    // A
+                                            makeVector({1.0, 0.009, 0.0, 0, 0, 0}),  // B - within 0.01 of A→C
+                                            makeVector({2.0, 0.0, 0.0, 0, 0, 0}),    // C
+                                            makeVector({3.0, 0.0, 0.0, 0, 0, 0})};   // D
+    apply_colinearization(waypoints, 0.02);                                          // diameter (radius = 0.01)
+    // With the revalidation logic, B remains within tolerance even when extending to D
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);  // B and C coalesced
+    BOOST_CHECK(waypoints.front().isApprox(makeVector({0.0, 0.0, 0.0, 0, 0, 0})));
+    BOOST_CHECK(waypoints.back().isApprox(makeVector({3.0, 0.0, 0.0, 0, 0, 0})));
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_zero_tolerance) {
+    // Zero tolerance - no coalescing should occur
+    std::list<Eigen::VectorXd> waypoints = {
+        makeVector({0.0, 0.0, 0.0, 0, 0, 0}), makeVector({1.0, 0.0, 0.0, 0, 0, 0}), makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.0);
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_negative_tolerance) {
+    // Negative tolerance - no coalescing should occur
+    std::list<Eigen::VectorXd> waypoints = {
+        makeVector({0.0, 0.0, 0.0, 0, 0, 0}), makeVector({1.0, 0.0, 0.0, 0, 0, 0}), makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, -0.02);
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(test_within_colinearization_tolerance_diameter_interpretation) {
+    // Verify diameter interpretation: tolerance=0.02 means radius=0.01
+    // Point at perpendicular distance 0.01 should be exactly on boundary (within tolerance)
+    const Eigen::VectorXd line_start = makeVector({0.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd line_end = makeVector({2.0, 0.0, 0.0, 0, 0, 0});
+    const Eigen::VectorXd point_inside = makeVector({1.0, 0.009, 0.0, 0, 0, 0});   // < radius
+    const Eigen::VectorXd point_outside = makeVector({1.0, 0.011, 0.0, 0, 0, 0});  // > radius
+
+    BOOST_CHECK(within_colinearization_tolerance(point_inside, line_start, line_end, 0.02));
+    BOOST_CHECK(!within_colinearization_tolerance(point_outside, line_start, line_end, 0.02));
+}
+
+BOOST_AUTO_TEST_CASE(test_colinearization_reversal_inside_bounds) {
+    // Test reversals that stay within tolerance cylinder
+    // Waypoint reverses direction but remains within diameter bounds
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({1.0, 0.005, 0.0, 0, 0, 0}),  // Forward, within tolerance
+                                            makeVector({0.5, 0.005, 0.0, 0, 0, 0}),  // Reversal, but within tolerance of 0→2 line
+                                            makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);  // diameter=0.02 (radius=0.01)
+    // The reversal at waypoint 2 projects outside [0,1] range on the 0→3 segment
+    // so it should be preserved by the monotonic advancement check
+    BOOST_CHECK_EQUAL(waypoints.size(), 4);
+}
+
+BOOST_AUTO_TEST_CASE(test_colinearization_reversal_outside_bounds) {
+    // Test reversals that extend outside tolerance
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({1.0, 0.02, 0.0, 0, 0, 0}),  // Outside tolerance
+                                            makeVector({0.5, 0.0, 0.0, 0, 0, 0}),   // Reversal
+                                            makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);
+    // All waypoints preserved - middle point outside tolerance, reversal detected
+    BOOST_CHECK_EQUAL(waypoints.size(), 4);
+}
+
+BOOST_AUTO_TEST_CASE(test_apply_colinearization_preserves_monotonicity) {
+    // Verify monotonic advancement check (projection bounds checking)
+    // Points that project before start or after end of segment must be preserved
+    std::list<Eigen::VectorXd> waypoints = {makeVector({0.0, 0.0, 0.0, 0, 0, 0}),
+                                            makeVector({0.5, 0.005, 0.0, 0, 0, 0}),  // Projects in [0,1] range
+                                            makeVector({1.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);
+    // Middle point should be coalesced (within tolerance and projects in range)
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+
+    // Now test point that projects outside range
+    waypoints = {makeVector({1.0, 0.0, 0.0, 0, 0, 0}),
+                 makeVector({0.5, 0.005, 0.0, 0, 0, 0}),  // Projects before start (backward movement)
+                 makeVector({2.0, 0.0, 0.0, 0, 0, 0})};
+    apply_colinearization(waypoints, 0.02);
+    // Middle point preserved due to projection < 0 (monotonicity violation)
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE(failed_trajectory_tests)
+
+BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
+    namespace json = Json;
+    const std::list<Eigen::VectorXd> waypoints = {
+        makeVector({-4.69128, -2.91963, -2.26317, 0.489444, 1.56107, 1.59114}),
+        makeVector({-4.69117, -2.91964, -2.26309, 0.489552, 1.56106, 1.59116}),
+        makeVector({-4.70382, -2.91788, -2.26929, 0.482124, 1.56016, 1.5789}),
+        makeVector({-4.70963, -2.91635, -2.27192, 0.475846, 1.5592, 1.5733}),
+        makeVector({-4.72595, -2.91965, -2.28115, 0.48728, 1.55764, 1.55699}),
+        makeVector({-4.73848, -2.91581, -2.28515, 0.472227, 1.55893, 1.54486}),
+        makeVector({-4.82513, -2.90866, -2.31311, 0.440307, 1.56338, 1.45867}),
+        makeVector({-4.88347, -2.90632, -2.32819, 0.425642, 1.55701, 1.40029}),
+        makeVector({-4.92608, -2.90817, -2.33889, 0.432907, 1.55442, 1.35774}),
+        makeVector({-5.01661, -2.91314, -2.35718, 0.457662, 1.55075, 1.26755}),
+        makeVector({-5.064311111111, -2.914144444, -2.3635444442, 1.2345678901234567, 1.54814444446, 1.22006}),
+    };
+
+    const double k_tolerance = 5e-18;
+    const Path path(waypoints, k_tolerance);
+
+    // Create trajectory with normal velocity/acceleration constraints
+    const auto max_velocity_vec = Eigen::VectorXd::Constant(6, 1.0);
+    const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, 1.0);
+
+    const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+
+    BOOST_REQUIRE(!trajectory.isValid());
+    const std::string k_test_path = std::filesystem::temp_directory_path();
+    const std::string k_resource_name = "test_arm";
+    const std::string k_timestamp = unix_time_iso8601();
+    const std::string k_filename = failed_trajectory_filename(k_test_path, k_resource_name, k_timestamp);
+
+    const std::string json_content = serialize_failed_trajectory_to_json(waypoints, max_velocity_vec, max_acceleration_vec, k_tolerance);
+
+    // Write the failed trajectory JSON
+    std::ofstream json_file(k_filename);
+    json_file << json_content;
+    json_file.close();
+
+    std::ifstream readback(k_filename);
+    BOOST_CHECK(readback.good());
+
+    std::stringstream buffer;
+    buffer << readback.rdbuf();
+    readback.close();
+
+    json::Value readback_parsed;
+    const json::CharReaderBuilder reader;
+    BOOST_REQUIRE(json::parseFromStream(reader, buffer, &readback_parsed, NULL));
+
+    BOOST_REQUIRE(readback_parsed.isMember("timestamp"));
+    BOOST_REQUIRE(readback_parsed.isMember("path_tolerance_delta_rads"));
+    BOOST_REQUIRE(readback_parsed.isMember("max_velocity_vec_rads_per_sec"));
+    BOOST_REQUIRE(readback_parsed.isMember("max_acceleration_vec_rads_per_sec2"));
+    BOOST_REQUIRE(readback_parsed.isMember("waypoints_rads"));
+
+    BOOST_REQUIRE(readback_parsed["timestamp"].isString());
+    BOOST_REQUIRE(readback_parsed["path_tolerance_delta_rads"].isDouble());
+    BOOST_REQUIRE(readback_parsed["max_velocity_vec_rads_per_sec"].isArray());
+    BOOST_REQUIRE(readback_parsed["max_acceleration_vec_rads_per_sec2"].isArray());
+    BOOST_REQUIRE(readback_parsed["waypoints_rads"].isArray());
+
+    BOOST_REQUIRE_EQUAL(readback_parsed["max_velocity_vec_rads_per_sec"].size(), 6);
+    BOOST_REQUIRE_EQUAL(readback_parsed["max_acceleration_vec_rads_per_sec2"].size(), 6);
+    BOOST_REQUIRE_EQUAL(readback_parsed["waypoints_rads"].size(), waypoints.size());
+
+    BOOST_REQUIRE_CLOSE(readback_parsed["path_tolerance_delta_rads"].asDouble(), k_tolerance, 1e-10);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

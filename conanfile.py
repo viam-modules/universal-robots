@@ -34,12 +34,13 @@ class universal_robots(ConanFile):
     def requirements(self):
         # NOTE: If you update the `viam-cpp-sdk` dependency here, it
         # should also be updated in `bin/setup.sh`.
-        self.requires("viam-cpp-sdk/[>=0.20.0]")
+        self.requires("viam-cpp-sdk/[>=0.25.0]")
         self.requires("eigen/[>=3.4 <5.0]")
         self.requires("boost/[>=1.74.0]")
+        self.requires("jsoncpp/[>=1.9.5]")
 
     def validate(self):
-        check_min_cppstd(self, 17)
+        check_min_cppstd(self, 20)
 
     def generate(self):
         tc = CMakeToolchain(self)

@@ -119,7 +119,7 @@ func parseAndAddPoses(df *dataframe.DataFrame, model referenceframe.Model) (*dat
 			}
 		}
 		// perform FK to get the pose
-		pose, err := model.Transform(referenceframe.FloatsToInputs(rowInputs.Values))
+		pose, err := model.Transform(rowInputs.Values)
 		if err != nil {
 			return nil, err
 		}

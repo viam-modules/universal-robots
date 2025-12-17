@@ -2,3 +2,6 @@
 
 /// The relative path that will take us from CMAKE_INSTALL_BINDIR to the root of the configured CMAKE_INSTALL_PREFIX.
 constexpr char k_relpath_bindir_to_datadir[] = "@VIAM_UR_RELPATH_BINDIR_TO_DATADIR@";
+
+/// The relative path from CMAKE_INSTALL_BINDIR to the URCL resources directory.
+constexpr char k_relpath_bindir_to_urcl_resources[] = "@VIAM_UR_RELPATH_BINDIR_TO_URCL_RESOURCES@";

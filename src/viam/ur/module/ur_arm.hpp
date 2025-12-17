@@ -7,6 +7,7 @@
 
 #include <ur_client_library/types.h>
 
+#include <viam/sdk/common/mesh.hpp>
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/registry/registry.hpp>
@@ -20,6 +21,10 @@ struct trajectory_sample_point {
     vector6d_t v;
     float timestep;
 };
+
+// NOLINTNEXTLINE(misc-redundant-expression): We rely on the p and v arrays having the same size
+static_assert(std::tuple_size_v<decltype(trajectory_sample_point::p)> == std::tuple_size_v<decltype(trajectory_sample_point::v)>,
+              "trajectory_sample_point position and velocity must have the same size");
 
 struct pose_sample {
     vector6d_t p;
@@ -52,12 +57,18 @@ void sampling_func(std::vector<trajectory_sample_point>& samples, double duratio
 }
 
 void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples);
+void write_pose_to_file(const std::string& filepath, const pose_sample& sample);
 void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::VectorXd>& waypoints);
-std::string waypoints_filename(const std::string& path, const std::string& unix_time);
-std::string trajectory_filename(const std::string& path, const std::string& unix_time);
-std::string arm_joint_positions_filename(const std::string& path, const std::string& unix_time);
-std::string move_to_position_trajectory_filename(const std::string& path, const std::string& unix_time);
+std::string waypoints_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
+std::string trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
+std::string arm_joint_positions_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
+std::string move_to_position_pose_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
+std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string unix_time_iso8601();
+std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>& waypoints,
+                                                const Eigen::VectorXd& max_velocity_vec,
+                                                const Eigen::VectorXd& max_acceleration_vec,
+                                                double path_tolerance_delta_rads);
 
 class URArm final : public Arm, public Reconfigurable {
    public:
@@ -112,6 +123,11 @@ class URArm final : public Arm, public Reconfigurable {
     /// and the object's type indicating the file format.
     KinematicsData get_kinematics(const ProtoStruct& extra) override;
 
+    /// @brief Get the 3D models associated with the arm.
+    /// @param extra Any additional arguments to the method.
+    /// @return A map of model names to 3D models.
+    std::map<std::string, mesh> get_3d_models(const ProtoStruct& extra) override;
+
     /// @brief Stops the Arm.
     /// @param extra Extra arguments to pass to the resource's `stop` method.
     void stop(const ProtoStruct& extra) override;
@@ -163,4 +179,6 @@ class URArm final : public Arm, public Reconfigurable {
 
     std::shared_mutex config_mutex_;
     std::unique_ptr<state_> current_state_;
+
+    std::unordered_map<std::string, std::vector<std::string>> arm_name_to_model_parts_;
 };

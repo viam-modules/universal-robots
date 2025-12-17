@@ -25,7 +25,7 @@ VIAM_UNIVERSAL_ROBOTS_VERSION=$(conan inspect -vquiet ${REPO_ROOT} --format=json
 
 # Build the viam-universal-robots module
 #
-# We want a static binary, so we turn off shared. Elect for C++17
+# We want a static binary, so we turn off shared. Elect for C++20
 # compilation, since it seems some of the dependencies we pick mandate
 # it anyway.
 
@@ -41,7 +41,7 @@ conan install ${REPO_ROOT} --update \
       --build=missing \
       -s:a build_type=Release \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
-      -s:a compiler.cppstd=17 \
+      -s:a compiler.cppstd=20 \
       -o:a "*:shared=False" \
       -o:a "&:shared=False"
 
@@ -51,7 +51,7 @@ conan create ${REPO_ROOT} \
       -s:a build_type=Release \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a "&:build_type=RelWithDebInfo" \
-      -s:a compiler.cppstd=17 \
+      -s:a compiler.cppstd=20 \
       -o:a "*:shared=False" \
       -o:a "&:shared=False"
 
@@ -63,6 +63,6 @@ conan install \
       --deployer-folder=. --deployer-package "&" \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a "&:build_type=RelWithDebInfo" \
-      -s:a compiler.cppstd=17 \
+      -s:a compiler.cppstd=20 \
       -o:a "*:shared=False" \
       -o:a "&:shared=False"

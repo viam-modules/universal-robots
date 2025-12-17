@@ -1,14 +1,21 @@
 #include "ur_arm_state.hpp"
 
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/median.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
 #include <boost/accumulators/statistics/variance.hpp>
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/split.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
+
+#include <viam/sdk/log/logging.hpp>
+#include <viam/sdk/rpc/grpc_context_observer.hpp>
 
 #include "ur_arm_config.hpp"
 #include "utils.hpp"
@@ -16,6 +23,48 @@
 namespace {
 
 constexpr auto k_default_robot_control_freq_hz = 100.;
+constexpr double k_default_max_trajectory_duration_secs = 600.0;
+constexpr double k_default_trajectory_sampling_freq_hz = 10.0;
+constexpr double k_default_path_tolerance_delta_rads = 0.1;
+
+// Extracts trace-id from W3C Trace Context traceparent header.
+// Format: <version>-<trace-id>-<parent-id>-<trace-flags>
+// Example: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
+// Returns std::nullopt if parsing fails or format is invalid.
+std::optional<std::string> extract_trace_id_from_traceparent(std::string_view traceparent) {
+    std::vector<std::string_view> parts;
+    boost::split(parts, traceparent, boost::is_any_of("-"));
+
+    // W3C Trace Context format requires exactly 4 components
+    if (parts.size() != 4) {
+        return std::nullopt;
+    }
+
+    // Validate version field (parts[0]) - should be "00" for current spec
+    if (parts[0] != "00") {
+        return std::nullopt;
+    }
+
+    // Validate trace-id (parts[1]) - must be 32 hex characters
+    if (parts[1].size() != 32) {
+        return std::nullopt;
+    }
+
+    // Validate parent-id (parts[2]) - must be 16 hex characters
+    if (parts[2].size() != 16) {
+        return std::nullopt;
+    }
+
+    // Validate trace-flags (parts[3]) - must be 2 hex characters
+    if (parts[3].size() != 2) {
+        return std::nullopt;
+    }
+
+    // Could add validation that characters are actually hex, but not strictly necessary
+    // since an invalid trace-id subdirectory name is harmless
+
+    return std::string(parts[1]);
+}
 
 void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::string& unix_time, std::size_t attempt) {
     of << unix_time << "," << attempt << ",";
@@ -39,25 +88,42 @@ void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& 
 
 URArm::state_::state_(private_,
                       std::string configured_model_type,
+                      std::string resource_name,
                       std::string host,
                       std::filesystem::path resource_root,
-                      std::filesystem::path csv_output_path,
+                      std::filesystem::path urcl_resource_root,
+                      std::filesystem::path telemetry_output_path,
                       std::optional<double> reject_move_request_threshold_rad,
                       std::optional<double> robot_control_freq_hz,
+                      double path_tolerance_delta_rads,
+                      std::optional<double> path_colinearization_ratio,
+                      bool use_new_trajectory_planner,
+                      double max_trajectory_duration_secs,
+                      double trajectory_sampling_freq_hz,
+                      bool telemetry_output_path_append_traceid,
                       const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
+      resource_name_{std::move(resource_name)},
       host_{std::move(host)},
       resource_root_{std::move(resource_root)},
-      csv_output_path_{std::move(csv_output_path)},
+      urcl_resource_root_{std::move(urcl_resource_root)},
+      telemetry_output_path_{std::move(telemetry_output_path)},
       robot_control_freq_hz_(robot_control_freq_hz.value_or(k_default_robot_control_freq_hz)),
       reject_move_request_threshold_rad_(std::move(reject_move_request_threshold_rad)),
-      ports_{ports} {}
+      ports_{ports},
+      path_tolerance_delta_rads_(path_tolerance_delta_rads),
+      path_colinearization_ratio_(path_colinearization_ratio),
+      use_new_trajectory_planner_(use_new_trajectory_planner),
+      max_trajectory_duration_secs_(max_trajectory_duration_secs),
+      trajectory_sampling_freq_hz_(trajectory_sampling_freq_hz),
+      telemetry_output_path_append_traceid_(telemetry_output_path_append_traceid) {}
 
 URArm::state_::~state_() {
     shutdown();
 }
 
 std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_model_type,
+                                                     std::string resource_name,
                                                      const ResourceConfig& config,
                                                      const struct ports_& ports) {
     auto host = find_config_attribute<std::string>(config, "host").value();
@@ -68,12 +134,23 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     VIAM_SDK_LOG(debug) << "Universal robots module executable found in `" << module_executable_path << "; resources will be found in `"
                         << resource_root << "`";
 
-    // If the config contains `csv_output_path`, use that, otherwise,
+    auto urcl_resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_urcl_resources);
+    VIAM_SDK_LOG(debug) << "URCL resources will be found in `" << urcl_resource_root << "`";
+
+    // If the config contains `telemetry_output_path`, use that, otherwise,
     // fall back to `VIAM_MODULE_DATA` as the output path, which must
     // be set.
-    auto csv_output_path = [&] {
-        auto path = find_config_attribute<std::string>(config, "csv_output_path");
+    auto telemetry_output_path = [&] {
+        auto path = find_config_attribute<std::string>(config, "telemetry_output_path");
         if (path) {
+            return path.value();
+        }
+
+        // TODO(RSDK-12929): When `csv_output_path` is removed, delete this.
+        path = find_config_attribute<std::string>(config, "csv_output_path");
+        if (path) {
+            VIAM_SDK_LOG(warn) << "The `csv_output_path` configuration parameter is deprecated and will be removed; please use "
+                                  "`telemetry_output_path` instead";
             return path.value();
         }
 
@@ -88,18 +165,41 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
 
     auto threshold = find_config_attribute<double>(config, "reject_move_request_threshold_deg");
     auto frequency = find_config_attribute<double>(config, "robot_control_freq_hz");
+    auto use_new_planner = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
+
+    auto path_tolerance_deg = find_config_attribute<double>(config, "path_tolerance_delta_deg");
+    auto path_tolerance_rad = path_tolerance_deg ? degrees_to_radians(*path_tolerance_deg) : k_default_path_tolerance_delta_rads;
+
+    auto colinearization_ratio = find_config_attribute<double>(config, "path_colinearization_ratio");
+
+    const double max_trajectory_duration_secs =
+        find_config_attribute<double>(config, "max_trajectory_duration_secs").value_or(k_default_max_trajectory_duration_secs);
+
+    const double trajectory_sampling_freq_hz =
+        find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(k_default_trajectory_sampling_freq_hz);
+
+    const bool telemetry_output_path_append_traceid =
+        find_config_attribute<bool>(config, "telemetry_output_path_append_traceid").value_or(false);
 
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
+                                          std::move(resource_name),
                                           std::move(host),
                                           std::move(resource_root),
-                                          std::move(csv_output_path),
+                                          std::move(urcl_resource_root),
+                                          std::move(telemetry_output_path),
                                           std::move(threshold),
                                           std::move(frequency),
+                                          path_tolerance_rad,
+                                          colinearization_ratio,
+                                          use_new_planner,
+                                          max_trajectory_duration_secs,
+                                          trajectory_sampling_freq_hz,
+                                          telemetry_output_path_append_traceid,
                                           ports);
 
-    state->set_speed(degrees_to_radians(find_config_attribute<double>(config, "speed_degs_per_sec").value()));
-    state->set_acceleration(degrees_to_radians(find_config_attribute<double>(config, "acceleration_degs_per_sec2").value()));
+    state->set_max_velocity(parse_and_validate_joint_limits(config, "speed_degs_per_sec"));
+    state->set_max_acceleration(parse_and_validate_joint_limits(config, "acceleration_degs_per_sec2"));
 
     // Hold the mutex while we start the worker thread. It will not be
     // able to advance, but will be ready to take over work as soon as
@@ -195,28 +295,112 @@ URArm::state_::tcp_state_snapshot URArm::state_::read_tcp_state_snapshot() const
     return {ephemeral_->tcp_state, ephemeral_->tcp_forces};
 }
 
-const std::filesystem::path& URArm::state_::csv_output_path() const {
-    return csv_output_path_;
+std::filesystem::path URArm::state_::telemetry_output_path() const {
+    // If trace-id appending is not enabled, return the base path
+    if (!telemetry_output_path_append_traceid_) {
+        return telemetry_output_path_;
+    }
+
+    // Try to get the trace-id from the current gRPC context
+    const auto& observer = viam::sdk::GrpcContextObserver::current();
+    if (!observer) {
+        // No gRPC context available, return base path
+        return telemetry_output_path_;
+    }
+
+    const auto traceparent_values = observer->get_client_metadata_field_values("traceparent");
+    if (traceparent_values.empty()) {
+        // No traceparent header, return base path
+        return telemetry_output_path_;
+    }
+
+    const auto trace_id = extract_trace_id_from_traceparent(traceparent_values[0]);
+    if (!trace_id) {
+        // Failed to parse trace-id, return base path
+        return telemetry_output_path_;
+    }
+
+    // Append trace-id as a subdirectory
+    auto result = telemetry_output_path_ / *trace_id;
+
+    // Ensure the directory exists before returning
+    std::error_code ec;
+    std::filesystem::create_directories(result, ec);
+    if (ec) {
+        VIAM_SDK_LOG(warn) << "Failed to create telemetry output directory '" << result << "': " << ec.message()
+                           << " - falling back to base path";
+        return telemetry_output_path_;
+    }
+
+    return result;
 }
 
 const std::filesystem::path& URArm::state_::resource_root() const {
     return resource_root_;
 }
 
-void URArm::state_::set_speed(double speed) {
-    speed_.store(speed);
+const std::filesystem::path& URArm::state_::urcl_resource_root() const {
+    return urcl_resource_root_;
 }
 
-double URArm::state_::get_speed() const {
-    return speed_.load();
+const std::string& URArm::state_::resource_name() const {
+    return resource_name_;
 }
 
-void URArm::state_::set_acceleration(double acceleration) {
-    acceleration_.store(acceleration);
+bool URArm::state_::telemetry_output_path_append_traceid() const {
+    return telemetry_output_path_append_traceid_;
 }
 
-double URArm::state_::get_acceleration() const {
-    return acceleration_.load();
+void URArm::state_::set_max_velocity(const vector6d_t& velocity) {
+    const std::lock_guard lock(mutex_);
+    max_velocity_ = velocity;
+}
+
+void URArm::state_::set_max_velocity(double velocity) {
+    vector6d_t v;
+    v.fill(velocity);
+    set_max_velocity(v);
+}
+
+vector6d_t URArm::state_::get_max_velocity() const {
+    const std::lock_guard lock(mutex_);
+    return max_velocity_;
+}
+
+void URArm::state_::set_max_acceleration(const vector6d_t& acceleration) {
+    const std::lock_guard lock(mutex_);
+    max_acceleration_ = acceleration;
+}
+
+void URArm::state_::set_max_acceleration(double acceleration) {
+    vector6d_t a;
+    a.fill(acceleration);
+    set_max_acceleration(a);
+}
+
+vector6d_t URArm::state_::get_max_acceleration() const {
+    const std::lock_guard lock(mutex_);
+    return max_acceleration_;
+}
+
+double URArm::state_::get_path_tolerance_delta_rads() const {
+    return path_tolerance_delta_rads_;
+}
+
+const std::optional<double>& URArm::state_::get_path_colinearization_ratio() const {
+    return path_colinearization_ratio_;
+}
+
+bool URArm::state_::use_new_trajectory_planner() const {
+    return use_new_trajectory_planner_;
+}
+
+double URArm::state_::get_max_trajectory_duration_secs() const {
+    return max_trajectory_duration_secs_;
+}
+
+double URArm::state_::get_trajectory_sampling_freq_hz() const {
+    return trajectory_sampling_freq_hz_;
 }
 
 size_t URArm::state_::get_move_epoch() const {

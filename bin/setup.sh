@@ -20,8 +20,8 @@ else
 fi
 
 # NOTE: If you change this version, also change it in the `conanfile.py` requirements
-# and in the Dockerfile
-git checkout releases/v0.20.0
+# and in the Dockerfile and CMakeLists.txt
+git checkout releases/v0.25.0
 
 # Export the recipe to the cache so we can skip rebuilds gracefully
 conan export .
@@ -39,7 +39,7 @@ VIAM_CPP_SDK_VERSION=$(conan inspect -vquiet . --format=json | jq -r '.version')
 
 # Build the C++ SDK repo
 #
-# We want a static binary, so we turn off shared. Elect for C++17
+# We want a static binary, so we turn off shared. Elect for C++20
 # compilation, since it seems some of the dependencies we pick mandate
 # it anyway.
 
@@ -49,6 +49,6 @@ conan install --update \
       --requires=viam-cpp-sdk/${VIAM_CPP_SDK_VERSION} \
       -s:a build_type=Release \
       -s:a "&:build_type=RelWithDebInfo" \
-      -s:a compiler.cppstd=17 \
+      -s:a compiler.cppstd=20 \
       -o:a "*:shared=False" \
       -o:a "&:shared=False"
