@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"go.viam.com/rdk/logging"
+	"go.viam.com/rdk/motionplan"
 	"go.viam.com/rdk/referenceframe"
 
 	homedir "github.com/mitchellh/go-homedir"
@@ -24,6 +27,10 @@ type config struct {
 	TrajectoryCSV     string `json:"trajectory_csv"`
 	WaypointsCSV      string `json:"waypoints_csv"`
 	ArmKinematicsPath string `json:"arm_kinematics_path"`
+	CachedPlanPath    string `json:"cached_plan_path"`
+	CachedOnly        bool   `json:"cached_only"`
+	CachedWindow      []int  `json:"cached_window"`
+	WaypointsOnly     bool   `json:"waypoints_only"`
 }
 
 func loadConfig(path string) (config, error) {
@@ -40,21 +47,27 @@ func loadConfig(path string) (config, error) {
 	return cfg, nil
 }
 
-func getPath(trajectoryPath, waypointPath string) (string, string, error) {
+func getTwoPaths(trajectoryPath, waypointPath string) (string, string, error) {
 	if trajectoryPath == "" || waypointPath == "" {
 		return "", "", fmt.Errorf("empty path passed in")
 	}
-	trajPath, err := homedir.Expand(trajectoryPath)
+	trajPath, err := getPath(trajectoryPath)
 	if err != nil {
 		return "", "", err
 	}
-	wpPath, err := homedir.Expand(waypointPath)
+	wpPath, err := getPath(waypointPath)
 	if err != nil {
 		return "", "", err
 	}
 	return trajPath, wpPath, nil
 }
 
+func getPath(waypointPath string) (string, error) {
+	if waypointPath == "" {
+		return "", fmt.Errorf("empty path passed in")
+	}
+	return homedir.Expand(waypointPath)
+}
 func readCSVintoDataframe(path string, headers []string) (*dataframe.DataFrame, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -72,6 +85,12 @@ func readCSVintoDataframe(path string, headers []string) (*dataframe.DataFrame, 
 			"j3":   float64(0),
 			"j4":   float64(0),
 			"j5":   float64(0),
+			"v0":   float64(0),
+			"v1":   float64(0),
+			"v2":   float64(0),
+			"v3":   float64(0),
+			"v4":   float64(0),
+			"v5":   float64(0),
 		},
 	})
 }
@@ -163,7 +182,7 @@ func evenlySpacedTimes(start, end float64, count int) []float64 {
 	return times
 }
 
-func saveChartPNG(name, yLabel string, x1, y1, x2, y2 []float64) error {
+func saveComparisonChartPNG(name, yLabel string, x1, y1, x2, y2 []float64) error {
 	traj := chart.ContinuousSeries{Name: "Trajectory", XValues: x1, YValues: y1, Style: chart.Style{Show: true, StrokeColor: chart.ColorBlue}}
 	way := chart.ContinuousSeries{Name: "Waypoints", XValues: x2, YValues: y2, Style: chart.Style{Show: true, StrokeColor: chart.ColorOrange}}
 
@@ -176,13 +195,46 @@ func saveChartPNG(name, yLabel string, x1, y1, x2, y2 []float64) error {
 		YAxis:  chart.YAxis{Name: yLabel, NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
 		Series: []chart.Series{traj, way},
 		Height: 600,
-		Elements: []chart.Renderable{chart.Legend(
+		Elements: []chart.Renderable{chart.LegendThin(
 			&chart.Chart{Series: []chart.Series{traj, way}},
 			chart.Style{FillColor: chart.ColorTransparent,
 				StrokeColor:     chart.ColorTransparent,
 				TextLineSpacing: 5,
 			}),
 		},
+	}
+	f, err := os.Create(name)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return graph.Render(chart.PNG, f)
+}
+func saveChartPNG(name, yLabel string, x1, y1 []float64, includeLegend bool) error {
+	way := chart.ContinuousSeries{Name: "Waypoints", XValues: x1, YValues: y1, Style: chart.Style{Show: true, DotWidth: 1, DotColor: chart.ColorOrange}}
+
+	// Create title with legend information
+	titleWithLegend := fmt.Sprintf("%s (Orange: Waypoints)", name)
+
+	elements := []chart.Renderable{}
+	if includeLegend {
+		elements = append(elements, chart.LegendThin(
+			&chart.Chart{Series: []chart.Series{way}},
+			chart.Style{
+				FillColor:       chart.ColorTransparent,
+				StrokeColor:     chart.ColorTransparent,
+				TextLineSpacing: 5,
+			}))
+	} else {
+
+	}
+	graph := chart.Chart{
+		Title:    titleWithLegend,
+		XAxis:    chart.XAxis{Name: "Time (s)", NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
+		YAxis:    chart.YAxis{Name: yLabel, NameStyle: chart.StyleShow(), Style: chart.StyleShow()},
+		Series:   []chart.Series{way},
+		Height:   600,
+		Elements: elements,
 	}
 	f, err := os.Create(name)
 	if err != nil {
@@ -204,13 +256,77 @@ func plotCharts(
 	for i := range trajData {
 		name := fmt.Sprintf("%s%s_comparison.png", prefix, labelFunc(i))
 		yLabel := fmt.Sprintf(yLabelFormat, labelFunc(i))
-		if err := saveChartPNG(name, yLabel, trajTime, trajData[i], wayTime, waypointData[i]); err != nil {
+		if err := saveComparisonChartPNG(name, yLabel, trajTime, trajData[i], wayTime, waypointData[i]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+func plotChartsCachedData(
+	prefix, yLabelFormat string,
+	wayTime []float64,
+	waypointData [][]float64,
+	labelFunc func(int) string,
+	window []int,
+) error {
+	start := 0
+	end := len(wayTime) - 1
+	if len(window) == 2 {
+		if window[0] > start {
+			start = window[0]
+		}
+		if window[1] < end {
+			end = window[1]
+		}
+	}
+	for i := range waypointData {
+		name := fmt.Sprintf("%s%s_cached.png", prefix, labelFunc(i))
+		yLabel := fmt.Sprintf(yLabelFormat, labelFunc(i))
+		fmt.Println(name, ": ", len(waypointData[i]))
+		if err := saveChartPNG(name, yLabel, wayTime[start:end], waypointData[i][start:end], true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func plotWaypointsOnly(waypointDf *dataframe.DataFrame) error {
+	var waypointTime []float64
+	for i := range waypointDf.NRows() {
+		waypointTime = append(waypointTime, float64(i))
+	}
+	for i := range jointCount {
+		waypointJointValues, err := extractFloatSeries(waypointDf, fmt.Sprintf("j%d", i))
+		if err != nil {
+			return err
+		}
+		for i, num := range waypointJointValues {
+			waypointJointValues[i] = num * 180 / math.Pi
+		}
+		saveChartPNG(fmt.Sprintf("waypoints_joint%v.png", i), fmt.Sprintf("Angular Position Joint %v (deg)", i), waypointTime, waypointJointValues, false)
+
+	}
+	wx, err := extractFloatSeries(waypointDf, "x")
+	if err != nil {
+		return err
+	}
+	saveChartPNG(fmt.Sprintf("waypoints_X_pos.png"), fmt.Sprintf("X Position (mm)"), waypointTime, wx, false)
+
+	wy, err := extractFloatSeries(waypointDf, "y")
+	if err != nil {
+		return err
+	}
+	saveChartPNG(fmt.Sprintf("waypoints_Y_pos.png"), fmt.Sprintf("Y Position (mm)"), waypointTime, wy, false)
+
+	wz, err := extractFloatSeries(waypointDf, "z")
+	if err != nil {
+		return err
+	}
+	saveChartPNG(fmt.Sprintf("waypoints_Z_pos.png"), fmt.Sprintf("Z Position (mm)"), waypointTime, wz, false)
+
+	return nil
+}
 func plotJointAndPoseComparisonFromDataframes(trajDf, waypointDf *dataframe.DataFrame) error {
 	// get the time values which will determine the spacing of trajectory and waypoint data
 	trajTime, err := extractFloatSeries(trajDf, "t(s)")
@@ -229,9 +345,15 @@ func plotJointAndPoseComparisonFromDataframes(trajDf, waypointDf *dataframe.Data
 		if err != nil {
 			return err
 		}
+		for i, num := range trajJointValues {
+			trajJointValues[i] = num * 180 / math.Pi
+		}
 		waypointJointValues, err := extractFloatSeries(waypointDf, fmt.Sprintf("j%d", i))
 		if err != nil {
 			return err
+		}
+		for i, num := range waypointJointValues {
+			waypointJointValues[i] = num * 180 / math.Pi
 		}
 		allTrajectoryJointValues[i] = trajJointValues
 		allWaypointJointValues[i] = waypointJointValues
@@ -266,7 +388,7 @@ func plotJointAndPoseComparisonFromDataframes(trajDf, waypointDf *dataframe.Data
 	waypointPoses := [][]float64{wx, wy, wz}
 
 	// For joints, just use the index number as string
-	if err := plotCharts("joint", "Joint %s Angle (rad)", trajTime, waypointTime, allTrajectoryJointValues, allWaypointJointValues, func(i int) string {
+	if err := plotCharts("joint", "Joint %s Angle (deg)", trajTime, waypointTime, allTrajectoryJointValues, allWaypointJointValues, func(i int) string {
 		return strconv.Itoa(i)
 	}); err != nil {
 		return err
@@ -283,20 +405,77 @@ func plotJointAndPoseComparisonFromDataframes(trajDf, waypointDf *dataframe.Data
 	return nil
 }
 
+func plotJointVelocities(trajDf *dataframe.DataFrame) error {
+	// get the time values which will determine the spacing of trajectory and waypoint data
+	trajTime, err := extractFloatSeries(trajDf, "t(s)")
+	if err != nil {
+		return err
+	}
+
+	// get the joint positions data
+	for i := range jointCount {
+		trajJointValues, err := extractFloatSeries(trajDf, fmt.Sprintf("v%d", i))
+		if err != nil {
+			return err
+		}
+		for i, num := range trajJointValues {
+			trajJointValues[i] = num * 180 / math.Pi
+		}
+		saveChartPNG(fmt.Sprintf("joint%v_velocity.png", i), fmt.Sprintf("Angular Velocity Joint %v (deg/s)", i), trajTime, trajJointValues, false)
+	}
+	return nil
+}
+
 func main() {
 	logger := logging.NewLogger("graph")
 	cfg, err := loadConfig("config.json")
 	if err != nil {
 		logger.Fatal(err)
 	}
-	trajectoryPath, waypointPath, err := getPath(cfg.TrajectoryCSV, cfg.WaypointsCSV)
-	if err := realmain(trajectoryPath, waypointPath, cfg.ArmKinematicsPath); err != nil {
+	if err := realmain(cfg); err != nil {
 		logger.Fatal(err)
 	}
 }
 
-func realmain(trajectoryPath, waypointPath, armKinematicsPath string) error {
-	model, err := referenceframe.ParseModelJSONFile(armKinematicsPath, "")
+func realmain(cfg config) error {
+	model, err := referenceframe.ParseModelJSONFile(cfg.ArmKinematicsPath, "")
+	if err != nil {
+		return err
+	}
+
+	if cfg.CachedPlanPath != "" {
+		cachedPath := filepath.Clean(cfg.CachedPlanPath)
+		joints, poses, err := parseAndAddPosesCachedPlan(cachedPath, model)
+		if err != nil {
+			return err
+		}
+		window := cfg.CachedWindow
+		err = plotJointsAndPosesCachedPlan(joints, poses, window)
+		if err != nil {
+			return err
+		}
+	}
+
+	if cfg.CachedOnly {
+		return nil
+	}
+
+	if cfg.WaypointsOnly {
+		waypointPath, err := getPath(cfg.WaypointsCSV)
+		if err != nil {
+			return err
+		}
+		wayDf, err := readCSVintoDataframe(waypointPath, []string{"j0", "j1", "j2", "j3", "j4", "j5"})
+		if err != nil {
+			return err
+		}
+		wayDf, err = parseAndAddPoses(wayDf, model)
+		if err != nil {
+			return err
+		}
+		return plotWaypointsOnly(wayDf)
+	}
+	trajectoryPath, waypointPath, err := getTwoPaths(cfg.TrajectoryCSV, cfg.WaypointsCSV)
 	if err != nil {
 		return err
 	}
@@ -320,6 +499,118 @@ func realmain(trajectoryPath, waypointPath, armKinematicsPath string) error {
 	}
 	// plot joint positions and poses as .png files
 	if err := plotJointAndPoseComparisonFromDataframes(trajDf, wayDf); err != nil {
+		return err
+	}
+
+	// plot joint positions and poses as .png files
+	if err := plotJointVelocities(trajDf); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type TrajectoryGroup []motionplan.Trajectory
+
+func (tg *TrajectoryGroup) getJoints() [][]float64 {
+	allInputs := [][]float64{}
+	for _, t := range *tg {
+		for _, ins := range t {
+			for _, in := range ins {
+				// assume any 6dof arm is our arm
+				if len(in) == 6 {
+					allInputs = append(allInputs, referenceframe.InputsToFloats(in))
+				}
+			}
+		}
+	}
+	return allInputs
+}
+
+func ReadTrajectoriesFromFile(fileName string) (trajectories []*TrajectoryGroup, err error) {
+	file, err := os.Open(fileName) //nolint:gosec // File path from user input
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+	var allTrajectories []*TrajectoryGroup
+	if err = json.NewDecoder(file).Decode(&allTrajectories); err != nil {
+		return nil, err
+	}
+	return allTrajectories, err
+}
+
+func parseAndAddPosesCachedPlan(cached string, model referenceframe.Model) ([][]float64, [][]float64, error) {
+	tgs, err := ReadTrajectoriesFromFile(cached)
+	if err != nil {
+		return nil, nil, err
+	}
+	jointsCached := [][]float64{}
+	for _, tg := range tgs {
+		jointsCached = append(jointsCached, tg.getJoints()...)
+	}
+	// // we need to create series for poses which is a 7 dimensional
+	// xSeries := dataframe.NewSeriesFloat64("x", nil)
+	// ySeries := dataframe.NewSeriesFloat64("y", nil)
+	// zSeries := dataframe.NewSeriesFloat64("z", nil)
+	// oxSeries := dataframe.NewSeriesFloat64("ox", nil)
+	// oySeries := dataframe.NewSeriesFloat64("oy", nil)
+	// ozSeries := dataframe.NewSeriesFloat64("oz", nil)
+	// thetaSeries := dataframe.NewSeriesFloat64("theta", nil)
+
+	cx := []float64{}
+	cy := []float64{}
+	cz := []float64{}
+	j0 := []float64{}
+	j1 := []float64{}
+	j2 := []float64{}
+	j3 := []float64{}
+	j4 := []float64{}
+	j5 := []float64{}
+
+	for _, joints := range jointsCached {
+		// perform FK to get the pose
+		pose, err := model.Transform(referenceframe.FloatsToInputs(joints))
+		if err != nil {
+			return nil, nil, err
+		}
+		j0 = append(j0, joints[0])
+		j1 = append(j1, joints[1])
+		j2 = append(j2, joints[2])
+		j3 = append(j3, joints[3])
+		j4 = append(j4, joints[4])
+		j5 = append(j5, joints[5])
+
+		cx = append(cx, pose.Point().X)
+		cy = append(cy, pose.Point().Y)
+		cz = append(cz, pose.Point().Z)
+	}
+
+	return [][]float64{j0, j1, j2, j3, j4, j5}, [][]float64{cx, cy, cz}, nil
+}
+
+func plotJointsAndPosesCachedPlan(joints, poses [][]float64, window []int) error {
+
+	waypointTime := []float64{}
+	for i := range len(poses[0]) {
+		waypointTime = append(waypointTime, float64(i))
+	}
+	// For joints, just use the index number as string
+	if err := plotChartsCachedData("joint", "Joint %s Angle (rad)", waypointTime, joints, func(i int) string {
+		return strconv.Itoa(i)
+	}, window); err != nil {
+		return err
+	}
+
+	// For positions, use letters X, Y, Z
+	suffix := []string{"X", "Y", "Z"}
+	if err := plotChartsCachedData("position_", "Position %s (mm)", waypointTime, poses, func(i int) string {
+		return suffix[i]
+	}, window); err != nil {
 		return err
 	}
 	return nil
