@@ -297,7 +297,7 @@ class trajectory::integration_observer {
     ///
     /// @param pt Phase plane position where integration starts
     ///
-    virtual void on_started_forward_integration(phase_point pt) = 0;
+    virtual void on_started_forward_integration(const trajectory& traj, phase_point pt) = 0;
 
     ///
     /// Called when integration detects that the next step would exceed a limit curve.
@@ -310,14 +310,14 @@ class trajectory::integration_observer {
     /// @param s_dot_max_acc Maximum velocity from acceleration constraints at pt.s
     /// @param s_dot_max_vel Maximum velocity from velocity constraints at pt.s
     ///
-    virtual void on_hit_limit_curve(phase_point pt, arc_velocity s_dot_max_acc, arc_velocity s_dot_max_vel) = 0;
+    virtual void on_hit_limit_curve(const trajectory& traj, phase_point pt, arc_velocity s_dot_max_acc, arc_velocity s_dot_max_vel) = 0;
 
     ///
     /// Called when backward integration starts from a switching point.
     ///
     /// @param pt Phase plane position of switching point
     ///
-    virtual void on_started_backward_integration(phase_point pt) = 0;
+    virtual void on_started_backward_integration(const trajectory& traj, phase_point pt) = 0;
 
     ///
     /// Called when trajectory has been extended with finalized integration points.

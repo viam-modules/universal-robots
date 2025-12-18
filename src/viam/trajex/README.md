@@ -65,6 +65,10 @@ Behavior`s, and will be similarly identified in the source code.
 - **Correction 6: Eqs. 41 and 42**: The third `s` in the LHS of each
   inequality is missing a dot.
 
+- **Correction 7: Eq. 38**: In the positive step case, we are looking
+  for a *sink*, which would mean all candidate accelerations are
+  infeasible, so we check against the minimum, not the maximum.
+
 ### Behavioral Differences:
 
 - **Divergent Behavior 1**: We implement an opt-in denoising pass for
