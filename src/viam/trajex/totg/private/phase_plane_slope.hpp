@@ -30,10 +30,8 @@ class phase_plane_slope {
         return value_;
     }
 
-    // clang-format off
     // Three-way comparison operator.
     constexpr auto operator<=>(const phase_plane_slope&) const = default;
-    // clang-format on
 
     // Compound subtraction (used for slope comparisons).
     constexpr phase_plane_slope& operator-=(phase_plane_slope other) noexcept {

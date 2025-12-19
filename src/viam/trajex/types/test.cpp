@@ -452,4 +452,155 @@ BOOST_AUTO_TEST_CASE(epsilon_comparisons) {
     // auto bad3 = eps - eps;  // Should fail
 }
 
+BOOST_AUTO_TEST_CASE(epsilon_wrapper_less_than) {
+    using namespace viam::trajex;
+
+    const epsilon eps{1.0};
+
+    // Significantly different values
+    const arc_length a{5.0};
+    const arc_length b{10.0};
+    BOOST_CHECK(eps.wrap(a) < eps.wrap(b));     // 5 < 10 significantly
+    BOOST_CHECK(!(eps.wrap(b) < eps.wrap(a)));  // 10 not < 5
+
+    // Within tolerance (not significantly different)
+    const arc_length c{10.0};
+    const arc_length d{10.5};
+    BOOST_CHECK(!(eps.wrap(c) < eps.wrap(d)));  // 10 not < 10.5 (within eps)
+    BOOST_CHECK(!(eps.wrap(d) < eps.wrap(c)));  // 10.5 not < 10 (within eps)
+
+    // Right at the boundary
+    const arc_length e{10.0};
+    const arc_length f{11.0};
+    BOOST_CHECK(!(eps.wrap(e) < eps.wrap(f)));  // Exactly at epsilon boundary
+
+    const arc_length g{10.0};
+    const arc_length h{11.1};
+    BOOST_CHECK(eps.wrap(g) < eps.wrap(h));  // Just beyond epsilon
+}
+
+BOOST_AUTO_TEST_CASE(epsilon_wrapper_greater_than) {
+    using namespace viam::trajex;
+
+    const epsilon eps{1.0};
+
+    // Significantly different values
+    const arc_velocity v1{20.0};
+    const arc_velocity v2{10.0};
+    BOOST_CHECK(eps.wrap(v1) > eps.wrap(v2));     // 20 > 10 significantly
+    BOOST_CHECK(!(eps.wrap(v2) > eps.wrap(v1)));  // 10 not > 20
+
+    // Within tolerance
+    const arc_velocity v3{15.0};
+    const arc_velocity v4{15.8};
+    BOOST_CHECK(!(eps.wrap(v3) > eps.wrap(v4)));  // Not significantly different
+    BOOST_CHECK(!(eps.wrap(v4) > eps.wrap(v3)));  // Not significantly different
+}
+
+BOOST_AUTO_TEST_CASE(epsilon_wrapper_equality) {
+    using namespace viam::trajex;
+
+    const epsilon eps{1.0};
+
+    // Exactly equal
+    const arc_acceleration a1{5.0};
+    const arc_acceleration a2{5.0};
+    BOOST_CHECK(eps.wrap(a1) == eps.wrap(a2));
+
+    // Within tolerance (indistinguishable)
+    const arc_acceleration a3{10.0};
+    const arc_acceleration a4{10.5};
+    BOOST_CHECK(eps.wrap(a3) == eps.wrap(a4));
+
+    // Just at boundary
+    const arc_acceleration a5{10.0};
+    const arc_acceleration a6{11.0};
+    BOOST_CHECK(eps.wrap(a5) == eps.wrap(a6));
+
+    // Significantly different
+    const arc_acceleration a7{10.0};
+    const arc_acceleration a8{12.0};
+    BOOST_CHECK(!(eps.wrap(a7) == eps.wrap(a8)));
+    BOOST_CHECK(eps.wrap(a7) != eps.wrap(a8));
+}
+
+BOOST_AUTO_TEST_CASE(epsilon_wrapper_less_equal_greater_equal) {
+    using namespace viam::trajex;
+
+    const epsilon eps{1.0};
+
+    const arc_length a{5.0};
+    const arc_length b{10.0};
+    const arc_length c{10.5};
+
+    // <= means "not significantly greater"
+    BOOST_CHECK(eps.wrap(a) <= eps.wrap(b));     // 5 <= 10 (less)
+    BOOST_CHECK(eps.wrap(c) <= eps.wrap(b));     // 10.5 <= 10 (equivalent)
+    BOOST_CHECK(!(eps.wrap(b) <= eps.wrap(a)));  // 10 not <= 5
+
+    // >= means "not significantly less"
+    BOOST_CHECK(eps.wrap(b) >= eps.wrap(a));     // 10 >= 5 (greater)
+    BOOST_CHECK(eps.wrap(b) >= eps.wrap(c));     // 10 >= 10.5 (equivalent)
+    BOOST_CHECK(!(eps.wrap(a) >= eps.wrap(b)));  // 5 not >= 10
+}
+
+BOOST_AUTO_TEST_CASE(epsilon_wrapper_mixed_tolerances) {
+    using namespace viam::trajex;
+
+    const epsilon eps_strict{0.5};
+    const epsilon eps_loose{2.0};
+
+    const arc_length a{10.0};
+    const arc_length b{11.0};
+
+    // Using stricter tolerance, values are different
+    BOOST_CHECK(eps_strict.wrap(a) != eps_strict.wrap(b));
+    BOOST_CHECK(eps_strict.wrap(a) < eps_strict.wrap(b));
+
+    // Using looser tolerance, values are equivalent
+    BOOST_CHECK(eps_loose.wrap(a) == eps_loose.wrap(b));
+
+    // Mixed: should use min (stricter) tolerance
+    BOOST_CHECK(eps_strict.wrap(a) != eps_loose.wrap(b));
+    BOOST_CHECK(eps_loose.wrap(a) != eps_strict.wrap(b));
+    BOOST_CHECK(eps_strict.wrap(a) < eps_loose.wrap(b));
+}
+
+BOOST_AUTO_TEST_CASE(epsilon_wrapper_negative_values) {
+    using namespace viam::trajex;
+
+    const epsilon eps{1.0};
+
+    const arc_velocity v1{-10.0};
+    const arc_velocity v2{-5.0};
+    const arc_velocity v3{5.0};
+
+    BOOST_CHECK(eps.wrap(v1) < eps.wrap(v2));  // -10 < -5 significantly
+    BOOST_CHECK(eps.wrap(v1) < eps.wrap(v3));  // -10 < 5 significantly
+    BOOST_CHECK(eps.wrap(v2) < eps.wrap(v3));  // -5 < 5 significantly
+
+    // Within tolerance around zero
+    const arc_velocity v4{0.0};
+    const arc_velocity v5{0.5};
+    const arc_velocity v6{-0.5};
+    BOOST_CHECK(eps.wrap(v4) == eps.wrap(v5));  // 0 == 0.5 within tolerance
+    BOOST_CHECK(eps.wrap(v4) == eps.wrap(v6));  // 0 == -0.5 within tolerance
+    BOOST_CHECK(eps.wrap(v5) == eps.wrap(v6));  // 0.5 == -0.5 within tolerance
+}
+
+BOOST_AUTO_TEST_CASE(epsilon_wrapper_constexpr) {
+    using namespace viam::trajex;
+
+    // Verify wrapper operations can be constexpr
+    static constexpr epsilon eps{1.0};
+    static constexpr arc_length a{5.0};
+    static constexpr arc_length b{10.0};
+
+    // These should all be constexpr evaluable
+    constexpr auto w1 = eps.wrap(a);
+    constexpr auto w2 = eps.wrap(b);
+
+    static_assert((w1 <=> w2) == std::weak_ordering::less, "constexpr comparison should work");
+}
+
 BOOST_AUTO_TEST_SUITE_END()

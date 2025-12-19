@@ -67,7 +67,7 @@ BOOST_AUTO_TEST_CASE(custom_integration_parameters) {
     const path p = path::create(waypoints);
 
     const trajectory::options options{.max_velocity = xt::xarray<double>{1.0, 1.0, 1.0},
-                                      .max_acceleration = xt::xarray<double>{0.5, 0.5, 0.5},
+                                      .max_acceleration = xt::xarray<double>{1.5, 1.5, 1.5},
                                       .delta = trajectory::seconds{0.0005},
                                       .epsilon = epsilon{1e-9}};
 
