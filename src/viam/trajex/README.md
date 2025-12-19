@@ -83,11 +83,6 @@ Behavior`s, and will be similarly identified in the source code.
   points are removed and no circular blend is produced for them. See
   `path::options::max_linear_deviation` for more details.
 
-- **Divergent Behavior 2**: When searching for a velocity switching
-  point we reject switching points where it would be impossible to
-  begin backwards integration because it would immediately intersect
-  the acceleration limit curve, and vice versa.
-
-- **Divergent Behavior 3**: The backward integration pass
+- **Divergent Behavior 2**: The backward integration pass
   conservatively rejects trajectories that exceed limit curves, which
   is not described in the paper.

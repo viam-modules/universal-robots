@@ -350,8 +350,8 @@ enum class integration_event : std::uint8_t {
                         const auto [s_dot_max_acc, s_dot_max_vel] =
                             compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-                        // NOTE: `Divergent Behavior 2`: If this switching point is infeasible with respect to the
-                        // velocity limit curve, reject it.
+                        // If this switching point is infeasible with respect to the velocity limit curve,
+                        // reject it.
                         if (opt.epsilon.wrap(s_dot_max_vel) < opt.epsilon.wrap(s_dot_max_acc)) {
                             first_extremum.reset();
                             return;
@@ -512,8 +512,7 @@ enum class integration_event : std::uint8_t {
             // But make sure we don't violate whichever side's velocity limit is constraining.
             const auto s_dot_max_vel_switching_min = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
 
-            // NOTE: `Divergent Behavior 2`: Only accept this as switching point if it is also feasible with respect to
-            // the velocity limits.
+            // Only accept this as switching point if it is also feasible with respect to the velocity limits.
             if (opt.epsilon.wrap(s_dot_max_acc_switching_min) <= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
                 return trajectory::phase_point{.s = boundary, .s_dot = s_dot_max_acc_switching_min};
             }
@@ -650,8 +649,8 @@ enum class integration_event : std::uint8_t {
             const auto s_dot_max_vel_switching_min = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
             const auto s_dot_max_accel_switching_min = std::min(s_dot_max_accel_before, s_dot_max_accel_after);
 
-            // NOTE: `Divergent Behavior 2`: Only accept the velocity switching point if it is feasible with respect to
-            // the acceleration limit curve.
+            // Only accept the velocity switching point if it is feasible with respect to the acceleration
+            // limit curve.
             if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
                 // Record first discontinuous switching point, but don't return yet - need to check continuous cases too
                 discontinuous_switching_point = trajectory::phase_point{.s = boundary, .s_dot = s_dot_max_vel_switching_min};
@@ -793,13 +792,11 @@ enum class integration_event : std::uint8_t {
         const auto [s_dot_max_acc, s_dot_max_vel] =
             compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        // `Divergent Behavior 2`: Reject switching points where s_dot_max_vel > s_dot_max_acc.
+        // `Reject switching points where s_dot_max_vel > s_dot_max_acc.
         //
-        // If the velocity switching point has s_dot > s_dot_max_acc,
-        // backward integration will immediately hit the acceleration
-        // limit curve, causing the algorithm to fail. We should
-        // continue searching forward until finding a switching point
-        // where s_dot_max_vel <= s_dot_max_acc + epsilon.
+        // If the velocity switching point has s_dot > s_dot_max_acc, backward integration will immediately
+        // hit the acceleration limit curve, causing the algorithm to fail. We should continue searching
+        // forward until finding a switching point where s_dot_max_vel <= s_dot_max_acc + epsilon.
         if (opt.epsilon.wrap(s_dot_max_vel) <= opt.epsilon.wrap(s_dot_max_acc)) {
             continuous_switching_point = trajectory::phase_point{.s = after, .s_dot = s_dot_max_vel};
         }
@@ -1191,6 +1188,11 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // we selected at our current location in the phase plane in order to get to the next point. That
                     // new point now has an indeterminate acceleration, which will not be computed until the next point,
                     // etc.
+                    //
+                    // TODO(RSDK-13002): Recording zero for the s_ddot value isn't great. We should find a
+                    // better way so that invalid integration points are never present in the integration
+                    // points vector, or, if they are, they shouldn't have a potentially reasonable value like
+                    // 0.0.
                     //
                     // Note: Don't call maybe_on_trajectory_extended() here - forward points are tentative
                     // and may be discarded during backward integration. Only finalized segments trigger that callback.
