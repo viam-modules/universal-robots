@@ -600,9 +600,7 @@ BOOST_AUTO_TEST_CASE(epsilon_wrapper_constexpr) {
     constexpr auto w1 = eps.wrap(a);
     constexpr auto w2 = eps.wrap(b);
 
-    // clang-format off
     static_assert((w1 <=> w2) == std::weak_ordering::less, "constexpr comparison should work");
-    // clang-format on
 }
 
 BOOST_AUTO_TEST_SUITE_END()

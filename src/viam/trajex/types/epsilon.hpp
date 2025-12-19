@@ -13,9 +13,7 @@ namespace epsilon_details {
 ///
 template <typename T>
 concept explicitly_convertible_to_double = requires(T t) {
-    {
-        static_cast<double>(t)
-    } -> std::same_as<double>;
+    { static_cast<double>(t) } -> std::same_as<double>;
 };
 
 }  // namespace epsilon_details
@@ -97,15 +95,15 @@ class epsilon::wrapper {
 
     friend class epsilon;
 
-    // clang-format off
     template <typename U, typename V>
     friend constexpr auto operator<=>(const wrapper<U>& lhs, const wrapper<V>& rhs) noexcept
-        requires std::three_way_comparable_with<U, V> && epsilon_details::explicitly_convertible_to_double<U> && epsilon_details::explicitly_convertible_to_double<V>;
+        requires std::three_way_comparable_with<U, V> && epsilon_details::explicitly_convertible_to_double<U> &&
+                 epsilon_details::explicitly_convertible_to_double<V>;
 
     template <typename U, typename V>
     friend constexpr bool operator==(const wrapper<U>& lhs, const wrapper<V>& rhs) noexcept
-        requires std::three_way_comparable_with<U, V> && epsilon_details::explicitly_convertible_to_double<U> && epsilon_details::explicitly_convertible_to_double<V>;
-    // clang-format on
+        requires std::three_way_comparable_with<U, V> && epsilon_details::explicitly_convertible_to_double<U> &&
+                 epsilon_details::explicitly_convertible_to_double<V>;
 
    private:
     const epsilon& e_;
@@ -116,8 +114,6 @@ template <typename T>
 constexpr epsilon::wrapper<T> epsilon::wrap(const T& t) const noexcept {
     return wrapper<T>(*this, t);
 }
-
-// clang-format off
 
 ///
 /// Three-way comparison between wrapped values with epsilon tolerance.
@@ -136,7 +132,9 @@ constexpr epsilon::wrapper<T> epsilon::wrap(const T& t) const noexcept {
 ///
 template <typename T, typename U>
 constexpr auto operator<=>(const epsilon::wrapper<T>& lhs, const epsilon::wrapper<U>& rhs) noexcept
-    requires std::three_way_comparable_with<T, U> && epsilon_details::explicitly_convertible_to_double<T> && epsilon_details::explicitly_convertible_to_double<U> {
+    requires std::three_way_comparable_with<T, U> && epsilon_details::explicitly_convertible_to_double<T> &&
+             epsilon_details::explicitly_convertible_to_double<U>
+{
     const double tol = std::min(static_cast<double>(lhs.e_), static_cast<double>(rhs.e_));
     const double diff = static_cast<double>(lhs.t_) - static_cast<double>(rhs.t_);
 
@@ -160,11 +158,11 @@ constexpr auto operator<=>(const epsilon::wrapper<T>& lhs, const epsilon::wrappe
 ///
 template <typename T, typename U>
 constexpr bool operator==(const epsilon::wrapper<T>& lhs, const epsilon::wrapper<U>& rhs) noexcept
-    requires std::three_way_comparable_with<T, U> && epsilon_details::explicitly_convertible_to_double<T> && epsilon_details::explicitly_convertible_to_double<U> {
+    requires std::three_way_comparable_with<T, U> && epsilon_details::explicitly_convertible_to_double<T> &&
+             epsilon_details::explicitly_convertible_to_double<U>
+{
     return (lhs <=> rhs) == 0;
 }
-
-// clang-format on
 
 ///
 /// Three-way comparison between dimensional type and epsilon.
@@ -176,12 +174,10 @@ constexpr bool operator==(const epsilon::wrapper<T>& lhs, const epsilon::wrapper
 /// @param rhs Epsilon tolerance
 /// @return Comparison result
 ///
-// clang-format off
 template <epsilon_details::explicitly_convertible_to_double T>
 constexpr auto operator<=>(const T& lhs, epsilon rhs) noexcept {
     return static_cast<double>(lhs) <=> static_cast<double>(rhs);
 }
-// clang-format on
 
 ///
 /// Three-way comparison between epsilon and dimensional type (reversed).
@@ -193,12 +189,10 @@ constexpr auto operator<=>(const T& lhs, epsilon rhs) noexcept {
 /// @param rhs Dimensional value (arc_length, arc_velocity, arc_acceleration)
 /// @return Comparison result
 ///
-// clang-format off
 template <epsilon_details::explicitly_convertible_to_double T>
 constexpr auto operator<=>(epsilon lhs, const T& rhs) noexcept {
     return static_cast<double>(lhs) <=> static_cast<double>(rhs);
 }
-// clang-format on
 
 ///
 /// Equality comparison between dimensional type and epsilon.
@@ -212,9 +206,7 @@ constexpr auto operator<=>(epsilon lhs, const T& rhs) noexcept {
 ///
 template <typename T>
 constexpr bool operator==(const T& lhs, epsilon rhs) noexcept {
-    // clang-format off
     return (lhs <=> rhs) == 0;
-    // clang-format on
 }
 
 ///
@@ -229,9 +221,7 @@ constexpr bool operator==(const T& lhs, epsilon rhs) noexcept {
 ///
 template <typename T>
 constexpr bool operator==(epsilon lhs, const T& rhs) noexcept {
-    // clang-format off
-    return (lhs <=>rhs) == 0;
-    // clang-format on
+    return (lhs <=> rhs) == 0;
 }
 
 ///

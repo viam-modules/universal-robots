@@ -25,6 +25,8 @@ trajectory create_trajectory_with_integration_points(path p, std::vector<traject
 
 class expectation_observer : public trajectory::integration_observer {
    public:
+    // TODO(RSDK-12992): Move these types to the integration_observer
+    // to make it easier to journal events.
     struct expected_forward_start {
         arc_length s;
         arc_velocity s_dot;
@@ -195,6 +197,9 @@ void validate_trajectory_invariants(const trajectory& traj, double tolerance_per
         }
 
         // Phase plane velocity limits
+        //
+        // TODO(RSDK-12993): We should expose the necessary methods in
+        // `trajectory` to re-use the implementations.
         BOOST_TEST_CONTEXT("Phase plane velocity limits") {
             auto cursor = p.create_cursor(arc_length{0.0});
 
@@ -255,6 +260,7 @@ struct trajectory_test_fixture {
     explicit trajectory_test_fixture(size_t dof = 6, double expectation_tolerance_percent = 0.1)
         : observer(expectation_tolerance_percent), dof_(dof) {}
 
+    // TODO: Cleanup waypoints handling. It is annoying how it works here now.
     trajectory_test_fixture& add_waypoint_deg(const std::vector<double>& wp_deg) {
         xt::xarray<double> wp_rad = xt::zeros<double>({dof_});
         constexpr double deg_to_rad = M_PI / 180.0;
@@ -562,15 +568,8 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior) {
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
 
-    // BASELINE: First working three-waypoint trajectory case
-    // This documents CURRENT algorithm behavior as of initial implementation.
-    //
-    // If this fails after changes:
-    //   1. Check: Is the new trajectory VALID?
-    //   2. Check: Is it BETTER? (faster, smoother, fewer violations)
-    //   3. If YES to both: Update these expectations
-    //   4. If NO: You broke it - fix the regression
-
+    // TODO: Clean up degree/radian handling in this file, and any
+    // others that are doing it the manual way.
     constexpr double deg_to_rad = M_PI / 180.0;
 
     // Create fixture
@@ -588,17 +587,6 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior) {
     fixture.add_waypoint_deg({0.0, 0.0, 0.0, 0.0, 0.0, 0.0})
         .add_waypoint_deg({-45.0, -45.0, 0.0, 0.0, 0.0, 0.0})
         .add_waypoint_deg({-45.0, -90.0, 0.0, 0.0, 0.0, 0.0});
-
-    // Set up expectations based on observed behavior
-    // Event sequence from running test:
-    // [FORWARD START] s=0 s_dot=0
-    // [HIT LIMIT] s=0.718023 s_dot=0.18827 acc_limit=0.152973 vel_limit=1.23413
-    // [BACKWARD START] s=0.718022 s_dot=0.152973
-    // [SPLICE] duration=7.7013s
-    // [FORWARD START] s=0.718022 s_dot=0.152973
-    // [HIT LIMIT] s=0.720836 s_dot=0.152973 acc_limit=0.152972 vel_limit=1.23049
-    // [BACKWARD START] s=1.85532 s_dot=0
-    // [SPLICE] duration=20.1621s
 
     fixture.observer.expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
         .expect_hit_limit(arc_length{0.718023},

@@ -41,12 +41,10 @@ class arc_acceleration {
         return value_;
     }
 
-    // clang-format off
     ///
     /// Three-way comparison operator.
     ///
     constexpr auto operator<=>(const arc_acceleration&) const = default;
-    // clang-format on
 
     ///
     /// Compound addition.

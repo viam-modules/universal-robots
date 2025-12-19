@@ -55,15 +55,21 @@ Behavior`s, and will be similarly identified in the source code.
 - **Correction 4: Eq 38**: The equation is not dimensionally sound,
   since the result of the `s_dot_dot_max` function is an acceleration
   term, but it is compared to a slope in the phase plane. Instead, we
-  interpret these equations more like VI.3, where there is an `s_dot` in
-  the denominator, which renders it dimensionally sound.
+  interpret these equations more like VI.3, where there is an `s_dot`
+  in the denominator, which renders it dimensionally
+  sound. Practically, we divide the LHS by `s_dot_max_acc(s+-)` when
+  comparing in the inequality against the slope of
+  `s_dot_max_acc(s+-)`
 
 - **Correction 5: Eq. 40**: As noted in the `-Revised` paper above, on
   the LHS the third `s` should be dotted, and the RHS should say
-  `vel`, not `acc`.
+  `vel`, not `acc`. However, additionally, the LHS needs to be divided
+  by an `s_dot`-type quantity, much like in `Correction 4`.
 
 - **Correction 6: Eqs. 41 and 42**: The third `s` in the LHS of each
-  inequality is missing a dot.
+  inequality is missing a dot. Furthermore, similar to the above two
+  corrections, the LHS needs to be divided by the appropriate
+  `s_dot`-type quantity.
 
 - **Correction 7: Eq. 38**: In the positive step case, we are looking
   for a *sink*, which would mean all candidate accelerations are

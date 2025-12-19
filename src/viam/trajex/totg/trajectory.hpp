@@ -29,9 +29,7 @@ namespace trajectory_details {
 ///
 template <typename S, typename Cursor, typename Sample>
 concept sampler = requires(S s, Cursor& c) {
-    {
-        s.next(c)
-    } -> std::convertible_to<std::optional<Sample>>;
+    { s.next(c) } -> std::convertible_to<std::optional<Sample>>;
 };
 
 }  // namespace trajectory_details
