@@ -850,6 +850,7 @@ enum class integration_event : std::uint8_t {
 
 }  // namespace
 
+trajectory::integration_observer::integration_observer() = default;
 trajectory::integration_observer::~integration_observer() = default;
 
 trajectory::trajectory(class path p, options opt, integration_points points)
@@ -1072,7 +1073,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // On entry to this state (detected via observer latch), notify observer
                     if (auto* observer = std::exchange(observer_latch, nullptr)) {
                         const auto& current_point = traj.integration_points_.back();
-                        observer->on_started_forward_integration(traj, {.s = current_point.s, .s_dot = current_point.s_dot});
+                        observer->on_started_forward_integration(traj, {.start = {current_point.s, current_point.s_dot}});
                     }
 
                     // Starting point is the last integration point (known to be feasible)
@@ -1148,7 +1149,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                         if (traj.options_.observer) {
                             traj.options_.observer->on_hit_limit_curve(
-                                traj, {.s = next_s, .s_dot = next_s_dot}, s_dot_max_acc, s_dot_max_vel);
+                                traj, {.breach = {next_s, next_s_dot}, .s_dot_max_acc = s_dot_max_acc, .s_dot_max_vel = s_dot_max_vel});
                         }
 
                         // Determine which limit curve we hit by comparing the two curves.
@@ -1213,7 +1214,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // starting forward integration along the velocity limit curve.
                     if (auto* observer = std::exchange(observer_latch, nullptr)) {
                         const auto& current_point = traj.integration_points_.back();
-                        observer->on_started_forward_integration(traj, {.s = current_point.s, .s_dot = current_point.s_dot});
+                        observer->on_started_forward_integration(traj, {.start = {current_point.s, current_point.s_dot}});
                     }
 
                     // Algorithm Step 3: Analyze velocity limit curve and decide whether to escape,
@@ -1254,8 +1255,10 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // k_forward_accelerating that detects hitting the velocity curve from below.
                     if (traj.options_.epsilon.wrap(s_dot_max_acc) < traj.options_.epsilon.wrap(s_dot_max_vel)) {
                         if (traj.options_.observer) {
-                            traj.options_.observer->on_hit_limit_curve(
-                                traj, {.s = current_point.s, .s_dot = current_point.s_dot}, s_dot_max_acc, s_dot_max_vel);
+                            traj.options_.observer->on_hit_limit_curve(traj,
+                                                                       {.breach = {current_point.s, current_point.s_dot},
+                                                                        .s_dot_max_acc = s_dot_max_acc,
+                                                                        .s_dot_max_vel = s_dot_max_vel});
                         }
 
                         // Acceleration curve is now below velocity curve - we've effectively hit the acceleration
@@ -1399,8 +1402,10 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // that exceeded limits, not a feasible point on the limit curve.
 
                         if (traj.options_.observer) {
-                            traj.options_.observer->on_hit_limit_curve(
-                                traj, {.s = next_s, .s_dot = next_s_dot}, s_dot_max_acc_probe, s_dot_max_vel_probe);
+                            traj.options_.observer->on_hit_limit_curve(traj,
+                                                                       {.breach = {next_s, next_s_dot},
+                                                                        .s_dot_max_acc = s_dot_max_acc_probe,
+                                                                        .s_dot_max_vel = s_dot_max_vel_probe});
                         }
 
                         // Hit limit curve. Search forward along the path for a switching point where
@@ -1461,7 +1466,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // On entry to this state (detected via observer latch), notify observer
                     if (auto* observer = std::exchange(observer_latch, nullptr)) {
                         const auto& switching_point = backward_points.back();
-                        observer->on_started_backward_integration(traj, {.s = switching_point.s, .s_dot = switching_point.s_dot});
+                        observer->on_started_backward_integration(traj, {.start = {switching_point.s, switching_point.s_dot}});
                     }
 
                     // Starting point is the last backward integration point. On first entry to this state,
@@ -1584,7 +1589,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                         // Notify observer that trajectory has been extended with finalized backward segment
                         if (traj.options_.observer) {
-                            traj.options_.observer->on_trajectory_extended(traj);
+                            traj.options_.observer->on_trajectory_extended(traj, {});
                         }
 
                         event = integration_event::k_hit_forward_trajectory;

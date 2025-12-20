@@ -23,32 +23,28 @@ trajectory create_trajectory_with_integration_points(path p, std::vector<traject
 
 // Observer that validates expectations as events occur
 
-class expectation_observer : public trajectory::integration_observer {
+class expectation_observer final : public trajectory::integration_observer {
    public:
     // TODO(RSDK-12992): Move these types to the integration_observer
     // to make it easier to journal events.
     struct expected_forward_start {
-        arc_length s;
-        arc_velocity s_dot;
+        started_forward_event event;
         std::optional<double> tolerance_percent;
     };
 
     struct expected_hit_limit {
-        arc_length s;
-        arc_velocity s_dot;
-        std::optional<arc_velocity> s_dot_max_acc;
-        std::optional<arc_velocity> s_dot_max_vel;
+        limit_hit_event event;
         std::optional<double> tolerance_percent;
     };
 
     struct expected_backward_start {
-        arc_length s;
-        arc_velocity s_dot;
+        started_backward_event event;
         std::optional<double> tolerance_percent;
     };
 
     struct expected_splice {
-        std::optional<trajectory::seconds> duration;
+        splice_event event;
+        trajectory::seconds duration;
         std::optional<double> tolerance_percent;
     };
 
@@ -57,27 +53,26 @@ class expectation_observer : public trajectory::integration_observer {
     explicit expectation_observer(double default_tolerance_percent = 0.1) : default_tolerance_percent_(default_tolerance_percent) {}
 
     expectation_observer& expect_forward_start(arc_length s, arc_velocity s_dot, std::optional<double> tolerance_percent = std::nullopt) {
-        expectations_.push_back(expected_forward_start{s, s_dot, tolerance_percent});
+        expectations_.push_back(expected_forward_start{{s, s_dot}, tolerance_percent});
         return *this;
     }
 
     expectation_observer& expect_hit_limit(arc_length s,
                                            arc_velocity s_dot,
-                                           std::optional<arc_velocity> acc_limit = std::nullopt,
-                                           std::optional<arc_velocity> vel_limit = std::nullopt,
+                                           arc_velocity acc_limit,
+                                           arc_velocity vel_limit,
                                            std::optional<double> tolerance_percent = std::nullopt) {
-        expectations_.push_back(expected_hit_limit{s, s_dot, acc_limit, vel_limit, tolerance_percent});
+        expectations_.push_back(expected_hit_limit{{{s, s_dot}, acc_limit, vel_limit}, tolerance_percent});
         return *this;
     }
 
     expectation_observer& expect_backward_start(arc_length s, arc_velocity s_dot, std::optional<double> tolerance_percent = std::nullopt) {
-        expectations_.push_back(expected_backward_start{s, s_dot, tolerance_percent});
+        expectations_.push_back(expected_backward_start{{s, s_dot}, tolerance_percent});
         return *this;
     }
 
-    expectation_observer& expect_splice(std::optional<trajectory::seconds> duration = std::nullopt,
-                                        std::optional<double> tolerance_percent = std::nullopt) {
-        expectations_.push_back(expected_splice{duration, tolerance_percent});
+    expectation_observer& expect_splice(trajectory::seconds duration, std::optional<double> tolerance_percent = std::nullopt) {
+        expectations_.push_back(expected_splice{{}, duration, tolerance_percent});
         return *this;
     }
 
@@ -87,76 +82,68 @@ class expectation_observer : public trajectory::integration_observer {
         }
     }
 
-    void on_started_forward_integration(const trajectory& /*traj*/, trajectory::phase_point pt) override {
+    void on_started_forward_integration(const trajectory&, started_forward_event event) override {
         BOOST_TEST_CONTEXT("on_started_forward_integration event") {
-            BOOST_REQUIRE_MESSAGE(!expectations_.empty(), "Unexpected forward_start event at s=" << pt.s << " s_dot=" << pt.s_dot);
+            BOOST_REQUIRE_MESSAGE(!expectations_.empty(),
+                                  "Unexpected forward_start event at s=" << event.start.s << " s_dot=" << event.start.s_dot);
 
             const auto* expected = std::get_if<expected_forward_start>(&expectations_.front());
-            BOOST_REQUIRE_MESSAGE(expected != nullptr, "Expected different event type, got forward_start at s=" << pt.s);
+            BOOST_REQUIRE_MESSAGE(expected != nullptr, "Expected different event type, got forward_start at s=" << event.start.s);
 
             const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
 
-            BOOST_CHECK_CLOSE(static_cast<double>(pt.s), static_cast<double>(expected->s), tol);
-            BOOST_CHECK_CLOSE(static_cast<double>(pt.s_dot), static_cast<double>(expected->s_dot), tol);
+            BOOST_CHECK_CLOSE(static_cast<double>(event.start.s), static_cast<double>(expected->event.start.s), tol);
+            BOOST_CHECK_CLOSE(static_cast<double>(event.start.s_dot), static_cast<double>(expected->event.start.s_dot), tol);
 
             expectations_.pop_front();
         }
     }
 
-    void on_hit_limit_curve(const trajectory& /*traj*/,
-                            trajectory::phase_point pt,
-                            arc_velocity s_dot_max_acc,
-                            arc_velocity s_dot_max_vel) override {
+    void on_hit_limit_curve(const trajectory&, limit_hit_event event) override {
         BOOST_TEST_CONTEXT("on_hit_limit_curve event") {
-            BOOST_REQUIRE_MESSAGE(!expectations_.empty(), "Unexpected hit_limit event at s=" << pt.s << " s_dot=" << pt.s_dot);
+            BOOST_REQUIRE_MESSAGE(!expectations_.empty(),
+                                  "Unexpected hit_limit event at s=" << event.breach.s << " s_dot=" << event.breach.s_dot);
 
             const auto* expected = std::get_if<expected_hit_limit>(&expectations_.front());
-            BOOST_REQUIRE_MESSAGE(expected != nullptr, "Expected different event type, got hit_limit at s=" << pt.s);
+            BOOST_REQUIRE_MESSAGE(expected != nullptr, "Expected different event type, got hit_limit at s=" << event.breach.s);
 
             const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
 
-            BOOST_CHECK_CLOSE(static_cast<double>(pt.s), static_cast<double>(expected->s), tol);
-            BOOST_CHECK_CLOSE(static_cast<double>(pt.s_dot), static_cast<double>(expected->s_dot), tol);
-
-            if (expected->s_dot_max_acc.has_value()) {
-                BOOST_CHECK_CLOSE(static_cast<double>(s_dot_max_acc), static_cast<double>(*expected->s_dot_max_acc), tol);
-            }
-
-            if (expected->s_dot_max_vel.has_value()) {
-                BOOST_CHECK_CLOSE(static_cast<double>(s_dot_max_vel), static_cast<double>(*expected->s_dot_max_vel), tol);
-            }
+            BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s), static_cast<double>(expected->event.breach.s), tol);
+            BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s_dot), static_cast<double>(expected->event.breach.s_dot), tol);
+            BOOST_CHECK_CLOSE(static_cast<double>(event.s_dot_max_acc), static_cast<double>(expected->event.s_dot_max_acc), tol);
+            BOOST_CHECK_CLOSE(static_cast<double>(event.s_dot_max_vel), static_cast<double>(expected->event.s_dot_max_vel), tol);
 
             expectations_.pop_front();
         }
     }
 
-    void on_started_backward_integration(const trajectory& /*traj*/, trajectory::phase_point pt) override {
+    void on_started_backward_integration(const trajectory&, started_backward_event event) override {
         BOOST_TEST_CONTEXT("on_started_backward_integration event") {
-            BOOST_REQUIRE_MESSAGE(!expectations_.empty(), "Unexpected backward_start event at s=" << pt.s << " s_dot=" << pt.s_dot);
+            BOOST_REQUIRE_MESSAGE(!expectations_.empty(),
+                                  "Unexpected backward_start event at s=" << event.start.s << " s_dot=" << event.start.s_dot);
 
             const auto* expected = std::get_if<expected_backward_start>(&expectations_.front());
-            BOOST_REQUIRE_MESSAGE(expected != nullptr, "Expected different event type, got backward_start at s=" << pt.s);
+            BOOST_REQUIRE_MESSAGE(expected != nullptr, "Expected different event type, got backward_start at s=" << event.start.s);
 
             const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
 
-            BOOST_CHECK_CLOSE(static_cast<double>(pt.s), static_cast<double>(expected->s), tol);
-            BOOST_CHECK_CLOSE(static_cast<double>(pt.s_dot), static_cast<double>(expected->s_dot), tol);
+            BOOST_CHECK_CLOSE(static_cast<double>(event.start.s), static_cast<double>(expected->event.start.s), tol);
+            BOOST_CHECK_CLOSE(static_cast<double>(event.start.s_dot), static_cast<double>(expected->event.start.s_dot), tol);
 
             expectations_.pop_front();
         }
     }
 
-    void on_trajectory_extended(const trajectory& traj) override {
+    void on_trajectory_extended(const trajectory& traj, splice_event) override {
         BOOST_TEST_CONTEXT("on_trajectory_extended event") {
             BOOST_REQUIRE_MESSAGE(!expectations_.empty(), "Unexpected splice event at duration=" << traj.duration().count());
 
             const auto* expected = std::get_if<expected_splice>(&expectations_.front());
             BOOST_REQUIRE_MESSAGE(expected != nullptr, "Expected different event type, got splice at duration=" << traj.duration().count());
 
-            if (expected->duration.has_value()) {
-                const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
-                BOOST_CHECK_CLOSE(traj.duration().count(), expected->duration->count(), tol);
-            }
+            const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
+            BOOST_CHECK_CLOSE(traj.duration().count(), expected->duration.count(), tol);
 
             expectations_.pop_front();
         }
@@ -502,21 +489,19 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
     opts.max_acceleration = xt::ones<double>({6}) * (150.0 * deg_to_rad);  // 150 deg/s^2 = 2.618 rad/s^2
 
     // Observer to log integration events
-    struct test_observer : trajectory::integration_observer {
-        void on_started_forward_integration(const trajectory&, trajectory::phase_point pt) override {
-            std::cout << "[FORWARD START] s=" << pt.s << " s_dot=" << pt.s_dot << "\n";
+    class test_observer final : public trajectory::integration_observer {
+       public:
+        void on_started_forward_integration(const trajectory&, started_forward_event event) override {
+            std::cout << "[FORWARD START] s=" << event.start.s << " s_dot=" << event.start.s_dot << "\n";
         }
-        void on_hit_limit_curve(const trajectory&,
-                                trajectory::phase_point pt,
-                                viam::trajex::arc_velocity s_dot_max_acc,
-                                viam::trajex::arc_velocity s_dot_max_vel) override {
-            std::cout << "[HIT LIMIT] s=" << pt.s << " s_dot=" << pt.s_dot << " acc_limit=" << s_dot_max_acc
-                      << " vel_limit=" << s_dot_max_vel << "\n";
+        void on_hit_limit_curve(const trajectory&, limit_hit_event event) override {
+            std::cout << "[HIT LIMIT] s=" << event.breach.s << " s_dot=" << event.breach.s_dot << " acc_limit=" << event.s_dot_max_acc
+                      << " vel_limit=" << event.s_dot_max_vel << "\n";
         }
-        void on_started_backward_integration(const trajectory&, trajectory::phase_point pt) override {
-            std::cout << "[BACKWARD START] s=" << pt.s << " s_dot=" << pt.s_dot << "\n";
+        void on_started_backward_integration(const trajectory&, started_backward_event event) override {
+            std::cout << "[BACKWARD START] s=" << event.start.s << " s_dot=" << event.start.s_dot << "\n";
         }
-        void on_trajectory_extended(const trajectory& traj) override {
+        void on_trajectory_extended(const trajectory& traj, splice_event) override {
             std::cout << "[SPLICE] points=" << traj.get_integration_points().size() << " duration=" << traj.duration().count() << "s\n";
         }
     };

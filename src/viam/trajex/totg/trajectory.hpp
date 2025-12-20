@@ -284,18 +284,32 @@ class trajectory {
 /// TOTG trajectory generation. Useful for testing algorithm correctness.
 ///
 class trajectory::integration_observer {
+   protected:
+     integration_observer();
+
    public:
     ///
     /// Destructor.
     ///
     virtual ~integration_observer();
 
+    struct started_forward_event {
+        phase_point start;
+    };
+
     ///
     /// Called when forward integration starts or resumes.
     ///
     /// @param pt Phase plane position where integration starts
     ///
-    virtual void on_started_forward_integration(const trajectory& traj, phase_point pt) = 0;
+    virtual void on_started_forward_integration(const trajectory& traj, started_forward_event event) = 0;
+
+
+    struct limit_hit_event {
+        phase_point breach;
+        arc_velocity s_dot_max_acc;
+        arc_velocity s_dot_max_vel;
+    };
 
     ///
     /// Called when integration detects that the next step would exceed a limit curve.
@@ -308,14 +322,23 @@ class trajectory::integration_observer {
     /// @param s_dot_max_acc Maximum velocity from acceleration constraints at pt.s
     /// @param s_dot_max_vel Maximum velocity from velocity constraints at pt.s
     ///
-    virtual void on_hit_limit_curve(const trajectory& traj, phase_point pt, arc_velocity s_dot_max_acc, arc_velocity s_dot_max_vel) = 0;
+    virtual void on_hit_limit_curve(const trajectory& traj, limit_hit_event event) = 0;
+
+
+    struct started_backward_event {
+        phase_point start;
+    };
 
     ///
     /// Called when backward integration starts from a switching point.
     ///
     /// @param pt Phase plane position of switching point
     ///
-    virtual void on_started_backward_integration(const trajectory& traj, phase_point pt) = 0;
+    virtual void on_started_backward_integration(const trajectory& traj, started_backward_event event) = 0;
+
+
+    struct splice_event {
+    };
 
     ///
     /// Called when trajectory has been extended with finalized integration points.
@@ -330,7 +353,9 @@ class trajectory::integration_observer {
     ///
     /// @param traj Trajectory with finalized integration points up to current position
     ///
-    virtual void on_trajectory_extended(const trajectory& traj) = 0;
+    virtual void on_trajectory_extended(const trajectory& traj, splice_event event) = 0;
+
+    using event = std::variant<started_forward_event, limit_hit_event, started_backward_event, splice_event>;
 };
 
 ///
