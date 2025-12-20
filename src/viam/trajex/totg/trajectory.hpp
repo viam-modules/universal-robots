@@ -59,8 +59,11 @@ class trajectory {
         xt::xarray<double> acceleration;   ///< Acceleration at sample time
     };
 
-    // Forward declaration for observer interface
+    // Forward declaration for observer interface.
     class integration_observer;
+
+    // Forward declaration for event observer interface.
+    class integration_event_observer;
 
     ///
     /// Options for trajectory generation via TOTG algorithm.
@@ -285,7 +288,7 @@ class trajectory {
 ///
 class trajectory::integration_observer {
    protected:
-     integration_observer();
+    integration_observer();
 
    public:
     ///
@@ -303,7 +306,6 @@ class trajectory::integration_observer {
     /// @param pt Phase plane position where integration starts
     ///
     virtual void on_started_forward_integration(const trajectory& traj, started_forward_event event) = 0;
-
 
     struct limit_hit_event {
         phase_point breach;
@@ -324,7 +326,6 @@ class trajectory::integration_observer {
     ///
     virtual void on_hit_limit_curve(const trajectory& traj, limit_hit_event event) = 0;
 
-
     struct started_backward_event {
         phase_point start;
     };
@@ -336,9 +337,7 @@ class trajectory::integration_observer {
     ///
     virtual void on_started_backward_integration(const trajectory& traj, started_backward_event event) = 0;
 
-
-    struct splice_event {
-    };
+    struct splice_event {};
 
     ///
     /// Called when trajectory has been extended with finalized integration points.
@@ -354,8 +353,28 @@ class trajectory::integration_observer {
     /// @param traj Trajectory with finalized integration points up to current position
     ///
     virtual void on_trajectory_extended(const trajectory& traj, splice_event event) = 0;
+};
+
+/// A trajectory event observer which forwards all events to a single handler taking a variant. Useful if you
+/// want to handle all events uniformly (e.g. storing them).
+class trajectory::integration_event_observer : public trajectory::integration_observer {
+   protected:
+    integration_event_observer();
+
+   public:
+    ~integration_event_observer() override;
 
     using event = std::variant<started_forward_event, limit_hit_event, started_backward_event, splice_event>;
+
+    void on_started_forward_integration(const trajectory& traj, started_forward_event event) final;
+
+    void on_hit_limit_curve(const trajectory& traj, limit_hit_event event) final;
+
+    void on_started_backward_integration(const trajectory& traj, started_backward_event event) final;
+
+    void on_trajectory_extended(const trajectory& traj, splice_event event) final;
+
+    virtual void on_event(const trajectory& traj, event ev) = 0;
 };
 
 ///

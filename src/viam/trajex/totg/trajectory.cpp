@@ -853,6 +853,25 @@ enum class integration_event : std::uint8_t {
 trajectory::integration_observer::integration_observer() = default;
 trajectory::integration_observer::~integration_observer() = default;
 
+trajectory::integration_event_observer::integration_event_observer() = default;
+trajectory::integration_event_observer::~integration_event_observer() = default;
+
+void trajectory::integration_event_observer::on_started_forward_integration(const trajectory& traj, started_forward_event event) {
+    on_event(traj, std::move(event));
+}
+
+void trajectory::integration_event_observer::on_hit_limit_curve(const trajectory& traj, limit_hit_event event) {
+    on_event(traj, std::move(event));
+}
+
+void trajectory::integration_event_observer::on_started_backward_integration(const trajectory& traj, started_backward_event event) {
+    on_event(traj, std::move(event));
+}
+
+void trajectory::integration_event_observer::on_trajectory_extended(const trajectory& traj, splice_event event) {
+    on_event(traj, std::move(event));
+}
+
 trajectory::trajectory(class path p, options opt, integration_points points)
     : path_{std::move(p)}, options_{std::move(opt)}, integration_points_{std::move(points)} {
     if (path_.empty() || path_.length() <= arc_length{0.0}) {
