@@ -34,7 +34,9 @@ class expectation_observer final : public trajectory::integration_observer {
     };
 
     struct expected_hit_limit {
-        limit_hit_event event;
+        trajectory::phase_point breach;
+        std::optional<arc_velocity> s_dot_max_acc;
+        std::optional<arc_velocity> s_dot_max_vel;
         std::optional<double> tolerance_percent;
     };
 
@@ -44,9 +46,8 @@ class expectation_observer final : public trajectory::integration_observer {
     };
 
     struct expected_splice {
-        splice_event event;
-        trajectory::seconds duration;
-        std::size_t num_pruned;
+        std::optional<trajectory::seconds> duration;
+        std::optional<std::size_t> num_pruned;
         std::optional<double> tolerance_percent;
     };
 
@@ -61,10 +62,10 @@ class expectation_observer final : public trajectory::integration_observer {
 
     expectation_observer& expect_hit_limit(arc_length s,
                                            arc_velocity s_dot,
-                                           arc_velocity acc_limit,
-                                           arc_velocity vel_limit,
+                                           std::optional<arc_velocity> acc_limit = std::nullopt,
+                                           std::optional<arc_velocity> vel_limit = std::nullopt,
                                            std::optional<double> tolerance_percent = std::nullopt) {
-        expectations_.push_back(expected_hit_limit{{{s, s_dot}, acc_limit, vel_limit}, tolerance_percent});
+        expectations_.push_back(expected_hit_limit{{s, s_dot}, acc_limit, vel_limit, tolerance_percent});
         return *this;
     }
 
@@ -73,10 +74,10 @@ class expectation_observer final : public trajectory::integration_observer {
         return *this;
     }
 
-    expectation_observer& expect_splice(trajectory::seconds duration,
-                                        std::size_t num_pruned,
+    expectation_observer& expect_splice(std::optional<trajectory::seconds> duration = std::nullopt,
+                                        std::optional<std::size_t> num_pruned = std::nullopt,
                                         std::optional<double> tolerance_percent = std::nullopt) {
-        expectations_.push_back(expected_splice{{}, duration, num_pruned, tolerance_percent});
+        expectations_.push_back(expected_splice{duration, num_pruned, tolerance_percent});
         return *this;
     }
 
@@ -113,10 +114,16 @@ class expectation_observer final : public trajectory::integration_observer {
 
             const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
 
-            BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s), static_cast<double>(expected->event.breach.s), tol);
-            BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s_dot), static_cast<double>(expected->event.breach.s_dot), tol);
-            BOOST_CHECK_CLOSE(static_cast<double>(event.s_dot_max_acc), static_cast<double>(expected->event.s_dot_max_acc), tol);
-            BOOST_CHECK_CLOSE(static_cast<double>(event.s_dot_max_vel), static_cast<double>(expected->event.s_dot_max_vel), tol);
+            BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s), static_cast<double>(expected->breach.s), tol);
+            BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s_dot), static_cast<double>(expected->breach.s_dot), tol);
+
+            if (expected->s_dot_max_acc.has_value()) {
+                BOOST_CHECK_CLOSE(static_cast<double>(event.s_dot_max_acc), static_cast<double>(*expected->s_dot_max_acc), tol);
+            }
+
+            if (expected->s_dot_max_vel.has_value()) {
+                BOOST_CHECK_CLOSE(static_cast<double>(event.s_dot_max_vel), static_cast<double>(*expected->s_dot_max_vel), tol);
+            }
 
             expectations_.pop_front();
         }
@@ -147,8 +154,14 @@ class expectation_observer final : public trajectory::integration_observer {
             BOOST_REQUIRE_MESSAGE(expected != nullptr, "Expected different event type, got splice at duration=" << traj.duration().count());
 
             const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
-            BOOST_CHECK_CLOSE(traj.duration().count(), expected->duration.count(), tol);
-            BOOST_CHECK_EQUAL(event.pruned.size(), expected->num_pruned);
+
+            if (expected->duration.has_value()) {
+                BOOST_CHECK_CLOSE(traj.duration().count(), expected->duration->count(), tol);
+            }
+
+            if (expected->num_pruned.has_value()) {
+                BOOST_CHECK_EQUAL(event.pruned.size(), *expected->num_pruned);
+            }
 
             expectations_.pop_front();
         }

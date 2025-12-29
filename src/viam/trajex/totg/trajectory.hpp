@@ -299,21 +299,31 @@ class trajectory::integration_observer {
     ///
     virtual ~integration_observer();
 
+    ///
+    /// Event fired when forward integration starts or resumes.
+    ///
     struct started_forward_event {
-        phase_point start;
+        phase_point start;  ///< Phase plane position where integration starts
     };
 
     ///
     /// Called when forward integration starts or resumes.
     ///
-    /// @param pt Phase plane position where integration starts
+    /// @param traj Trajectory being integrated
+    /// @param event Event data containing starting position
     ///
     virtual void on_started_forward_integration(const trajectory& traj, started_forward_event event) = 0;
 
+    ///
+    /// Event fired when integration detects exceeding a limit curve.
+    ///
+    /// Contains the infeasible candidate point that would exceed limits,
+    /// not a point on the limit curve itself.
+    ///
     struct limit_hit_event {
-        phase_point breach;
-        arc_velocity s_dot_max_acc;
-        arc_velocity s_dot_max_vel;
+        phase_point breach;          ///< Infeasible candidate point (exceeds limit)
+        arc_velocity s_dot_max_acc;  ///< Maximum velocity from acceleration constraints
+        arc_velocity s_dot_max_vel;  ///< Maximum velocity from velocity constraints
     };
 
     ///
@@ -323,24 +333,40 @@ class trajectory::integration_observer {
     /// the limit, not a point on the limit curve itself. The algorithm will transition
     /// to curve following or switching point search to handle this condition.
     ///
-    /// @param pt Phase plane position of infeasible candidate point (exceeds limit)
-    /// @param s_dot_max_acc Maximum velocity from acceleration constraints at pt.s
-    /// @param s_dot_max_vel Maximum velocity from velocity constraints at pt.s
+    /// @param traj Trajectory being integrated
+    /// @param event Event data containing breach point and limit values
     ///
     virtual void on_hit_limit_curve(const trajectory& traj, limit_hit_event event) = 0;
 
+    ///
+    /// Event fired when backward integration starts from a switching point.
+    ///
     struct started_backward_event {
-        phase_point start;
+        phase_point start;  ///< Phase plane position of switching point
     };
 
     ///
     /// Called when backward integration starts from a switching point.
     ///
-    /// @param pt Phase plane position of switching point
+    /// @param traj Trajectory being integrated
+    /// @param event Event data containing switching point position
     ///
     virtual void on_started_backward_integration(const trajectory& traj, started_backward_event event) = 0;
 
+    ///
+    /// Event fired when trajectory is extended with finalized integration points.
+    ///
+    /// Contains the pruned forward integration points that were replaced by
+    /// backward-integrated points with lower (more conservative) velocities.
+    ///
     struct splice_event {
+        ///
+        /// Range of integration points that were pruned from the forward trajectory.
+        ///
+        /// These points represent an over-optimistic forward integration that
+        /// didn't account for deceleration to a switching point. They've been
+        /// replaced by more conservative backward-integrated points.
+        ///
         std::ranges::subrange<trajectory::integration_points::const_iterator> pruned;
     };
 
@@ -356,6 +382,7 @@ class trajectory::integration_observer {
     /// the trajectory itself (last integration point and trajectory.duration()).
     ///
     /// @param traj Trajectory with finalized integration points up to current position
+    /// @param event Event data containing pruned integration points
     ///
     virtual void on_trajectory_extended(const trajectory& traj, splice_event event) = 0;
 };
@@ -379,6 +406,16 @@ class trajectory::integration_event_observer : public trajectory::integration_ob
 
     void on_trajectory_extended(const trajectory& traj, splice_event event) final;
 
+    ///
+    /// Called for all integration events with event type as variant.
+    ///
+    /// Override this method to handle all event types uniformly. All specific
+    /// event callbacks (on_started_forward_integration, on_hit_limit_curve, etc.)
+    /// are marked final and forward to this method.
+    ///
+    /// @param traj Trajectory being integrated
+    /// @param ev Event variant containing one of the event types
+    ///
     virtual void on_event(const trajectory& traj, event ev) = 0;
 };
 

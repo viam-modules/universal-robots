@@ -1,5 +1,4 @@
 #include <viam/trajex/totg/observers.hpp>
-#include "viam/trajex/totg/trajectory.hpp"
 
 namespace viam::trajex::totg {
 
@@ -14,14 +13,22 @@ const std::vector<trajectory_integration_event_collector::event>& trajectory_int
     return events_;
 }
 
-trajectory_integration_event_collector::const_iterator trajectory_integration_event_collector::cbebin() const noexcept {
-    using std::begin;
-    return begin(events());
+trajectory_integration_event_collector::const_iterator trajectory_integration_event_collector::cbegin() const noexcept {
+    using std::cbegin;
+    return cbegin(events());
 }
 
 trajectory_integration_event_collector::const_iterator trajectory_integration_event_collector::cend() const noexcept {
-    using std::end;
-    return end(events());
-};
+    using std::cend;
+    return cend(events());
+}
+
+trajectory_integration_event_collector::const_iterator trajectory_integration_event_collector::begin() const noexcept {
+    return cbegin();
+}
+
+trajectory_integration_event_collector::const_iterator trajectory_integration_event_collector::end() const noexcept {
+    return cend();
+}
 
 }  // namespace viam::trajex::totg

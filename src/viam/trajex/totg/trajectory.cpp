@@ -1576,8 +1576,11 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                         const auto truncate_begin = std::next(begin(traj.integration_points_), truncate_index);
 
-                        auto& frost = traj.frosts_.emplace_back(std::make_move_iterator(truncate_begin),
-                                                                std::make_move_iterator(end(traj.integration_points_)));
+                        // Only preserve pruned points if observer needs them for event reporting
+                        if (traj.options_.observer) {
+                            traj.frosts_.emplace_back(std::make_move_iterator(truncate_begin),
+                                                      std::make_move_iterator(end(traj.integration_points_)));
+                        }
                         traj.integration_points_.erase(truncate_begin, traj.integration_points_.end());
 
                         // Record intersection time - backward trajectory timestamps start here
@@ -1614,7 +1617,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                         // Notify observer that trajectory has been extended with finalized backward segment
                         if (traj.options_.observer) {
-                            traj.options_.observer->on_trajectory_extended(traj, {.pruned = std::ranges::subrange(frost)});
+                            // Observer exists, so frosts_ must have been populated above
+                            traj.options_.observer->on_trajectory_extended(traj, {.pruned = std::ranges::subrange(traj.frosts_.back())});
                         }
 
                         event = integration_event::k_hit_forward_trajectory;
