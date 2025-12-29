@@ -276,6 +276,9 @@ class trajectory {
     // Time parameterization from TOTG integration
     integration_points integration_points_;
 
+    // The path(s) not taken
+    std::vector<integration_points> frosts_;
+
     // Total trajectory duration
     seconds duration_{seconds{0.0}};
 };
@@ -337,7 +340,9 @@ class trajectory::integration_observer {
     ///
     virtual void on_started_backward_integration(const trajectory& traj, started_backward_event event) = 0;
 
-    struct splice_event {};
+    struct splice_event {
+        std::ranges::subrange<trajectory::integration_points::const_iterator> pruned;
+    };
 
     ///
     /// Called when trajectory has been extended with finalized integration points.

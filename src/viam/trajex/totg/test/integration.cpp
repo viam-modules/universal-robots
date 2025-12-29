@@ -2,6 +2,7 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <iterator>
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
@@ -45,6 +46,7 @@ class expectation_observer final : public trajectory::integration_observer {
     struct expected_splice {
         splice_event event;
         trajectory::seconds duration;
+        std::size_t num_pruned;
         std::optional<double> tolerance_percent;
     };
 
@@ -71,8 +73,10 @@ class expectation_observer final : public trajectory::integration_observer {
         return *this;
     }
 
-    expectation_observer& expect_splice(trajectory::seconds duration, std::optional<double> tolerance_percent = std::nullopt) {
-        expectations_.push_back(expected_splice{{}, duration, tolerance_percent});
+    expectation_observer& expect_splice(trajectory::seconds duration,
+                                        std::size_t num_pruned,
+                                        std::optional<double> tolerance_percent = std::nullopt) {
+        expectations_.push_back(expected_splice{{}, duration, num_pruned, tolerance_percent});
         return *this;
     }
 
@@ -135,7 +139,7 @@ class expectation_observer final : public trajectory::integration_observer {
         }
     }
 
-    void on_trajectory_extended(const trajectory& traj, splice_event) override {
+    void on_trajectory_extended(const trajectory& traj, splice_event event) override {
         BOOST_TEST_CONTEXT("on_trajectory_extended event") {
             BOOST_REQUIRE_MESSAGE(!expectations_.empty(), "Unexpected splice event at duration=" << traj.duration().count());
 
@@ -144,6 +148,7 @@ class expectation_observer final : public trajectory::integration_observer {
 
             const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
             BOOST_CHECK_CLOSE(traj.duration().count(), expected->duration.count(), tol);
+            BOOST_CHECK_EQUAL(event.pruned.size(), expected->num_pruned);
 
             expectations_.pop_front();
         }
@@ -580,7 +585,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior) {
                           arc_velocity{1.23413}   // vel_limit
                           )
         .expect_backward_start(arc_length{0.71802}, arc_velocity{0.15297})
-        .expect_splice(trajectory::seconds{7.7013})
+        .expect_splice(trajectory::seconds{7.7013}, size_t{6782})
         .expect_forward_start(arc_length{0.71802}, arc_velocity{0.15297})
         .expect_hit_limit(arc_length{0.72084},
                           arc_velocity{0.15297},
@@ -588,7 +593,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior) {
                           arc_velocity{1.23049}   // vel_limit
                           )
         .expect_backward_start(arc_length{1.85532}, arc_velocity{0.0})
-        .expect_splice(trajectory::seconds{20.1621});
+        .expect_splice(trajectory::seconds{20.1621}, size_t{10118});
 
     const trajectory traj = fixture.create_and_validate();
 }

@@ -1,4 +1,3 @@
-#include <stdexcept>
 #include <viam/trajex/totg/observers.hpp>
 #include "viam/trajex/totg/trajectory.hpp"
 
@@ -7,7 +6,7 @@ namespace viam::trajex::totg {
 trajectory_integration_event_collector::trajectory_integration_event_collector() = default;
 trajectory_integration_event_collector::~trajectory_integration_event_collector() = default;
 
-void trajectory_integration_event_collector::on_event(const class trajectory& traj, event ev) {
+void trajectory_integration_event_collector::on_event(const class trajectory&, event ev) {
     events_.push_back(std::move(ev));
 }
 

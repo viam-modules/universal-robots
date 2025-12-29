@@ -1,3 +1,5 @@
+#include <cstddef>
+#include <iterator>
 #include <viam/trajex/totg/trajectory.hpp>
 
 #include <cassert>
@@ -1562,17 +1564,21 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     }
 
                     if (intersection_index.has_value()) {
-                        // Found intersection - the candidate point crossed above the forward trajectory in the phase plane. Note that we
-                        // do not include it in the backward trajectory.
+                        // Found intersection - the candidate point crossed above the forward trajectory in
+                        // the phase plane. Note that we do not include it in the backward trajectory.
 
                         // Splice backward trajectory into forward trajectory at intersection point.
                         // The backward trajectory has lower velocities than the over-optimistic forward,
                         // representing the constraint from needing to decelerate to the switching point.
 
                         // Truncate forward trajectory after intersection point
-                        const size_t truncate_index = *intersection_index + 1;  // Keep intersection point
-                        traj.integration_points_.erase(traj.integration_points_.begin() + static_cast<std::ptrdiff_t>(truncate_index),
-                                                       traj.integration_points_.end());
+                        const auto truncate_index = static_cast<ptrdiff_t>(*intersection_index + 1);
+
+                        const auto truncate_begin = std::next(begin(traj.integration_points_), truncate_index);
+
+                        auto& frost = traj.frosts_.emplace_back(std::make_move_iterator(truncate_begin),
+                                                                std::make_move_iterator(end(traj.integration_points_)));
+                        traj.integration_points_.erase(truncate_begin, traj.integration_points_.end());
 
                         // Record intersection time - backward trajectory timestamps start here
                         const seconds intersection_time = traj.integration_points_.back().time;
@@ -1608,7 +1614,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                         // Notify observer that trajectory has been extended with finalized backward segment
                         if (traj.options_.observer) {
-                            traj.options_.observer->on_trajectory_extended(traj, {});
+                            traj.options_.observer->on_trajectory_extended(traj, {.pruned = std::ranges::subrange(frost)});
                         }
 
                         event = integration_event::k_hit_forward_trajectory;
