@@ -89,25 +89,38 @@ class epsilon {
     double value_;
 };
 
+namespace epsilon_details {
+
+///
+/// Concept for types that can be ordered with each other using epsilon tolerance.
+///
+/// Two types satisfy this concept if their difference can be compared with epsilon
+/// using relational operators, preserving dimensional consistency.
+///
+template <typename U, typename V>
+concept ordered_with = requires(U u, V v, epsilon e) {
+    { (u - v) > e } -> std::convertible_to<bool>;
+    { (u - v) < e } -> std::convertible_to<bool>;
+};
+
+}  // namespace epsilon_details
+
 template <typename T>
 class epsilon::wrapper {
-    explicit constexpr wrapper(const epsilon& e, T const& t) : e_{e}, t_{t} {}
-
     friend class epsilon;
+
+    explicit constexpr wrapper(const epsilon& e, T const& t) noexcept : e_{e}, t_{t} {}
 
     template <typename U, typename V>
     friend constexpr auto operator<=>(const wrapper<U>& lhs, const wrapper<V>& rhs) noexcept
-        requires std::three_way_comparable_with<U, V> && epsilon_details::explicitly_convertible_to_double<U> &&
-                 epsilon_details::explicitly_convertible_to_double<V>;
+        requires epsilon_details::ordered_with<U, V>;
 
     template <typename U, typename V>
     friend constexpr bool operator==(const wrapper<U>& lhs, const wrapper<V>& rhs) noexcept
-        requires std::three_way_comparable_with<U, V> && epsilon_details::explicitly_convertible_to_double<U> &&
-                 epsilon_details::explicitly_convertible_to_double<V>;
+        requires epsilon_details::ordered_with<U, V>;
 
-   private:
     const epsilon& e_;
-    T const& t_;
+    const T& t_;
 };
 
 template <typename T>
@@ -130,13 +143,12 @@ constexpr epsilon::wrapper<T> epsilon::wrap(const T& t) const noexcept {
 ///         weak_ordering::greater if lhs significantly exceeds rhs,
 ///         weak_ordering::equivalent if values are within tolerance
 ///
-template <typename T, typename U>
-constexpr auto operator<=>(const epsilon::wrapper<T>& lhs, const epsilon::wrapper<U>& rhs) noexcept
-    requires std::three_way_comparable_with<T, U> && epsilon_details::explicitly_convertible_to_double<T> &&
-             epsilon_details::explicitly_convertible_to_double<U>
+template <typename U, typename V>
+constexpr auto operator<=>(const epsilon::wrapper<U>& lhs, const epsilon::wrapper<V>& rhs) noexcept
+    requires epsilon_details::ordered_with<U, V>
 {
-    const double tol = std::min(static_cast<double>(lhs.e_), static_cast<double>(rhs.e_));
-    const double diff = static_cast<double>(lhs.t_) - static_cast<double>(rhs.t_);
+    const auto tol = std::min(lhs.e_, rhs.e_);
+    const auto diff = lhs.t_ - rhs.t_;
 
     if (diff > tol) {
         return std::weak_ordering::greater;
@@ -156,11 +168,32 @@ constexpr auto operator<=>(const epsilon::wrapper<T>& lhs, const epsilon::wrappe
 /// @param rhs Right wrapped value
 /// @return True if values are within tolerance
 ///
-template <typename T, typename U>
-constexpr bool operator==(const epsilon::wrapper<T>& lhs, const epsilon::wrapper<U>& rhs) noexcept
-    requires std::three_way_comparable_with<T, U> && epsilon_details::explicitly_convertible_to_double<T> &&
-             epsilon_details::explicitly_convertible_to_double<U>
+template <typename U, typename V>
+constexpr bool operator==(const epsilon::wrapper<U>& lhs, const epsilon::wrapper<V>& rhs) noexcept
+    requires epsilon_details::ordered_with<U, V>
 {
+    return (lhs <=> rhs) == 0;
+}
+
+///
+/// Three-way comparison between epsilon values.
+///
+/// @param lhs Left epsilon
+/// @param rhs Right epsilon
+/// @return Comparison result
+///
+constexpr auto operator<=>(epsilon lhs, epsilon rhs) noexcept {
+    return static_cast<double>(lhs) <=> static_cast<double>(rhs);
+}
+
+///
+/// Equality comparison between epsilon values.
+///
+/// @param lhs Left epsilon
+/// @param rhs Right epsilon
+/// @return True if equal
+///
+constexpr bool operator==(epsilon lhs, epsilon rhs) noexcept {
     return (lhs <=> rhs) == 0;
 }
 
