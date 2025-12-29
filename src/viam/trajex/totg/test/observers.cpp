@@ -13,10 +13,10 @@ using namespace viam::trajex::totg;
 BOOST_AUTO_TEST_SUITE(trajectory_observer_tests)
 
 BOOST_AUTO_TEST_CASE(event_collector_empty_on_construction) {
-    trajectory_integration_event_collector collector;
+    const trajectory_integration_event_collector collector;
 
     BOOST_CHECK(collector.events().empty());
-    BOOST_CHECK_EQUAL(collector.events().size(), 0u);
+    BOOST_CHECK_EQUAL(collector.events().size(), 0U);
     BOOST_CHECK(collector.begin() == collector.end());
     BOOST_CHECK(collector.cbegin() == collector.cend());
 }
@@ -35,7 +35,7 @@ BOOST_AUTO_TEST_CASE(event_collector_stores_events_in_order) {
 
     // Should have collected some events
     BOOST_CHECK(!collector.events().empty());
-    BOOST_CHECK_GT(collector.events().size(), 0u);
+    BOOST_CHECK_GT(collector.events().size(), 0U);
 
     // Iterator range should match size
     BOOST_CHECK_EQUAL(std::distance(collector.begin(), collector.end()), static_cast<std::ptrdiff_t>(collector.events().size()));
@@ -100,7 +100,7 @@ BOOST_AUTO_TEST_CASE(event_collector_contains_expected_event_types) {
     }
 
     // Should have at least some forward starts (always happens)
-    BOOST_CHECK_GT(forward_starts, 0u);
+    BOOST_CHECK_GT(forward_starts, 0);
 
     // Total events should match
     BOOST_CHECK_EQUAL(forward_starts + limit_hits + backward_starts + splices, collector.events().size());
