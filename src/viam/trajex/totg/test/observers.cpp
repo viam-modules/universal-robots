@@ -1,5 +1,3 @@
-// Observer tests: event collection and handling
-
 #include <viam/trajex/totg/observers.hpp>
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
@@ -31,10 +29,7 @@ BOOST_AUTO_TEST_CASE(event_collector_stores_events_in_order) {
     const path p = path::create(waypoints);
 
     const trajectory::options opts{
-        .max_velocity = xt::ones<double>({3}),
-        .max_acceleration = xt::ones<double>({3}),
-        .observer = &collector
-    };
+        .max_velocity = xt::ones<double>({3}), .max_acceleration = xt::ones<double>({3}), .observer = &collector};
 
     const trajectory traj = trajectory::create(p, opts);
 
@@ -43,8 +38,7 @@ BOOST_AUTO_TEST_CASE(event_collector_stores_events_in_order) {
     BOOST_CHECK_GT(collector.events().size(), 0u);
 
     // Iterator range should match size
-    BOOST_CHECK_EQUAL(std::distance(collector.begin(), collector.end()),
-                      static_cast<std::ptrdiff_t>(collector.events().size()));
+    BOOST_CHECK_EQUAL(std::distance(collector.begin(), collector.end()), static_cast<std::ptrdiff_t>(collector.events().size()));
 }
 
 BOOST_AUTO_TEST_CASE(event_collector_range_iteration) {
@@ -55,10 +49,7 @@ BOOST_AUTO_TEST_CASE(event_collector_range_iteration) {
     const path p = path::create(waypoints);
 
     const trajectory::options opts{
-        .max_velocity = xt::ones<double>({3}),
-        .max_acceleration = xt::ones<double>({3}),
-        .observer = &collector
-    };
+        .max_velocity = xt::ones<double>({3}), .max_acceleration = xt::ones<double>({3}), .observer = &collector};
 
     const trajectory traj = trajectory::create(p, opts);
 
@@ -81,17 +72,12 @@ BOOST_AUTO_TEST_CASE(event_collector_contains_expected_event_types) {
 
     // Create trajectory with reversal to generate diverse events
     const xt::xarray<double> waypoints = {
-        {0.0, 0.0, 0.0},
-        {1.0, 0.0, 0.0},
-        {0.5, 0.0, 0.0}  // Reversal
+        {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.5, 0.0, 0.0}  // Reversal
     };
     const path p = path::create(waypoints);
 
     const trajectory::options opts{
-        .max_velocity = xt::ones<double>({3}) * 0.5,
-        .max_acceleration = xt::ones<double>({3}) * 0.3,
-        .observer = &collector
-    };
+        .max_velocity = xt::ones<double>({3}) * 0.5, .max_acceleration = xt::ones<double>({3}) * 0.3, .observer = &collector};
 
     const trajectory traj = trajectory::create(p, opts);
 
@@ -117,8 +103,7 @@ BOOST_AUTO_TEST_CASE(event_collector_contains_expected_event_types) {
     BOOST_CHECK_GT(forward_starts, 0u);
 
     // Total events should match
-    BOOST_CHECK_EQUAL(forward_starts + limit_hits + backward_starts + splices,
-                      collector.events().size());
+    BOOST_CHECK_EQUAL(forward_starts + limit_hits + backward_starts + splices, collector.events().size());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

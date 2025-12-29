@@ -2,14 +2,12 @@
 
 #include <boost/test/unit_test.hpp>
 
-#include <iterator>
 #include <viam/trajex/totg/path.hpp>
+#include <viam/trajex/totg/test/test_utils.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/types/arc_length.hpp>
 #include <viam/trajex/types/hertz.hpp>
-
-#include "test_utils.hpp"
 
 namespace {
 
