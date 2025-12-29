@@ -37,7 +37,7 @@ class trajectory_integration_event_collector final : public trajectory::integrat
     /// @param traj Trajectory being integrated
     /// @param ev Event to store
     ///
-    void on_event(const trajectory& traj, event ev) override;
+    void on_event(const trajectory& traj, event ev);
 
     ///
     /// Gets all collected events.

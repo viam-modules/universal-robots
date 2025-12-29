@@ -1,9 +1,9 @@
-#include <cstddef>
-#include <iterator>
 #include <viam/trajex/totg/trajectory.hpp>
 
 #include <cassert>
+#include <cstddef>
 #include <functional>
+#include <iterator>
 #include <numbers>
 #include <optional>
 #include <ranges>

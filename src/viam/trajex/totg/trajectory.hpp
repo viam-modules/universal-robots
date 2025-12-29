@@ -356,6 +356,9 @@ class trajectory::integration_observer {
     ///
     /// Event fired when trajectory is extended with finalized integration points.
     ///
+    /// Occurs after backward integration finds an intersection with the forward
+    /// trajectory.
+    ///
     /// Contains the pruned forward integration points that were replaced by
     /// backward-integrated points with lower (more conservative) velocities.
     ///
@@ -387,8 +390,10 @@ class trajectory::integration_observer {
     virtual void on_trajectory_extended(const trajectory& traj, splice_event event) = 0;
 };
 
+///
 /// A trajectory event observer which forwards all events to a single handler taking a variant. Useful if you
 /// want to handle all events uniformly (e.g. storing them).
+///
 class trajectory::integration_event_observer : public trajectory::integration_observer {
    protected:
     integration_event_observer();
