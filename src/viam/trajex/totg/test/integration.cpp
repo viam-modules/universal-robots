@@ -24,8 +24,6 @@ trajectory create_trajectory_with_integration_points(path p, std::vector<traject
 
 class expectation_observer final : public trajectory::integration_observer {
    public:
-    // TODO(RSDK-12992): Move these types to the integration_observer
-    // to make it easier to journal events.
     struct expected_forward_start {
         started_forward_event event;
         std::optional<double> tolerance_percent;
