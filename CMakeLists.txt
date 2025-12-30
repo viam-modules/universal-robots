@@ -187,6 +187,7 @@ add_library(trajex)
 target_sources(trajex
   PRIVATE
     src/viam/trajex/trajex.cpp
+    src/viam/trajex/totg/observers.cpp
     src/viam/trajex/totg/path.cpp
     src/viam/trajex/totg/trajectory.cpp
     src/viam/trajex/totg/uniform_sampler.cpp
@@ -346,6 +347,7 @@ target_sources(trajex-test
     src/viam/trajex/totg/test/trajectory.cpp
     src/viam/trajex/totg/test/uniform_sampler.cpp
     src/viam/trajex/totg/test/integration.cpp
+    src/viam/trajex/totg/test/observers.cpp
 )
 
 target_link_libraries(trajex-test
