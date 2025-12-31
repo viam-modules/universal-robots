@@ -2,6 +2,7 @@
 // Extracted from test.cpp lines 1755-2060
 
 #include <viam/trajex/totg/path.hpp>
+#include <viam/trajex/types/angles.hpp>
 #include <viam/trajex/types/arc_length.hpp>
 
 #if __has_include(<xtensor/reducers/xnorm.hpp>)
@@ -15,6 +16,8 @@
 #include <boost/test/unit_test.hpp>
 
 BOOST_AUTO_TEST_SUITE(segment_tests)
+
+using viam::trajex::degrees_to_radians;
 BOOST_AUTO_TEST_CASE(linear_constructor) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
@@ -172,10 +175,10 @@ BOOST_AUTO_TEST_CASE(circular_segment_configuration) {
         xt::xarray<double>{1.0, 0.0},  // x
         xt::xarray<double>{0.0, 1.0},  // y
         1.0,                           // radius
-        std::numbers::pi / 2.0         // angle_rads (90 degrees)
+        degrees_to_radians(90.0)       // angle_rads (90 degrees)
     };
     const path::segment seg{data};
-    const path::segment::view view{seg, arc_length{0.0}, arc_length{std::numbers::pi / 2.0}};
+    const path::segment::view view{seg, arc_length{0.0}, arc_length{degrees_to_radians(90.0)}};
 
     // At start (angle=0): should be (1, 0)
     auto config_start = view.configuration(arc_length{0.0});
@@ -183,12 +186,12 @@ BOOST_AUTO_TEST_CASE(circular_segment_configuration) {
     BOOST_CHECK_CLOSE(config_start(1), 0.0, 1e-6);
 
     // At middle (angle=π/4): should be (√2/2, √2/2)
-    auto config_mid = view.configuration(arc_length{std::numbers::pi / 4.0});
+    auto config_mid = view.configuration(arc_length{degrees_to_radians(45.0)});
     BOOST_CHECK_CLOSE(config_mid(0), std::sqrt(2.0) / 2.0, 1e-6);
     BOOST_CHECK_CLOSE(config_mid(1), std::sqrt(2.0) / 2.0, 1e-6);
 
     // At end (angle=π/2): should be (0, 1)
-    auto config_end = view.configuration(arc_length{std::numbers::pi / 2.0});
+    auto config_end = view.configuration(arc_length{degrees_to_radians(90.0)});
     BOOST_CHECK_SMALL(config_end(0), 1e-10);  // Near zero, use SMALL not CLOSE
     BOOST_CHECK_CLOSE(config_end(1), 1.0, 1e-6);
 }
@@ -203,10 +206,10 @@ BOOST_AUTO_TEST_CASE(circular_segment_tangent) {
         xt::xarray<double>{1.0, 0.0},  // x
         xt::xarray<double>{0.0, 1.0},  // y
         1.0,                           // radius
-        std::numbers::pi / 2.0         // angle_rads
+        degrees_to_radians(90.0)       // angle_rads
     };
     const path::segment seg{data};
-    const path::segment::view view{seg, arc_length{0.0}, arc_length{std::numbers::pi / 2.0}};
+    const path::segment::view view{seg, arc_length{0.0}, arc_length{degrees_to_radians(90.0)}};
 
     // At start (angle=0): tangent should be (0, 1)
     auto tangent_start = view.tangent(arc_length{0.0});
@@ -214,7 +217,7 @@ BOOST_AUTO_TEST_CASE(circular_segment_tangent) {
     BOOST_CHECK_CLOSE(tangent_start(1), 1.0, 1e-6);
 
     // At end (angle=π/2): tangent should be (-1, 0)
-    auto tangent_end = view.tangent(arc_length{std::numbers::pi / 2.0});
+    auto tangent_end = view.tangent(arc_length{degrees_to_radians(90.0)});
     BOOST_CHECK_CLOSE(tangent_end(0), -1.0, 1e-6);
     BOOST_CHECK_SMALL(tangent_end(1), 1e-10);  // Near zero
 }
@@ -229,10 +232,10 @@ BOOST_AUTO_TEST_CASE(circular_segment_curvature) {
         xt::xarray<double>{1.0, 0.0},  // x
         xt::xarray<double>{0.0, 1.0},  // y
         2.0,                           // radius = 2
-        std::numbers::pi / 2.0         // angle_rads
+        degrees_to_radians(90.0)       // angle_rads
     };
     const path::segment seg{data};
-    const path::segment::view view{seg, arc_length{0.0}, arc_length{std::numbers::pi}};
+    const path::segment::view view{seg, arc_length{0.0}, arc_length{degrees_to_radians(180.0)}};
 
     // At start (angle=0): curvature should point from (2,0) to (0,0), magnitude 1/2
     auto curvature_start = view.curvature(arc_length{0.0});
