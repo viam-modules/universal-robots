@@ -1012,7 +1012,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     auto max_acceleration_vec_data = current_state_->get_max_acceleration();
     // TODO(RSDK-12375) Remove 0 acc check when RDK stops sending 0 velocities
     if (options.max_acc_degs_per_sec2 && options.max_acc_degs_per_sec2.get() > 0) {
-        max_acceleration_vec_data.fill(options.max_acc_degs_per_sec2.get());
+        max_acceleration_vec_data.fill(degrees_to_radians(options.max_acc_degs_per_sec2.get()));
     }
     const auto max_acceleration_vec = Eigen::Map<const Eigen::VectorXd>(max_acceleration_vec_data.data(), max_acceleration_vec_data.size());
 
