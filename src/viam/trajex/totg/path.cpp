@@ -14,8 +14,11 @@
 
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
+#include <viam/trajex/types/angles.hpp>
 
 namespace viam::trajex::totg {
+
+using viam::trajex::degrees_to_radians;
 
 path::options::options() : max_blend_deviation_(k_default_max_deviation), max_linear_deviation_(k_default_max_deviation) {}
 
@@ -280,7 +283,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // isn't clear that it is OK to omit the blend, because we end
         // up with a discontinuity.
         constexpr double epsilon = 1e-6;
-        if (half_angle < epsilon || half_angle > (std::numbers::pi / 2.0 - epsilon)) {
+        if (half_angle < epsilon || half_angle > (degrees_to_radians(90.0) - epsilon)) {
             return std::nullopt;
         }
 

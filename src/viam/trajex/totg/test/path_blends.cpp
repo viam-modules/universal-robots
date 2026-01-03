@@ -5,12 +5,14 @@
 
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
+#include <viam/trajex/types/angles.hpp>
 #include <viam/trajex/types/arc_length.hpp>
 
 #include <numbers>
 
 #include <boost/test/unit_test.hpp>
 
+using viam::trajex::degrees_to_radians;
 using viam::trajex::totg::test::configs_close;
 using viam::trajex::totg::test::verify_path_visits_waypoints;
 
@@ -262,12 +264,12 @@ BOOST_AUTO_TEST_CASE(circular_blend_blend_radius_geometry) {
     // For 90-degree turn using Kunz & Stilman formulas (eq. 3-4):
     // Trim: ℓ = δ * sin(α/2) / (1 - cos(α/2))
     // Radius: r = ℓ / tan(α/2)
-    const double half_angle = M_PI / 4.0;  // 45 degrees
+    const double half_angle = degrees_to_radians(45.0);
     const double expected_trim = max_dev * std::sin(half_angle) / (1.0 - std::cos(half_angle));
     const double expected_radius = expected_trim / std::tan(half_angle);
 
     // Path length should be: (1 - trim) + (radius * π/2) + (1 - trim)
-    const double expected_length = (2.0 * (1.0 - expected_trim)) + ((expected_radius * M_PI) / 2.0);
+    const double expected_length = (2.0 * (1.0 - expected_trim)) + ((expected_radius * std::numbers::pi) / 2.0);
     BOOST_CHECK_CLOSE(static_cast<double>(p.length()), expected_length, 0.1);  // 0.1% tolerance
 }
 

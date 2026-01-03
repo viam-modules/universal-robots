@@ -1,11 +1,20 @@
+#include <algorithm>
 #include <deque>
+#include <limits>
 
 #include <boost/test/unit_test.hpp>
+
+#if defined(__has_include) && (__has_include(<xtensor/containers/xadapt.hpp>))
+#include <xtensor/containers/xadapt.hpp>
+#else
+#include <xtensor/xadapt.hpp>
+#endif
 
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/test/test_utils.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
+#include <viam/trajex/types/angles.hpp>
 #include <viam/trajex/types/arc_length.hpp>
 #include <viam/trajex/types/hertz.hpp>
 
@@ -14,6 +23,7 @@ namespace {
 using namespace viam::trajex::totg;
 using viam::trajex::arc_length;
 using viam::trajex::arc_velocity;
+using viam::trajex::degrees_to_radians;
 
 trajectory create_trajectory_with_integration_points(path p, std::vector<trajectory::integration_point> points) {
     const trajectory::options opts{.max_velocity = xt::ones<double>({p.dof()}), .max_acceleration = xt::ones<double>({p.dof()})};
@@ -83,6 +93,14 @@ class expectation_observer final : public trajectory::integration_observer {
         }
     }
 
+    const std::deque<integration_expectation>& get_expectations() const {
+        return expectations_;
+    }
+
+    double get_default_tolerance_percent() const {
+        return default_tolerance_percent_;
+    }
+
     void on_started_forward_integration(const trajectory&, started_forward_event event) override {
         BOOST_TEST_CONTEXT("on_started_forward_integration event") {
             BOOST_REQUIRE_MESSAGE(!expectations_.empty(),
@@ -114,7 +132,13 @@ class expectation_observer final : public trajectory::integration_observer {
             BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s_dot), static_cast<double>(expected->breach.s_dot), tol);
 
             if (expected->s_dot_max_acc.has_value()) {
-                BOOST_CHECK_CLOSE(static_cast<double>(event.s_dot_max_acc), static_cast<double>(*expected->s_dot_max_acc), tol);
+                const double actual = static_cast<double>(event.s_dot_max_acc);
+                const double expected_val = static_cast<double>(*expected->s_dot_max_acc);
+                if (std::isinf(expected_val)) {
+                    BOOST_CHECK_EQUAL(actual, expected_val);
+                } else {
+                    BOOST_CHECK_CLOSE(actual, expected_val, tol);
+                }
             }
 
             if (expected->s_dot_max_vel.has_value()) {
@@ -172,7 +196,6 @@ class expectation_observer final : public trajectory::integration_observer {
 
 void validate_trajectory_invariants(const trajectory& traj, double tolerance_percent = 0.1) {
     const auto& points = traj.get_integration_points();
-    const auto& opts = traj.get_options();
     const auto& p = traj.path();
 
     BOOST_TEST_CONTEXT("Validating trajectory invariants") {
@@ -181,12 +204,13 @@ void validate_trajectory_invariants(const trajectory& traj, double tolerance_per
             BOOST_REQUIRE(!points.empty());
 
             const auto& first = points.front();
-            BOOST_CHECK_SMALL(static_cast<double>(first.s), 1e-9);
-            BOOST_CHECK_SMALL(static_cast<double>(first.s_dot), 1e-9);
+            BOOST_CHECK_EQUAL(static_cast<double>(first.s), 0.0);
+            BOOST_CHECK_EQUAL(static_cast<double>(first.s_dot), 0.0);
 
             const auto& last = points.back();
-            BOOST_CHECK_CLOSE(static_cast<double>(last.s), static_cast<double>(p.length()), tolerance_percent);
-            BOOST_CHECK_SMALL(static_cast<double>(last.s_dot), 1e-9);
+            BOOST_CHECK_EQUAL(static_cast<double>(last.s), static_cast<double>(p.length()));
+            BOOST_CHECK_EQUAL(static_cast<double>(last.s_dot), 0.0);
+            BOOST_CHECK_EQUAL(static_cast<double>(last.s_ddot), 0.0);
         }
 
         // Monotonicity
@@ -197,50 +221,47 @@ void validate_trajectory_invariants(const trajectory& traj, double tolerance_per
             }
         }
 
-        // Phase plane velocity limits
-        //
-        // TODO(RSDK-12993): We should expose the necessary methods in
-        // `trajectory` to re-use the implementations.
-        BOOST_TEST_CONTEXT("Phase plane velocity limits") {
+        // Phase plane constraints (velocity limits and acceleration bounds)
+        BOOST_TEST_CONTEXT("Phase plane constraints") {
             auto cursor = p.create_cursor(arc_length{0.0});
 
             for (size_t i = 0; i < points.size(); ++i) {
                 const auto& pt = points[i];
                 cursor.seek(pt.s);
 
-                const auto tangent = cursor.tangent();
-
-                // Compute s_dot_max_vel from equation 22
-                double s_dot_max_vel = std::numeric_limits<double>::infinity();
-                for (size_t j = 0; j < opts.max_velocity.size(); ++j) {
-                    const double tangent_abs = std::abs(tangent(static_cast<long>(j)));
-                    if (tangent_abs > 1e-9) {
-                        s_dot_max_vel = std::min(s_dot_max_vel, opts.max_velocity(static_cast<long>(j)) / tangent_abs);
-                    }
-                }
-
-                // Compute s_dot_max_acc from equation 31
-                double s_dot_max_acc = std::numeric_limits<double>::infinity();
-                for (size_t j = 0; j < opts.max_acceleration.size(); ++j) {
-                    const double tangent_val = tangent(static_cast<long>(j));
-                    const double tangent_sq = tangent_val * tangent_val;
-                    if (tangent_sq > 1e-9) {
-                        s_dot_max_acc = std::min(s_dot_max_acc, std::sqrt(opts.max_acceleration(static_cast<long>(j)) / tangent_sq));
-                    }
-                }
-
+                // Validate velocity limits
+                const auto limits = traj.get_velocity_limits(cursor);
+                const double s_dot_max_vel = static_cast<double>(limits.s_dot_max_vel);
+                const double s_dot_max_acc = static_cast<double>(limits.s_dot_max_acc);
                 const double s_dot_limit = std::min(s_dot_max_vel, s_dot_max_acc);
                 const double actual_s_dot = static_cast<double>(pt.s_dot);
 
-                // Allow small violations due to tolerance
-                const double allowed_limit = s_dot_limit * (1.0 + tolerance_percent / 100.0);
+                // Validate acceleration bounds
+                const auto bounds = traj.get_acceleration_bounds(cursor, pt.s_dot);
+                const double s_ddot_min = static_cast<double>(bounds.s_ddot_min);
+                const double s_ddot_max = static_cast<double>(bounds.s_ddot_max);
+                const double actual_s_ddot = static_cast<double>(pt.s_ddot);
 
                 BOOST_TEST_CONTEXT("Integration point " << i << " at s=" << static_cast<double>(pt.s)) {
-                    BOOST_CHECK_LE(actual_s_dot, allowed_limit);
+                    // Check velocity limits
+                    const double allowed_vel_limit = s_dot_limit * (1.0 + tolerance_percent / 100.0);
+                    BOOST_CHECK_LE(actual_s_dot, allowed_vel_limit);
 
-                    if (actual_s_dot > allowed_limit) {
+                    if (actual_s_dot > allowed_vel_limit) {
                         BOOST_TEST_MESSAGE("s_dot=" << actual_s_dot << " exceeds limit=" << s_dot_limit << " (vel_limit=" << s_dot_max_vel
                                                     << ", acc_limit=" << s_dot_max_acc << ")");
+                    }
+
+                    // Check acceleration bounds
+                    const double tolerance_margin = std::max(std::abs(s_ddot_max), std::abs(s_ddot_min)) * (tolerance_percent / 100.0);
+                    const double allowed_min = s_ddot_min - tolerance_margin;
+                    const double allowed_max = s_ddot_max + tolerance_margin;
+
+                    BOOST_CHECK_GE(actual_s_ddot, allowed_min);
+                    BOOST_CHECK_LE(actual_s_ddot, allowed_max);
+
+                    if (actual_s_ddot < allowed_min || actual_s_ddot > allowed_max) {
+                        BOOST_TEST_MESSAGE("s_ddot=" << actual_s_ddot << " outside bounds=[" << s_ddot_min << ", " << s_ddot_max << "]");
                     }
                 }
             }
@@ -256,28 +277,32 @@ struct trajectory_test_fixture {
     expectation_observer observer;
     double validation_tolerance_percent = 0.1;
     size_t dof_;
-    std::vector<xt::xarray<double>> waypoints_;
+    xt::xarray<double> waypoints_;
+
+    // Trajectory-wide expectations (optional)
+    struct expected_duration {
+        trajectory::seconds duration;
+        std::optional<double> tolerance_percent;
+    };
+    struct expected_path_length {
+        arc_length length;
+        std::optional<double> tolerance_percent;
+    };
+
+    std::optional<expected_duration> expected_duration_;
+    std::optional<size_t> expected_integration_point_count_;
+    std::optional<expected_path_length> expected_path_length_;
 
     explicit trajectory_test_fixture(size_t dof = 6, double expectation_tolerance_percent = 0.1)
         : observer(expectation_tolerance_percent), dof_(dof) {}
 
-    // TODO: Cleanup waypoints handling. It is annoying how it works here now.
-    trajectory_test_fixture& add_waypoint_deg(const std::vector<double>& wp_deg) {
-        xt::xarray<double> wp_rad = xt::zeros<double>({dof_});
-        constexpr double deg_to_rad = M_PI / 180.0;
-        for (size_t i = 0; i < dof_ && i < wp_deg.size(); ++i) {
-            wp_rad(static_cast<long>(i)) = wp_deg[i] * deg_to_rad;
-        }
-        waypoints_.push_back(std::move(wp_rad));
+    trajectory_test_fixture& set_waypoints_deg(const xt::xarray<double>& waypoints_deg) {
+        waypoints_ = degrees_to_radians(waypoints_deg);
         return *this;
     }
 
-    trajectory_test_fixture& add_waypoint_rad(const std::vector<double>& wp_rad) {
-        xt::xarray<double> wp = xt::zeros<double>({dof_});
-        for (size_t i = 0; i < dof_ && i < wp_rad.size(); ++i) {
-            wp(static_cast<long>(i)) = wp_rad[i];
-        }
-        waypoints_.push_back(std::move(wp));
+    trajectory_test_fixture& set_waypoints_rad(const xt::xarray<double>& waypoints_rad) {
+        waypoints_ = waypoints_rad;
         return *this;
     }
 
@@ -296,19 +321,58 @@ struct trajectory_test_fixture {
         return *this;
     }
 
-    trajectory create_and_validate() {
-        BOOST_REQUIRE_MESSAGE(!waypoints_.empty(), "Must add waypoints before calling create_and_validate");
+    trajectory_test_fixture& expect_duration(trajectory::seconds duration, std::optional<double> tolerance_percent = std::nullopt) {
+        expected_duration_ = expected_duration{duration, tolerance_percent};
+        return *this;
+    }
 
-        // Convert vector of waypoints to 2D xarray
-        xt::xarray<double> waypoints = xt::zeros<double>({waypoints_.size(), dof_});
-        for (size_t i = 0; i < waypoints_.size(); ++i) {
-            for (size_t j = 0; j < dof_; ++j) {
-                waypoints(i, j) = waypoints_[i](static_cast<long>(j));
+    trajectory_test_fixture& expect_integration_point_count(size_t count) {
+        expected_integration_point_count_ = count;
+        return *this;
+    }
+
+    trajectory_test_fixture& expect_path_length(arc_length length, std::optional<double> tolerance_percent = std::nullopt) {
+        expected_path_length_ = expected_path_length{length, tolerance_percent};
+        return *this;
+    }
+
+    trajectory create_and_validate() {
+        BOOST_REQUIRE_MESSAGE(waypoints_.size() > 0, "Must set waypoints before calling create_and_validate");
+
+        // Create path
+        path p = path::create(waypoints_, path_opts);
+
+        // Validate path length expectation
+        if (expected_path_length_.has_value()) {
+            const double tol = expected_path_length_->tolerance_percent.value_or(validation_tolerance_percent);
+            BOOST_TEST_CONTEXT("Path length expectation") {
+                BOOST_CHECK_CLOSE(static_cast<double>(p.length()), static_cast<double>(expected_path_length_->length), tol);
             }
         }
 
-        // Create path
-        path p = path::create(waypoints, path_opts);
+        // Validate that expectations follow TOTG invariant:
+        // Must have at least 3 events: forward_start, backward_start from endpoint, splice
+        const auto& expectations = observer.get_expectations();
+        BOOST_REQUIRE_MESSAGE(expectations.size() >= 3, "Must have at least 3 expected events (TOTG invariant)");
+
+        BOOST_TEST_CONTEXT("Expectation coherence (TOTG invariant)") {
+            // First must be forward_start
+            const auto* first_forward = std::get_if<expectation_observer::expected_forward_start>(&expectations.front());
+            BOOST_REQUIRE_MESSAGE(first_forward != nullptr, "First expectation must be forward_start (TOTG invariant)");
+
+            // Second-to-last must be backward_start (from endpoint)
+            const auto& second_last = expectations[expectations.size() - 2];
+            const auto* backward = std::get_if<expectation_observer::expected_backward_start>(&second_last);
+            BOOST_REQUIRE_MESSAGE(backward != nullptr, "Second-to-last expectation must be backward_start (TOTG invariant)");
+
+            // Sanity check: backward expectation should be approximately at path endpoint
+            const double backward_tol = backward->tolerance_percent.value_or(observer.get_default_tolerance_percent());
+            BOOST_CHECK_CLOSE(static_cast<double>(backward->event.start.s), static_cast<double>(p.length()), backward_tol);
+
+            // Last must be splice
+            const auto* splice = std::get_if<expectation_observer::expected_splice>(&expectations.back());
+            BOOST_REQUIRE_MESSAGE(splice != nullptr, "Last expectation must be splice (TOTG invariant)");
+        }
 
         // Attach observer
         traj_opts.observer = &observer;
@@ -318,6 +382,20 @@ struct trajectory_test_fixture {
 
         // Verify all expectations were met
         observer.verify_all_expectations_met();
+
+        // Validate trajectory-wide expectations
+        if (expected_duration_.has_value()) {
+            const double tol = expected_duration_->tolerance_percent.value_or(validation_tolerance_percent);
+            BOOST_TEST_CONTEXT("Trajectory duration expectation") {
+                BOOST_CHECK_CLOSE(traj.duration().count(), expected_duration_->duration.count(), tol);
+            }
+        }
+
+        if (expected_integration_point_count_.has_value()) {
+            BOOST_TEST_CONTEXT("Integration point count expectation") {
+                BOOST_CHECK_EQUAL(traj.get_integration_points().size(), *expected_integration_point_count_);
+            }
+        }
 
         // Validate trajectory invariants
         validate_trajectory_invariants(traj, validation_tolerance_percent);
@@ -463,10 +541,7 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
 
     // Real UR arm waypoint sequence that includes direction reversals
     // Values are in degrees, convert to radians
-    constexpr double deg_to_rad = M_PI / 180.0;
-
-    // All waypoints including the initial all-zeros position
-    std::vector<std::array<double, 6>> waypoints_deg = {
+    const xt::xarray<double> waypoints_deg = {
         {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 0: Start at zero
         {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 1
         {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 2
@@ -488,19 +563,12 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
         // {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 16: back to zero again
     };
 
-    // Convert to radians and create xt::xarray
-    const std::vector<size_t> shape = {waypoints_deg.size(), 6};
-    xt::xarray<double> waypoints_rad = xt::zeros<double>(shape);
-    for (size_t i = 0; i < waypoints_deg.size(); ++i) {
-        for (size_t j = 0; j < 6; ++j) {
-            waypoints_rad(i, j) = waypoints_deg[i][j] * deg_to_rad;
-        }
-    }
+    xt::xarray<double> waypoints_rad = degrees_to_radians(waypoints_deg);
 
     // Typical UR arm constraints (from working configuration)
     trajectory::options opts;
-    opts.max_velocity = xt::ones<double>({6}) * (50 * deg_to_rad);         // 50 deg/s = 0.873 rad/s
-    opts.max_acceleration = xt::ones<double>({6}) * (150.0 * deg_to_rad);  // 150 deg/s^2 = 2.618 rad/s^2
+    opts.max_velocity = degrees_to_radians(xt::ones<double>({6}) * 50.0);       // 50 deg/s
+    opts.max_acceleration = degrees_to_radians(xt::ones<double>({6}) * 150.0);  // 150 deg/s^2
 
     // Observer to log integration events
     class test_observer final : public trajectory::integration_observer {
@@ -521,7 +589,7 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
     };
 
     // Try incrementally longer subsets: [0,1], [0,1,2], [0,1,2,3], etc.
-    for (size_t num_waypoints = 2; num_waypoints <= waypoints_deg.size(); ++num_waypoints) {
+    for (size_t num_waypoints = 2; num_waypoints <= waypoints_deg.shape(0); ++num_waypoints) {
         BOOST_TEST_CONTEXT("Testing " << num_waypoints << " waypoints") {
             // Extract subset
             const xt::xarray<double> subset = xt::view(waypoints_rad, xt::range(0, num_waypoints), xt::all());
@@ -563,29 +631,24 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
     }
 }
 
-BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior) {
+BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
-
-    // TODO: Clean up degree/radian handling in this file, and any
-    // others that are doing it the manual way.
-    constexpr double deg_to_rad = M_PI / 180.0;
 
     // Create fixture
     trajectory_test_fixture fixture(6, 0.1);
 
-    // Set constraints (same as ur_arm_incremental_waypoints_with_reversals)
-    fixture.set_max_velocity(xt::ones<double>({6}) * (50.0 * deg_to_rad))
-        .set_max_acceleration(xt::ones<double>({6}) * (1.0 * deg_to_rad))
+    fixture.set_max_velocity(degrees_to_radians(xt::ones<double>({6}) * 50.0))
+        .set_max_acceleration(degrees_to_radians(xt::ones<double>({6}) * 1.0))
         .set_max_deviation(0.1);
 
-    // Override delta to match test expectations
     fixture.traj_opts.delta = trajectory::seconds{0.0001};
 
-    // Add waypoints
-    fixture.add_waypoint_deg({0.0, 0.0, 0.0, 0.0, 0.0, 0.0})
-        .add_waypoint_deg({-45.0, -45.0, 0.0, 0.0, 0.0, 0.0})
-        .add_waypoint_deg({-45.0, -90.0, 0.0, 0.0, 0.0, 0.0});
+    // Trajectory-wide expectations
+    fixture.expect_duration(trajectory::seconds{20.162}).expect_integration_point_count(201622).expect_path_length(arc_length{1.8553});
+
+    // Set waypoints
+    fixture.set_waypoints_deg({{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0}});
 
     fixture.observer.expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
         .expect_hit_limit(arc_length{0.718023},
@@ -603,6 +666,38 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior) {
                           )
         .expect_backward_start(arc_length{1.85532}, arc_velocity{0.0})
         .expect_splice(trajectory::seconds{20.1621}, size_t{10118});
+
+    const trajectory traj = fixture.create_and_validate();
+}
+
+BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_vel_constrained) {
+    using namespace viam::trajex::totg;
+    using namespace viam::trajex::types;
+
+    // Create fixture
+    trajectory_test_fixture fixture(6, 0.1);
+
+    fixture.set_max_velocity(degrees_to_radians(xt::ones<double>({6}) * 1.0))
+        .set_max_acceleration(degrees_to_radians(xt::ones<double>({6}) * 50.0))
+        .set_max_deviation(0.1);
+
+    fixture.traj_opts.delta = trajectory::seconds{0.0001};
+
+    // Trajectory-wide expectations
+    fixture.expect_duration(trajectory::seconds{90.02}).expect_integration_point_count(900201).expect_path_length(arc_length{1.8553});
+
+    // Set waypoints
+    fixture.set_waypoints_deg({{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0}});
+
+    fixture.observer.expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
+        .expect_hit_limit(arc_length{0.0002493},
+                          arc_velocity{0.0248060},
+                          arc_velocity{std::numeric_limits<double>::infinity()},  // acc_limit
+                          arc_velocity{0.0246826}                                 // vel_limit
+                          )
+        .expect_forward_start(arc_length{0.00024682}, arc_velocity{0.02468268})
+        .expect_backward_start(arc_length{1.85532488}, arc_velocity{0})
+        .expect_splice(trajectory::seconds{90.02000000}, size_t{100});
 
     const trajectory traj = fixture.create_and_validate();
 }

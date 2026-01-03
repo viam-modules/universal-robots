@@ -19,6 +19,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <numbers>
 #include <sstream>
 
 namespace {
@@ -188,7 +189,7 @@ BOOST_AUTO_TEST_CASE(test_rotation_vector_to_matrix_90_degrees_x) {
     // Test: 90-degree rotation around X-axis
     // Why: Standard orthogonal rotation - Y becomes Z, Z becomes -Y
     // This verifies correct implementation of Rodrigues' rotation formula
-    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, M_PI / 2.0, 0.0, 0.0};
+    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, std::numbers::pi / 2.0, 0.0, 0.0};
     const auto rotation_matrix = rotation_vector_to_matrix(tcp_pose);
 
     Eigen::Matrix3d expected;
@@ -201,7 +202,7 @@ BOOST_AUTO_TEST_CASE(test_rotation_vector_to_matrix_90_degrees_y) {
     // Test: 90-degree rotation around Y-axis
     // Why: Standard orthogonal rotation - X becomes -Z, Z becomes X
     // Verifies correct axis ordering in rotation matrix construction
-    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, 0.0, M_PI / 2.0, 0.0};
+    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, 0.0, std::numbers::pi / 2.0, 0.0};
     const auto rotation_matrix = rotation_vector_to_matrix(tcp_pose);
 
     Eigen::Matrix3d expected;
@@ -214,7 +215,7 @@ BOOST_AUTO_TEST_CASE(test_rotation_vector_to_matrix_90_degrees_z) {
     // Test: 90-degree rotation around Z-axis
     // Why: Standard orthogonal rotation - X becomes Y, Y becomes -X
     // Most common rotation in robotics applications
-    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, 0.0, 0.0, M_PI / 2.0};
+    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, 0.0, 0.0, std::numbers::pi / 2.0};
     const auto rotation_matrix = rotation_vector_to_matrix(tcp_pose);
 
     Eigen::Matrix3d expected;
@@ -291,7 +292,7 @@ BOOST_AUTO_TEST_CASE(test_transform_vector_arbitrary_rotation) {
     // Expected result should be at 45-degree angle in XY plane
     const Eigen::Vector3d input_vector(1.0, 0.0, 0.0);
     const Eigen::Vector3d axis(0.0, 0.0, 1.0);
-    const double angle = M_PI / 4.0;
+    const double angle = std::numbers::pi / 4.0;
     const Eigen::Matrix3d rotation_matrix = Eigen::AngleAxisd(angle, axis).toRotationMatrix();
 
     const auto result = transform_vector(input_vector, rotation_matrix);
@@ -325,7 +326,7 @@ BOOST_AUTO_TEST_CASE(test_convert_tcp_force_to_tool_frame_90_degrees_x) {
     // Test: 90-degree X rotation transforms Y→Z, Z→-Y for both force and torque
     // Why: Simulates tool rotated 90° around its X-axis (common in assembly tasks)
     // Force in base Y becomes force in tool Z, etc.
-    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, M_PI / 2.0, 0.0, 0.0};
+    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, std::numbers::pi / 2.0, 0.0, 0.0};
     const vector6d_t tcp_force_base = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
 
     const auto result = convert_tcp_force_to_tool_frame(tcp_pose, tcp_force_base);
@@ -342,7 +343,7 @@ BOOST_AUTO_TEST_CASE(test_convert_tcp_force_to_tool_frame_90_degrees_z) {
     // Test: 90-degree Z rotation transforms X→Y, Y→-X for both force and torque
     // Why: Most common robot tool rotation - tool frame Z-axis aligned with approach direction
     // Critical for correct force feedback in contact tasks
-    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, 0.0, 0.0, M_PI / 2.0};
+    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, 0.0, 0.0, std::numbers::pi / 2.0};
     const vector6d_t tcp_force_base = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
 
     const auto result = convert_tcp_force_to_tool_frame(tcp_pose, tcp_force_base);
@@ -359,7 +360,7 @@ BOOST_AUTO_TEST_CASE(test_convert_tcp_force_to_tool_frame_combined_rotation) {
     // Test: Combined X and Y axis rotations (complex 3D orientation)
     // Why: Tests composition of rotations and validates against reference calculation
     // Represents realistic tool orientations in 6-DOF manipulation tasks
-    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, M_PI / 4.0, M_PI / 4.0, 0.0};
+    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, std::numbers::pi / 4.0, std::numbers::pi / 4.0, 0.0};
     const vector6d_t tcp_force_base = {10.0, 0.0, 0.0, 0.0, 10.0, 0.0};
 
     const auto result = convert_tcp_force_to_tool_frame(tcp_pose, tcp_force_base);
@@ -439,7 +440,7 @@ BOOST_AUTO_TEST_CASE(test_convert_tcp_force_to_tool_frame_large_rotation_angle) 
     // Test: 180-degree rotation (maximum rotation angle)
     // Why: Tests behavior at rotation boundaries and sign changes
     // 180° rotation around X should flip Y and Z components
-    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, M_PI, 0.0, 0.0};
+    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, std::numbers::pi, 0.0, 0.0};
     const vector6d_t tcp_force_base = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
 
     const auto result = convert_tcp_force_to_tool_frame(tcp_pose, tcp_force_base);
@@ -456,7 +457,7 @@ BOOST_AUTO_TEST_CASE(test_convert_tcp_force_to_tool_frame_multiple_axes) {
     // Test: Complex rotation involving all three axes simultaneously
     // Why: Tests real-world scenarios where tool has arbitrary 3D orientation
     // Validates composition of rotations for complex manipulator poses
-    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, M_PI / 6.0, M_PI / 4.0, M_PI / 3.0};
+    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, std::numbers::pi / 6.0, std::numbers::pi / 4.0, std::numbers::pi / 3.0};
     const vector6d_t tcp_force_base = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
 
     const auto result = convert_tcp_force_to_tool_frame(tcp_pose, tcp_force_base);
@@ -506,7 +507,7 @@ BOOST_AUTO_TEST_CASE(test_convert_tcp_force_to_tool_frame_negative_angles) {
     // Test: Negative rotation angles (opposite direction rotations)
     // Why: Tests sign handling in rotation vector calculations
     // Validates bidirectional rotation capability
-    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, -M_PI / 2.0, 0.0, 0.0};
+    const vector6d_t tcp_pose = {0.0, 0.0, 0.0, -std::numbers::pi / 2.0, 0.0, 0.0};
     const vector6d_t tcp_force_base = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
 
     const auto result = convert_tcp_force_to_tool_frame(tcp_pose, tcp_force_base);

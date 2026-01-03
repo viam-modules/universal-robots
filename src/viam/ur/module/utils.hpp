@@ -1,7 +1,6 @@
 #pragma once
 
 #include <list>
-#include <numbers>
 #include <optional>
 #include <sstream>
 
@@ -13,6 +12,7 @@
 #include <tuple>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
+#include <viam/trajex/types/angles.hpp>
 
 inline constexpr auto k_ur_arm_dof = std::tuple_size_v<urcl::vector6d_t>;
 
@@ -64,15 +64,9 @@ class URArmLogHandler : public urcl::LogHandler {
     }
 };
 
-template <typename T>
-[[nodiscard]] constexpr decltype(auto) degrees_to_radians(T&& degrees) {
-    return std::forward<T>(degrees) * (std::numbers::pi / 180.0);
-}
-
-template <typename T>
-[[nodiscard]] constexpr decltype(auto) radians_to_degrees(T&& radians) {
-    return std::forward<T>(radians) * (180.0 / std::numbers::pi);
-}
+// Import angle conversion functions from trajex
+using viam::trajex::degrees_to_radians;
+using viam::trajex::radians_to_degrees;
 
 [[nodiscard]] urcl::vector6d_t degrees_to_radians(urcl::vector6d_t degrees);
 [[nodiscard]] urcl::vector6d_t radians_to_degrees(urcl::vector6d_t radians);
