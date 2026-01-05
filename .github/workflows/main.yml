@@ -96,7 +96,7 @@ jobs:
             artifact_name: module-linux-arm64
           # macOS native build
           - platform: darwin/arm64
-            runner: macos-14
+            runner: macos-latest
             setup_type: macos
             artifact_name: module-darwin-arm64
 

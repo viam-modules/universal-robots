@@ -20,6 +20,22 @@ include(default)
 protobuf/*: protobuf/<host_version>
 EOF
 
+# Set macOS deployment target to 14.0 (Sonoma) if building for macOS.
+# We need macOS 14 because it ships with Xcode 15's libc++, which has
+# mature support for the C++20 features this project uses (concepts,
+# ranges, spaceship operators).
+#
+# This must stay in sync with CMakeLists.txt and bin/setup.sh. If you
+# change the version here, update all three locations.
+#
+# We query the actual Conan profile to determine whether we're targeting
+# macOS (the host platform where binaries will run), then add os.version
+# to the host context if so.
+#
+HOST_OS=$(conan profile show -pr protobuf-override.profile -cx host --format=json 2>/dev/null | jq -r '.host.settings.os // empty')
+MACOS_SETTINGS=""
+[[ "$HOST_OS" == "Macos" ]] && MACOS_SETTINGS="-s:h os.version=14.0"
+
 # Dig out the declared version of the module so we can use it for arguments to --build and --requires below.
 VIAM_UNIVERSAL_ROBOTS_VERSION=$(conan inspect -vquiet ${REPO_ROOT} --format=json | jq -r '.version')
 
@@ -39,6 +55,7 @@ conan install ${REPO_ROOT} --update \
       --output-folder=. \
       --profile=protobuf-override.profile \
       --build=missing \
+      $MACOS_SETTINGS \
       -s:a build_type=Release \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=20 \
@@ -48,6 +65,7 @@ conan install ${REPO_ROOT} --update \
 conan create ${REPO_ROOT} \
       --profile=protobuf-override.profile \
       --build=viam-universal-robots/$VIAM_UNIVERSAL_ROBOTS_VERSION \
+      $MACOS_SETTINGS \
       -s:a build_type=Release \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a "&:build_type=RelWithDebInfo" \
@@ -61,6 +79,7 @@ conan install \
       --build=never \
       --requires=viam-universal-robots/$VIAM_UNIVERSAL_ROBOTS_VERSION \
       --deployer-folder=. --deployer-package "&" \
+      $MACOS_SETTINGS \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a "&:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=20 \

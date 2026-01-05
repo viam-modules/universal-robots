@@ -7,6 +7,22 @@ project(
   LANGUAGES CXX
 )
 
+# Set minimum macOS deployment target to 14.0 (Sonoma). We need macOS 14
+# because it ships with Xcode 15's libc++, which has the mature C++20
+# support this project requires (concepts, ranges, spaceship operators).
+# Targeting 14.0 covers the current macOS release and the two previous
+# ones, which seems like a reasonable support window.
+#
+# This deployment target must be kept in sync with bin/setup.sh and
+# bin/build.sh, which set the same version via Conan's os.version
+# setting. If you change the version here, update all three locations.
+#
+# Users can override via: cmake -DCMAKE_OSX_DEPLOYMENT_TARGET=X.Y
+#
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
+endif()
+
 # - `VIAM_UR_USE_WALL_WERROR`
 #
 # This causes the internal code to compile with `-Wall` and
