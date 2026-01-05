@@ -154,6 +154,30 @@ class trajectory {
     };
 
     ///
+    /// Phase plane velocity limits at a given path position.
+    ///
+    /// Encapsulates the two types of velocity constraints from TOTG:
+    /// acceleration-limited (centripetal) and velocity-limited (direct).
+    /// See Kunz & Stilman equations 31 and 36.
+    ///
+    struct velocity_limits {
+        arc_velocity s_dot_max_acc;  ///< Maximum velocity from acceleration constraints
+        arc_velocity s_dot_max_vel;  ///< Maximum velocity from velocity constraints
+    };
+
+    ///
+    /// Phase plane acceleration bounds at a given position and velocity.
+    ///
+    /// Encapsulates the feasible range of path acceleration given current path
+    /// velocity and joint acceleration constraints.
+    /// See Kunz & Stilman equations 22-23.
+    ///
+    struct acceleration_bounds {
+        arc_acceleration s_ddot_min;  ///< Minimum feasible path acceleration
+        arc_acceleration s_ddot_max;  ///< Maximum feasible path acceleration
+    };
+
+    ///
     /// Collection of integration points from TOTG phase plane integration.
     ///
     /// Represents the time-parameterization of a path as a sequence of
@@ -212,6 +236,32 @@ class trajectory {
     /// @return Reference to trajectory generation options
     ///
     const struct options& get_options() const noexcept;
+
+    ///
+    /// Computes phase plane velocity limits at cursor's current position.
+    ///
+    /// Uses path geometry from cursor and constraint limits from trajectory options
+    /// to compute both acceleration-limited and velocity-limited constraints.
+    /// See Kunz & Stilman equations 31 and 36.
+    ///
+    /// @param cursor Path cursor positioned at query location
+    /// @return Velocity limits from acceleration and velocity constraints
+    ///
+    velocity_limits get_velocity_limits(const path::cursor& cursor) const;
+
+    ///
+    /// Computes phase plane acceleration bounds at cursor's current position and velocity.
+    ///
+    /// Uses path geometry from cursor, current velocity, and constraint limits from
+    /// trajectory options to compute the feasible range of path acceleration.
+    /// See Kunz & Stilman equations 22-23.
+    ///
+    /// @param cursor Path cursor positioned at query location
+    /// @param s_dot Current path velocity
+    /// @return Acceleration bounds from joint acceleration constraints
+    /// @throws std::runtime_error if bounds are infeasible (shouldn't happen with valid trajectories)
+    ///
+    acceleration_bounds get_acceleration_bounds(const path::cursor& cursor, arc_velocity s_dot) const;
 
     ///
     /// Samples trajectory at given time.

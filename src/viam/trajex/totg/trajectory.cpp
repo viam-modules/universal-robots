@@ -51,16 +51,11 @@ enum class integration_event : std::uint8_t {
 // Two constraints apply: centripetal acceleration from path curvature (eq 31) and
 // direct velocity limits (eq 36). Returns both so caller can take the minimum.
 // See Kunz & Stilman equations 31 and 36.
-[[gnu::pure]] auto compute_velocity_limits(const xt::xarray<double>& q_prime,
-                                           const xt::xarray<double>& q_double_prime,
-                                           const xt::xarray<double>& q_dot_max,
-                                           const xt::xarray<double>& q_ddot_max,
-                                           class epsilon epsilon) {
-    struct result {
-        arc_velocity s_dot_max_acc;
-        arc_velocity s_dot_max_vel;
-    };
-
+[[gnu::pure]] trajectory::velocity_limits compute_velocity_limits(const xt::xarray<double>& q_prime,
+                                                                  const xt::xarray<double>& q_double_prime,
+                                                                  const xt::xarray<double>& q_dot_max,
+                                                                  const xt::xarray<double>& q_ddot_max,
+                                                                  class epsilon epsilon) {
     // Compute the path velocity limit imposed by joint acceleration constraints (equation 31).
     // This is the acceleration limit curve in the phase plane. The derivation in the paper
     // converts joint acceleration bounds into constraints on path velocity by considering
@@ -127,22 +122,17 @@ enum class integration_event : std::uint8_t {
         s_dot_max_vel = std::min(s_dot_max_vel, arc_velocity{limit});
     }
 
-    return result{s_dot_max_accel, s_dot_max_vel};
+    return {s_dot_max_accel, s_dot_max_vel};
 }
 
 // Computes the feasible range of path acceleration (s_ddot) given current path velocity (s_dot)
 // and joint acceleration limits. The path acceleration must satisfy joint constraints in all DOF.
 // See Kunz & Stilman equations 22-23.
-[[gnu::pure]] auto compute_acceleration_bounds(const xt::xarray<double>& q_prime,
-                                               const xt::xarray<double>& q_double_prime,
-                                               arc_velocity s_dot,
-                                               const xt::xarray<double>& q_ddot_max,
-                                               class epsilon epsilon) {
-    struct result {
-        arc_acceleration s_ddot_min;
-        arc_acceleration s_ddot_max;
-    };
-
+[[gnu::pure]] trajectory::acceleration_bounds compute_acceleration_bounds(const xt::xarray<double>& q_prime,
+                                                                          const xt::xarray<double>& q_double_prime,
+                                                                          arc_velocity s_dot,
+                                                                          const xt::xarray<double>& q_ddot_max,
+                                                                          class epsilon epsilon) {
     arc_acceleration s_ddot_min{-std::numeric_limits<double>::infinity()};
     arc_acceleration s_ddot_max{std::numeric_limits<double>::infinity()};
 
@@ -180,7 +170,7 @@ enum class integration_event : std::uint8_t {
     }
     assert(s_ddot_min <= s_ddot_max);
 
-    return result{s_ddot_min, s_ddot_max};
+    return {s_ddot_min, s_ddot_max};
 }
 
 // Computes the derivative of the velocity limit curve in the phase plane.
@@ -1737,6 +1727,18 @@ const trajectory::integration_points& trajectory::get_integration_points() const
 
 const trajectory::options& trajectory::get_options() const noexcept {
     return options_;
+}
+
+trajectory::velocity_limits trajectory::get_velocity_limits(const path::cursor& cursor) const {
+    const auto tangent = cursor.tangent();
+    const auto curvature = cursor.curvature();
+    return compute_velocity_limits(tangent, curvature, options_.max_velocity, options_.max_acceleration, options_.epsilon);
+}
+
+trajectory::acceleration_bounds trajectory::get_acceleration_bounds(const path::cursor& cursor, arc_velocity s_dot) const {
+    const auto tangent = cursor.tangent();
+    const auto curvature = cursor.curvature();
+    return compute_acceleration_bounds(tangent, curvature, s_dot, options_.max_acceleration, options_.epsilon);
 }
 
 trajectory::cursor trajectory::create_cursor() const {
