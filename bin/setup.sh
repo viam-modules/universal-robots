@@ -47,7 +47,7 @@ EOF
 #
 HOST_OS=$(conan profile show -pr protobuf-override.profile -cx host --format=json 2>/dev/null | jq -r '.host.settings.os // empty')
 MACOS_SETTINGS=""
-[[ "$HOST_OS" == "Macos" ]] && MACOS_SETTINGS="-s:h os.version=14.0"
+[[ "$HOST_OS" == "Macos" ]] && MACOS_SETTINGS="-s:a os.version=14.0"
 
 # Dig out the declared version of the module so we can use it for arguments to --build and --requires below.
 VIAM_CPP_SDK_VERSION=$(conan inspect -vquiet . --format=json | jq -r '.version')
