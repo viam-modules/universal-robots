@@ -113,6 +113,20 @@ class trajectory {
     };
 
     ///
+    /// Classification of switching points in TOTG algorithm.
+    ///
+    /// Switching points mark locations where forward integration transitions
+    /// to backward integration. Different types require different handling.
+    ///
+    enum class switching_point_kind : std::uint8_t {
+        k_discontinuous_curvature,       ///< Acceleration case 1 (Eq 38): f''(s) discontinuous
+        k_nondifferentiable_extremum,    ///< Acceleration case 2 (Eq 39): f'_i(s) = 0
+        k_velocity_escape,               ///< Velocity case 1 (Eq 40): can escape below velocity curve
+        k_discontinuous_velocity_limit,  ///< Equations 41-42: velocity limit discontinuous
+        k_path_end,                      ///< Natural termination at path end
+    };
+
+    ///
     /// Position in phase plane (s, ṡ) space.
     ///
     /// Represents a point in the 2D phase plane used by TOTG algorithm.
@@ -392,7 +406,8 @@ class trajectory::integration_observer {
     /// Event fired when backward integration starts from a switching point.
     ///
     struct started_backward_event {
-        phase_point start;  ///< Phase plane position of switching point
+        phase_point start;          ///< Phase plane position of switching point
+        switching_point_kind kind;  ///< Classification of switching point
     };
 
     ///

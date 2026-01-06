@@ -27,6 +27,12 @@ static_assert(std::ranges::view<trajectory::sampled<uniform_sampler>>);
 
 namespace {
 
+// Internal representation of a switching point.
+struct switching_point {
+    trajectory::phase_point point;
+    trajectory::switching_point_kind kind;
+};
+
 // State machine states for TOTG integration algorithm.
 // Internal implementation detail - not exposed in public API.
 enum class integration_state : std::uint8_t {
@@ -270,7 +276,7 @@ enum class integration_event : std::uint8_t {
 // Returns the first valid switching point found, or the end of the trajectory if none is found.
 //
 // Takes path::cursor by value (cheap copy) to seed forward search from current position.
-[[gnu::pure]] trajectory::phase_point find_acceleration_switching_point(path::cursor cursor, const trajectory::options& opt) {
+[[gnu::pure]] switching_point find_acceleration_switching_point(path::cursor cursor, const trajectory::options& opt) {
     // Walk forward through segments, checking interior extrema first, then boundaries
 
     // Note: We search for VII-A Case 2 before Case 1 because Case 1 occurs when we switch between a circular segment
@@ -282,10 +288,6 @@ enum class integration_event : std::uint8_t {
         // Examine the current segment for switching points where the path velocity limit curve, s_dot_max_acc(s),
         // is continuous, but not differentiable, per VII-A Case 2 in the paper (Kunz & Stilman equation 39). These
         // switching points occur on the interior of circular segments for joint extrema where f'_i(s) = 0.
-        //
-        // TODO(RSDK-12979): The paper says that at these points, we must use zero acceleration, but we do not return.
-        // that information in any meaningful way. Currently, a caller who obtains this type of switching point will
-        // erroneously use the local max acceleration, which would lead into the infeasible region.
         if (current_segment.is<path::segment::circular>()) {
             std::optional<arc_length> first_extremum;
             arc_velocity first_extremum_velocity{0.0};
@@ -398,7 +400,8 @@ enum class integration_event : std::uint8_t {
 
             // If we found a valid extremum switching point, return it
             if (first_extremum) {
-                return trajectory::phase_point{.s = *first_extremum, .s_dot = first_extremum_velocity};
+                return switching_point{.point = {.s = *first_extremum, .s_dot = first_extremum_velocity},
+                                       .kind = trajectory::switching_point_kind::k_nondifferentiable_extremum};
             }
         }
 
@@ -506,27 +509,27 @@ enum class integration_event : std::uint8_t {
 
             // Only accept this as switching point if it is also feasible with respect to the velocity limits.
             if (opt.epsilon.wrap(s_dot_max_acc_switching_min) <= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
-                return trajectory::phase_point{.s = boundary, .s_dot = s_dot_max_acc_switching_min};
+                return switching_point{.point = {.s = boundary, .s_dot = s_dot_max_acc_switching_min},
+                                       .kind = trajectory::switching_point_kind::k_discontinuous_curvature};
             }
         }
     }
 
     // No valid switching point found before path end - return end of path as switching point
-    return trajectory::phase_point{.s = cursor.path().length(), .s_dot = arc_velocity{0.0}};
+    return switching_point{.point = {.s = cursor.path().length(), .s_dot = arc_velocity{0.0}},
+                           .kind = trajectory::switching_point_kind::k_path_end};
 }
 
 // Selects between two switching points: returns the earlier one, or if at the same location
 // (within epsilon), returns the one with lower velocity (more conservative).
-[[gnu::pure]] trajectory::phase_point select_switching_point(const trajectory::phase_point& sp1,
-                                                             const trajectory::phase_point& sp2,
-                                                             class epsilon epsilon) {
-    if (epsilon.wrap(sp1.s) == epsilon.wrap(sp2.s)) {
+[[gnu::pure]] switching_point select_switching_point(const switching_point& sp1, const switching_point& sp2, class epsilon epsilon) {
+    if (epsilon.wrap(sp1.point.s) == epsilon.wrap(sp2.point.s)) {
         // Same location (within epsilon) - use whichever has lower velocity (more conservative)
-        return (sp1.s_dot < sp2.s_dot) ? sp1 : sp2;
+        return (sp1.point.s_dot < sp2.point.s_dot) ? sp1 : sp2;
     }
 
     // Return whichever comes first along the path
-    return (sp1.s < sp2.s) ? sp1 : sp2;
+    return (sp1.point.s < sp2.point.s) ? sp1 : sp2;
 }
 
 // Searches for a velocity switching point where escape from velocity curve becomes possible.
@@ -535,11 +538,11 @@ enum class integration_event : std::uint8_t {
 //
 // Returns the switching point on velocity curve. If no escape point found, returns end of path.
 // Takes path::cursor by value (cheap copy) to seed forward search from current position.
-[[gnu::pure]] trajectory::phase_point find_velocity_switching_point(path::cursor cursor, const trajectory::options& opt) {
+[[gnu::pure]] switching_point find_velocity_switching_point(path::cursor cursor, const trajectory::options& opt) {
     const auto path_length = cursor.path().length();
 
-    std::optional<trajectory::phase_point> discontinuous_switching_point;
-    std::optional<trajectory::phase_point> continuous_switching_point;
+    std::optional<switching_point> discontinuous_switching_point;
+    std::optional<switching_point> continuous_switching_point;
 
     // Phase 1: Check for discontinuous switching points at segment boundaries (Kunz & Stilman equations 41-42).
     // Section VII-B case 2: f''_i(s) being discontinuous is a necessary condition for
@@ -589,7 +592,8 @@ enum class integration_event : std::uint8_t {
         if (abs(s_dot_max_vel_before) < opt.epsilon || abs(s_dot_max_vel_after) < opt.epsilon) {
             // Must stop at this boundary (or nearly so)
             const auto switching_velocity = std::min(std::min(s_dot_max_vel_before, s_dot_max_vel_after), arc_velocity{0.0});
-            discontinuous_switching_point = trajectory::phase_point{.s = boundary, .s_dot = switching_velocity};
+            discontinuous_switching_point = switching_point{.point = {.s = boundary, .s_dot = switching_velocity},
+                                                            .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
             break;  // This is the first (most constraining) discontinuous point
         }
 
@@ -645,7 +649,8 @@ enum class integration_event : std::uint8_t {
             // limit curve.
             if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
                 // Record first discontinuous switching point, but don't return yet - need to check continuous cases too
-                discontinuous_switching_point = trajectory::phase_point{.s = boundary, .s_dot = s_dot_max_vel_switching_min};
+                discontinuous_switching_point = switching_point{.point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
+                                                                .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
                 break;  // First discontinuous point found, can stop searching for more discontinuous points
             }
         }
@@ -661,7 +666,7 @@ enum class integration_event : std::uint8_t {
     // If we already found a discontinuous switching point, we can bound the search to stop there.
     std::optional<arc_length> escape_region_start;
     auto previous_position = cursor.position();
-    const auto search_limit = discontinuous_switching_point.has_value() ? discontinuous_switching_point->s : path_length;
+    const auto search_limit = discontinuous_switching_point.has_value() ? discontinuous_switching_point->point.s : path_length;
 
     auto search_cursor = cursor;  // this creates a copy of cursor but preserves the pattern above of having a `boundary_cursor`
     while (search_cursor.position() < search_limit) {
@@ -790,7 +795,8 @@ enum class integration_event : std::uint8_t {
         // hit the acceleration limit curve, causing the algorithm to fail. We should continue searching
         // forward until finding a switching point where s_dot_max_vel <= s_dot_max_acc + epsilon.
         if (opt.epsilon.wrap(s_dot_max_vel) <= opt.epsilon.wrap(s_dot_max_acc)) {
-            continuous_switching_point = trajectory::phase_point{.s = after, .s_dot = s_dot_max_vel};
+            continuous_switching_point =
+                switching_point{.point = {.s = after, .s_dot = s_dot_max_vel}, .kind = trajectory::switching_point_kind::k_velocity_escape};
         }
     }
 
@@ -811,7 +817,7 @@ enum class integration_event : std::uint8_t {
     }
 
     // No switching point found - return end of path
-    return trajectory::phase_point{.s = path_length, .s_dot = arc_velocity{0.0}};
+    return switching_point{.point = {.s = path_length, .s_dot = arc_velocity{0.0}}, .kind = trajectory::switching_point_kind::k_path_end};
 }
 
 // Unified switching point search that calls both acceleration and velocity searches.
@@ -832,7 +838,7 @@ enum class integration_event : std::uint8_t {
 // the combined limit curve, since there could be curve crossings,
 // which represent discontinuities on the limit curve. How should we
 // handle those?
-[[gnu::pure]] trajectory::phase_point find_switching_point(path::cursor cursor, const trajectory::options& opt) {
+[[gnu::pure]] switching_point find_switching_point(path::cursor cursor, const trajectory::options& opt) {
     // Always search for both types of switching points
     auto accel_sp = find_acceleration_switching_point(cursor, opt);
     auto vel_sp = find_velocity_switching_point(cursor, opt);
@@ -1070,6 +1076,10 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
         // events that carry context, rather than state machine-scoped variables.
         std::vector<integration_point> backward_points;
 
+        // Switching point classification for current backward integration.
+        // Set when finding switching point, required on entry to backward state, cleared after use.
+        std::optional<trajectory::switching_point_kind> switching_point_kind_;
+
         // Observer latch for detecting state transitions. When a state change is detected,
         // this latch gets armed with the observer pointer. Each state case checks and clears
         // the latch on entry using std::exchange, calling the observer only on actual transitions.
@@ -1101,9 +1111,17 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
 
-                    // Compute candidate next point via Euler integration with maximum acceleration
+                    // Check if we're starting forward integration from a non-differentiable extremum
+                    // switching point. If so, use zero acceleration per Kunz & Stilman Section VII-A Case 2.
+                    auto starting_sp_kind = std::exchange(switching_point_kind_, std::nullopt);
+                    auto s_ddot_to_use = s_ddot_max;
+                    if (starting_sp_kind == trajectory::switching_point_kind::k_nondifferentiable_extremum) {
+                        s_ddot_to_use = arc_acceleration{0.0};
+                    }
+
+                    // Compute candidate next point via Euler integration with appropriate acceleration
                     const auto [next_s, next_s_dot] =
-                        euler_step(current_point.s, current_point.s_dot, s_ddot_max, traj.options_.delta, traj.options_.epsilon);
+                        euler_step(current_point.s, current_point.s_dot, s_ddot_to_use, traj.options_.delta, traj.options_.epsilon);
 
                     // Forward integration should move "up and to the right" in phase plane
                     if ((next_s <= current_point.s) || (next_s_dot < current_point.s_dot)) [[unlikely]] {
@@ -1118,6 +1136,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                                                           .s = traj.path_.length(),
                                                           .s_dot = arc_velocity{0.0},
                                                           .s_ddot = arc_acceleration{0.0}};
+
+                        // Store the kind for backward integration to use
+                        switching_point_kind_ = trajectory::switching_point_kind::k_path_end;
 
                         // Initialize backward integration with switching point as starting position
                         backward_points.push_back(std::move(switching_point));
@@ -1181,12 +1202,15 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // Hit limit curve. Search forward along the path for a switching point where
                         // backward integration can begin. The unified search checks for both acceleration
                         // discontinuities and velocity escape points, returning whichever comes first.
-                        auto switching_point = find_switching_point(path_cursor, traj.options_);
+                        auto sp_result = find_switching_point(path_cursor, traj.options_);
+
+                        // Store the kind for backward integration to use
+                        switching_point_kind_ = sp_result.kind;
 
                         // Initialize backward integration from switching point
                         integration_point sp{.time = current_point.time + traj.options_.delta,  // Placeholder, corrected during splice
-                                             .s = switching_point.s,
-                                             .s_dot = switching_point.s_dot,
+                                             .s = sp_result.point.s,
+                                             .s_dot = sp_result.point.s_dot,
                                              .s_ddot = arc_acceleration{0.0}};
                         backward_points.push_back(std::move(sp));
 
@@ -1212,7 +1236,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                                                  .s = next_s,
                                                  .s_dot = next_s_dot,
                                                  .s_ddot = arc_acceleration{0.0}};
-                    traj.integration_points_.back().s_ddot = s_ddot_max;
+                    traj.integration_points_.back().s_ddot = s_ddot_to_use;
                     traj.integration_points_.push_back(std::move(next_point));
 
                     // Continue in same state (no event)
@@ -1274,12 +1298,15 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                         // Acceleration curve is now below velocity curve - we've effectively hit the acceleration
                         // limit curve from above. Need to search for switching point.
-                        auto switching_point = find_switching_point(path_cursor, traj.options_);
+                        auto sp_result = find_switching_point(path_cursor, traj.options_);
+
+                        // Store the kind for backward integration to use
+                        switching_point_kind_ = sp_result.kind;
 
                         // Initialize backward integration from switching point
                         integration_point sp{.time = current_point.time + traj.options_.delta,  // Placeholder, corrected during splice
-                                             .s = switching_point.s,
-                                             .s_dot = switching_point.s_dot,
+                                             .s = sp_result.point.s,
+                                             .s_dot = sp_result.point.s_dot,
                                              .s_ddot = arc_acceleration{0.0}};
                         backward_points.push_back(std::move(sp));
 
@@ -1321,12 +1348,15 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // Search forward for a switching point where backward integration can begin.
                         // The unified search checks for both acceleration discontinuities and velocity
                         // escape points, returning whichever comes first.
-                        auto switching_point = find_switching_point(path_cursor, traj.options_);
+                        auto sp_result = find_switching_point(path_cursor, traj.options_);
+
+                        // Store the kind for backward integration to use
+                        switching_point_kind_ = sp_result.kind;
 
                         // Initialize backward integration from switching point
                         integration_point sp{.time = current_point.time + traj.options_.delta,  // Placeholder, corrected during splice
-                                             .s = switching_point.s,
-                                             .s_dot = switching_point.s_dot,
+                                             .s = sp_result.point.s,
+                                             .s_dot = sp_result.point.s_dot,
                                              .s_ddot = arc_acceleration{0.0}};
                         backward_points.push_back(std::move(sp));
 
@@ -1369,6 +1399,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                                                           .s = traj.path_.length(),
                                                           .s_dot = arc_velocity{0.0},
                                                           .s_ddot = arc_acceleration{0.0}};
+
+                        // Store the kind for backward integration to use
+                        switching_point_kind_ = trajectory::switching_point_kind::k_path_end;
 
                         // Initialize backward integration with switching point as starting position
                         backward_points.push_back(std::move(switching_point));
@@ -1422,12 +1455,15 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // Hit limit curve. Search forward along the path for a switching point where
                         // backward integration can begin. The unified search checks for both acceleration
                         // discontinuities and velocity escape points, returning whichever comes first.
-                        auto switching_point = find_switching_point(path_cursor, traj.options_);
+                        auto sp_result = find_switching_point(path_cursor, traj.options_);
+
+                        // Store the kind for backward integration to use
+                        switching_point_kind_ = sp_result.kind;
 
                         // Initialize backward integration from switching point
                         integration_point sp{.time = current_point.time + traj.options_.delta,  // Placeholder, corrected during splice
-                                             .s = switching_point.s,
-                                             .s_dot = switching_point.s_dot,
+                                             .s = sp_result.point.s,
+                                             .s_dot = sp_result.point.s_dot,
                                              .s_ddot = arc_acceleration{0.0}};
                         backward_points.push_back(std::move(sp));
 
@@ -1477,7 +1513,12 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // On entry to this state (detected via observer latch), notify observer
                     if (auto* observer = std::exchange(observer_latch, nullptr)) {
                         const auto& switching_point = backward_points.back();
-                        observer->on_started_backward_integration(traj, {.start = {switching_point.s, switching_point.s_dot}});
+
+                        // Switching point kind must be set before entering backward integration
+                        assert(switching_point_kind_.has_value());
+
+                        observer->on_started_backward_integration(
+                            traj, {.start = {switching_point.s, switching_point.s_dot}, .kind = *switching_point_kind_});
                     }
 
                     // Starting point is the last backward integration point. On first entry to this state,
@@ -1496,6 +1537,12 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                     auto s_ddot_to_use = s_ddot_min;
 
+                    // Per Kunz & Stilman Section VII-A Case 2, backward integration must use zero acceleration
+                    // at these points, not the local s_ddot_min, to avoid entering the infeasible region.
+                    if (switching_point_kind_ == trajectory::switching_point_kind::k_nondifferentiable_extremum) {
+                        s_ddot_to_use = arc_acceleration{0.0};
+                    }
+
                     // Minimum acceleration must be negative to produce backward motion (decreasing s)
                     // Allow small tolerance for numerical precision at near-zero acceleration points
                     if (s_ddot_to_use >= -traj.options_.epsilon) {
@@ -1503,7 +1550,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                             // Clearly positive - this is an error
                             throw std::runtime_error{"TOTG algorithm error: backward integration requires negative minimum acceleration"};
                         }
-                        // Near zero (degenerate switching point) - use zero acceleration per Kunz & Stilman Section VII-A-2.x`
+                        // Near zero (degenerate switching point) - use zero acceleration per Kunz & Stilman Section VII-A-2.x
                         // Forward progress is guaranteed as long as s_dot is non-zero.
                         s_ddot_to_use = arc_acceleration{0.0};
                     }
@@ -1605,6 +1652,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // Clear backward scratch buffer for potential reuse if algorithm continues
                         backward_points.clear();
 
+                        // Note: switching_point_kind_ is NOT reset here. It will be consumed by forward
+                        // integration if needed (e.g., for non-differentiable extremum points).
+
                         // Notify observer that trajectory has been extended with finalized backward segment
                         if (traj.options_.observer) {
                             // Observer exists, so frosts_ must have been populated above
@@ -1645,7 +1695,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     integration_point next_point{.time = current_point.time + traj.options_.delta,  // Placeholder, fixed during splice
                                                  .s = candidate_s,
                                                  .s_dot = candidate_s_dot,
-                                                 .s_ddot = s_ddot_min};
+                                                 .s_ddot = s_ddot_to_use};
                     backward_points.push_back(std::move(next_point));
 
                     // Continue in same state (no event)

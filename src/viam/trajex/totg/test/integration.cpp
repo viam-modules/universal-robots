@@ -35,19 +35,23 @@ trajectory create_trajectory_with_integration_points(path p, std::vector<traject
 class expectation_observer final : public trajectory::integration_observer {
    public:
     struct expected_forward_start {
-        started_forward_event event;
+        std::optional<arc_length> s;
+        std::optional<arc_velocity> s_dot;
         std::optional<double> tolerance_percent;
     };
 
     struct expected_hit_limit {
-        trajectory::phase_point breach;
+        std::optional<arc_length> s;
+        std::optional<arc_velocity> s_dot;
         std::optional<arc_velocity> s_dot_max_acc;
         std::optional<arc_velocity> s_dot_max_vel;
         std::optional<double> tolerance_percent;
     };
 
     struct expected_backward_start {
-        started_backward_event event;
+        std::optional<arc_length> s;
+        std::optional<arc_velocity> s_dot;
+        std::optional<trajectory::switching_point_kind> kind;
         std::optional<double> tolerance_percent;
     };
 
@@ -61,22 +65,27 @@ class expectation_observer final : public trajectory::integration_observer {
 
     explicit expectation_observer(double default_tolerance_percent = 0.1) : default_tolerance_percent_(default_tolerance_percent) {}
 
-    expectation_observer& expect_forward_start(arc_length s, arc_velocity s_dot, std::optional<double> tolerance_percent = std::nullopt) {
-        expectations_.push_back(expected_forward_start{{s, s_dot}, tolerance_percent});
+    expectation_observer& expect_forward_start(std::optional<arc_length> s = std::nullopt,
+                                               std::optional<arc_velocity> s_dot = std::nullopt,
+                                               std::optional<double> tolerance_percent = std::nullopt) {
+        expectations_.push_back(expected_forward_start{s, s_dot, tolerance_percent});
         return *this;
     }
 
-    expectation_observer& expect_hit_limit(arc_length s,
-                                           arc_velocity s_dot,
+    expectation_observer& expect_hit_limit(std::optional<arc_length> s = std::nullopt,
+                                           std::optional<arc_velocity> s_dot = std::nullopt,
                                            std::optional<arc_velocity> acc_limit = std::nullopt,
                                            std::optional<arc_velocity> vel_limit = std::nullopt,
                                            std::optional<double> tolerance_percent = std::nullopt) {
-        expectations_.push_back(expected_hit_limit{{s, s_dot}, acc_limit, vel_limit, tolerance_percent});
+        expectations_.push_back(expected_hit_limit{s, s_dot, acc_limit, vel_limit, tolerance_percent});
         return *this;
     }
 
-    expectation_observer& expect_backward_start(arc_length s, arc_velocity s_dot, std::optional<double> tolerance_percent = std::nullopt) {
-        expectations_.push_back(expected_backward_start{{s, s_dot}, tolerance_percent});
+    expectation_observer& expect_backward_start(std::optional<arc_length> s = std::nullopt,
+                                                std::optional<arc_velocity> s_dot = std::nullopt,
+                                                std::optional<trajectory::switching_point_kind> kind = std::nullopt,
+                                                std::optional<double> tolerance_percent = std::nullopt) {
+        expectations_.push_back(expected_backward_start{s, s_dot, kind, tolerance_percent});
         return *this;
     }
 
@@ -111,8 +120,12 @@ class expectation_observer final : public trajectory::integration_observer {
 
             const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
 
-            BOOST_CHECK_CLOSE(static_cast<double>(event.start.s), static_cast<double>(expected->event.start.s), tol);
-            BOOST_CHECK_CLOSE(static_cast<double>(event.start.s_dot), static_cast<double>(expected->event.start.s_dot), tol);
+            if (expected->s.has_value()) {
+                BOOST_CHECK_CLOSE(static_cast<double>(event.start.s), static_cast<double>(*expected->s), tol);
+            }
+            if (expected->s_dot.has_value()) {
+                BOOST_CHECK_CLOSE(static_cast<double>(event.start.s_dot), static_cast<double>(*expected->s_dot), tol);
+            }
 
             expectations_.pop_front();
         }
@@ -128,8 +141,12 @@ class expectation_observer final : public trajectory::integration_observer {
 
             const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
 
-            BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s), static_cast<double>(expected->breach.s), tol);
-            BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s_dot), static_cast<double>(expected->breach.s_dot), tol);
+            if (expected->s.has_value()) {
+                BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s), static_cast<double>(*expected->s), tol);
+            }
+            if (expected->s_dot.has_value()) {
+                BOOST_CHECK_CLOSE(static_cast<double>(event.breach.s_dot), static_cast<double>(*expected->s_dot), tol);
+            }
 
             if (expected->s_dot_max_acc.has_value()) {
                 const double actual = static_cast<double>(event.s_dot_max_acc);
@@ -159,8 +176,17 @@ class expectation_observer final : public trajectory::integration_observer {
 
             const double tol = expected->tolerance_percent.value_or(default_tolerance_percent_);
 
-            BOOST_CHECK_CLOSE(static_cast<double>(event.start.s), static_cast<double>(expected->event.start.s), tol);
-            BOOST_CHECK_CLOSE(static_cast<double>(event.start.s_dot), static_cast<double>(expected->event.start.s_dot), tol);
+            if (expected->s.has_value()) {
+                BOOST_CHECK_CLOSE(static_cast<double>(event.start.s), static_cast<double>(*expected->s), tol);
+            }
+            if (expected->s_dot.has_value()) {
+                BOOST_CHECK_CLOSE(static_cast<double>(event.start.s_dot), static_cast<double>(*expected->s_dot), tol);
+            }
+
+            // Check switching point kind if expectation includes it
+            if (expected->kind.has_value()) {
+                BOOST_CHECK_EQUAL(static_cast<int>(event.kind), static_cast<int>(*expected->kind));
+            }
 
             expectations_.pop_front();
         }
@@ -365,9 +391,17 @@ struct trajectory_test_fixture {
             const auto* backward = std::get_if<expectation_observer::expected_backward_start>(&second_last);
             BOOST_REQUIRE_MESSAGE(backward != nullptr, "Second-to-last expectation must be backward_start (TOTG invariant)");
 
-            // Sanity check: backward expectation should be approximately at path endpoint
-            const double backward_tol = backward->tolerance_percent.value_or(observer.get_default_tolerance_percent());
-            BOOST_CHECK_CLOSE(static_cast<double>(backward->event.start.s), static_cast<double>(p.length()), backward_tol);
+            // Backward expectation must specify k_path_end kind (TOTG always ends with backward from endpoint)
+            BOOST_REQUIRE_MESSAGE(backward->kind.has_value(),
+                                  "Second-to-last expectation must specify switching point kind (TOTG invariant)");
+            BOOST_REQUIRE_MESSAGE(*backward->kind == trajectory::switching_point_kind::k_path_end,
+                                  "Second-to-last expectation must be backward_start with k_path_end kind (TOTG invariant)");
+
+            // Sanity check: backward expectation should be approximately at path endpoint (if s is specified)
+            if (backward->s.has_value()) {
+                const double backward_tol = backward->tolerance_percent.value_or(observer.get_default_tolerance_percent());
+                BOOST_CHECK_CLOSE(static_cast<double>(*backward->s), static_cast<double>(p.length()), backward_tol);
+            }
 
             // Last must be splice
             const auto* splice = std::get_if<expectation_observer::expected_splice>(&expectations.back());
@@ -664,7 +698,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
                           arc_velocity{0.15297},  // acc_limit
                           arc_velocity{1.23049}   // vel_limit
                           )
-        .expect_backward_start(arc_length{1.85532}, arc_velocity{0.0})
+        .expect_backward_start(arc_length{1.85532}, arc_velocity{0.0}, trajectory::switching_point_kind::k_path_end)
         .expect_splice(trajectory::seconds{20.1621}, size_t{10118});
 
     const trajectory traj = fixture.create_and_validate();
@@ -696,8 +730,48 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_vel_constrained) {
                           arc_velocity{0.0246826}                                 // vel_limit
                           )
         .expect_forward_start(arc_length{0.00024682}, arc_velocity{0.02468268})
-        .expect_backward_start(arc_length{1.85532488}, arc_velocity{0})
+        .expect_backward_start(arc_length{1.85532488}, arc_velocity{0}, trajectory::switching_point_kind::k_path_end)
         .expect_splice(trajectory::seconds{90.02000000}, size_t{100});
+
+    const trajectory traj = fixture.create_and_validate();
+}
+
+BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_acceleration) {
+    // RSDK-12979: Test that non-differentiable switching points (where f'_i(s) = 0 for some joint
+    // on a circular arc) are handled correctly by using zero acceleration during backward integration.
+    //
+    // Without the fix (commented out in trajectory.cpp:1537-1539), backward integration uses the
+    // local s_ddot_min, which can be significantly negative when other joints have non-zero tangents.
+    // This causes entry into the infeasible region and throws an exception.
+    //
+    // Strategy: Use very high velocity limits (unconstrained) and very low acceleration limits
+    // (constrained) with curved paths to create acceleration-dominated dynamics.
+
+    using namespace viam::trajex::totg;
+    using namespace viam::trajex::types;
+
+    trajectory_test_fixture fixture(2, 0.12);
+
+    // Very high velocity limits (essentially unconstrained)
+    // Very low acceleration limits (the actual constraint)
+    fixture.set_max_velocity(xt::xarray<double>{100.0, 100.0})
+        .set_max_acceleration(xt::xarray<double>{0.05, 0.05})
+        .set_max_deviation(0.05);  // Enable curves
+
+    fixture.traj_opts.delta = trajectory::seconds{0.002};
+
+    // Waypoints that create a path with curves where joints have different tangent behavior
+    fixture.set_waypoints_rad({{0.0, 0.0}, {0.6, 0.0}, {0.1, 0.6}});
+
+    // Expectations - looking for acceleration-constrained pattern:
+    // forward_start -> hit_limit -> backward_start (NDE) -> splice -> forward_start -> backward_start (endpoint) -> splice
+    fixture.observer.expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
+        .expect_hit_limit()
+        .expect_backward_start(std::nullopt, std::nullopt, trajectory::switching_point_kind::k_nondifferentiable_extremum)
+        .expect_splice()
+        .expect_forward_start()
+        .expect_backward_start(std::nullopt, std::nullopt, trajectory::switching_point_kind::k_path_end)
+        .expect_splice();
 
     const trajectory traj = fixture.create_and_validate();
 }
