@@ -606,7 +606,7 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         } else if (model_ == model("ur20")) {
             return "ur20";
         }
-        throw std::runtime_error(str(boost::format("no kinematics file known for model '%1'") % model_.to_string()));
+        throw std::runtime_error(str(boost::format("no kinematics file known for model '%1%'") % model_.to_string()));
     }();
 
     constexpr char kSvaFileTemplate[] = "kinematics/%1%.json";
@@ -615,13 +615,13 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     // Open the file in binary mode
     std::ifstream sva_file(sva_file_path, std::ios::binary);
     if (!sva_file) {
-        throw std::runtime_error(str(boost::format("unable to open kinematics file '%1'") % sva_file_path));
+        throw std::runtime_error(str(boost::format("unable to open kinematics file '%1%'") % sva_file_path));
     }
 
     // Read the entire file into a vector without computing size ahead of time
     std::vector<char> temp_bytes(std::istreambuf_iterator<char>(sva_file), {});
     if (sva_file.bad()) {
-        throw std::runtime_error(str(boost::format("error reading kinematics file '%1'") % sva_file_path));
+        throw std::runtime_error(str(boost::format("error reading kinematics file '%1%'") % sva_file_path));
     }
 
     // Convert to unsigned char vector
@@ -652,13 +652,13 @@ std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
         // Open the file in binary mode
         std::ifstream model_file(model_file_path, std::ios::binary);
         if (!model_file) {
-            throw std::runtime_error(str(boost::format("unable to open 3d model file '%1'") % model_file_path));
+            throw std::runtime_error(str(boost::format("unable to open 3d model file '%1%'") % model_file_path));
         }
 
         // Read the entire file into a vector without computing size ahead of time
         std::vector<char> temp_bytes(std::istreambuf_iterator<char>(model_file), {});
         if (model_file.bad()) {
-            throw std::runtime_error(str(boost::format("error reading 3d model file '%1'") % model_file_path));
+            throw std::runtime_error(str(boost::format("error reading 3d model file '%1%'") % model_file_path));
         }
 
         // Convert to unsigned char vector
@@ -1045,7 +1045,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             json_file << json_content;
             json_file.close();
 
-            throw std::runtime_error(boost::str(boost::format("trajectory generation failed - details saved to: %1") % filename));
+            throw std::runtime_error(boost::str(boost::format("trajectory generation failed - details saved to: %1%") % filename));
         }
 
         const double duration = trajectory.getDuration();
