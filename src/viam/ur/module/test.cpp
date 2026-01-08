@@ -910,4 +910,52 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     BOOST_REQUIRE_CLOSE(readback_parsed["path_tolerance_delta_rads"].asDouble(), k_tolerance, 1e-10);
 }
 
+BOOST_AUTO_TEST_CASE(test_state_estimation_mismatch_nearly_identical_waypoints) {
+    // Regression test for state estimation mismatch creating nearly-identical waypoints.
+    // This case has two waypoints that are 0.000275 rad apart (L∞ norm),
+    // which is below the current dedup threshold of 1e-4 rad.
+    // Both legacy and new generators fail on this input.
+    //
+    // Root cause: Motion planner believes arm is at position A, actual position is A',
+    // they're close but outside L∞ dedup threshold. With dt=0.001s integration,
+    // the distance between waypoints (~0.0004656 rad) is smaller than typical
+    // integration step movement, causing trajectory generation to fail.
+    //
+    // Expected behavior: This test should PASS by confirming that legacy generator
+    // FAILS on this input (trajectory.isValid() returns false).
+
+    const std::list<Eigen::VectorXd> waypoints = {
+        makeVector(
+            {0.86162841320037842, -2.912748476068014, -1.4315807819366455, -0.43625719965014653, 1.4747567176818848, 0.86391860246658325}),
+        makeVector(
+            {0.86190300345456516, -2.9129917760199686, -1.4314953314444034, -0.43621047815164599, 1.4744832474373546, 0.86391310388875919}),
+        makeVector(
+            {0.76428190417993802, -2.9066158721334885, -1.4104209952962836, -0.45583191856938904, 1.4657484272628158, 0.76620493188004013}),
+        makeVector(
+            {0.70063350624593246, -2.9047065501727753, -1.3849914692788434, -0.47677585518868032, 1.453744431644983, 0.70233985427631329})};
+
+    // Original parameters from failed trajectory
+    const double path_tolerance = 0.1;  // 0.1 rad
+
+    const Eigen::VectorXd max_velocity_vec = makeVector(
+        {2.0943951023931953, 2.0943951023931953, 2.0943951023931953, 2.0943951023931953, 2.0943951023931953, 2.0943951023931953});
+
+    const Eigen::VectorXd max_acceleration_vec = makeVector(
+        {5.2359877559829897, 5.2359877559829897, 5.2359877559829897, 5.2359877559829897, 5.2359877559829897, 5.2359877559829897});
+
+    // L∞ distance between first two waypoints (should be ~0.000275 rad)
+    const double linf_dist = (waypoints.front() - *std::next(waypoints.begin())).cwiseAbs().maxCoeff();
+    BOOST_TEST_MESSAGE("L∞ distance between first two waypoints: " << linf_dist);
+    BOOST_CHECK_LT(linf_dist, 1e-3);  // Verify they're very close
+
+    // Create path and trajectory using legacy generator
+    const Path path(waypoints, path_tolerance);
+    const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+
+    // Legacy generator should FAIL on this input
+    BOOST_CHECK(!trajectory.isValid());
+
+    BOOST_TEST_MESSAGE("Legacy trajectory generator correctly failed on nearly-identical waypoints");
+}
+
 BOOST_AUTO_TEST_SUITE_END()
