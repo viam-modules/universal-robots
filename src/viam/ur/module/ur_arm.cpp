@@ -64,7 +64,6 @@ extern "C" void free_axis_angles_memory(void* aa);
 
 namespace {
 
-constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 
 constexpr double k_min_duration_secs = 0.1;
@@ -852,7 +851,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     // Unconditionally prepend current position, then deduplicate
     waypoints.emplace_front(curr_joint_pos_rad);
-    deduplicate_waypoints(waypoints, k_waypoint_equivalancy_epsilon_rad);
+    deduplicate_waypoints(waypoints, current_state_->get_waypoint_deduplication_tolerance_rad());
 
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
         VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";

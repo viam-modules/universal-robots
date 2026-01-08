@@ -22,11 +22,6 @@
 
 namespace {
 
-constexpr auto k_default_robot_control_freq_hz = 100.;
-constexpr double k_default_max_trajectory_duration_secs = 600.0;
-constexpr double k_default_trajectory_sampling_freq_hz = 10.0;
-constexpr double k_default_path_tolerance_delta_rads = 0.1;
-
 // Extracts trace-id from W3C Trace Context traceparent header.
 // Format: <version>-<trace-id>-<parent-id>-<trace-flags>
 // Example: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
@@ -94,6 +89,7 @@ URArm::state_::state_(private_,
                       std::filesystem::path urcl_resource_root,
                       std::filesystem::path telemetry_output_path,
                       std::optional<double> reject_move_request_threshold_rad,
+                      double waypoint_deduplication_tolerance_rad,
                       std::optional<double> robot_control_freq_hz,
                       double path_tolerance_delta_rads,
                       std::optional<double> path_colinearization_ratio,
@@ -108,9 +104,10 @@ URArm::state_::state_(private_,
       resource_root_{std::move(resource_root)},
       urcl_resource_root_{std::move(urcl_resource_root)},
       telemetry_output_path_{std::move(telemetry_output_path)},
-      robot_control_freq_hz_(robot_control_freq_hz.value_or(k_default_robot_control_freq_hz)),
+      robot_control_freq_hz_(robot_control_freq_hz.value_or(URArm::k_default_robot_control_freq_hz)),
       reject_move_request_threshold_rad_(std::move(reject_move_request_threshold_rad)),
       ports_{ports},
+      waypoint_deduplication_tolerance_rad_(std::move(waypoint_deduplication_tolerance_rad)),
       path_tolerance_delta_rads_(path_tolerance_delta_rads),
       path_colinearization_ratio_(path_colinearization_ratio),
       use_new_trajectory_planner_(use_new_trajectory_planner),
@@ -163,20 +160,29 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
         return std::string{viam_module_data};
     }();
 
-    auto threshold = find_config_attribute<double>(config, "reject_move_request_threshold_deg");
+    auto threshold_deg = find_config_attribute<double>(config, "reject_move_request_threshold_deg");
+    std::optional<double> threshold_rad;
+    if (threshold_deg) {
+        threshold_rad = degrees_to_radians(*threshold_deg);
+    }
+
+    auto waypoint_dedup_tolerance_deg = find_config_attribute<double>(config, "waypoint_deduplication_tolerance_deg");
+    double waypoint_dedup_tolerance_rad = waypoint_dedup_tolerance_deg ? degrees_to_radians(*waypoint_dedup_tolerance_deg)
+                                                                       : URArm::k_default_waypoint_deduplication_tolerance_rads;
+
     auto frequency = find_config_attribute<double>(config, "robot_control_freq_hz");
     auto use_new_planner = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
 
     auto path_tolerance_deg = find_config_attribute<double>(config, "path_tolerance_delta_deg");
-    auto path_tolerance_rad = path_tolerance_deg ? degrees_to_radians(*path_tolerance_deg) : k_default_path_tolerance_delta_rads;
+    auto path_tolerance_rad = path_tolerance_deg ? degrees_to_radians(*path_tolerance_deg) : URArm::k_default_path_tolerance_delta_rads;
 
     auto colinearization_ratio = find_config_attribute<double>(config, "path_colinearization_ratio");
 
     const double max_trajectory_duration_secs =
-        find_config_attribute<double>(config, "max_trajectory_duration_secs").value_or(k_default_max_trajectory_duration_secs);
+        find_config_attribute<double>(config, "max_trajectory_duration_secs").value_or(URArm::k_default_max_trajectory_duration_secs);
 
     const double trajectory_sampling_freq_hz =
-        find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(k_default_trajectory_sampling_freq_hz);
+        find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(URArm::k_default_trajectory_sampling_freq_hz);
 
     const bool telemetry_output_path_append_traceid =
         find_config_attribute<bool>(config, "telemetry_output_path_append_traceid").value_or(false);
@@ -188,7 +194,8 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           std::move(resource_root),
                                           std::move(urcl_resource_root),
                                           std::move(telemetry_output_path),
-                                          std::move(threshold),
+                                          std::move(threshold_rad),
+                                          std::move(waypoint_dedup_tolerance_rad),
                                           std::move(frequency),
                                           path_tolerance_rad,
                                           colinearization_ratio,
@@ -251,6 +258,10 @@ void URArm::state_::shutdown() {
 const std::optional<double>& URArm::state_::get_reject_move_request_threshold_rad() const {
     // NOTE: It is OK to return this as a reference and without taking the lock, as this field is immutable inside `state_`.
     return reject_move_request_threshold_rad_;
+}
+
+double URArm::state_::get_waypoint_deduplication_tolerance_rad() const {
+    return waypoint_deduplication_tolerance_rad_;
 }
 
 vector6d_t URArm::state_::read_joint_positions() const {

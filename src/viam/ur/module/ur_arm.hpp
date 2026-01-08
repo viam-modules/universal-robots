@@ -73,6 +73,31 @@ std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>
 
 class URArm final : public Arm, public Reconfigurable {
    public:
+    ///
+    /// Default robot control frequency in Hz.
+    ///
+    static constexpr double k_default_robot_control_freq_hz = 100.0;
+
+    ///
+    /// Default maximum trajectory duration in seconds.
+    ///
+    static constexpr double k_default_max_trajectory_duration_secs = 600.0;
+
+    ///
+    /// Default trajectory sampling frequency in Hz.
+    ///
+    static constexpr double k_default_trajectory_sampling_freq_hz = 10.0;
+
+    ///
+    /// Default path tolerance delta in radians.
+    ///
+    static constexpr double k_default_path_tolerance_delta_rads = 0.1;
+
+    ///
+    /// Default waypoint deduplication tolerance in radians.
+    ///
+    static constexpr double k_default_waypoint_deduplication_tolerance_rads = 1e-3;
+
     /// @brief Returns the common ModelFamily for all implementations
     static const ModelFamily& model_family();
 

@@ -1055,10 +1055,10 @@ BOOST_AUTO_TEST_CASE(test_state_estimation_mismatch_nearly_identical_waypoints) 
         BOOST_TEST_MESSAGE("With 1e-4 dedup tolerance, waypoints not removed and trajectory still fails");
     }
 
-    // Test that deduplication with the proposed new default tolerance (1e-3) fixes it.
+    // Test that deduplication with the default tolerance fixes it.
     {
         auto waypoints_copy{waypoints};
-        deduplicate_waypoints(waypoints_copy, 1e-3);
+        deduplicate_waypoints(waypoints_copy, URArm::k_default_waypoint_deduplication_tolerance_rads);
 
         // We expect the second waypoint to go away.
         BOOST_CHECK_EQUAL(waypoints_copy.size(), 3);
@@ -1068,7 +1068,8 @@ BOOST_AUTO_TEST_CASE(test_state_estimation_mismatch_nearly_identical_waypoints) 
         const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
         BOOST_CHECK(trajectory.isValid());
 
-        BOOST_TEST_MESSAGE("With 1e-3 dedup tolerance, waypoints are removed and trajectory does not fail");
+        BOOST_TEST_MESSAGE("With default dedup tolerance (" << URArm::k_default_waypoint_deduplication_tolerance_rads
+                                                            << " rad), waypoints are removed and trajectory does not fail");
     }
 }
 
