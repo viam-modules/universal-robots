@@ -107,7 +107,7 @@ URArm::state_::state_(private_,
       robot_control_freq_hz_(robot_control_freq_hz.value_or(URArm::k_default_robot_control_freq_hz)),
       reject_move_request_threshold_rad_(std::move(reject_move_request_threshold_rad)),
       ports_{ports},
-      waypoint_deduplication_tolerance_rad_(std::move(waypoint_deduplication_tolerance_rad)),
+      waypoint_deduplication_tolerance_rad_(waypoint_deduplication_tolerance_rad),
       path_tolerance_delta_rads_(path_tolerance_delta_rads),
       path_colinearization_ratio_(path_colinearization_ratio),
       use_new_trajectory_planner_(use_new_trajectory_planner),
@@ -167,8 +167,8 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     }
 
     auto waypoint_dedup_tolerance_deg = find_config_attribute<double>(config, "waypoint_deduplication_tolerance_deg");
-    double waypoint_dedup_tolerance_rad = waypoint_dedup_tolerance_deg ? degrees_to_radians(*waypoint_dedup_tolerance_deg)
-                                                                       : URArm::k_default_waypoint_deduplication_tolerance_rads;
+    const auto waypoint_dedup_tolerance_rad = waypoint_dedup_tolerance_deg ? degrees_to_radians(*waypoint_dedup_tolerance_deg)
+                                                                           : URArm::k_default_waypoint_deduplication_tolerance_rads;
 
     auto frequency = find_config_attribute<double>(config, "robot_control_freq_hz");
     auto use_new_planner = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
@@ -195,7 +195,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           std::move(urcl_resource_root),
                                           std::move(telemetry_output_path),
                                           std::move(threshold_rad),
-                                          std::move(waypoint_dedup_tolerance_rad),
+                                          waypoint_dedup_tolerance_rad,
                                           std::move(frequency),
                                           path_tolerance_rad,
                                           colinearization_ratio,
