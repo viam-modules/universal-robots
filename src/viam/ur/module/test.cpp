@@ -1029,14 +1029,47 @@ BOOST_AUTO_TEST_CASE(test_state_estimation_mismatch_nearly_identical_waypoints) 
     BOOST_TEST_MESSAGE("L∞ distance between first two waypoints: " << linf_dist);
     BOOST_CHECK_LT(linf_dist, 1e-3);  // Verify they're very close
 
-    // Create path and trajectory using legacy generator
-    const Path path(waypoints, path_tolerance);
-    const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+    // Test that the baseline waypoints fail with the legacy generator
+    {
+        // Create path and trajectory using legacy generator
+        const Path path(waypoints, path_tolerance);
+        const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+        BOOST_CHECK(!trajectory.isValid());
+        BOOST_TEST_MESSAGE("Legacy trajectory generator correctly failed on nearly-identical waypoints");
+    }
 
-    // Legacy generator should FAIL on this input
-    BOOST_CHECK(!trajectory.isValid());
+    // Test that deduplication with original default tolerance (1e-4) doesn't help
+    {
+        auto waypoints_copy{waypoints};
+        deduplicate_waypoints(waypoints_copy, 1e-4);
 
-    BOOST_TEST_MESSAGE("Legacy trajectory generator correctly failed on nearly-identical waypoints");
+        // Waypoints are 0.000275 rad apart (L∞), which is OUTSIDE 1e-4 tolerance
+        // So deduplication should NOT remove them
+        BOOST_CHECK_EQUAL(waypoints_copy.size(), 4);
+
+        // Trajectory generation should still fail
+        const Path path(waypoints_copy, path_tolerance);
+        const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+        BOOST_CHECK(!trajectory.isValid());
+
+        BOOST_TEST_MESSAGE("With 1e-4 dedup tolerance, waypoints not removed and trajectory still fails");
+    }
+
+    // Test that deduplication with the proposed new default tolerance (1e-3) fixes it.
+    {
+        auto waypoints_copy{waypoints};
+        deduplicate_waypoints(waypoints_copy, 1e-3);
+
+        // We expect the second waypoint to go away.
+        BOOST_CHECK_EQUAL(waypoints_copy.size(), 3);
+
+        // Trajectory generation should now pass
+        const Path path(waypoints_copy, path_tolerance);
+        const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+        BOOST_CHECK(trajectory.isValid());
+
+        BOOST_TEST_MESSAGE("With 1e-3 dedup tolerance, waypoints are removed and trajectory does not fail");
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
