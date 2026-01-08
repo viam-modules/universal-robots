@@ -856,7 +856,7 @@ BOOST_AUTO_TEST_CASE(test_deduplicate_removes_consecutive_duplicates) {
 
 BOOST_AUTO_TEST_CASE(test_deduplicate_within_tolerance) {
     std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}),
-                                            makeVector({1.00001, 2.00001, 3.00001}),  // Within L∞ tolerance of 1e-4
+                                            makeVector({1.00001, 2.00001, 3.00001}),  // Within L-infinity tolerance of 1e-4
                                             makeVector({4.0, 5.0, 6.0})};
 
     deduplicate_waypoints(waypoints, 1e-4);
@@ -868,7 +868,7 @@ BOOST_AUTO_TEST_CASE(test_deduplicate_within_tolerance) {
 
 BOOST_AUTO_TEST_CASE(test_deduplicate_outside_tolerance) {
     std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}),
-                                            makeVector({1.001, 2.0, 3.0}),  // Outside L∞ tolerance of 1e-4
+                                            makeVector({1.001, 2.0, 3.0}),  // Outside L-infinity tolerance of 1e-4
                                             makeVector({4.0, 5.0, 6.0})};
 
     deduplicate_waypoints(waypoints, 1e-4);
@@ -902,7 +902,7 @@ BOOST_AUTO_TEST_CASE(test_deduplicate_single) {
 }
 
 BOOST_AUTO_TEST_CASE(test_deduplicate_linf_norm) {
-    // Test that L∞ norm is used (max component difference)
+    // Test that L-infinity norm is used (max component difference)
     std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}),
                                             makeVector({1.00005, 2.00005, 3.0001}),  // Max diff is 0.0001 in last component
                                             makeVector({4.0, 5.0, 6.0})};
@@ -993,17 +993,19 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
 
 BOOST_AUTO_TEST_CASE(test_state_estimation_mismatch_nearly_identical_waypoints) {
     // Regression test for state estimation mismatch creating nearly-identical waypoints.
-    // This case has two waypoints that are 0.000275 rad apart (L∞ norm),
-    // which is below the current dedup threshold of 1e-4 rad.
-    // Both legacy and new generators fail on this input.
+    // This case has two waypoints that are 0.000275 rad apart (L-infinity norm).
     //
     // Root cause: Motion planner believes arm is at position A, actual position is A',
-    // they're close but outside L∞ dedup threshold. With dt=0.001s integration,
-    // the distance between waypoints (~0.0004656 rad) is smaller than typical
+    // they're close but distinguishable. With dt=0.001s integration and waypoints this
+    // close together (~0.0004656 rad arc length), the distance is smaller than typical
     // integration step movement, causing trajectory generation to fail.
     //
-    // Expected behavior: This test should PASS by confirming that legacy generator
-    // FAILS on this input (trajectory.isValid() returns false).
+    // With the old default threshold of 1e-4 rad, these waypoints were NOT deduplicated
+    // (0.000275 > 0.0001), causing trajectory generation to fail. With the new default
+    // of 1e-3 rad, they ARE deduplicated (0.000275 < 0.001), allowing success.
+    //
+    // This test verifies: (1) legacy generator fails on input, (2) old threshold doesn't
+    // help, (3) new default threshold fixes the issue.
 
     const std::list<Eigen::VectorXd> waypoints = {
         makeVector(
@@ -1024,9 +1026,9 @@ BOOST_AUTO_TEST_CASE(test_state_estimation_mismatch_nearly_identical_waypoints) 
     const Eigen::VectorXd max_acceleration_vec = makeVector(
         {5.2359877559829897, 5.2359877559829897, 5.2359877559829897, 5.2359877559829897, 5.2359877559829897, 5.2359877559829897});
 
-    // L∞ distance between first two waypoints (should be ~0.000275 rad)
+    // L-infinity distance between first two waypoints (should be ~0.000275 rad)
     const double linf_dist = (waypoints.front() - *std::next(waypoints.begin())).cwiseAbs().maxCoeff();
-    BOOST_TEST_MESSAGE("L∞ distance between first two waypoints: " << linf_dist);
+    BOOST_TEST_MESSAGE("L-infinity distance between first two waypoints: " << linf_dist);
     BOOST_CHECK_LT(linf_dist, 1e-3);  // Verify they're very close
 
     // Test that the baseline waypoints fail with the legacy generator
@@ -1043,7 +1045,7 @@ BOOST_AUTO_TEST_CASE(test_state_estimation_mismatch_nearly_identical_waypoints) 
         auto waypoints_copy{waypoints};
         deduplicate_waypoints(waypoints_copy, 1e-4);
 
-        // Waypoints are 0.000275 rad apart (L∞), which is OUTSIDE 1e-4 tolerance
+        // Waypoints are 0.000275 rad apart (L-infinity), which is OUTSIDE 1e-4 tolerance
         // So deduplication should NOT remove them
         BOOST_CHECK_EQUAL(waypoints_copy.size(), 4);
 
