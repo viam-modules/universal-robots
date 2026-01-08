@@ -1073,6 +1073,38 @@ BOOST_AUTO_TEST_CASE(test_state_estimation_mismatch_nearly_identical_waypoints) 
         BOOST_TEST_MESSAGE("With default dedup tolerance (" << URArm::k_default_waypoint_deduplication_tolerance_rads
                                                             << " rad), waypoints are removed and trajectory does not fail");
     }
+
+    // Test that waypoints just OUTSIDE the tolerance don't get deduplication, but trajectory generation succeeds.
+    {
+        auto waypoints_copy{waypoints};
+        auto it0 = waypoints_copy.begin();
+        auto it1 = std::next(it0);
+
+        // Scale the delta between waypoint[0] and waypoint[1] to be just outside the default tolerance
+        const auto delta = *it1 - *it0;
+        const double original_linf_dist = delta.lpNorm<Eigen::Infinity>();
+        const double target_linf_dist = 1.1e-3;  // Just outside URArm::k_default_waypoint_deduplication_tolerance_rads
+        const double scale_factor = target_linf_dist / original_linf_dist;
+
+        // Replace waypoint[1] with the scaled version
+        *it1 = *it0 + scale_factor * delta;
+
+        // Verify the scaled distance is close to what we expect (within 1% for floating point)
+        const double scaled_linf_dist = (*it1 - *it0).lpNorm<Eigen::Infinity>();
+        BOOST_CHECK_CLOSE(scaled_linf_dist, target_linf_dist, 1.0);
+
+        // Test that deduplication does NOT remove the scaled waypoint (it's outside tolerance)
+        auto waypoints_dedup{waypoints_copy};
+        deduplicate_waypoints(waypoints_dedup, URArm::k_default_waypoint_deduplication_tolerance_rads);
+        BOOST_CHECK_EQUAL(waypoints_dedup.size(), 4);
+
+        // Test that trajectory generation succeeds WITHOUT deduplication
+        const Path path(waypoints_copy, path_tolerance);
+        const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+        BOOST_CHECK(trajectory.isValid());
+
+        BOOST_TEST_MESSAGE("Waypoints scaled to 1.1e-3 rad apart are NOT deduplicated and trajectory succeeds");
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
