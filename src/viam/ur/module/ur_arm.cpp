@@ -67,6 +67,17 @@ namespace {
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 
+// Deduplicate waypoints in-place using L∞ norm.
+// Removes consecutive waypoints that are within tolerance of each other.
+// Always keeps the first waypoint.
+void deduplicate_waypoints(std::list<Eigen::VectorXd>& waypoints, double tolerance) {
+    const auto close_enough = [tolerance](const Eigen::VectorXd& a, const Eigen::VectorXd& b) -> bool {
+        return (a - b).lpNorm<Eigen::Infinity>() <= tolerance;
+    };
+    const auto result = std::ranges::unique(waypoints, close_enough);
+    waypoints.erase(result.begin(), result.end());
+}
+
 constexpr double k_min_duration_secs = 0.1;
 constexpr double k_max_duration_secs = 3600.0;
 constexpr double k_min_sampling_freq_hz = 1.0;
@@ -555,27 +566,23 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
-    // TODO: use options
-    if (!positions.empty()) {
-        std::list<Eigen::VectorXd> waypoints;
-        for (const auto& position : positions) {
-            auto next_waypoint_deg = Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
-            auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg)).eval();
-            if ((!waypoints.empty()) &&
-                ((next_waypoint_rad - waypoints.back()).lpNorm<Eigen::Infinity>() <= k_waypoint_equivalancy_epsilon_rad)) {
-                continue;
-            }
-            waypoints.emplace_back(std::move(next_waypoint_rad));
-        }
-
-        const auto unix_time = unix_time_iso8601();
-        const auto filename = waypoints_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
-
-        write_waypoints_to_csv(filename, waypoints);
-
-        // move will throw if an error occurs
-        move_joint_space_(std::move(rlock), std::move(waypoints), options, unix_time);
+    if (positions.empty()) {
+        return;
     }
+
+    // Convert from vector<vector<double>> (degrees) to list<Eigen::VectorXd> (radians)
+    constexpr auto to_radians = [](const auto& position) {
+        auto deg = Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
+        return degrees_to_radians(std::move(deg)).eval();
+    };
+    auto waypoints_range = positions | std::views::transform(to_radians);
+    std::list<Eigen::VectorXd> waypoints(std::ranges::begin(waypoints_range), std::ranges::end(waypoints_range));
+
+    const auto unix_time = unix_time_iso8601();
+    const auto filename = waypoints_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
+    write_waypoints_to_csv(filename, waypoints);
+
+    move_joint_space_(std::move(rlock), std::move(waypoints), options, unix_time);
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {
@@ -854,18 +861,29 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     auto curr_joint_pos = get_joint_positions_rad_(our_config_rlock);
     auto curr_joint_pos_rad = Eigen::Map<Eigen::VectorXd>(curr_joint_pos.data(), curr_joint_pos.size());
 
+    // Unconditionally prepend current position, then deduplicate
+    waypoints.emplace_front(curr_joint_pos_rad);
+    deduplicate_waypoints(waypoints, k_waypoint_equivalancy_epsilon_rad);
+
+    if (waypoints.size() == 1) {  // this tells us if we are already at the goal
+        VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
+        return;
+    }
+
     if (const auto& threshold = current_state_->get_reject_move_request_threshold_rad()) {
-        auto delta_pos = (waypoints.front() - curr_joint_pos_rad);
+        auto current_joint_position = waypoints.begin();
+        auto first_waypoint = std::next(current_joint_position);
+
+        auto delta_pos = (*first_waypoint - *current_joint_position);
 
         if (delta_pos.lpNorm<Eigen::Infinity>() > *threshold) {
             std::stringstream err_string;
 
             err_string << "rejecting move request : difference between starting trajectory position [(";
-            auto first_waypoint = waypoints.front();
-            boost::copy(first_waypoint | boost::adaptors::transformed(radians_to_degrees<const double&>),
+            boost::copy(*first_waypoint | boost::adaptors::transformed(radians_to_degrees<const double&>),
                         boost::io::make_ostream_joiner(err_string, ", "));
             err_string << ")] and joint position [(";
-            boost::copy(curr_joint_pos_rad | boost::adaptors::transformed(radians_to_degrees<const double&>),
+            boost::copy(*current_joint_position | boost::adaptors::transformed(radians_to_degrees<const double&>),
                         boost::io::make_ostream_joiner(err_string, ", "));
             err_string << ")] is above threshold " << radians_to_degrees(delta_pos.lpNorm<Eigen::Infinity>()) << " > "
                        << radians_to_degrees(*threshold);
@@ -875,15 +893,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
 
     VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
-
-    if ((curr_joint_pos_rad - waypoints.front()).lpNorm<Eigen::Infinity>() > k_waypoint_equivalancy_epsilon_rad) {
-        waypoints.emplace_front(std::move(curr_joint_pos_rad));
-    }
-
-    if (waypoints.size() == 1) {  // this tells us if we are already at the goal
-        VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
-        return;
-    }
 
     // Walk all interior points of the waypoints list, if any. If the
     // point of current interest is the cusp of a direction reversal
