@@ -1,6 +1,7 @@
 #pragma once
 
 #include <list>
+#include <optional>
 #include <shared_mutex>
 
 #include <Eigen/Core>
