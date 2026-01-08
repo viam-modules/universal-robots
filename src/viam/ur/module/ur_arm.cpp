@@ -36,6 +36,7 @@
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/resource.hpp>
 
+#include <third_party/trajectories/Path.h>
 #include <third_party/trajectories/Trajectory.h>
 
 #include <viam/trajex/totg/totg.hpp>
@@ -371,12 +372,17 @@ std::string unix_time_iso8601() {
 std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>& waypoints,
                                                 const Eigen::VectorXd& max_velocity_vec,
                                                 const Eigen::VectorXd& max_acceleration_vec,
-                                                double path_tolerance_delta_rads) {
+                                                double path_tolerance_delta_rads,
+                                                const std::optional<double>& path_colinearization_ratio) {
     namespace json = Json;
 
     json::Value root;
     root["timestamp"] = unix_time_iso8601();
     root["path_tolerance_delta_rads"] = path_tolerance_delta_rads;
+
+    if (path_colinearization_ratio) {
+        root["path_colinearization_ratio"] = *path_colinearization_ratio;
+    }
 
     json::Value max_vel_array(json::arrayValue);
     std::ranges::for_each(max_velocity_vec, [&](double item) {
@@ -1036,8 +1042,11 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         if (!trajectory.isValid()) {
             // When the trajectory cannot be generated save the all the waypoints, velocity, acceleration and path tolerance in a
             // JSON. We should be able to feed it back to the trajectory generator and confirm it is failing
-            const std::string json_content = serialize_failed_trajectory_to_json(
-                segment, max_velocity_vec, max_acceleration_vec, current_state_->get_path_tolerance_delta_rads());
+            const std::string json_content = serialize_failed_trajectory_to_json(segment,
+                                                                                 max_velocity_vec,
+                                                                                 max_acceleration_vec,
+                                                                                 current_state_->get_path_tolerance_delta_rads(),
+                                                                                 current_state_->get_path_colinearization_ratio());
 
             const std::string& path_dir = current_state_->telemetry_output_path();
             const std::string filename = failed_trajectory_filename(path_dir, current_state_->resource_name(), unix_time);

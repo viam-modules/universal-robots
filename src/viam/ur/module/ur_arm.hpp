@@ -68,7 +68,8 @@ std::string unix_time_iso8601();
 std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>& waypoints,
                                                 const Eigen::VectorXd& max_velocity_vec,
                                                 const Eigen::VectorXd& max_acceleration_vec,
-                                                double path_tolerance_delta_rads);
+                                                double path_tolerance_delta_rads,
+                                                const std::optional<double>& path_colinearization_ratio);
 
 class URArm final : public Arm, public Reconfigurable {
    public:

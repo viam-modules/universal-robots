@@ -873,7 +873,7 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     const std::string k_timestamp = unix_time_iso8601();
     const std::string k_filename = failed_trajectory_filename(k_test_path, k_resource_name, k_timestamp);
 
-    const std::string json_content = serialize_failed_trajectory_to_json(waypoints, max_velocity_vec, max_acceleration_vec, k_tolerance);
+    const std::string json_content = serialize_failed_trajectory_to_json(waypoints, max_velocity_vec, max_acceleration_vec, k_tolerance, 0.05);
 
     // Write the failed trajectory JSON
     std::ofstream json_file(k_filename);
@@ -899,6 +899,7 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
 
     BOOST_REQUIRE(readback_parsed["timestamp"].isString());
     BOOST_REQUIRE(readback_parsed["path_tolerance_delta_rads"].isDouble());
+    BOOST_REQUIRE(readback_parsed["path_colinearization_ratio"].isDouble());
     BOOST_REQUIRE(readback_parsed["max_velocity_vec_rads_per_sec"].isArray());
     BOOST_REQUIRE(readback_parsed["max_acceleration_vec_rads_per_sec2"].isArray());
     BOOST_REQUIRE(readback_parsed["waypoints_rads"].isArray());
