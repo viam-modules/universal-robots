@@ -67,17 +67,6 @@ namespace {
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
 
-// Deduplicate waypoints in-place using L∞ norm.
-// Removes consecutive waypoints that are within tolerance of each other.
-// Always keeps the first waypoint.
-void deduplicate_waypoints(std::list<Eigen::VectorXd>& waypoints, double tolerance) {
-    const auto close_enough = [tolerance](const Eigen::VectorXd& a, const Eigen::VectorXd& b) -> bool {
-        return (a - b).lpNorm<Eigen::Infinity>() <= tolerance;
-    };
-    const auto result = std::ranges::unique(waypoints, close_enough);
-    waypoints.erase(result.begin(), result.end());
-}
-
 constexpr double k_min_duration_secs = 0.1;
 constexpr double k_max_duration_secs = 3600.0;
 constexpr double k_min_sampling_freq_hz = 1.0;

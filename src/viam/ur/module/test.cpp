@@ -840,6 +840,85 @@ BOOST_AUTO_TEST_CASE(test_apply_colinearization_preserves_monotonicity) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
+BOOST_AUTO_TEST_SUITE(deduplication_tests)
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_removes_consecutive_duplicates) {
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}),
+                                            makeVector({1.0, 2.0, 3.0}),  // Duplicate
+                                            makeVector({4.0, 5.0, 6.0})};
+
+    deduplicate_waypoints(waypoints, 1e-6);
+
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+    BOOST_CHECK((waypoints.front() - makeVector({1.0, 2.0, 3.0})).norm() < 1e-10);
+    BOOST_CHECK((waypoints.back() - makeVector({4.0, 5.0, 6.0})).norm() < 1e-10);
+}
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_within_tolerance) {
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}),
+                                            makeVector({1.00001, 2.00001, 3.00001}),  // Within L∞ tolerance of 1e-4
+                                            makeVector({4.0, 5.0, 6.0})};
+
+    deduplicate_waypoints(waypoints, 1e-4);
+
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+    BOOST_CHECK((waypoints.front() - makeVector({1.0, 2.0, 3.0})).norm() < 1e-10);
+    BOOST_CHECK((waypoints.back() - makeVector({4.0, 5.0, 6.0})).norm() < 1e-10);
+}
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_outside_tolerance) {
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}),
+                                            makeVector({1.001, 2.0, 3.0}),  // Outside L∞ tolerance of 1e-4
+                                            makeVector({4.0, 5.0, 6.0})};
+
+    deduplicate_waypoints(waypoints, 1e-4);
+
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_preserves_first) {
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}), makeVector({1.0, 2.0, 3.0}), makeVector({1.0, 2.0, 3.0})};
+
+    deduplicate_waypoints(waypoints, 1e-6);
+
+    BOOST_CHECK_EQUAL(waypoints.size(), 1);
+    BOOST_CHECK((waypoints.front() - makeVector({1.0, 2.0, 3.0})).norm() < 1e-10);
+}
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_empty) {
+    std::list<Eigen::VectorXd> waypoints;
+
+    deduplicate_waypoints(waypoints, 1e-4);
+
+    BOOST_CHECK_EQUAL(waypoints.size(), 0);
+}
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_single) {
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0})};
+
+    deduplicate_waypoints(waypoints, 1e-4);
+
+    BOOST_CHECK_EQUAL(waypoints.size(), 1);
+}
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_linf_norm) {
+    // Test that L∞ norm is used (max component difference)
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}),
+                                            makeVector({1.00005, 2.00005, 3.0001}),  // Max diff is 0.0001 in last component
+                                            makeVector({4.0, 5.0, 6.0})};
+
+    // With tolerance 2e-4, should deduplicate (0.0001 < 2e-4)
+    deduplicate_waypoints(waypoints, 2e-4);
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+
+    // With tolerance 5e-5, should NOT deduplicate (0.0001 > 5e-5)
+    waypoints = {makeVector({1.0, 2.0, 3.0}), makeVector({1.00005, 2.00005, 3.0001}), makeVector({4.0, 5.0, 6.0})};
+    deduplicate_waypoints(waypoints, 5e-5);
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
 BOOST_AUTO_TEST_SUITE(failed_trajectory_tests)
 
 BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
@@ -873,7 +952,8 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     const std::string k_timestamp = unix_time_iso8601();
     const std::string k_filename = failed_trajectory_filename(k_test_path, k_resource_name, k_timestamp);
 
-    const std::string json_content = serialize_failed_trajectory_to_json(waypoints, max_velocity_vec, max_acceleration_vec, k_tolerance, 0.05);
+    const std::string json_content =
+        serialize_failed_trajectory_to_json(waypoints, max_velocity_vec, max_acceleration_vec, k_tolerance, 0.05);
 
     // Write the failed trajectory JSON
     std::ofstream json_file(k_filename);
