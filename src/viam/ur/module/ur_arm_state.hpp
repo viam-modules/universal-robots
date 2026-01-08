@@ -23,6 +23,7 @@ class URArm::state_ {
                     std::filesystem::path urcl_resource_root,
                     std::filesystem::path telemetry_output_path,
                     std::optional<double> reject_move_request_threshold_rad,
+                    double waypoint_deduplication_tolerance_rad,
                     std::optional<double> robot_control_freq_hz,
                     double path_tolerance_delta_rads,
                     std::optional<double> path_colinearization_ratio,
@@ -45,6 +46,7 @@ class URArm::state_ {
     };
 
     const std::optional<double>& get_reject_move_request_threshold_rad() const;
+    double get_waypoint_deduplication_tolerance_rad() const;
     vector6d_t read_joint_positions() const;
     vector6d_t read_tcp_pose() const;
     vector6d_t read_tcp_forces_at_base() const;
@@ -378,6 +380,8 @@ class URArm::state_ {
     const std::optional<double> reject_move_request_threshold_rad_;
 
     const struct ports_ ports_;
+
+    const double waypoint_deduplication_tolerance_rad_;
 
     vector6d_t max_velocity_;
     vector6d_t max_acceleration_;
