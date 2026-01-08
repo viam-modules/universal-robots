@@ -839,6 +839,85 @@ BOOST_AUTO_TEST_CASE(test_apply_colinearization_preserves_monotonicity) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
+BOOST_AUTO_TEST_SUITE(deduplication_tests)
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_removes_consecutive_duplicates) {
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}),
+                                            makeVector({1.0, 2.0, 3.0}),  // Duplicate
+                                            makeVector({4.0, 5.0, 6.0})};
+
+    deduplicate_waypoints(waypoints, 1e-6);
+
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+    BOOST_CHECK((waypoints.front() - makeVector({1.0, 2.0, 3.0})).norm() < 1e-10);
+    BOOST_CHECK((waypoints.back() - makeVector({4.0, 5.0, 6.0})).norm() < 1e-10);
+}
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_within_tolerance) {
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}),
+                                            makeVector({1.00001, 2.00001, 3.00001}),  // Within L-infinity tolerance of 1e-4
+                                            makeVector({4.0, 5.0, 6.0})};
+
+    deduplicate_waypoints(waypoints, 1e-4);
+
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+    BOOST_CHECK((waypoints.front() - makeVector({1.0, 2.0, 3.0})).norm() < 1e-10);
+    BOOST_CHECK((waypoints.back() - makeVector({4.0, 5.0, 6.0})).norm() < 1e-10);
+}
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_outside_tolerance) {
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}),
+                                            makeVector({1.001, 2.0, 3.0}),  // Outside L-infinity tolerance of 1e-4
+                                            makeVector({4.0, 5.0, 6.0})};
+
+    deduplicate_waypoints(waypoints, 1e-4);
+
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_preserves_first) {
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}), makeVector({1.0, 2.0, 3.0}), makeVector({1.0, 2.0, 3.0})};
+
+    deduplicate_waypoints(waypoints, 1e-6);
+
+    BOOST_CHECK_EQUAL(waypoints.size(), 1);
+    BOOST_CHECK((waypoints.front() - makeVector({1.0, 2.0, 3.0})).norm() < 1e-10);
+}
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_empty) {
+    std::list<Eigen::VectorXd> waypoints;
+
+    deduplicate_waypoints(waypoints, 1e-4);
+
+    BOOST_CHECK_EQUAL(waypoints.size(), 0);
+}
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_single) {
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0})};
+
+    deduplicate_waypoints(waypoints, 1e-4);
+
+    BOOST_CHECK_EQUAL(waypoints.size(), 1);
+}
+
+BOOST_AUTO_TEST_CASE(test_deduplicate_linf_norm) {
+    // Test that L-infinity norm is used (max component difference)
+    std::list<Eigen::VectorXd> waypoints = {makeVector({1.0, 2.0, 3.0}),
+                                            makeVector({1.00005, 2.00005, 3.0001}),  // Max diff is 0.0001 in last component
+                                            makeVector({4.0, 5.0, 6.0})};
+
+    // With tolerance 2e-4, should deduplicate (0.0001 < 2e-4)
+    deduplicate_waypoints(waypoints, 2e-4);
+    BOOST_CHECK_EQUAL(waypoints.size(), 2);
+
+    // With tolerance 5e-5, should NOT deduplicate (0.0001 > 5e-5)
+    waypoints = {makeVector({1.0, 2.0, 3.0}), makeVector({1.00005, 2.00005, 3.0001}), makeVector({4.0, 5.0, 6.0})};
+    deduplicate_waypoints(waypoints, 5e-5);
+    BOOST_CHECK_EQUAL(waypoints.size(), 3);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
 BOOST_AUTO_TEST_SUITE(failed_trajectory_tests)
 
 BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
@@ -872,7 +951,8 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     const std::string k_timestamp = unix_time_iso8601();
     const std::string k_filename = failed_trajectory_filename(k_test_path, k_resource_name, k_timestamp);
 
-    const std::string json_content = serialize_failed_trajectory_to_json(waypoints, max_velocity_vec, max_acceleration_vec, k_tolerance);
+    const std::string json_content =
+        serialize_failed_trajectory_to_json(waypoints, max_velocity_vec, max_acceleration_vec, k_tolerance, 0.05);
 
     // Write the failed trajectory JSON
     std::ofstream json_file(k_filename);
@@ -898,6 +978,7 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
 
     BOOST_REQUIRE(readback_parsed["timestamp"].isString());
     BOOST_REQUIRE(readback_parsed["path_tolerance_delta_rads"].isDouble());
+    BOOST_REQUIRE(readback_parsed["path_colinearization_ratio"].isDouble());
     BOOST_REQUIRE(readback_parsed["max_velocity_vec_rads_per_sec"].isArray());
     BOOST_REQUIRE(readback_parsed["max_acceleration_vec_rads_per_sec2"].isArray());
     BOOST_REQUIRE(readback_parsed["waypoints_rads"].isArray());
@@ -907,6 +988,122 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     BOOST_REQUIRE_EQUAL(readback_parsed["waypoints_rads"].size(), waypoints.size());
 
     BOOST_REQUIRE_CLOSE(readback_parsed["path_tolerance_delta_rads"].asDouble(), k_tolerance, 1e-10);
+}
+
+BOOST_AUTO_TEST_CASE(test_state_estimation_mismatch_nearly_identical_waypoints) {
+    // Regression test for state estimation mismatch creating nearly-identical waypoints.
+    // This case has two waypoints that are 0.000275 rad apart (L-infinity norm).
+    //
+    // Root cause: Motion planner believes arm is at position A, actual position is A',
+    // they're close but distinguishable. With dt=0.001s integration and waypoints this
+    // close together (~0.0004656 rad arc length), the distance is smaller than typical
+    // integration step movement, causing trajectory generation to fail.
+    //
+    // With the old default threshold of 1e-4 rad, these waypoints were NOT deduplicated
+    // (0.000275 > 0.0001), causing trajectory generation to fail. With the new default
+    // of 1e-3 rad, they ARE deduplicated (0.000275 < 0.001), allowing success.
+    //
+    // This test verifies: (1) legacy generator fails on input, (2) old threshold doesn't
+    // help, (3) new default threshold fixes the issue.
+
+    const std::list<Eigen::VectorXd> waypoints = {
+        makeVector(
+            {0.86162841320037842, -2.912748476068014, -1.4315807819366455, -0.43625719965014653, 1.4747567176818848, 0.86391860246658325}),
+        makeVector(
+            {0.86190300345456516, -2.9129917760199686, -1.4314953314444034, -0.43621047815164599, 1.4744832474373546, 0.86391310388875919}),
+        makeVector(
+            {0.76428190417993802, -2.9066158721334885, -1.4104209952962836, -0.45583191856938904, 1.4657484272628158, 0.76620493188004013}),
+        makeVector(
+            {0.70063350624593246, -2.9047065501727753, -1.3849914692788434, -0.47677585518868032, 1.453744431644983, 0.70233985427631329})};
+
+    // Original parameters from failed trajectory
+    const double path_tolerance = 0.1;  // 0.1 rad
+
+    const Eigen::VectorXd max_velocity_vec = makeVector(
+        {2.0943951023931953, 2.0943951023931953, 2.0943951023931953, 2.0943951023931953, 2.0943951023931953, 2.0943951023931953});
+
+    const Eigen::VectorXd max_acceleration_vec = makeVector(
+        {5.2359877559829897, 5.2359877559829897, 5.2359877559829897, 5.2359877559829897, 5.2359877559829897, 5.2359877559829897});
+
+    // L-infinity distance between first two waypoints (should be ~0.000275 rad)
+    const double linf_dist = (waypoints.front() - *std::next(waypoints.begin())).cwiseAbs().maxCoeff();
+    BOOST_TEST_MESSAGE("L-infinity distance between first two waypoints: " << linf_dist);
+    BOOST_CHECK_LT(linf_dist, 1e-3);  // Verify they're very close
+
+    // Test that the baseline waypoints fail with the legacy generator
+    {
+        // Create path and trajectory using legacy generator
+        const Path path(waypoints, path_tolerance);
+        const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+        BOOST_CHECK(!trajectory.isValid());
+        BOOST_TEST_MESSAGE("Legacy trajectory generator correctly failed on nearly-identical waypoints");
+    }
+
+    // Test that deduplication with original default tolerance (1e-4) doesn't help
+    {
+        auto waypoints_copy{waypoints};
+        deduplicate_waypoints(waypoints_copy, 1e-4);
+
+        // Waypoints are 0.000275 rad apart (L-infinity), which is OUTSIDE 1e-4 tolerance
+        // So deduplication should NOT remove them
+        BOOST_CHECK_EQUAL(waypoints_copy.size(), 4);
+
+        // Trajectory generation should still fail
+        const Path path(waypoints_copy, path_tolerance);
+        const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+        BOOST_CHECK(!trajectory.isValid());
+
+        BOOST_TEST_MESSAGE("With 1e-4 dedup tolerance, waypoints not removed and trajectory still fails");
+    }
+
+    // Test that deduplication with the default tolerance fixes it.
+    {
+        auto waypoints_copy{waypoints};
+        deduplicate_waypoints(waypoints_copy, URArm::k_default_waypoint_deduplication_tolerance_rads);
+
+        // We expect the second waypoint to go away.
+        BOOST_CHECK_EQUAL(waypoints_copy.size(), 3);
+
+        // Trajectory generation should now pass
+        const Path path(waypoints_copy, path_tolerance);
+        const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+        BOOST_CHECK(trajectory.isValid());
+
+        BOOST_TEST_MESSAGE("With default dedup tolerance (" << URArm::k_default_waypoint_deduplication_tolerance_rads
+                                                            << " rad), waypoints are removed and trajectory does not fail");
+    }
+
+    // Test that waypoints just OUTSIDE the tolerance don't get deduplication, but trajectory generation succeeds.
+    {
+        auto waypoints_copy{waypoints};
+        auto it0 = waypoints_copy.begin();
+        auto it1 = std::next(it0);
+
+        // Scale the delta between waypoint[0] and waypoint[1] to be just outside the default tolerance
+        const auto delta = *it1 - *it0;
+        const double original_linf_dist = delta.lpNorm<Eigen::Infinity>();
+        const double target_linf_dist = 1.1e-3;  // Just outside URArm::k_default_waypoint_deduplication_tolerance_rads
+        const double scale_factor = target_linf_dist / original_linf_dist;
+
+        // Replace waypoint[1] with the scaled version
+        *it1 = *it0 + scale_factor * delta;
+
+        // Verify the scaled distance is close to what we expect (within 1% for floating point)
+        const double scaled_linf_dist = (*it1 - *it0).lpNorm<Eigen::Infinity>();
+        BOOST_CHECK_CLOSE(scaled_linf_dist, target_linf_dist, 1.0);
+
+        // Test that deduplication does NOT remove the scaled waypoint (it's outside tolerance)
+        auto waypoints_dedup{waypoints_copy};
+        deduplicate_waypoints(waypoints_dedup, URArm::k_default_waypoint_deduplication_tolerance_rads);
+        BOOST_CHECK_EQUAL(waypoints_dedup.size(), 4);
+
+        // Test that trajectory generation succeeds WITHOUT deduplication
+        const Path path(waypoints_copy, path_tolerance);
+        const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+        BOOST_CHECK(trajectory.isValid());
+
+        BOOST_TEST_MESSAGE("Waypoints scaled to 1.1e-3 rad apart are NOT deduplicated and trajectory succeeds");
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

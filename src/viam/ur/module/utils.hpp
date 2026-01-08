@@ -111,6 +111,17 @@ bool within_colinearization_tolerance(const Eigen::VectorXd& point,
 void apply_colinearization(std::list<Eigen::VectorXd>& waypoints, double tolerance);
 
 ///
+/// Deduplicate waypoints in-place using L-infinity norm.
+///
+/// Removes consecutive waypoints that are within tolerance of each other using
+/// the L-infinity (maximum) norm. Always keeps the first waypoint.
+///
+/// @param waypoints List of waypoints to deduplicate (modified in-place)
+/// @param tolerance Maximum L-infinity distance for waypoints to be considered duplicates (in radians)
+///
+void deduplicate_waypoints(std::list<Eigen::VectorXd>& waypoints, double tolerance);
+
+///
 /// Parse and validate velocity or acceleration limits.
 ///
 /// Returns a 6-element vector in radians. Input (in degrees) can be scalar

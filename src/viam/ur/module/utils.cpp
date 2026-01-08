@@ -1,5 +1,7 @@
 #include "utils.hpp"
 
+#include <ranges>
+
 #include <ur_client_library/log.h>
 
 #include <Eigen/Dense>
@@ -175,6 +177,14 @@ void apply_colinearization(std::list<Eigen::VectorXd>& waypoints, double toleran
         waypoints.erase(std::next(anchor), locus);
         anchor = locus;
     }
+}
+
+void deduplicate_waypoints(std::list<Eigen::VectorXd>& waypoints, double tolerance) {
+    const auto close_enough = [tolerance](const Eigen::VectorXd& a, const Eigen::VectorXd& b) -> bool {
+        return (a - b).lpNorm<Eigen::Infinity>() <= tolerance;
+    };
+    const auto result = std::ranges::unique(waypoints, close_enough);
+    waypoints.erase(result.begin(), result.end());
 }
 
 vector6d_t parse_and_validate_joint_limits(const viam::sdk::ProtoValue& value, const std::string& param_name) {
