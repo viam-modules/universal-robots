@@ -152,7 +152,7 @@ find_package(xtensor CONFIG REQUIRED)
 find_package(jsoncpp CONFIG REQUIRED)
 
 find_package(Eigen3 CONFIG REQUIRED)
-find_package(viam-cpp-sdk 0.23 CONFIG REQUIRED viamsdk)
+find_package(viam-cpp-sdk 0.25 CONFIG REQUIRED viamsdk)
 
 # Everything needs threads, and prefer -pthread if available
 set(THREADS_PREFER_PTHREAD_FLAG ON)
