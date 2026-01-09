@@ -912,6 +912,20 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
     segments.push_back(std::move(waypoints));
 
+    auto max_velocity_vec_data = current_state_->get_max_velocity();
+    // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
+    if (options.max_vel_degs_per_sec && options.max_vel_degs_per_sec.get() > 0) {
+        max_velocity_vec_data.fill(degrees_to_radians(options.max_vel_degs_per_sec.get()));
+    }
+    const auto max_velocity_vec = Eigen::Map<const Eigen::VectorXd>(max_velocity_vec_data.data(), max_velocity_vec_data.size());
+
+    auto max_acceleration_vec_data = current_state_->get_max_acceleration();
+    // TODO(RSDK-12375) Remove 0 acc check when RDK stops sending 0 velocities
+    if (options.max_acc_degs_per_sec2 && options.max_acc_degs_per_sec2.get() > 0) {
+        max_acceleration_vec_data.fill(degrees_to_radians(options.max_acc_degs_per_sec2.get()));
+    }
+    const auto max_acceleration_vec = Eigen::Map<const Eigen::VectorXd>(max_acceleration_vec_data.data(), max_acceleration_vec_data.size());
+
     const auto new_trajectory = [&]() -> std::optional<std::vector<trajectory_sample_point>> {
         if (!current_state_->use_new_trajectory_planner()) {
             return std::nullopt;
@@ -925,63 +939,79 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             using namespace viam::trajex;
 
             totg::trajectory::options trajex_opts;
-            const auto max_vel = current_state_->get_max_velocity();
-            const auto max_acc = current_state_->get_max_acceleration();
-            trajex_opts.max_velocity = xt::xarray<double>::from_shape({max_vel.size()});
-            trajex_opts.max_acceleration = xt::xarray<double>::from_shape({max_acc.size()});
-            std::ranges::copy(max_vel, trajex_opts.max_velocity.begin());
-            std::ranges::copy(max_acc, trajex_opts.max_acceleration.begin());
+            trajex_opts.max_velocity = xt::xarray<double>::from_shape({max_velocity_vec_data.size()});
+            trajex_opts.max_acceleration = xt::xarray<double>::from_shape({max_acceleration_vec_data.size()});
+            std::ranges::copy(max_velocity_vec_data, trajex_opts.max_velocity.begin());
+            std::ranges::copy(max_acceleration_vec_data, trajex_opts.max_acceleration.begin());
 
             std::vector<trajectory_sample_point> all_trajex_samples;
 
             const auto generation_start = std::chrono::steady_clock::now();
 
             for (const auto& segment : segments) {
-                const auto segment_xarray = eigen_waypoints_to_xarray(segment);
-                const totg::waypoint_accumulator trajex_waypoints(segment_xarray);
+                try {
+                    const auto segment_xarray = eigen_waypoints_to_xarray(segment);
+                    const totg::waypoint_accumulator trajex_waypoints(segment_xarray);
 
-                auto path_opts = totg::path::options{}.set_max_blend_deviation(current_state_->get_path_tolerance_delta_rads());
+                    auto path_opts = totg::path::options{}.set_max_blend_deviation(current_state_->get_path_tolerance_delta_rads());
 
-                if (auto ratio = current_state_->get_path_colinearization_ratio()) {
-                    path_opts.set_max_linear_deviation(current_state_->get_path_tolerance_delta_rads() * (*ratio));
-                }
-
-                auto trajex_path = totg::path::create(trajex_waypoints, path_opts);
-
-                // Create a copy of trajex_opts for each segment since it's consumed by create()
-                totg::trajectory::options segment_opts = trajex_opts;
-                auto trajex_trajectory = totg::trajectory::create(std::move(trajex_path), std::move(segment_opts));
-
-                auto sampler = totg::uniform_sampler::quantized_for_trajectory(
-                    trajex_trajectory, types::hertz{current_state_->get_trajectory_sampling_freq_hz()});
-
-                double previous_time = 0.0;
-                for (const auto& sample : trajex_trajectory.samples(sampler) | std::views::drop(1)) {
-                    const double current_time = sample.time.count();
-                    const float timestep = boost::numeric_cast<float>(current_time - previous_time);
-
-                    trajectory_sample_point point;
-                    for (size_t i = 0; i < point.p.size(); ++i) {
-                        point.p[i] = sample.configuration(i);
-                        point.v[i] = sample.velocity(i);
+                    if (auto ratio = current_state_->get_path_colinearization_ratio()) {
+                        path_opts.set_max_linear_deviation(current_state_->get_path_tolerance_delta_rads() * (*ratio));
                     }
-                    point.timestep = timestep;
 
-                    all_trajex_samples.push_back(point);
-                    previous_time = current_time;
+                    auto trajex_path = totg::path::create(trajex_waypoints, path_opts);
+
+                    // Create a copy of trajex_opts for each segment since it's consumed by create()
+                    totg::trajectory::options segment_opts = trajex_opts;
+                    auto trajex_trajectory = totg::trajectory::create(std::move(trajex_path), std::move(segment_opts));
+
+                    auto sampler = totg::uniform_sampler::quantized_for_trajectory(
+                        trajex_trajectory, types::hertz{current_state_->get_trajectory_sampling_freq_hz()});
+
+                    double previous_time = 0.0;
+                    for (const auto& sample : trajex_trajectory.samples(sampler) | std::views::drop(1)) {
+                        const double current_time = sample.time.count();
+                        const float timestep = boost::numeric_cast<float>(current_time - previous_time);
+
+                        trajectory_sample_point point;
+                        for (size_t i = 0; i < point.p.size(); ++i) {
+                            point.p[i] = sample.configuration(i);
+                            point.v[i] = sample.velocity(i);
+                        }
+                        point.timestep = timestep;
+
+                        all_trajex_samples.push_back(point);
+                        previous_time = current_time;
+                    }
+
+                    total_waypoints += segment.size();
+                    total_duration += trajex_trajectory.duration().count();
+                    total_arc_length += trajex_trajectory.path().length();
+
+                    if (total_duration > current_state_->get_max_trajectory_duration_secs()) {
+                        throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
+                    }
+
+                    VIAM_SDK_LOG(info) << "trajex/totg segment generated successfully, waypoints: " << segment.size()
+                                       << ", duration: " << trajex_trajectory.duration().count()
+                                       << "s, samples: " << all_trajex_samples.size()
+                                       << ", arc length: " << trajex_trajectory.path().length();
+                } catch (...) {
+                    const std::string json_content = serialize_failed_trajectory_to_json(segment,
+                                                                                         max_velocity_vec,
+                                                                                         max_acceleration_vec,
+                                                                                         current_state_->get_path_tolerance_delta_rads(),
+                                                                                         current_state_->get_path_colinearization_ratio());
+
+                    const std::string& path_dir = current_state_->telemetry_output_path();
+                    const std::string filename =
+                        failed_trajectory_filename(path_dir, current_state_->resource_name() + "_trajex", unix_time);
+                    std::ofstream json_file(filename);
+                    json_file << json_content;
+                    json_file.close();
+
+                    throw;
                 }
-
-                total_waypoints += segment.size();
-                total_duration += trajex_trajectory.duration().count();
-                total_arc_length += trajex_trajectory.path().length();
-
-                if (total_duration > current_state_->get_max_trajectory_duration_secs()) {
-                    throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
-                }
-
-                VIAM_SDK_LOG(info) << "trajex/totg segment generated successfully, waypoints: " << segment.size()
-                                   << ", duration: " << trajex_trajectory.duration().count() << "s, samples: " << all_trajex_samples.size()
-                                   << ", arc length: " << trajex_trajectory.path().length();
             }
 
             if (total_duration < k_min_timestep_sec) {
@@ -1004,20 +1034,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }();
 
     const auto legacy_generation_start = std::chrono::steady_clock::now();
-
-    auto max_velocity_vec_data = current_state_->get_max_velocity();
-    // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
-    if (options.max_vel_degs_per_sec && options.max_vel_degs_per_sec.get() > 0) {
-        max_velocity_vec_data.fill(degrees_to_radians(options.max_vel_degs_per_sec.get()));
-    }
-    const auto max_velocity_vec = Eigen::Map<const Eigen::VectorXd>(max_velocity_vec_data.data(), max_velocity_vec_data.size());
-
-    auto max_acceleration_vec_data = current_state_->get_max_acceleration();
-    // TODO(RSDK-12375) Remove 0 acc check when RDK stops sending 0 velocities
-    if (options.max_acc_degs_per_sec2 && options.max_acc_degs_per_sec2.get() > 0) {
-        max_acceleration_vec_data.fill(degrees_to_radians(options.max_acc_degs_per_sec2.get()));
-    }
-    const auto max_acceleration_vec = Eigen::Map<const Eigen::VectorXd>(max_acceleration_vec_data.data(), max_acceleration_vec_data.size());
 
     VIAM_SDK_LOG(debug) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity_vec[0]);
 

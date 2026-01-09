@@ -171,7 +171,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                                                            : URArm::k_default_waypoint_deduplication_tolerance_rads;
 
     auto frequency = find_config_attribute<double>(config, "robot_control_freq_hz");
-    auto use_new_planner = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
+    auto use_new_planner = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(true);
 
     auto path_tolerance_deg = find_config_attribute<double>(config, "path_tolerance_delta_deg");
     auto path_tolerance_rad = path_tolerance_deg ? degrees_to_radians(*path_tolerance_deg) : URArm::k_default_path_tolerance_delta_rads;
