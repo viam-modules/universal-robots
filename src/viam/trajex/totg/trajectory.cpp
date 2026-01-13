@@ -16,6 +16,7 @@
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/types/arc_operations.hpp>
 #include "viam/trajex/types/arc_acceleration.hpp"
+#include "viam/trajex/types/arc_length.hpp"
 #include "viam/trajex/types/arc_velocity.hpp"
 
 namespace viam::trajex::totg {
@@ -236,12 +237,8 @@ enum class integration_event : std::uint8_t {
 // Given current position, velocity, and applied acceleration, computes the next state.
 // Uses constant acceleration kinematic equations: v_new = v + a*dt, s_new = s + v*dt + 0.5*a*dt^2.
 // This is direction-agnostic - caller determines whether dt is positive (forward) or negative (backward).
-[[gnu::const]] auto euler_step(arc_length s, arc_velocity s_dot, arc_acceleration s_ddot, trajectory::seconds dt, class epsilon epsilon) {
-    struct result {
-        arc_length s;
-        arc_velocity s_dot;
-    };
-
+[[gnu::const]] trajectory::phase_point euler_step(
+    arc_length s, arc_velocity s_dot, arc_acceleration s_ddot, trajectory::seconds dt, class epsilon epsilon) {
     const auto s_dot_new = s_dot + (s_ddot * dt);
     const auto s_new = s + (s_dot * dt) + (0.5 * s_ddot * dt * dt);
 
@@ -251,7 +248,11 @@ enum class integration_event : std::uint8_t {
         }
     }
 
-    return result{s_new, s_dot_new};
+    return {s_new, s_dot_new};
+}
+
+[[gnu::const]] auto euler_step(trajectory::phase_point where, arc_acceleration s_ddot, trajectory::seconds dt, class epsilon epsilon) {
+    return euler_step(where.s, where.s_dot, s_ddot, dt, epsilon);
 }
 
 // Validates if a segment boundary is a valid acceleration switching point per
@@ -1011,6 +1012,165 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
             return std::nullopt;
         };
+
+        path::cursor path_cursor = traj.path_.create_cursor();
+        const auto integrate_forward_from = [&](switching_point where) -> switching_point {
+            phase_point current_point{std::move(where.point)};
+            std::optional<switching_point_kind> current_kind{std::move(where.kind)};
+            trajectory::integration_observer* first_forward_observer{traj.options_.observer};
+
+            while (true) {
+                path_cursor.seek(current_point.s);
+
+                // Query path geometry at current position to compute maximum acceleration TODO: Do these two calls need
+                // SEGMENT information in case we need to know which side of a switching point we are on?  Maybe not,
+                // since we are always going forward, and path cursor seeking will always move us to the far side of the
+                // discontinuity.
+                const auto q_prime = path_cursor.tangent();
+                const auto q_double_prime = path_cursor.curvature();
+
+                const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
+                    q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
+
+                // Compute the maximum acceleration we are permitted at this phase point and switching point type.
+                const auto s_ddot_desired = [&] {
+                    if (std::exchange(current_kind, std::nullopt) == switching_point_kind::k_nondifferentiable_extremum) {
+                        return arc_acceleration{0.0};
+                    }
+                    return s_ddot_max;
+                }();
+
+                // Compute candidate next point via Euler integration with desired acceleration
+                auto next_point = euler_step(current_point, s_ddot_desired, traj.options_.delta, traj.options_.epsilon);
+
+                // TODO: must advance s
+
+                // Don't integrate past the end of a segment. Instead, interpolate to the segment end.
+                // TODO: Why?
+                const auto segment = *path_cursor;
+                const auto segment_end = segment.end();
+                if (next_point.s > segment_end) {
+                    const auto delta_s_desired = next_point.s - current_point.s;
+                    const auto delta_s_achieved = segment_end - current_point.s;
+                    const auto delta_s_dot_desired = next_point.s_dot - current_point.s_dot;
+                    next_point.s = segment_end;
+                    next_point.s_dot = current_point.s_dot + (delta_s_dot_desired * (delta_s_achieved / delta_s_desired));
+                }
+
+                // From here, use the path_segment, not the cursor. We want to evaluate on the leading edge of any
+                // discontinuity, if we are at one. But `cursor` interprets arc lengths as moving you to the next
+                // segment if it arrives at a segment boundary.
+                const auto probe_q_prime = segment.tangent(next_point.s);
+                const auto probe_q_double_prime = segment.curvature(next_point.s);
+
+                // Compute the velocity limits at the probe point.
+                const auto [s_dot_max_acc, s_dot_max_vel] = compute_velocity_limits(
+                    probe_q_prime, probe_q_double_prime, traj.options_.max_velocity, traj.options_.max_acceleration, traj.options_.epsilon);
+
+                // Bisect, until we have next_point in bounds, breach point out of bounds, and a separation less than epsilon.
+                const auto limit_hit_event = [&]() mutable -> std::optional<integration_observer::limit_hit_event> {
+                    if (next_point.s_dot > s_dot_max_acc || next_point.s_dot > s_dot_max_vel) {
+                        auto breach_point = next_point;
+                        next_point = current_point;
+                        while (traj.options_.epsilon.wrap(next_point.s) != traj.options_.epsilon.wrap(breach_point.s)) {
+                            const phase_point midpoint = {.s = (next_point.s + breach_point.s) / 2,
+                                                          .s_dot = (next_point.s_dot + breach_point.s_dot) / 2};
+
+                            const auto midpoint_q_prime = segment.tangent(midpoint.s);
+                            const auto midpoint_q_double_prime = segment.curvature(midpoint.s);
+
+                            // Compute the velocity limits at the midpoint.
+                            const auto [midpoint_s_dot_max_acc, midpoint_s_dot_max_vel] =
+                                compute_velocity_limits(midpoint_q_prime,
+                                                        midpoint_q_double_prime,
+                                                        traj.options_.max_velocity,
+                                                        traj.options_.max_acceleration,
+                                                        traj.options_.epsilon);
+
+                            // Use > here, because we really want the breach point to be on the violating side of the curve.
+                            if (midpoint.s_dot > midpoint_s_dot_max_acc || midpoint.s_dot > midpoint_s_dot_max_vel) {
+                                breach_point = midpoint;
+                            } else {
+                                next_point = midpoint;
+                            }
+                        }
+
+                        const auto breach_q_prime = segment.tangent(breach_point.s);
+                        const auto breach_q_double_prime = segment.curvature(breach_point.s);
+
+                        // Compute the velocity limits at the breach.
+                        const auto [breach_s_dot_max_acc, breach_s_dot_max_vel] = compute_velocity_limits(breach_q_prime,
+                                                                                                          breach_q_double_prime,
+                                                                                                          traj.options_.max_velocity,
+                                                                                                          traj.options_.max_acceleration,
+                                                                                                          traj.options_.epsilon);
+
+                        // Compute the acceleration limits at the last valid point.
+                        const auto next_q_prime = segment.tangent(next_point.s);
+                        const auto next_q_double_prime = segment.curvature(next_point.s);
+                        const auto [next_s_ddot_min, next_s_ddot_max] = compute_acceleration_bounds(
+                            next_q_prime, next_q_double_prime, next_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
+
+                        if (breach_s_dot_max_acc <= breach_s_dot_max_vel) {
+                            // auto max_phase_slope = next_s_ddot_max / next_point.s_dot;
+                            // TODO SLOPE
+
+                        } else {
+                            const auto min_phase_slope = next_s_ddot_min / next_point.s_dot;
+                            const auto velocity_limit_derivative = compute_velocity_limit_derivative(
+                                next_q_prime, next_q_double_prime, traj.options_.max_velocity, traj.options_.epsilon);
+
+                            if (min_phase_slope >= velocity_limit_derivative) {
+                                return std::nullopt;
+                            }
+                        }
+
+                        return integration_observer::limit_hit_event{
+                            .breach = breach_point, .s_dot_max_acc = breach_s_dot_max_acc, .s_dot_max_vel = breach_s_dot_max_vel};
+                    }
+                    return std::nullopt;
+                }();
+
+                // Compute the time delta and acceleration that moved us from current_point to next_point, and record
+                // this as our integration point.
+                const auto delta_s = next_point.s - current_point.s;
+                const auto delta_s_dot = next_point.s_dot - current_point.s_dot;
+                const auto s_dot_average = (current_point.s_dot + next_point.s_dot) / 2.0;
+                const auto dt = delta_s / s_dot_average;
+                const auto s_ddot = delta_s_dot / dt;
+                const auto prior_time = traj.integration_points_.empty() ? seconds{0.0} : traj.integration_points_.back().time;
+                traj.integration_points_.push_back({prior_time + dt, current_point.s, current_point.s_dot, s_ddot});
+
+                // If we have an observer, we now have enough to note that we were able to establish the first forward starting point.
+                if (auto* const observer = std::exchange(first_forward_observer, nullptr)) {
+                    // TODO: Add acceleration!
+                    observer->on_started_forward_integration(traj, {.start = {current_point.s, current_point.s_dot}});
+                }
+
+                // If we found a switching point, start backwards integration from there.
+                if (limit_hit_event) {
+                    if (traj.options_.observer) {
+                        traj.options_.observer->on_hit_limit_curve(traj, *limit_hit_event);
+                    }
+                    return *next_switching_point;
+                }
+
+                // If our computed next point hits the end of the path, return the k_path_end
+                // switching point at zero velocity.
+                if (next_point.s == traj.path_.length()) {
+                    return {.point = {next_point.s, arc_velocity{0.0}}, .kind = switching_point_kind::k_path_end};
+                }
+
+                current_point = next_point;
+            }
+        };
+
+        const auto integrate_backwards_from = [&](switching_point where) -> switching_point {};
+
+        switching_point sp = {.point = {arc_length{0}, arc_velocity{0}}, .kind = switching_point_kind::k_path_begin};
+        while (sp.kind != switching_point_kind::k_path_end) {
+            sp = integrate_backwards_from(integrate_forward_from(sp));
+        }
 
         // State transition function - validates and performs state transitions based on events
         const auto transition = [](integration_state current_state, integration_event event) -> integration_state {

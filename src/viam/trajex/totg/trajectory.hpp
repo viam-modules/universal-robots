@@ -119,6 +119,7 @@ class trajectory {
     /// to backward integration. Different types require different handling.
     ///
     enum class switching_point_kind : std::uint8_t {
+        k_path_begin,                    ///< Natural initiation at path start
         k_discontinuous_curvature,       ///< Acceleration case 1 (Eq 38): f''(s) discontinuous
         k_nondifferentiable_extremum,    ///< Acceleration case 2 (Eq 39): f'_i(s) = 0
         k_velocity_escape,               ///< Velocity case 1 (Eq 40): can escape below velocity curve
