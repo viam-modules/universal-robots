@@ -1,7 +1,9 @@
 #include "ur_arm_state.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <thread>
@@ -13,6 +15,9 @@
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
+#include <boost/io/ostream_joiner.hpp>
+#include <boost/range/adaptor/transformed.hpp>
+#include <boost/range/algorithm.hpp>
 
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
@@ -95,6 +100,8 @@ URArm::state_::state_(private_,
                       std::optional<double> path_colinearization_ratio,
                       bool use_new_trajectory_planner,
                       double max_trajectory_duration_secs,
+                      std::optional<vector6d_t> max_velocity_limits,
+                      std::optional<vector6d_t> max_acceleration_limits,
                       double trajectory_sampling_freq_hz,
                       bool telemetry_output_path_append_traceid,
                       const struct ports_& ports)
@@ -112,6 +119,8 @@ URArm::state_::state_(private_,
       path_colinearization_ratio_(path_colinearization_ratio),
       use_new_trajectory_planner_(use_new_trajectory_planner),
       max_trajectory_duration_secs_(max_trajectory_duration_secs),
+      max_velocity_limits_(std::move(max_velocity_limits)),
+      max_acceleration_limits_(std::move(max_acceleration_limits)),
       trajectory_sampling_freq_hz_(trajectory_sampling_freq_hz),
       telemetry_output_path_append_traceid_(telemetry_output_path_append_traceid) {}
 
@@ -187,6 +196,20 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     const bool telemetry_output_path_append_traceid =
         find_config_attribute<bool>(config, "telemetry_output_path_append_traceid").value_or(false);
 
+    // Look for the optional settings to place an upper bound on what velocity and acceleration limits may be
+    // configured, or set via DoCommand or applied via MoveOptions. Note that the parse/validate function automatically
+    // converts from degrees to radians.
+
+    std::optional<vector6d_t> max_velocity_limits;
+    if (config.attributes().contains("max_speed_degs_per_sec")) {
+        max_velocity_limits = parse_and_validate_joint_limits(config, "max_speed_degs_per_sec");
+    }
+
+    std::optional<vector6d_t> max_acceleration_limits;
+    if (config.attributes().contains("max_acceleration_degs_per_sec2")) {
+        max_acceleration_limits = parse_and_validate_joint_limits(config, "max_acceleration_degs_per_sec2");
+    }
+
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
                                           std::move(resource_name),
@@ -201,12 +224,14 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           colinearization_ratio,
                                           use_new_planner,
                                           max_trajectory_duration_secs,
+                                          std::move(max_velocity_limits),
+                                          std::move(max_acceleration_limits),
                                           trajectory_sampling_freq_hz,
                                           telemetry_output_path_append_traceid,
                                           ports);
 
-    state->set_max_velocity(parse_and_validate_joint_limits(config, "speed_degs_per_sec"));
-    state->set_max_acceleration(parse_and_validate_joint_limits(config, "acceleration_degs_per_sec2"));
+    state->set_velocity_limits(parse_and_validate_joint_limits(config, "speed_degs_per_sec"));
+    state->set_acceleration_limits(parse_and_validate_joint_limits(config, "acceleration_degs_per_sec2"));
 
     // Hold the mutex while we start the worker thread. It will not be
     // able to advance, but will be ready to take over work as soon as
@@ -362,36 +387,66 @@ bool URArm::state_::telemetry_output_path_append_traceid() const {
     return telemetry_output_path_append_traceid_;
 }
 
-void URArm::state_::set_max_velocity(const vector6d_t& velocity) {
+vector6d_t URArm::state_::set_velocity_limits(vector6d_t velocity) {
     const std::lock_guard lock(mutex_);
-    max_velocity_ = velocity;
+    return velocity_limits_ = clamp_velocity_limits(velocity);
 }
 
-void URArm::state_::set_max_velocity(double velocity) {
+vector6d_t URArm::state_::set_velocity_limits(double velocity) {
     vector6d_t v;
     v.fill(velocity);
-    set_max_velocity(v);
+    return set_velocity_limits(v);
 }
 
-vector6d_t URArm::state_::get_max_velocity() const {
+vector6d_t URArm::state_::get_velocity_limits() const {
     const std::lock_guard lock(mutex_);
-    return max_velocity_;
+    return velocity_limits_;
 }
 
-void URArm::state_::set_max_acceleration(const vector6d_t& acceleration) {
+vector6d_t URArm::state_::clamp_velocity_limits(vector6d_t desired_velocity_limits) {
+    const auto result = clamp_limits_(desired_velocity_limits, max_velocity_limits_);
+    if (max_velocity_limits_ && result != desired_velocity_limits) {
+        std::ostringstream msg;
+        msg << "Velocity limits clamped from [";
+        boost::copy(desired_velocity_limits | boost::adaptors::transformed(radians_to_degrees<const double&>),
+                    boost::io::make_ostream_joiner(msg, ", "));
+        msg << "] to [";
+        boost::copy(result | boost::adaptors::transformed(radians_to_degrees<const double&>), boost::io::make_ostream_joiner(msg, ", "));
+        msg << "] deg/s";
+        VIAM_SDK_LOG(debug) << msg.str();
+    }
+    return result;
+}
+
+vector6d_t URArm::state_::set_acceleration_limits(vector6d_t acceleration) {
     const std::lock_guard lock(mutex_);
-    max_acceleration_ = acceleration;
+    return acceleration_limits_ = clamp_acceleration_limits(acceleration);
 }
 
-void URArm::state_::set_max_acceleration(double acceleration) {
+vector6d_t URArm::state_::set_acceleration_limits(double acceleration) {
     vector6d_t a;
     a.fill(acceleration);
-    set_max_acceleration(a);
+    return set_acceleration_limits(a);
 }
 
-vector6d_t URArm::state_::get_max_acceleration() const {
+vector6d_t URArm::state_::get_acceleration_limits() const {
     const std::lock_guard lock(mutex_);
-    return max_acceleration_;
+    return acceleration_limits_;
+}
+
+vector6d_t URArm::state_::clamp_acceleration_limits(vector6d_t desired_acceleration_limits) {
+    const auto result = clamp_limits_(desired_acceleration_limits, max_acceleration_limits_);
+    if (max_acceleration_limits_ && result != desired_acceleration_limits) {
+        std::ostringstream msg;
+        msg << "Acceleration limits clamped from [";
+        boost::copy(desired_acceleration_limits | boost::adaptors::transformed(radians_to_degrees<const double&>),
+                    boost::io::make_ostream_joiner(msg, ", "));
+        msg << "] to [";
+        boost::copy(result | boost::adaptors::transformed(radians_to_degrees<const double&>), boost::io::make_ostream_joiner(msg, ", "));
+        msg << "] deg/s/s";
+        VIAM_SDK_LOG(debug) << msg.str();
+    }
+    return result;
 }
 
 double URArm::state_::get_path_tolerance_delta_rads() const {
@@ -736,4 +791,11 @@ void URArm::state_::program_running_callback_(bool running) {
         return;
     }
     VIAM_SDK_LOG(warn) << "UR program is not running";
+}
+
+vector6d_t URArm::state_::clamp_limits_(vector6d_t desired, const std::optional<vector6d_t>& limits) {
+    if (limits) {
+        std::ranges::transform(desired, *limits, begin(desired), [](auto d, auto l) { return std::min(d, l); });
+    }
+    return desired;
 }
