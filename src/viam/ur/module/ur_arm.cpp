@@ -716,12 +716,12 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     std::optional<controlled_info> cached_controlled_info;
 
     const auto add_limits_response = [&resp](const std::string& key, const vector6d_t& limits_deg) {
-      std::vector<ProtoValue> arr;
-      arr.reserve(limits_deg.size());
-      for (size_t i = 0; i < limits_deg.size(); ++i) {
-        arr.push_back(ProtoValue{limits_deg[i]});
-      }
-      resp.emplace(key, arr);
+        std::vector<ProtoValue> arr;
+        arr.reserve(limits_deg.size());
+        for (size_t i = 0; i < limits_deg.size(); ++i) {
+            arr.push_back(ProtoValue{limits_deg[i]});
+        }
+        resp.emplace(key, arr);
     };
 
     for (const auto& kv : command) {

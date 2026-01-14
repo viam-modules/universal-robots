@@ -1,5 +1,4 @@
 #include "ur_arm_state.hpp"
-#include <ur_client_library/types.h>
 
 #include <algorithm>
 #include <filesystem>
