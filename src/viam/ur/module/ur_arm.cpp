@@ -188,6 +188,14 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     parse_and_validate_joint_limits(cfg, "speed_degs_per_sec");
     parse_and_validate_joint_limits(cfg, "acceleration_degs_per_sec2");
 
+    if (cfg.attributes().contains("max_speed_degs_per_sec")) {
+        parse_and_validate_joint_limits(cfg, "max_speed_degs_per_sec");
+    }
+
+    if (cfg.attributes().contains("max_acceleration_degs_per_sec2")) {
+        parse_and_validate_joint_limits(cfg, "max_acceleration_degs_per_sec2");
+    }
+
     auto max_duration = find_config_attribute<double>(cfg, "max_trajectory_duration_secs");
     if (max_duration && (*max_duration < k_min_duration_secs || *max_duration > k_max_duration_secs)) {
         throw std::invalid_argument(
@@ -707,28 +715,24 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     };
     std::optional<controlled_info> cached_controlled_info;
 
-    const auto add_limits_response = [&resp](const std::string& key, const ProtoValue& original_value, const vector6d_t& limits_deg) {
-        if (original_value.get<double>()) {
-            resp.emplace(key, limits_deg[0]);
-        } else {
-            std::vector<ProtoValue> arr;
-            arr.reserve(limits_deg.size());
-            for (size_t i = 0; i < limits_deg.size(); ++i) {
-                arr.push_back(ProtoValue{limits_deg[i]});
-            }
-            resp.emplace(key, arr);
+    const auto add_limits_response = [&resp](const std::string& key, const vector6d_t& limits_deg) {
+        std::vector<ProtoValue> arr;
+        arr.reserve(limits_deg.size());
+        for (size_t i = 0; i < limits_deg.size(); ++i) {
+            arr.push_back(ProtoValue{limits_deg[i]});
         }
+        resp.emplace(key, arr);
     };
 
     for (const auto& kv : command) {
         if (kv.first == k_vel_key || kv.first == k_vel_degs_key) {
             const auto limits_rad = parse_and_validate_joint_limits(kv.second, kv.first);
-            current_state_->set_max_velocity(limits_rad);
-            add_limits_response(kv.first, kv.second, radians_to_degrees(limits_rad));
+            auto result = current_state_->set_velocity_limits(limits_rad);
+            add_limits_response(kv.first, radians_to_degrees(result));
         } else if (kv.first == k_acc_key || kv.first == k_acc_degs_key) {
             const auto limits_rad = parse_and_validate_joint_limits(kv.second, kv.first);
-            current_state_->set_max_acceleration(limits_rad);
-            add_limits_response(kv.first, kv.second, radians_to_degrees(limits_rad));
+            auto result = current_state_->set_acceleration_limits(limits_rad);
+            add_limits_response(kv.first, radians_to_degrees(result));
         } else if (kv.first == k_get_tcp_forces_base_key) {
             if (!cached_tcp_state) {
                 cached_tcp_state = current_state_->read_tcp_state_snapshot();
@@ -925,8 +929,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             using namespace viam::trajex;
 
             totg::trajectory::options trajex_opts;
-            const auto max_vel = current_state_->get_max_velocity();
-            const auto max_acc = current_state_->get_max_acceleration();
+            const auto max_vel = current_state_->get_velocity_limits();
+            const auto max_acc = current_state_->get_acceleration_limits();
             trajex_opts.max_velocity = xt::xarray<double>::from_shape({max_vel.size()});
             trajex_opts.max_acceleration = xt::xarray<double>::from_shape({max_acc.size()});
             std::ranges::copy(max_vel, trajex_opts.max_velocity.begin());
@@ -1005,21 +1009,23 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     const auto legacy_generation_start = std::chrono::steady_clock::now();
 
-    auto max_velocity_vec_data = current_state_->get_max_velocity();
+    auto velocity_limits_data = current_state_->get_velocity_limits();
     // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
     if (options.max_vel_degs_per_sec && options.max_vel_degs_per_sec.get() > 0) {
-        max_velocity_vec_data.fill(degrees_to_radians(options.max_vel_degs_per_sec.get()));
+        velocity_limits_data.fill(degrees_to_radians(options.max_vel_degs_per_sec.get()));
+        velocity_limits_data = current_state_->clamp_velocity_limits(velocity_limits_data);
     }
-    const auto max_velocity_vec = Eigen::Map<const Eigen::VectorXd>(max_velocity_vec_data.data(), max_velocity_vec_data.size());
+    const auto velocity_limits = Eigen::Map<const Eigen::VectorXd>(velocity_limits_data.data(), velocity_limits_data.size());
 
-    auto max_acceleration_vec_data = current_state_->get_max_acceleration();
+    auto acceleration_limits_data = current_state_->get_acceleration_limits();
     // TODO(RSDK-12375) Remove 0 acc check when RDK stops sending 0 velocities
     if (options.max_acc_degs_per_sec2 && options.max_acc_degs_per_sec2.get() > 0) {
-        max_acceleration_vec_data.fill(degrees_to_radians(options.max_acc_degs_per_sec2.get()));
+        acceleration_limits_data.fill(degrees_to_radians(options.max_acc_degs_per_sec2.get()));
+        acceleration_limits_data = current_state_->clamp_acceleration_limits(acceleration_limits_data);
     }
-    const auto max_acceleration_vec = Eigen::Map<const Eigen::VectorXd>(max_acceleration_vec_data.data(), max_acceleration_vec_data.size());
+    const auto acceleration_limits = Eigen::Map<const Eigen::VectorXd>(acceleration_limits_data.data(), acceleration_limits_data.size());
 
-    VIAM_SDK_LOG(debug) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity_vec[0]);
+    VIAM_SDK_LOG(debug) << "generating trajectory with max speed: " << radians_to_degrees(velocity_limits[0]);
 
     std::vector<trajectory_sample_point> samples;
     double total_duration = 0.0;
@@ -1035,13 +1041,13 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         total_waypoints += segment.size();
         const Path path(segment, current_state_->get_path_tolerance_delta_rads());
         total_arc_length += path.getLength();
-        const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+        const Trajectory trajectory(path, velocity_limits, acceleration_limits);
         if (!trajectory.isValid()) {
             // When the trajectory cannot be generated save the all the waypoints, velocity, acceleration and path tolerance in a
             // JSON. We should be able to feed it back to the trajectory generator and confirm it is failing
             const std::string json_content = serialize_failed_trajectory_to_json(segment,
-                                                                                 max_velocity_vec,
-                                                                                 max_acceleration_vec,
+                                                                                 velocity_limits,
+                                                                                 acceleration_limits,
                                                                                  current_state_->get_path_tolerance_delta_rads(),
                                                                                  current_state_->get_path_colinearization_ratio());
 

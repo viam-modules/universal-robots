@@ -8,6 +8,7 @@
 #include <thread>
 #include <variant>
 
+#include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
 
@@ -29,6 +30,8 @@ class URArm::state_ {
                     std::optional<double> path_colinearization_ratio,
                     bool use_new_trajectory_planner,
                     double max_trajectory_duration_secs,
+                    std::optional<vector6d_t> max_velocity_limits,
+                    std::optional<vector6d_t> max_acceleration_limits,
                     double trajectory_sampling_freq_hz,
                     bool telemetry_output_path_append_traceid,
                     const struct ports_& ports);
@@ -59,13 +62,17 @@ class URArm::state_ {
     const std::string& resource_name() const;
     bool telemetry_output_path_append_traceid() const;
 
-    void set_max_velocity(const vector6d_t& velocity);
-    void set_max_velocity(double velocity);
-    vector6d_t get_max_velocity() const;
+    // All values here are in radians/s.
+    vector6d_t set_velocity_limits(vector6d_t velocity);
+    vector6d_t set_velocity_limits(double velocity);
+    vector6d_t get_velocity_limits() const;
+    vector6d_t clamp_velocity_limits(vector6d_t desired_velocity_limits);
 
-    void set_max_acceleration(const vector6d_t& acceleration);
-    void set_max_acceleration(double acceleration);
-    vector6d_t get_max_acceleration() const;
+    // All values here are in radians/s^2.
+    vector6d_t set_acceleration_limits(vector6d_t acceleration);
+    vector6d_t set_acceleration_limits(double acceleration);
+    vector6d_t get_acceleration_limits() const;
+    vector6d_t clamp_acceleration_limits(vector6d_t desired_acceleration_limits);
 
     double get_path_tolerance_delta_rads() const;
     const std::optional<double>& get_path_colinearization_ratio() const;
@@ -362,6 +369,8 @@ class URArm::state_ {
     void trajectory_done_callback_(control::TrajectoryResult trajectory_result);
     void program_running_callback_(bool running);
 
+    static vector6d_t clamp_limits_(vector6d_t desired, const std::optional<vector6d_t>& limits);
+
     // TODO(RSDK-11620): Check if we still need this flag. We may
     // not, now that we examine status bits that include letting
     // us know whether the program is running.
@@ -383,14 +392,16 @@ class URArm::state_ {
 
     const double waypoint_deduplication_tolerance_rad_;
 
-    vector6d_t max_velocity_;
-    vector6d_t max_acceleration_;
+    vector6d_t velocity_limits_{};
+    vector6d_t acceleration_limits_{};
 
     const double path_tolerance_delta_rads_;
     const std::optional<double> path_colinearization_ratio_;
 
     const bool use_new_trajectory_planner_;
     const double max_trajectory_duration_secs_;
+    const std::optional<vector6d_t> max_velocity_limits_;
+    const std::optional<vector6d_t> max_acceleration_limits_;
     const double trajectory_sampling_freq_hz_;
     const bool telemetry_output_path_append_traceid_;
 
