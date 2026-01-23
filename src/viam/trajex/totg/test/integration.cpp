@@ -232,6 +232,7 @@ void validate_trajectory_invariants(const trajectory& traj, double tolerance_per
             const auto& first = points.front();
             BOOST_CHECK_EQUAL(static_cast<double>(first.s), 0.0);
             BOOST_CHECK_EQUAL(static_cast<double>(first.s_dot), 0.0);
+            BOOST_CHECK_EQUAL(static_cast<double>(first.time.count()), 0.0);
 
             const auto& last = points.back();
             BOOST_CHECK_EQUAL(static_cast<double>(last.s), static_cast<double>(p.length()));
@@ -679,7 +680,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
     fixture.traj_opts.delta = trajectory::seconds{0.0001};
 
     // Trajectory-wide expectations
-    fixture.expect_duration(trajectory::seconds{20.162}).expect_integration_point_count(201622).expect_path_length(arc_length{1.8553});
+    fixture.expect_duration(trajectory::seconds{20.162}).expect_integration_point_count(201621).expect_path_length(arc_length{1.8553});
 
     // Set waypoints
     fixture.set_waypoints_deg({{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0}});
@@ -691,7 +692,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
                           arc_velocity{1.23413}   // vel_limit
                           )
         .expect_backward_start(arc_length{0.71802}, arc_velocity{0.15297})
-        .expect_splice(trajectory::seconds{7.7013}, size_t{6782})
+        .expect_splice(trajectory::seconds{7.7013}, size_t{6783})
         .expect_forward_start(arc_length{0.71802}, arc_velocity{0.15297})
         .expect_hit_limit(arc_length{0.718022},
                           arc_velocity{0.15297},
@@ -699,7 +700,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
                           arc_velocity{1.23413}   // vel_limit
                           )
         .expect_backward_start(arc_length{1.85532}, arc_velocity{0.0}, trajectory::switching_point_kind::k_path_end)
-        .expect_splice(trajectory::seconds{20.1621}, size_t{9935});
+        .expect_splice(trajectory::seconds{20.1621}, size_t{9936});
 
     const trajectory traj = fixture.create_and_validate();
 }

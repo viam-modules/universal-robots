@@ -253,7 +253,10 @@ enum class integration_event : std::uint8_t {
     return {s_new, s_dot_new};
 }
 
-[[maybe_unused]] [[gnu::const]] auto euler_step(trajectory::phase_point where, arc_acceleration s_ddot, trajectory::seconds dt, class epsilon epsilon) {
+[[maybe_unused]] [[gnu::const]] auto euler_step(trajectory::phase_point where,
+                                                arc_acceleration s_ddot,
+                                                trajectory::seconds dt,
+                                                class epsilon epsilon) {
     return euler_step(where.s, where.s_dot, s_ddot, dt, epsilon);
 }
 
@@ -902,14 +905,7 @@ trajectory::trajectory(class path p, options opt, integration_points points)
     duration_ = integration_points_.back().time;
 }
 
-trajectory::trajectory(class path p, options opt) : path_{std::move(p)}, options_{std::move(opt)} {
-    // Verify NSDMI set duration to zero (safety check in case NSDMI is broken)
-    assert(duration_ == seconds{0.0});
-
-    // Start every trajectory at rest at the beginning
-    integration_points_.push_back(
-        {.time = seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{0.0}, .s_ddot = arc_acceleration{0.0}});
-}
+trajectory::trajectory(class path p, options opt) : path_{std::move(p)}, options_{std::move(opt)} {}
 
 trajectory trajectory::create(class path p, options opt, integration_points points) {
     if (opt.max_velocity.shape(0) != p.dof()) {
@@ -1021,7 +1017,10 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
         // TODO: If switching_point communicated s via cursor, this would be even cleaner.
         path::cursor path_cursor = traj.path_.create_cursor();
         const auto integrate_forward_from = [&](switching_point where) -> switching_point {
+            // TODO: I want a better abstraction for this coupled data.
             auto current_point{std::move(where.point)};
+            auto current_time = traj.integration_points_.empty() ? trajectory::seconds(0.0) : traj.integration_points_.back().time;
+
             std::optional<switching_point_kind> current_kind{std::move(where.kind)};
             auto* first_forward_observer{traj.options_.observer};
 
@@ -1157,8 +1156,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 const auto s_dot_average = (current_point.s_dot + next_point.s_dot) / 2.0;
                 const auto dt = delta_s / s_dot_average;
                 const auto s_ddot = delta_s_dot / dt;
-                const auto prior_time = traj.integration_points_.empty() ? seconds{0.0} : traj.integration_points_.back().time;
-                traj.integration_points_.push_back({prior_time + dt, current_point.s, current_point.s_dot, s_ddot});
+                const auto next_time = current_time + dt;
+                traj.integration_points_.push_back(
+                    {.time = current_time, .s = current_point.s, .s_dot = current_point.s_dot, .s_ddot = s_ddot});
 
                 // If we have an observer, we now have enough to note that we were able to establish the first forward starting point.
                 if (auto* const observer = std::exchange(first_forward_observer, nullptr)) {
@@ -1166,16 +1166,19 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     observer->on_started_forward_integration(traj, {.start = {current_point.s, current_point.s_dot}});
                 }
 
-                // If we found a switching point, start backwards integration from there.  TODO: We
-                // want to record `next`, but with `NaN` acceleration. It is our closest approach to
-                // the limit curve, so having it in our list of points is valuable for calculating
-                // an accurate intersection during backward integration. But the correct
-                // acceleration at that point is indeterminate, since we don't have another forward
-                // point that is reachable after it.
+                // If we found a switching point, start backwards integration from there.
+                //
+                // TODO: I don't love the duplication here, can we DRY this somehow.
                 if (limit_hit_event) {
+                    traj.integration_points_.push_back({.time = next_time,
+                                                        .s = next_point.s,
+                                                        .s_dot = next_point.s_dot,
+                                                        .s_ddot = arc_acceleration{std::numeric_limits<double>::quiet_NaN()}});
+
                     if (traj.options_.observer) {
                         traj.options_.observer->on_hit_limit_curve(traj, *limit_hit_event);
                     }
+
                     path_cursor.seek(next_point.s);
                     return find_switching_point(path_cursor, traj.options_);
                     // return *next_switching_point;
@@ -1184,10 +1187,17 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 // If our computed next point hits the end of the path, return the k_path_end
                 // switching point at zero velocity.
                 if (next_point.s == traj.path_.length()) {
+                    traj.integration_points_.push_back({.time = next_time,
+                                                        .s = next_point.s,
+                                                        .s_dot = next_point.s_dot,
+                                                        .s_ddot = arc_acceleration{std::numeric_limits<double>::quiet_NaN()}});
+
+                    path_cursor.seek(next_point.s);
                     return {.point = {next_point.s, arc_velocity{0.0}}, .kind = switching_point_kind::k_path_end};
                 }
 
                 current_point = next_point;
+                current_time = next_time;
             }
         };
 
