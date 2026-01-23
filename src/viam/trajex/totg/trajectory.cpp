@@ -1150,6 +1150,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                 // Compute the time delta and acceleration that moved us from current_point to next_point, and record
                 // this as our integration point.
+                //
+                // TODO: think through fp edge cases here.
                 const auto delta_s = next_point.s - current_point.s;
                 const auto delta_s_dot = next_point.s_dot - current_point.s_dot;
                 const auto s_dot_average = (current_point.s_dot + next_point.s_dot) / 2.0;
