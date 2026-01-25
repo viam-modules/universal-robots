@@ -999,7 +999,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
             const auto s_offset = backward_s - pt0.s;
             const auto interpolation_factor = s_offset / s_range;
-            const auto forward_s_dot_interp = pt0.s_dot + (interpolation_factor * (pt1.s_dot - pt0.s_dot));
+            const auto forward_s_dot_interp = lerp(pt0.s_dot, pt1.s_dot, interpolation_factor);
 
             // Intersection occurs if backward's s_dot exceeds forward's interpolated s_dot.
             // Backward integration starts with low s_dot and increases as s decreases, eventually
@@ -1058,9 +1058,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 if (const auto segment = *path_cursor; next_point.s > segment.end()) {
                     const auto delta_s_desired = next_point.s - current_point.s;
                     const auto delta_s_achieved = segment.end() - current_point.s;
-                    const auto delta_s_dot_desired = next_point.s_dot - current_point.s_dot;
                     next_point.s = segment.end();
-                    next_point.s_dot = current_point.s_dot + (delta_s_dot_desired * (delta_s_achieved / delta_s_desired));
+                    next_point.s_dot = lerp(current_point.s_dot, next_point.s_dot, delta_s_achieved / delta_s_desired);
                 }
 
                 // Advance the path cursor to the arc length we just computed above. Note that this intentionally
@@ -1088,26 +1087,26 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     auto breach_point = next_point;
                     next_point = current_point;
                     while (traj.options_.epsilon.wrap(next_point.s) != traj.options_.epsilon.wrap(breach_point.s)) {
-                        const phase_point midpoint = {.s = next_point.s + (breach_point.s - next_point.s) / 2,
-                                                      .s_dot = next_point.s_dot + (breach_point.s_dot - next_point.s_dot) / 2};
+                        const phase_point mid = {.s = midpoint(next_point.s, breach_point.s),
+                                                 .s_dot = midpoint(next_point.s_dot, breach_point.s_dot)};
 
-                        path_cursor.seek(midpoint.s);
-                        const auto midpoint_q_prime = path_cursor.tangent();
-                        const auto midpoint_q_double_prime = path_cursor.curvature();
+                        path_cursor.seek(mid.s);
+                        const auto mid_q_prime = path_cursor.tangent();
+                        const auto mid_q_double_prime = path_cursor.curvature();
 
                         // Compute the velocity limits at the midpoint.
                         const auto [midpoint_s_dot_max_acc, midpoint_s_dot_max_vel] =
-                            compute_velocity_limits(midpoint_q_prime,
-                                                    midpoint_q_double_prime,
+                            compute_velocity_limits(mid_q_prime,
+                                                    mid_q_double_prime,
                                                     traj.options_.max_velocity,
                                                     traj.options_.max_acceleration,
                                                     traj.options_.epsilon);
 
                         // Use > here, because we really want the breach point to be on the violating side of the curve.
-                        if (midpoint.s_dot > midpoint_s_dot_max_acc || midpoint.s_dot > midpoint_s_dot_max_vel) {
-                            breach_point = midpoint;
+                        if (mid.s_dot > midpoint_s_dot_max_acc || mid.s_dot > midpoint_s_dot_max_vel) {
+                            breach_point = mid;
                         } else {
-                            next_point = midpoint;
+                            next_point = mid;
                         }
                     }
 
@@ -1153,7 +1152,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 // TODO: think through fp edge cases here.
                 const auto delta_s = next_point.s - current_point.s;
                 const auto delta_s_dot = next_point.s_dot - current_point.s_dot;
-                const auto s_dot_average = (current_point.s_dot + next_point.s_dot) / 2.0;
+                const auto s_dot_average = midpoint(current_point.s_dot, next_point.s_dot);
                 const auto dt = delta_s / s_dot_average;
                 const auto s_ddot = delta_s_dot / dt;
                 const auto next_time = current_time + dt;
@@ -1210,8 +1209,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
         // The `where` parameter is `const` because we intend to return it so that it will feed back
         // into `integrate_forward`. Intentional or accidental alteration would likely result in a bug.
-        auto integrate_backwards_from =
-            [&, backwards_points = trajectory::integration_points{}](const switching_point where) mutable -> switching_point {
+        auto integrate_backwards_from = [&, backwards_points = trajectory::integration_points{}](const switching_point where) mutable {
             // Clear out any old state.
             backwards_points.clear();
 
