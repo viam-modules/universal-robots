@@ -528,8 +528,12 @@ URArm::state_::arm_connection_::~arm_connection_() {
     dashboard.reset();
 }
 
-URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream, move_command_data&& move_command)
-    : arm_joint_positions_stream(std::move(arm_joint_positions_stream)), move_command(std::move(move_command)) {
+URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream,
+                                          async_cancellation_monitor monitor,
+                                          move_command_data&& move_command)
+    : arm_joint_positions_stream(std::move(arm_joint_positions_stream)),
+      async_cancel_monitor(std::move(monitor)),
+      move_command(std::move(move_command)) {
     // Validate the move command based on its type
     std::visit(
         [](const auto& cmd) {
@@ -548,11 +552,15 @@ URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint
 }
 
 URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream,
+                                          async_cancellation_monitor monitor,
                                           std::vector<trajectory_sample_point>&& tsps)
-    : move_request(std::move(arm_joint_positions_stream), move_command_data{std::move(tsps)}) {}
+    : move_request(std::move(arm_joint_positions_stream), std::move(monitor), move_command_data{std::move(tsps)}) {}
 
-URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream, pose_sample ps)
-    : move_request(std::move(arm_joint_positions_stream), move_command_data{std::optional<pose_sample>{std::move(ps)}}) {}
+URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream,
+                                          async_cancellation_monitor monitor,
+                                          pose_sample ps)
+    : move_request(
+          std::move(arm_joint_positions_stream), std::move(monitor), move_command_data{std::optional<pose_sample>{std::move(ps)}}) {}
 
 std::shared_future<void> URArm::state_::move_request::cancel() {
     if (!cancellation_request) {

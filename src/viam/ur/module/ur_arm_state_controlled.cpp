@@ -62,6 +62,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         return std::nullopt;
     }
 
+    // If we don't already have a cancel request, but we do have an async cancellation event,
+    // note the cancellation so we act on it below.
+    if (!state.move_request_->cancellation_request && state.move_request_->async_cancel_monitor()) {
+        state.move_request_->cancel();
+    }
+
     return std::visit(
         [this, &state](auto& cmd) -> std::optional<event_variant_> {
             using T = std::decay_t<decltype(cmd)>;

@@ -297,6 +297,7 @@ target_link_libraries(viam-ur
     trajectories
     trajex
     urcl
+    viam-cpp-sdk::viamapi # Proxy for gRPC
     viam-cpp-sdk::viamsdk
     jsoncpp_lib
 )
