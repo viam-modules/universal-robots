@@ -22,6 +22,8 @@
 
 #include <json/json.h>
 
+#include <grpcpp/server_context.h>
+
 #include <boost/format.hpp>
 #include <boost/io/ostream_joiner.hpp>
 #include <boost/numeric/conversion/cast.hpp>
@@ -39,6 +41,7 @@
 #include <third_party/trajectories/Path.h>
 #include <third_party/trajectories/Trajectory.h>
 
+#include <viam/sdk/rpc/grpc_context_observer.hpp>
 #include <viam/trajex/totg/totg.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
@@ -785,6 +788,14 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
 void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time) {
     auto our_config_rlock = std::move(config_rlock);
 
+    auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
+        if (!observer) {
+            return false;
+        }
+
+        return observer->context().IsCancelled();
+    };
+
     // Capture the current movement epoch, so we can later detect if another caller
     // slipped in while we were planning.
     auto current_move_epoch = current_state_->get_move_epoch();
@@ -828,7 +839,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 
     // For pose-space moves, we don't log joint data since we only have the target pose
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock)]() mutable {
-        return current_state_->enqueue_move_request(current_move_epoch, std::nullopt, ps);
+        return current_state_->enqueue_move_request(current_move_epoch, std::nullopt, std::move(async_cancellation_monitor), ps);
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
@@ -841,6 +852,15 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                               const MoveOptions& options,
                               const std::string& unix_time) {
     auto our_config_rlock = std::move(config_rlock);
+
+    auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
+        if (!observer) {
+            return false;
+        }
+
+        auto result = observer->context().IsCancelled();
+        return result;
+    };
 
     // Capture the current movement epoch, so we can later detect if another caller
     // slipped in while we were planning.
@@ -1129,8 +1149,10 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
               "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
-        return current_state_->enqueue_move_request(
-            current_move_epoch, std::optional<std::ofstream>{std::move(ajp_of)}, std::move(new_trajectory).value_or(std::move(samples)));
+        return current_state_->enqueue_move_request(current_move_epoch,
+                                                    std::optional<std::ofstream>{std::move(ajp_of)},
+                                                    std::move(async_cancellation_monitor),
+                                                    std::move(new_trajectory).value_or(std::move(samples)));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact

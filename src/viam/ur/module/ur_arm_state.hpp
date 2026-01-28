@@ -316,11 +316,17 @@ class URArm::state_ {
        public:
         using move_command_data = std::variant<std::vector<trajectory_sample_point>, std::optional<pose_sample>>;
 
-        explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream, move_command_data&& move_command);
+        using async_cancellation_monitor = std::function<bool()>;
 
-        explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream, std::vector<trajectory_sample_point>&& tsps);
+        explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream,
+                              async_cancellation_monitor monitor,
+                              move_command_data&& move_command);
 
-        explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream, pose_sample ps);
+        explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream,
+                              async_cancellation_monitor monitor,
+                              std::vector<trajectory_sample_point>&& tsps);
+
+        explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream, async_cancellation_monitor monitor, pose_sample ps);
 
         std::shared_future<void> cancel();
 
@@ -333,6 +339,7 @@ class URArm::state_ {
         void write_joint_data(vector6d_t& position, vector6d_t& velocity);
 
         std::optional<std::ofstream> arm_joint_positions_stream;
+        async_cancellation_monitor async_cancel_monitor;
         move_command_data move_command;
         std::size_t arm_joint_positions_sample{0};
         std::promise<void> completion;
