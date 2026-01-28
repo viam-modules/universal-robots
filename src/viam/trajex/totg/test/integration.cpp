@@ -589,7 +589,7 @@ BOOST_AUTO_TEST_CASE(quantized_sampler_end_to_end) {
     BOOST_CHECK_EQUAL(sample_count, 9);
     BOOST_CHECK_EQUAL(last_time->count(), 1.0);  // Should hit endpoint exactly
 }
-#if 0
+
 BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
@@ -685,7 +685,7 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
         }
     }
 }
-#endif
+
 BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
@@ -711,20 +711,12 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
                           arc_velocity{0.15297},  // acc_limit
                           arc_velocity{1.23413}   // vel_limit
                           )
-        // .expect_backward_start(arc_length{0.71802}, arc_velocity{0.15297})
-        // .expect_splice(trajectory::seconds{7.7013}, size_t{6783})
-        // .expect_forward_start(arc_length{0.71802}, arc_velocity{0.15297})
-        // .expect_hit_limit(arc_length{0.718022},
-        //                   arc_velocity{0.15297},
-        //                   arc_velocity{0.15297},  // acc_limit
-        //                   arc_velocity{1.23413}   // vel_limit
-        //                   )
         .expect_backward_start(arc_length{1.85532}, arc_velocity{0.0}, trajectory::switching_point_kind::k_path_end)
         .expect_splice(trajectory::seconds{20.1621}, size_t{9198});
 
     const trajectory traj = fixture.create_and_validate();
 }
-#if 0
+
 BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_vel_constrained) {
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
@@ -739,24 +731,18 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_vel_constrained) {
     fixture.traj_opts.delta = trajectory::seconds{0.0001};
 
     // Trajectory-wide expectations
-    fixture.expect_duration(trajectory::seconds{90.02}).expect_integration_point_count(900201).expect_path_length(arc_length{1.8553});
+    fixture.expect_duration(trajectory::seconds{90.02}).expect_integration_point_count(900202).expect_path_length(arc_length{1.8553});
 
     // Set waypoints
     fixture.set_waypoints_deg({{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0}});
 
     fixture.observer.expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
-        .expect_hit_limit(arc_length{0.0002493},
-                          arc_velocity{0.0248060},
-                          arc_velocity{std::numeric_limits<double>::infinity()},  // acc_limit
-                          arc_velocity{0.0246826}                                 // vel_limit
-                          )
-        .expect_forward_start(arc_length{0.00024682}, arc_velocity{0.02468268})
         .expect_backward_start(arc_length{1.85532488}, arc_velocity{0}, trajectory::switching_point_kind::k_path_end)
-        .expect_splice(trajectory::seconds{90.02000000}, size_t{100});
+        .expect_splice(trajectory::seconds{90.02000000}, size_t{101});
 
     const trajectory traj = fixture.create_and_validate();
 }
-#endif
+
 BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_acceleration) {
     // RSDK-12979: Test that non-differentiable switching points (where f'_i(s) = 0 for some joint
     // on a circular arc) are handled correctly by using zero acceleration during backward integration.

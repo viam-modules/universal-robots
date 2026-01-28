@@ -1276,6 +1276,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
         auto integrate_backwards_from = [&, backwards_points = trajectory::integration_points{}](const switching_point where) mutable {
             // Clear out any old state.
             backwards_points.clear();
+            std::cout << "XXX ACM BACK CAP: "<< backwards_points.capacity();
 
             // Copy the cursor. We don't want to change path_cursor, because that's where we will start forward integration from.
             //
