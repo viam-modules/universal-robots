@@ -38,6 +38,7 @@ class universal_robots(ConanFile):
         self.requires("eigen/[>=3.4 <5.0]")
         self.requires("boost/[>=1.74.0]")
         self.requires("jsoncpp/[>=1.9.5]")
+        self.requires("grpc/[>=1.48.4]")
 
     def validate(self):
         check_min_cppstd(self, 20)
