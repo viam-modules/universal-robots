@@ -1081,7 +1081,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 // had a very short subsequent segment, but which contained a more limiting constraint, we might
                 // integrate right over it with a coarse `dt`, and tunnel through the infeasible region.
                 if (const auto segment = *path_cursor; next_point.s > segment.end()) {
-                  std::cout << "CLIP TO SEGMENT AT TIME: " << current_time << "\n";
                     const auto delta_s_desired = next_point.s - current_point.s;
                     const auto delta_s_achieved = segment.end() - current_point.s;
                     next_point.s = segment.end();
@@ -1211,10 +1210,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     return std::nullopt;
                 }();
 
-                if (limit_hit_event) {
-                  std::cout << "LIMIT HIT EVENT AT: " << current_time << "\n";
-                }
-
                 // Compute the time delta and acceleration that moved us from current_point to next_point, and record
                 // this as our integration point.
                 //
@@ -1225,13 +1220,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 const auto dt = delta_s / s_dot_average;
                 const auto s_ddot = delta_s_dot / dt;
                 const auto next_time = current_time + dt;
-                if (next_time == current_time) {
-                    std::cout << "XXX ACM NO DTDTDTDT: current_point.s=" << current_point.s
-                              << " current_point.s_dot=" << current_point.s_dot << " next_point.s=" << next_point.s
-                              << " next_point.s_dot=" << next_point.s_dot << " delta_s=" << delta_s
-                              << " delta_s_dot=" << delta_s_dot << " s_dot_average=" << s_dot_average << " dt=" << dt
-                              << " current_time=" << current_time << " next_time=" << next_time << "\n";
-                }
                 traj.integration_points_.push_back(
                     {.time = current_time, .s = current_point.s, .s_dot = current_point.s_dot, .s_ddot = s_ddot});
 
