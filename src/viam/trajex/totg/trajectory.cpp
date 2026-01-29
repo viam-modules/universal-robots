@@ -1081,6 +1081,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 // had a very short subsequent segment, but which contained a more limiting constraint, we might
                 // integrate right over it with a coarse `dt`, and tunnel through the infeasible region.
                 if (const auto segment = *path_cursor; next_point.s > segment.end()) {
+                  std::cout << "CLIP TO SEGMENT AT TIME: " << current_time << "\n";
                     const auto delta_s_desired = next_point.s - current_point.s;
                     const auto delta_s_achieved = segment.end() - current_point.s;
                     next_point.s = segment.end();
@@ -1210,6 +1211,10 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     return std::nullopt;
                 }();
 
+                if (limit_hit_event) {
+                  std::cout << "LIMIT HIT EVENT AT: " << current_time << "\n";
+                }
+
                 // Compute the time delta and acceleration that moved us from current_point to next_point, and record
                 // this as our integration point.
                 //
@@ -1220,6 +1225,13 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 const auto dt = delta_s / s_dot_average;
                 const auto s_ddot = delta_s_dot / dt;
                 const auto next_time = current_time + dt;
+                if (next_time == current_time) {
+                    std::cout << "XXX ACM NO DTDTDTDT: current_point.s=" << current_point.s
+                              << " current_point.s_dot=" << current_point.s_dot << " next_point.s=" << next_point.s
+                              << " next_point.s_dot=" << next_point.s_dot << " delta_s=" << delta_s
+                              << " delta_s_dot=" << delta_s_dot << " s_dot_average=" << s_dot_average << " dt=" << dt
+                              << " current_time=" << current_time << " next_time=" << next_time << "\n";
+                }
                 traj.integration_points_.push_back(
                     {.time = current_time, .s = current_point.s, .s_dot = current_point.s_dot, .s_ddot = s_ddot});
 
@@ -1276,12 +1288,13 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
         auto integrate_backwards_from = [&, backwards_points = trajectory::integration_points{}](const switching_point where) mutable {
             // Clear out any old state.
             backwards_points.clear();
-            std::cout << "XXX ACM BACK CAP: "<< backwards_points.capacity();
+            std::cout << "XXX ACM BACK CAP: " << backwards_points.capacity() << "\n";
+            std::cout << "XXX ACM FWD POINTS: " << traj.integration_points_.size() << "\n";
 
             // Copy the cursor. We don't want to change path_cursor, because that's where we will start forward integration from.
             //
             // TODO: This might be cleaner if the switching_point struct contained a path cursor.
-            auto backward_cursor = path_cursor;
+            auto backwards_cursor = path_cursor;
 
             if (where.point.s < traj.integration_points_.back().s || where.point.s_dot >= traj.integration_points_.back().s_dot) {
                 std::ostringstream oss;
@@ -1300,7 +1313,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
             std::optional<switching_point_kind> current_kind{where.kind};
 
             while (true) {
-                backward_cursor.seek(current_point.s);
+                backwards_cursor.seek(current_point.s);
 
                 // Compute the maximum acceleration we are permitted at this phase point and switching point type.
                 const auto s_ddot_desired = [&] {
@@ -1309,8 +1322,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         return arc_acceleration{0.0};
                     }
 
-                    const auto q_prime = backward_cursor.tangent();
-                    const auto q_double_prime = backward_cursor.curvature();
+                    const auto q_prime = backwards_cursor.tangent();
+                    const auto q_double_prime = backwards_cursor.curvature();
 
                     const auto [s_ddot_min, _1] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
@@ -1383,7 +1396,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         traj.frosts_.emplace_back(std::make_move_iterator(truncate_begin),
                                                   std::make_move_iterator(end(traj.integration_points_)));
                     }
-                    traj.integration_points_.erase(truncate_begin, traj.integration_points_.end());
+                    traj.integration_points_.erase(truncate_begin, end(traj.integration_points_));
 
                     // Reserve space to avoid reallocations during bulk append
                     traj.integration_points_.reserve(traj.integration_points_.size() + backwards_points.size());
@@ -1433,9 +1446,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 // Query geometry at candidate position to check if it would hit limit curves.
                 // Backward integration hitting a limit curve indicates the trajectory is infeasible -
                 // we cannot decelerate from the switching point without violating joint constraints.
-                backward_cursor.seek(next_point.s);
-                const auto next_q_prime = backward_cursor.tangent();
-                const auto next_q_double_prime = backward_cursor.curvature();
+                backwards_cursor.seek(next_point.s);
+                const auto next_q_prime = backwards_cursor.tangent();
+                const auto next_q_double_prime = backwards_cursor.curvature();
 
                 const auto [s_dot_max_acc, s_dot_max_vel] = compute_velocity_limits(
                     next_q_prime, next_q_double_prime, traj.options_.max_velocity, traj.options_.max_acceleration, traj.options_.epsilon);
@@ -1448,7 +1461,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 // `Divergent Behavior 3`: Candidate exceeding limit curve is an algorithm error - trajectory is
                 // infeasible. Being at the limit (within epsilon) is allowed - only exceeding it is rejected.
                 if (traj.options_.epsilon.wrap(next_point.s_dot) > traj.options_.epsilon.wrap(s_dot_limit)) {
-                  std::cout << "OOPS: " << backwards_points.size() << " next_point.s: " << next_point.s << " next_point.s_dot:" << next_point.s_dot << " s_dot_limit: " << s_dot_limit << "\n";
+                    std::cout << "OOPS: " << backwards_points.size() << " next_point.s: " << next_point.s
+                              << " next_point.s_dot:" << next_point.s_dot << " s_dot_limit: " << s_dot_limit << "\n";
                     throw std::runtime_error{"TOTG algorithm error: backward integration exceeded limit curve - trajectory is infeasible"};
                 }
 
