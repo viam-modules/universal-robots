@@ -16,11 +16,11 @@ namespace viam::trajex::totg {
 class uniform_sampler {
    public:
     ///
-    /// Constructs uniform sampler with given time step.
+    /// Constructs uniform sampler with sample count.
     ///
-    /// @param dt Time interval between samples
+    /// @param num_samples Total number of samples to generate
     ///
-    explicit uniform_sampler(trajectory::seconds dt);
+    explicit uniform_sampler(std::size_t num_samples);
 
     ///
     /// Creates uniform sampler with adjusted timestep to hit duration endpoint exactly.
@@ -59,6 +59,18 @@ class uniform_sampler {
     static double calculate_quantized_dt(double duration_sec, double frequency_hz);
 
     ///
+    /// Calculates number of samples for quantized sampling.
+    ///
+    /// Exposes the sample count calculation for testing and custom use.
+    ///
+    /// @param duration_sec Duration in seconds
+    /// @param frequency_hz Frequency in Hz
+    /// @return Number of samples that will be generated
+    /// @throws std::invalid_argument if values are non-positive or exceed limits
+    ///
+    static std::size_t calculate_quantized_samples(double duration_sec, double frequency_hz);
+
+    ///
     /// Gets next sample, advancing cursor by dt.
     ///
     /// @param cursor Cursor to sample and advance
@@ -67,7 +79,8 @@ class uniform_sampler {
     std::optional<struct trajectory::sample> next(trajectory::cursor& cursor);
 
    private:
-    trajectory::seconds dt_;
+    std::size_t num_samples_;
+    std::size_t next_sample_ = 0;
 };
 
 // Verify that uniform_sampler satisfies the sampler concept
