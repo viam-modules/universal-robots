@@ -1037,9 +1037,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 const auto current_segment = *path_cursor;
 
                 // Select acceleration for this integration step based on local situation.
-                const auto s_ddot_desired = [&] {
+                const auto [s_ddot_desired, following] = [&]() -> std::pair<arc_acceleration, bool> {
                     if (std::exchange(current_kind, std::nullopt) == switching_point_kind::k_nondifferentiable_extremum) {
-                        return arc_acceleration{0.0};
+                        return {arc_acceleration{0.0}, false};
                     }
 
                     const auto q_prime = path_cursor.tangent();
@@ -1080,7 +1080,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         //               << " product=" << (vel_curve_slope * current_point.s_dot) << " s_ddot_max=" << s_ddot_max
                         //               << " using_tangent=" << s_ddot_tangent << "\n";
                         // }
-                        return s_ddot_tangent;
+                        return {s_ddot_tangent, true};
                     } else {
                         // if (std::abs(static_cast<double>(current_point.s) - 0.721) < 0.01) {
                         //     std::cout << "[S_DDOT MAX] s=" << current_point.s << " s_dot=" << current_point.s_dot
@@ -1089,7 +1089,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // }
                     }
 
-                    return s_ddot_max;
+                    return {s_ddot_max, false};
                 }();
 
                 // Compute candidate next point via Euler integration with desired acceleration
@@ -1121,6 +1121,14 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 // Compute the velocity limits at the probe point.
                 auto [next_s_dot_max_acc, next_s_dot_max_vel] = compute_velocity_limits(
                     next_q_prime, next_q_double_prime, traj.options_.max_velocity, traj.options_.max_acceleration, traj.options_.epsilon);
+
+                // If we got here by following, but we clipped past the velocity limit curve
+                // clamp to it so we don't bisect.
+                //
+                // TODO: Do we need to check against accel bounds to do this safely? Is it still worth it if we need to?
+                if (following && next_point.s_dot > next_s_dot_max_vel) {
+                    next_point.s_dot = next_s_dot_max_vel;
+                }
 
                 // If we hit the a limit curve, bisect until we have `next_point` in bounds,
                 // `breach_point` out of bounds, and a separation less than our configured epsilon.
