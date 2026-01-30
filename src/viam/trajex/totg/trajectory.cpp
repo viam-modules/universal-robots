@@ -1027,8 +1027,14 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
             std::optional<switching_point_kind> current_kind{std::move(where.kind)};
             auto* first_forward_observer{traj.options_.observer};
 
+            // std::size_t stuck_iterations = 0;
+            // arc_length last_stuck_s{-1.0};
+
             while (true) {
                 path_cursor.seek(current_point.s);
+
+                // Capture current segment before any seeking, so we can detect segment boundary crossings
+                const auto current_segment = *path_cursor;
 
                 // Select acceleration for this integration step based on local situation.
                 const auto s_ddot_desired = [&] {
@@ -1053,7 +1059,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
 
                     // If we are at the velocity limit, clamp our acceleration to follow it.
-                    if (traj.options_.epsilon.wrap(current_point.s_dot) == traj.options_.epsilon.wrap(s_dot_max_vel)) {
+                    const bool at_velocity_limit =
+                        traj.options_.epsilon.wrap(current_point.s_dot) == traj.options_.epsilon.wrap(s_dot_max_vel);
+                    if (at_velocity_limit) {
                         const auto vel_curve_slope =
                             compute_velocity_limit_derivative(q_prime, q_double_prime, traj.options_.max_velocity, traj.options_.epsilon);
 
@@ -1063,7 +1071,22 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // handled as the "trapped" condition below and forced a switching point
                         // search.
                         assert(vel_curve_slope > s_ddot_min);
-                        return std::min(vel_curve_slope * current_point.s_dot, s_ddot_max);
+                        const auto s_ddot_tangent = std::min(vel_curve_slope * current_point.s_dot, s_ddot_max);
+
+                        // Only log near the problematic position
+                        // if (std::abs(static_cast<double>(current_point.s) - 0.721) < 0.01) {
+                        //     std::cout << "[S_DDOT TANGENT] s=" << current_point.s << " s_dot=" << current_point.s_dot
+                        //               << " s_dot_limit=" << s_dot_max_vel << " vel_curve_slope=" << vel_curve_slope
+                        //               << " product=" << (vel_curve_slope * current_point.s_dot) << " s_ddot_max=" << s_ddot_max
+                        //               << " using_tangent=" << s_ddot_tangent << "\n";
+                        // }
+                        return s_ddot_tangent;
+                    } else {
+                        // if (std::abs(static_cast<double>(current_point.s) - 0.721) < 0.01) {
+                        //     std::cout << "[S_DDOT MAX] s=" << current_point.s << " s_dot=" << current_point.s_dot
+                        //               << " s_dot_limit=" << s_dot_max_vel << " product="
+                        //               << " s_ddot_max=" << s_ddot_max << "\n";
+                        // }
                     }
 
                     return s_ddot_max;
@@ -1106,13 +1129,19 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         return std::nullopt;
                     }
 
+                    // std::cout << "[LIMIT VIOLATION] s=" << next_point.s << " s_dot=" << next_point.s_dot
+                    //           << " acc_limit=" << next_s_dot_max_acc << " vel_limit=" << next_s_dot_max_vel
+                    //           << " points=" << traj.integration_points_.size() << "\n";
+
                     auto breach_point = next_point;
                     next_point = current_point;
 
                     auto breach_s_dot_max_acc = next_s_dot_max_acc;
                     auto breach_s_dot_max_vel = next_s_dot_max_vel;
 
+                    // std::size_t bisection_iterations = 0;
                     while (traj.options_.epsilon.wrap(next_point.s) != traj.options_.epsilon.wrap(breach_point.s)) {
+                        //++bisection_iterations;
                         const phase_point mid = {.s = midpoint(next_point.s, breach_point.s),
                                                  .s_dot = midpoint(next_point.s_dot, breach_point.s_dot)};
 
@@ -1142,16 +1171,24 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         }
                     }
 
-                    path_cursor.seek(next_point.s);
-                    const auto next_segment = *path_cursor;
                     path_cursor.seek(breach_point.s);
                     const auto breach_segment = *path_cursor;
 
+                    // std::cout << "[BISECTION CONVERGED] iters=" << bisection_iterations << " next.s=" << next_point.s
+                    //           << " breach.s=" << breach_point.s << " in segment=[" << breach_segment.start() << ", " <<
+                    //           breach_segment.end()
+                    //           << "] delta_s=" << (breach_point.s - next_point.s) << "\n";
+
                     // If we violated across a segment boundary, we need to do a switching point search.
-                    if (next_segment.start() != breach_segment.start()) {
-                        return integration_observer::limit_hit_event{
-                            .breach = breach_point, .s_dot_max_acc = breach_s_dot_max_acc, .s_dot_max_vel = breach_s_dot_max_vel};
+                    // Check if current_point and breach_point are in different segments.
+                    // std::cout << "[SEGMENT BOUNDARY CHECK] current_segment=[" << current_segment.start() << ", " << current_segment.end()
+                    //           << "] breach_segment=[" << breach_segment.start() << ", " << breach_segment.end() << "]";
+                    if (current_segment.start() != breach_segment.start()) {
+                        std::cout << " CROSSED BOUNDARY - need switching point\n";
+                        //return integration_observer::limit_hit_event{
+                            //.breach = breach_point, .s_dot_max_acc = breach_s_dot_max_acc, .s_dot_max_vel = breach_s_dot_max_vel};
                     }
+                    // std::cout << " SAME SEGMENT - continue\n";
 
                     // TODO: this could be eliminated by tracking these in the loop above as well.
                     const auto breach_q_prime = path_cursor.tangent();
@@ -1174,12 +1211,13 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         // if (max_phase_slope > acc_curve_slope) {
                         //     // The acceleration limit drops faster than we can follow. We need a switching
                         //     // point to start backward integration.
-                        //     return integration_observer::limit_hit_event{
-                        //         .breach = breach_point, .s_dot_max_acc = breach_s_dot_max_acc, .s_dot_max_vel = breach_s_dot_max_vel};
+                             return integration_observer::limit_hit_event{
+                               .breach = breach_point, .s_dot_max_acc = breach_s_dot_max_acc, .s_dot_max_vel = breach_s_dot_max_vel};
                         // }
 
                         // The trajectory naturally escapes back to the feasible region. This was
                         // numerical overshoot from a source point.
+                        std::cout << "XXX ACM DIDNT INVESTIGATE ACCEL BREACH CAREDUFLLY\n";
                         return std::nullopt;
                     }
 
@@ -1189,7 +1227,12 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     const auto vel_curve_slope = compute_velocity_limit_derivative(
                         breach_q_prime, breach_q_double_prime, traj.options_.max_velocity, traj.options_.epsilon);
 
+                    // std::cout << "[ESCAPE ANALYSIS] breach.s=" << breach_point.s << " breach.s_dot=" << breach_point.s_dot
+                    //           << " min_phase_slope=" << min_phase_slope << " max_phase_slope=" << max_phase_slope
+                    //           << " vel_curve_slope=" << vel_curve_slope;
+
                     if (min_phase_slope > vel_curve_slope) {
+                        // std::cout << " DECISION: TRAPPED (need switching point)\n";
                         // The velocity curve drops faster than we can follow while respecting the
                         // acceleration bounds. We are trapped and need a switching point.
                         return integration_observer::limit_hit_event{
@@ -1197,41 +1240,95 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     }
 
                     if (max_phase_slope < vel_curve_slope) {
+                        // std::cout << " DECISION: NATURAL ESCAPE (numerical overshoot)\n";
                         // The velocity curve rises faster than we can accelerate, so the trajectory
-                        // naturally falls away from the limit. This was numerical overshoot.
+                        // naturally falls away from the limit. This was numerical overshoot. Accept
+                        // the breach point as valid since we'll naturally escape from it, but clamp
+                        // velocity to avoid starting in a forbidden region.
+                        next_point = breach_point;
+                        next_point.s_dot = breach_s_dot_max_vel;
                         return std::nullopt;
                     }
 
-                    // The curve slope is within our acceleration authority, so we can follow it
-                    // tangentially. We clamp next_point velocity to the limit so the next iteration
-                    // detects "at velocity limit" and uses tangent acceleration rather than max
-                    // acceleration, avoiding repeated bisection.
-                    next_point.s_dot = next_s_dot_max_vel;
+                    // std::cout << " DECISION: CAN FOLLOW (clamp to limit)";
+                    //  if (std::abs(static_cast<double>(next_point.s) - 0.718022) < 0.001) {
+                    //      std::cout << " [CLAMPING] before=" << next_point.s_dot << " after=" << next_s_dot_max_vel;
+                    //  }
+                    //  std::cout << "\n";
+                    //  The curve slope is within our acceleration authority, so we can follow it
+                    //  tangentially. Accept the breach point as our next position and clamp velocity
+                    //  to the limit so the next iteration detects "at velocity limit" and uses tangent
+                    //  acceleration rather than max acceleration, avoiding repeated bisection.
+                    next_point = breach_point;
+                    next_point.s_dot = breach_s_dot_max_vel;
                     return std::nullopt;
                 }();
 
-                // Compute the time delta and acceleration that moved us from current_point to next_point, and record
-                // this as our integration point.
-                //
-                // TODO: think through fp edge cases here.
                 const auto delta_s = next_point.s - current_point.s;
                 const auto delta_s_dot = next_point.s_dot - current_point.s_dot;
+
+                // When bisection converges to the same arc length, we're at a segment boundary.
+                // The cursor has already advanced to the next segment during seek operations.
+                if (delta_s == arc_length{0.0}) {
+                    if (first_forward_observer != nullptr) {
+                        throw std::runtime_error{"Cannot advance from initial forward position"};
+                    }
+
+                    // Track consecutive stuck iterations at same position to detect infinite loops.
+                    // if (current_point.s == last_stuck_s) {
+                    //     ++stuck_iterations;
+                    //     if (stuck_iterations <= 5) {
+                    //         path_cursor.seek(current_point.s);
+                    //         const auto segment = *path_cursor;
+                    //         // std::cout << "[STUCK #" << stuck_iterations << "] s=" << current_point.s << " s_dot=" <<
+                    //         current_point.s_dot
+                    //         //           << " segment=[" << segment.start() << ", " << segment.end() << "]"
+                    //         //           << " limit_hit=" << (limit_hit_event ? "yes" : "no") << "\n";
+                    //     }
+                    //     if (stuck_iterations > 10) {
+                    //         throw std::runtime_error{"Infinite loop detected: cannot advance past segment boundary after 10 attempts"};
+                    //     }
+                    // } else {
+                    //     stuck_iterations = 1;
+                    //     last_stuck_s = current_point.s;
+                    // }
+
+                    if (limit_hit_event) {
+                        // Stuck due to limit in new segment - record position for intersection detection.
+                        traj.integration_points_.push_back({.time = current_time,
+                                                            .s = current_point.s,
+                                                            .s_dot = current_point.s_dot,
+                                                            .s_ddot = arc_acceleration{std::numeric_limits<double>::quiet_NaN()}});
+
+                        if (traj.options_.observer) {
+                            traj.options_.observer->on_hit_limit_curve(traj, *limit_hit_event);
+                        }
+
+                        path_cursor.seek(current_point.s);
+                        return find_switching_point(path_cursor, traj.options_);
+                    }
+
+                    // Crossed segment boundary without hitting limit - try again with new segment geometry.
+                    // std::cout << "[RETRY BOUNDARY] s=" << current_point.s << " s_dot=" << current_point.s_dot
+                    //           << " attempting next segment\n";
+                    continue;
+                }
+
+                // Made progress - reset stuck counter.
+                // stuck_iterations = 0;
+
                 const auto s_dot_average = midpoint(current_point.s_dot, next_point.s_dot);
                 const auto dt = delta_s / s_dot_average;
                 const auto s_ddot = delta_s_dot / dt;
                 const auto next_time = current_time + dt;
+
                 traj.integration_points_.push_back(
                     {.time = current_time, .s = current_point.s, .s_dot = current_point.s_dot, .s_ddot = s_ddot});
 
-                // If we have an observer, we now have enough to note that we were able to establish the first forward starting point.
                 if (auto* const observer = std::exchange(first_forward_observer, nullptr)) {
-                    // TODO: Add acceleration, OR: pass no args, forward start info is last integration point!
                     observer->on_started_forward_integration(traj, {.start = {current_point.s, current_point.s_dot}});
                 }
 
-                // If we found a switching point, start backwards integration from there.
-                //
-                // TODO: I don't love the duplication here, can we DRY this somehow.
                 if (limit_hit_event) {
                     traj.integration_points_.push_back({.time = next_time,
                                                         .s = next_point.s,
@@ -1244,11 +1341,8 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                     path_cursor.seek(next_point.s);
                     return find_switching_point(path_cursor, traj.options_);
-                    // return *next_switching_point;
                 }
 
-                // If our computed next point hits the end of the path, return the k_path_end
-                // switching point at zero velocity.
                 if (next_point.s == traj.path_.length()) {
                     traj.integration_points_.push_back({.time = next_time,
                                                         .s = next_point.s,
