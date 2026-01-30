@@ -470,8 +470,8 @@ BOOST_AUTO_TEST_CASE(waypoints_to_samples_smoke_test) {
     // 4. Verify trajectory has correct duration
     BOOST_CHECK_CLOSE(traj.duration().count(), 2.0, 0.001);
 
-    // 5. Create uniform sampler
-    const uniform_sampler sampler{trajectory::seconds{0.1}};
+    // 5. Create uniform sampler at ~10Hz (dt ~= 0.1s)
+    const auto sampler = uniform_sampler::quantized_for_trajectory(traj, types::hertz{10.0});
 
     // 6. Sample trajectory using cursor + sampler
     int sample_count = 0;

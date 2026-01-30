@@ -3,11 +3,13 @@
 #include <cmath>
 #include <stdexcept>
 
+#include <viam/trajex/totg/trajectory.hpp>
+
 namespace viam::trajex::totg {
 
-uniform_sampler::uniform_sampler(trajectory::seconds dt) : dt_{dt} {}
+uniform_sampler::uniform_sampler(std::size_t num_samples) : num_samples_{num_samples} {}
 
-double uniform_sampler::calculate_quantized_dt(double duration_sec, double frequency_hz) {
+std::size_t uniform_sampler::calculate_quantized_samples(double duration_sec, double frequency_hz) {
     if (duration_sec <= 0.0 || frequency_hz <= 0.0) {
         throw std::invalid_argument{"duration and frequency must both be positive"};
     }
@@ -19,19 +21,20 @@ double uniform_sampler::calculate_quantized_dt(double duration_sec, double frequ
         throw std::invalid_argument{"duration and frequency exceed maximum allowable samples"};
     }
 
-    // Round up to ensure we slightly oversample, then add 1 to get at least 2 samples
-    // (start and end). This guarantees we'll hit the endpoint exactly after adjusting dt.
-    const auto num_samples = static_cast<std::size_t>(std::ceil(putative_samples) + 1);
+    // Round up to ensure we slightly oversample, then add 1 to get at
+    // least 2 samples (start and end).
+    return static_cast<std::size_t>(std::ceil(putative_samples) + 1);
+}
 
-    // Recalculate dt to divide the duration evenly. This adjusted timestep ensures that
-    // (num_samples - 1) * dt equals duration exactly, so the final sample lands precisely
-    // on the trajectory endpoint without floating point error.
+double uniform_sampler::calculate_quantized_dt(double duration_sec, double frequency_hz) {
+    const auto num_samples = calculate_quantized_samples(duration_sec, frequency_hz);
+
+    // Recalculate dt to divide the duration evenly
     return duration_sec / static_cast<double>(num_samples - 1);
 }
 
 uniform_sampler uniform_sampler::quantized_for_duration(trajectory::seconds duration, types::hertz frequency) {
-    const double adjusted_dt_sec = calculate_quantized_dt(duration.count(), frequency.value);
-    return uniform_sampler{trajectory::seconds{adjusted_dt_sec}};
+    return uniform_sampler{calculate_quantized_samples(duration.count(), frequency.value)};
 }
 
 uniform_sampler uniform_sampler::quantized_for_trajectory(const trajectory& traj, types::hertz frequency) {
@@ -39,26 +42,18 @@ uniform_sampler uniform_sampler::quantized_for_trajectory(const trajectory& traj
 }
 
 std::optional<struct trajectory::sample> uniform_sampler::next(trajectory::cursor& cursor) {
-    if (cursor == cursor.end()) {
+    if (next_sample_ == num_samples_) {
         return std::nullopt;
     }
 
-    // Sample before advancing (not after) so that the first call returns t=0 and the final
-    // call returns t=duration before advancing past the end. This ordering is important for
-    // C++20 range semantics where dereferencing gives the current value and ++ advances.
+    // Compute target time via `linspace` with a special case for the exact endpoint.
+    const auto when = (next_sample_ == num_samples_ - 1) ? 1.0 : static_cast<double>(next_sample_) / static_cast<double>(num_samples_ - 1);
+
+    // Seek cursor to computed time and sample
+    cursor.seek(trajectory::seconds{std::lerp(0.0, cursor.trajectory().duration().count(), when)});
     auto sample = cursor.sample();
 
-    // Advance for next iteration. If this takes us past the trajectory duration, the cursor
-    // moves to the end sentinel, and the next call to next() will return nullopt. We need to special
-    // case things near the end to ensure that we hit it exactly, but don't get stuck there.
-    const auto now = cursor.time();
-    const auto next = now + dt_;
-    if ((now != cursor.trajectory().duration()) && (next > cursor.trajectory().duration())) {
-        cursor.seek(cursor.trajectory().duration());
-    } else {
-        cursor.seek(next);
-    }
-
+    ++next_sample_;
     return sample;
 }
 

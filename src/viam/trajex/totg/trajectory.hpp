@@ -637,7 +637,9 @@ class trajectory::sampled : public std::ranges::view_interface<trajectory::sampl
 template <typename S>
 class trajectory::sampled<S>::iterator {
    public:
-    using iterator_category = std::forward_iterator_tag;
+    // NOTE: Potentially, the sampler could describe its iterator tag and we would just
+    // forward that here. For now, the only sampler we have has input semantics.
+    using iterator_category = std::input_iterator_tag;
     using value_type = struct trajectory::sample;
     using difference_type = std::ptrdiff_t;
     using pointer = const struct trajectory::sample*;
