@@ -1,11 +1,8 @@
 #include <algorithm>
 #include <cmath>
 #include <deque>
-#include <limits>
 
 #include <boost/test/unit_test.hpp>
-#include <viam/trajex/types/arc_acceleration.hpp>
-#include <viam/trajex/types/arc_velocity.hpp>
 
 #if defined(__has_include) && (__has_include(<xtensor/containers/xadapt.hpp>))
 #include <xtensor/containers/xadapt.hpp>
