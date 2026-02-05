@@ -203,6 +203,7 @@ add_library(trajex)
 target_sources(trajex
   PRIVATE
     src/viam/trajex/trajex.cpp
+    src/viam/trajex/totg/json_serialization.cpp
     src/viam/trajex/totg/observers.cpp
     src/viam/trajex/totg/path.cpp
     src/viam/trajex/totg/trajectory.cpp
@@ -221,6 +222,7 @@ target_link_libraries(trajex
     xtl
   PRIVATE
     Boost::boost
+    jsoncpp_lib
 )
 
 apply_wall_werror(trajex)
@@ -372,6 +374,7 @@ target_link_libraries(trajex-test
     trajex
     Boost::boost
     trajectories
+    jsoncpp_lib
 )
 
 apply_wall_werror(trajex-test)
