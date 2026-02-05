@@ -275,10 +275,6 @@ void validate_trajectory_invariants(const trajectory& traj, double tolerance_per
             for (size_t i = 1; i < points.size(); ++i) {
                 BOOST_CHECK_LT(points[i - 1].time.count(), points[i].time.count());
                 BOOST_CHECK_LT(static_cast<double>(points[i - 1].s), static_cast<double>(points[i].s));
-                if (points[i - 1].time.count() == points[i].time.count()) {
-                    std::cout << "XXX ACM MONOTONE: " << static_cast<double>(points[i - 1].s) << " " << static_cast<double>(points[i].s)
-                              << "\n";
-                }
             }
         }
 
@@ -955,7 +951,6 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_vel_constrained) {
 }
 
 BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_acceleration) {
-    std::cout << "XXXXXXXXXXXXXXXXXX\n";
     // RSDK-12979: Test that non-differentiable switching points (where f'_i(s) = 0 for some joint
     // on a circular arc) are handled correctly by using zero acceleration during backward integration.
     //
