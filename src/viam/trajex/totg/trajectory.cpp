@@ -1144,7 +1144,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     auto breach_s_dot_max_vel = next_s_dot_max_vel;
 
                     while (traj.options_.epsilon.wrap(next_point.s) != traj.options_.epsilon.wrap(breach_point.s)) {
-                        //++bisection_iterations;
                         const phase_point mid = {.s = midpoint(next_point.s, breach_point.s),
                                                  .s_dot = midpoint(next_point.s_dot, breach_point.s_dot)};
 
@@ -1417,23 +1416,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 // integrate forwards from the candidate to the switching point.
                 const auto next_point =
                     euler_step(current_point.s, current_point.s_dot, s_ddot_desired, -traj.options_.delta, traj.options_.epsilon);
-
-                // DIAGNOSTIC: Check if forward integration from next_point gets back to current_point
-                // Skip check for first backward step if switching point has mandated accel
-                if (!backwards_points.empty() || !where.backward_accel.has_value()) {
-                    backwards_cursor.seek(next_point.s);
-                    const auto next_q_prime = backwards_cursor.tangent();
-                    const auto next_q_double_prime = backwards_cursor.curvature();
-                    const auto [s_ddot_at_next, _] = compute_acceleration_bounds(
-                        next_q_prime, next_q_double_prime, next_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
-
-                    const auto forward_check =
-                        euler_step(next_point.s, next_point.s_dot, s_ddot_at_next, traj.options_.delta, traj.options_.epsilon);
-                    const auto s_error = std::abs(static_cast<double>(forward_check.s - current_point.s));
-                    const auto s_dot_error = std::abs(static_cast<double>(forward_check.s_dot - current_point.s_dot));
-                    if (s_error > 1e-6 || s_dot_error > 1e-6) {
-                    }
-                }
 
                 // TODO: Do we need to avoid integrating across segment boundaries here too?
 
