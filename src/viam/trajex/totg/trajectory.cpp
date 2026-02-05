@@ -30,8 +30,8 @@ namespace {
 struct switching_point {
     trajectory::phase_point point;
     trajectory::switching_point_kind kind;
-    std::optional<arc_acceleration> forward_accel;
-    std::optional<arc_acceleration> backward_accel;
+    std::optional<arc_acceleration> forward_accel = std::nullopt;
+    std::optional<arc_acceleration> backward_accel = std::nullopt;
 };
 
 // State machine states for TOTG integration algorithm.
@@ -1201,7 +1201,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                         // Compute acceleration curve slope by looking at next_point and a point before it.
                         const auto before_next = next_point.s - arc_length{traj.options_.epsilon};
-                        if (next_point.s - before_next < opt.epsilon * 0.5) {
+                        if (next_point.s - before_next < traj.options_.epsilon * 0.5) {
                             // Couldn't get good separation, we need to search for a switching point.
                             return integration_observer::limit_hit_event{
                                 .breach = breach_point, .s_dot_max_acc = breach_s_dot_max_acc, .s_dot_max_vel = breach_s_dot_max_vel};
@@ -1370,7 +1370,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
             }
 
             if (traj.options_.observer) {
-                traj.options_.observer->on_started_backward_integration(traj, {.kind = where.kind, .start = where.point});
+                traj.options_.observer->on_started_backward_integration(traj, {.start = where.point, .kind = where.kind});
             }
 
             auto current_point{where.point};

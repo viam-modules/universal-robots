@@ -477,8 +477,8 @@ struct trajectory_test_fixture {
             }
 
             // Create legacy path and trajectory
-            Path legacy_path(legacy_waypoints, path_opts.max_blend_deviation());
-            Trajectory legacy_traj(legacy_path, legacy_max_vel, legacy_max_acc, traj_opts.delta.count());
+            const Path legacy_path(legacy_waypoints, path_opts.max_blend_deviation());
+            const Trajectory legacy_traj(legacy_path, legacy_max_vel, legacy_max_acc, traj_opts.delta.count());
 
             if (legacy_traj.isValid()) {
                 legacy_duration_ = legacy_traj.getDuration();
@@ -492,10 +492,10 @@ struct trajectory_test_fixture {
         }
     }
 
-    void validate_against_legacy(const trajectory& traj, const path& p) {
+    void validate_against_legacy(const trajectory& traj) {
         BOOST_TEST_CONTEXT("Legacy comparison") {
             const double new_duration = traj.duration().count();
-            const double new_path_length = static_cast<double>(p.length());
+            const double new_path_length = static_cast<double>(traj.path().length());
 
             if (legacy_path_length_.has_value()) {
                 const double path_ratio = new_path_length / *legacy_path_length_;
@@ -601,7 +601,7 @@ struct trajectory_test_fixture {
 
         // Compare with legacy if available
         if (legacy_duration_.has_value() || legacy_path_length_.has_value()) {
-            validate_against_legacy(traj, p);
+            validate_against_legacy(traj);
         }
 
         // Validate trajectory invariants
@@ -836,8 +836,8 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
                 }
 
                 // Create legacy path and trajectory
-                Path legacy_path(legacy_waypoints, 0.1);  // maxDeviation=0.1
-                Trajectory legacy_traj(legacy_path, legacy_max_vel, legacy_max_acc, 0.001);
+                const Path legacy_path(legacy_waypoints, 0.1);  // maxDeviation=0.1
+                const Trajectory legacy_traj(legacy_path, legacy_max_vel, legacy_max_acc, 0.001);
 
                 if (legacy_traj.isValid()) {
                     legacy_duration = legacy_traj.getDuration();
