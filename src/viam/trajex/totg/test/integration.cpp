@@ -1,8 +1,11 @@
 #include <algorithm>
+#include <cmath>
 #include <deque>
 #include <limits>
 
 #include <boost/test/unit_test.hpp>
+#include <viam/trajex/types/arc_acceleration.hpp>
+#include <viam/trajex/types/arc_velocity.hpp>
 
 #if defined(__has_include) && (__has_include(<xtensor/containers/xadapt.hpp>))
 #include <xtensor/containers/xadapt.hpp>
@@ -10,13 +13,20 @@
 #include <xtensor/xadapt.hpp>
 #endif
 
+#include <Eigen/Core>
+
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/test/test_utils.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/types/angles.hpp>
 #include <viam/trajex/types/arc_length.hpp>
+#include <viam/trajex/types/arc_operations.hpp>
 #include <viam/trajex/types/hertz.hpp>
+
+// Legacy trajectory generator
+#include <third_party/trajectories/Path.h>
+#include <third_party/trajectories/Trajectory.h>
 
 namespace {
 
@@ -264,7 +274,11 @@ void validate_trajectory_invariants(const trajectory& traj, double tolerance_per
         BOOST_TEST_CONTEXT("Monotonicity") {
             for (size_t i = 1; i < points.size(); ++i) {
                 BOOST_CHECK_LT(points[i - 1].time.count(), points[i].time.count());
-                BOOST_CHECK_LE(static_cast<double>(points[i - 1].s), static_cast<double>(points[i].s));
+                BOOST_CHECK_LT(static_cast<double>(points[i - 1].s), static_cast<double>(points[i].s));
+                if (points[i - 1].time.count() == points[i].time.count()) {
+                    std::cout << "XXX ACM MONOTONE: " << static_cast<double>(points[i - 1].s) << " " << static_cast<double>(points[i].s)
+                              << "\n";
+                }
             }
         }
 
@@ -290,6 +304,10 @@ void validate_trajectory_invariants(const trajectory& traj, double tolerance_per
                 const double actual_s_ddot = static_cast<double>(pt.s_ddot);
 
                 BOOST_TEST_CONTEXT("Integration point " << i << " at s=" << static_cast<double>(pt.s)) {
+                    BOOST_CHECK(std::isfinite(actual_s_dot));
+                    BOOST_CHECK(std::isfinite(actual_s_ddot));
+                    BOOST_CHECK_GE(actual_s_dot, 0.0);
+
                     // Check velocity limits
                     const double allowed_vel_limit = s_dot_limit * (1.0 + tolerance_percent / 100.0);
                     BOOST_CHECK_LE(actual_s_dot, allowed_vel_limit);
@@ -309,6 +327,55 @@ void validate_trajectory_invariants(const trajectory& traj, double tolerance_per
 
                     if (actual_s_ddot < allowed_min || actual_s_ddot > allowed_max) {
                         BOOST_TEST_MESSAGE("s_ddot=" << actual_s_ddot << " outside bounds=[" << s_ddot_min << ", " << s_ddot_max << "]");
+                    }
+                }
+            }
+        }
+
+        // Integration point kinematic consistency
+        //
+        // Validates that consecutive integration points form a consistent kinematic sequence.
+        // Starting from point i with (s, s_dot, s_ddot), constant-acceleration integration
+        // should approximately reach point i+1's (s, s_dot). This checks that the stored
+        // acceleration values and time steps produce the claimed trajectory.
+        BOOST_TEST_CONTEXT("Integration point kinematic consistency") {
+            for (size_t i = 0; i + 1 < points.size(); ++i) {
+                const auto& curr = points[i];
+                const auto& next = points[i + 1];
+
+                const auto dt = next.time - curr.time;
+
+                // Constant-acceleration kinematics: integrate from current point
+                const auto predicted_s_dot = curr.s_dot + (curr.s_ddot * dt);
+                const auto predicted_s = curr.s + (curr.s_dot * dt) + (0.5 * (curr.s_ddot * dt) * dt);
+
+                BOOST_TEST_CONTEXT("Point " << i << " -> " << (i + 1) << " (dt=" << dt.count() << "s, s=" << static_cast<double>(curr.s)
+                                            << " -> " << static_cast<double>(next.s) << ")") {
+                    // Position check (always use relative error)
+                    BOOST_CHECK_CLOSE(static_cast<double>(predicted_s), static_cast<double>(next.s), tolerance_percent);
+
+                    // Velocity check: use absolute error for near-zero, relative error otherwise
+                    const double next_s_dot_val = static_cast<double>(next.s_dot);
+                    const double predicted_s_dot_val = static_cast<double>(predicted_s_dot);
+
+                    if (std::abs(next_s_dot_val) < 1e-9) {
+                        // Near-zero velocity: check absolute error
+                        // BOOST_CHECK_CLOSE would divide by ~zero and give meaningless result
+                        const double abs_error = std::abs(predicted_s_dot_val - next_s_dot_val);
+                        BOOST_TEST_CONTEXT("Near-zero velocity: checking absolute error") {
+                            BOOST_CHECK_LT(abs_error, 1e-9);
+                            if (abs_error >= 1e-9) {
+                                BOOST_TEST_MESSAGE("Absolute error: " << abs_error << " (predicted=" << predicted_s_dot_val
+                                                                      << ", actual=" << next_s_dot_val << ")");
+                            }
+                        }
+                    } else {
+                        // Normal case: check relative error
+                        BOOST_CHECK_CLOSE(predicted_s_dot_val, next_s_dot_val, tolerance_percent);
+                        if (std::abs((predicted_s_dot_val - next_s_dot_val) / next_s_dot_val) * 100.0 > tolerance_percent) {
+                            BOOST_TEST_MESSAGE("Velocity mismatch: predicted=" << predicted_s_dot_val << ", actual=" << next_s_dot_val
+                                                                               << ", curr.s_ddot=" << static_cast<double>(curr.s_ddot));
+                        }
                     }
                 }
             }
@@ -339,6 +406,11 @@ struct trajectory_test_fixture {
     std::optional<expected_duration> expected_duration_;
     std::optional<size_t> expected_integration_point_count_;
     std::optional<expected_path_length> expected_path_length_;
+
+    // Legacy comparison (A/B testing against reference implementation)
+    bool compare_with_legacy_ = false;
+    std::optional<double> legacy_duration_;
+    std::optional<double> legacy_path_length_;
 
     explicit trajectory_test_fixture(size_t dof = 6, double expectation_tolerance_percent = 0.1)
         : observer(expectation_tolerance_percent), dof_(dof) {}
@@ -383,8 +455,87 @@ struct trajectory_test_fixture {
         return *this;
     }
 
+    trajectory_test_fixture& enable_legacy_comparison() {
+        compare_with_legacy_ = true;
+        return *this;
+    }
+
+    void try_legacy_comparison(const xt::xarray<double>& waypoints) {
+        try {
+            // Convert waypoints to legacy format (std::list<Eigen::VectorXd>)
+            std::list<Eigen::VectorXd> legacy_waypoints;
+            for (size_t i = 0; i < waypoints.shape(0); ++i) {
+                Eigen::VectorXd wp(static_cast<Eigen::Index>(dof_));
+                for (size_t j = 0; j < dof_; ++j) {
+                    wp(static_cast<Eigen::Index>(j)) = waypoints(i, j);
+                }
+                legacy_waypoints.push_back(wp);
+            }
+
+            // Convert limits to Eigen format
+            Eigen::VectorXd legacy_max_vel(static_cast<Eigen::Index>(dof_));
+            Eigen::VectorXd legacy_max_acc(static_cast<Eigen::Index>(dof_));
+            for (size_t i = 0; i < dof_; ++i) {
+                legacy_max_vel(static_cast<Eigen::Index>(i)) = traj_opts.max_velocity(i);
+                legacy_max_acc(static_cast<Eigen::Index>(i)) = traj_opts.max_acceleration(i);
+            }
+
+            // Create legacy path and trajectory
+            Path legacy_path(legacy_waypoints, path_opts.max_blend_deviation());
+            Trajectory legacy_traj(legacy_path, legacy_max_vel, legacy_max_acc, traj_opts.delta.count());
+
+            if (legacy_traj.isValid()) {
+                legacy_duration_ = legacy_traj.getDuration();
+                legacy_path_length_ = legacy_path.getLength();
+                std::cout << "[LEGACY] duration=" << *legacy_duration_ << "s, path_length=" << *legacy_path_length_ << "\n";
+            } else {
+                std::cout << "[LEGACY] FAILED: invalid trajectory\n";
+            }
+        } catch (const std::exception& e) {
+            std::cout << "[LEGACY] FAILED: " << e.what() << "\n";
+        }
+    }
+
+    void validate_against_legacy(const trajectory& traj, const path& p) {
+        BOOST_TEST_CONTEXT("Legacy comparison") {
+            const double new_duration = traj.duration().count();
+            const double new_path_length = static_cast<double>(p.length());
+
+            if (legacy_path_length_.has_value()) {
+                const double path_ratio = new_path_length / *legacy_path_length_;
+                const double path_diff_percent = std::abs((new_path_length - *legacy_path_length_) / *legacy_path_length_) * 100.0;
+
+                std::cout << "[COMPARISON] Path: new=" << new_path_length << ", legacy=" << *legacy_path_length_ << ", "
+                          << "ratio=" << path_ratio << ", diff=" << path_diff_percent << "%\n";
+
+                // Path should be about the same length (within 5%)
+                BOOST_CHECK_CLOSE(new_path_length, *legacy_path_length_, 5.0);
+            }
+
+            if (legacy_duration_.has_value()) {
+                const double duration_ratio = new_duration / *legacy_duration_;
+                const double duration_diff_percent = ((new_duration - *legacy_duration_) / *legacy_duration_) * 100.0;
+
+                std::cout << "[COMPARISON] Duration: new=" << new_duration << "s, legacy=" << *legacy_duration_ << "s, "
+                          << "ratio=" << duration_ratio << ", diff=" << duration_diff_percent << "%\n";
+
+                // We should do NO WORSE than legacy: duration should be about the same or shorter
+                // Allow up to 5% slower (for numerical differences), but prefer faster
+                BOOST_CHECK_LE(new_duration, *legacy_duration_ * 1.05);
+
+                BOOST_TEST_MESSAGE("Duration comparison: new=" << new_duration << "s vs legacy=" << *legacy_duration_ << "s (ratio="
+                                                               << duration_ratio << ", diff=" << duration_diff_percent << "%)");
+            }
+        }
+    }
+
     trajectory create_and_validate() {
         BOOST_REQUIRE_MESSAGE(waypoints_.size() > 0, "Must set waypoints before calling create_and_validate");
+
+        // Try legacy comparison if enabled
+        if (compare_with_legacy_) {
+            try_legacy_comparison(waypoints_);
+        }
 
         // Create path
         path p = path::create(waypoints_, path_opts);
@@ -450,6 +601,11 @@ struct trajectory_test_fixture {
             BOOST_TEST_CONTEXT("Integration point count expectation") {
                 BOOST_CHECK_EQUAL(traj.get_integration_points().size(), *expected_integration_point_count_);
             }
+        }
+
+        // Compare with legacy if available
+        if (legacy_duration_.has_value() || legacy_path_length_.has_value()) {
+            validate_against_legacy(traj, p);
         }
 
         // Validate trajectory invariants
@@ -602,28 +758,28 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
         {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 2
         // TODO(RSDK-12711): Add these waypoints back in once we do not need to
         // break up segments according to their dot product.
-        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 3: reversal back to position 1
-        // {-90.0, 0.0, 0.0, 0.0, 0.0, 0.0},    // 4
-        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 5: reversal back to position 1 again
-        // {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 6
-        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 7
-        // {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 8: back to zero
-        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 9
-        // {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 10
-        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 11
-        // {-90.0, 0.0, 0.0, 0.0, 0.0, 0.0},    // 12
-        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 13
-        // {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 14
-        // {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 15
-        // {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 16: back to zero again
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 3: reversal back to position 1
+        {-90.0, 0.0, 0.0, 0.0, 0.0, 0.0},    // 4
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 5: reversal back to position 1 again
+        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 6
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 7
+        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 8: back to zero
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 9
+        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 10
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 11
+        {-90.0, 0.0, 0.0, 0.0, 0.0, 0.0},    // 12
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 13
+        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 14
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 15
+        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 16: back to zero again
     };
 
     xt::xarray<double> waypoints_rad = degrees_to_radians(waypoints_deg);
 
     // Typical UR arm constraints (from working configuration)
     trajectory::options opts;
-    opts.max_velocity = degrees_to_radians(xt::ones<double>({6}) * 50.0);       // 50 deg/s
-    opts.max_acceleration = degrees_to_radians(xt::ones<double>({6}) * 150.0);  // 150 deg/s^2
+    opts.max_velocity = degrees_to_radians(xt::ones<double>({6}) * 150.0);    // 50 deg/s
+    opts.max_acceleration = degrees_to_radians(xt::ones<double>({6}) * 5.0);  // 150 deg/s^2
 
     // Observer to log integration events
     class test_observer final : public trajectory::integration_observer {
@@ -661,6 +817,43 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
             test_observer observer;
             opts.observer = &observer;
 
+            // NEW: Also try legacy trajectory generator for comparison
+            double legacy_duration = -1.0;
+            bool legacy_valid = false;
+            try {
+                // Convert waypoints to legacy format (std::list<Eigen::VectorXd>)
+                std::list<Eigen::VectorXd> legacy_waypoints;
+                for (size_t i = 0; i < num_waypoints; ++i) {
+                    Eigen::VectorXd wp(6);
+                    for (size_t j = 0; j < 6; ++j) {
+                        wp(static_cast<Eigen::Index>(j)) = subset(i, j);
+                    }
+                    legacy_waypoints.push_back(wp);
+                }
+
+                // Convert limits to Eigen format
+                Eigen::VectorXd legacy_max_vel(6);
+                Eigen::VectorXd legacy_max_acc(6);
+                for (size_t i = 0; i < 6; ++i) {
+                    legacy_max_vel(static_cast<Eigen::Index>(i)) = opts.max_velocity(i);
+                    legacy_max_acc(static_cast<Eigen::Index>(i)) = opts.max_acceleration(i);
+                }
+
+                // Create legacy path and trajectory
+                Path legacy_path(legacy_waypoints, 0.1);  // maxDeviation=0.1
+                Trajectory legacy_traj(legacy_path, legacy_max_vel, legacy_max_acc, 0.001);
+
+                if (legacy_traj.isValid()) {
+                    legacy_duration = legacy_traj.getDuration();
+                    legacy_valid = true;
+                    std::cout << "[LEGACY] duration=" << legacy_duration << "s\n";
+                } else {
+                    std::cout << "[LEGACY] FAILED: invalid trajectory\n";
+                }
+            } catch (const std::exception& e) {
+                std::cout << "[LEGACY] FAILED: " << e.what() << "\n";
+            }
+
             try {
                 const trajectory traj = trajectory::create(std::move(p), opts);
 
@@ -675,6 +868,19 @@ BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
                     ++sample_count;
                 }
                 BOOST_CHECK(sample_count > 0);
+
+                // Compare with legacy if it succeeded
+                if (legacy_valid) {
+                    const double new_duration = traj.duration().count();
+                    const double duration_ratio = new_duration / legacy_duration;
+                    const double duration_diff_percent = ((new_duration - legacy_duration) / legacy_duration) * 100.0;
+
+                    std::cout << "[COMPARISON] new=" << new_duration << "s, legacy=" << legacy_duration << "s, "
+                              << "ratio=" << duration_ratio << ", diff=" << duration_diff_percent << "%\n";
+
+                    BOOST_TEST_MESSAGE("Duration comparison: new=" << new_duration << "s vs legacy=" << legacy_duration << "s (ratio="
+                                                                   << duration_ratio << ", diff=" << duration_diff_percent << "%)");
+                }
 
                 BOOST_TEST_MESSAGE("PASS: Succeeded with " << num_waypoints << " waypoints");
             } catch (const std::exception& e) {
@@ -693,7 +899,8 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
     // Create fixture
     trajectory_test_fixture fixture(6, 0.1);
 
-    fixture.set_max_velocity(degrees_to_radians(xt::ones<double>({6}) * 50.0))
+    fixture.enable_legacy_comparison()
+        .set_max_velocity(degrees_to_radians(xt::ones<double>({6}) * 50.0))
         .set_max_acceleration(degrees_to_radians(xt::ones<double>({6}) * 1.0))
         .set_max_deviation(0.1);
 
@@ -711,8 +918,11 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
                           arc_velocity{0.15297},  // acc_limit
                           arc_velocity{1.23413}   // vel_limit
                           )
-        .expect_backward_start(arc_length{1.85532}, arc_velocity{0.0}, trajectory::switching_point_kind::k_path_end)
-        .expect_splice(trajectory::seconds{20.1621}, size_t{9198});
+        .expect_backward_start(arc_length{1.46262}, arc_velocity{0.12863}, trajectory::switching_point_kind::k_discontinuous_curvature)
+        .expect_splice(trajectory::seconds{13.4162}, size_t{9195})
+        .expect_forward_start(arc_length{1.46262}, arc_velocity{0.12863})
+        .expect_backward_start(arc_length{1.85532488}, arc_velocity{0}, trajectory::switching_point_kind::k_path_end)
+        .expect_splice(trajectory::seconds{20.16199}, size_t{93043});
 
     const trajectory traj = fixture.create_and_validate();
 }
@@ -724,14 +934,15 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_vel_constrained) {
     // Create fixture
     trajectory_test_fixture fixture(6, 0.1);
 
-    fixture.set_max_velocity(degrees_to_radians(xt::ones<double>({6}) * 1.0))
+    fixture.enable_legacy_comparison()
+        .set_max_velocity(degrees_to_radians(xt::ones<double>({6}) * 1.0))
         .set_max_acceleration(degrees_to_radians(xt::ones<double>({6}) * 50.0))
         .set_max_deviation(0.1);
 
     fixture.traj_opts.delta = trajectory::seconds{0.0001};
 
     // Trajectory-wide expectations
-    fixture.expect_duration(trajectory::seconds{90.02}).expect_integration_point_count(900202).expect_path_length(arc_length{1.8553});
+    fixture.expect_duration(trajectory::seconds{90.02}).expect_integration_point_count(900201).expect_path_length(arc_length{1.8553});
 
     // Set waypoints
     fixture.set_waypoints_deg({{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0}});
@@ -744,6 +955,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_vel_constrained) {
 }
 
 BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_acceleration) {
+    std::cout << "XXXXXXXXXXXXXXXXXX\n";
     // RSDK-12979: Test that non-differentiable switching points (where f'_i(s) = 0 for some joint
     // on a circular arc) are handled correctly by using zero acceleration during backward integration.
     //
@@ -761,7 +973,8 @@ BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_
 
     // Very high velocity limits (essentially unconstrained)
     // Very low acceleration limits (the actual constraint)
-    fixture.set_max_velocity(xt::xarray<double>{100.0, 100.0})
+    fixture.enable_legacy_comparison()
+        .set_max_velocity(xt::xarray<double>{100.0, 100.0})
         .set_max_acceleration(xt::xarray<double>{0.05, 0.05})
         .set_max_deviation(0.05);  // Enable curves
 
@@ -773,6 +986,10 @@ BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_
     // Expectations - looking for acceleration-constrained pattern:
     // forward_start -> hit_limit -> backward_start (NDE) -> splice -> forward_start -> backward_start (endpoint) -> splice
     fixture.observer.expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
+        .expect_hit_limit()
+        .expect_backward_start(std::nullopt, std::nullopt, trajectory::switching_point_kind::k_discontinuous_curvature)
+        .expect_splice()
+        .expect_forward_start()
         .expect_hit_limit()
         .expect_backward_start(std::nullopt, std::nullopt, trajectory::switching_point_kind::k_nondifferentiable_extremum)
         .expect_splice()

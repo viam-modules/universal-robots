@@ -86,9 +86,9 @@ constexpr arc_acceleration operator*(arc_velocity vel, phase_plane_slope slope) 
 }  // namespace viam::trajex::totg
 
 
-namespace viam::trajex {
+// namespace viam::trajex {
 
-template <>
-class epsilon::wrapper<totg::phase_plane_slope>;
+// template <>
+// class epsilon::wrapper<totg::phase_plane_slope>;
 
-}  // namespace viam::trajex
+// }  // namespace viam::trajex
