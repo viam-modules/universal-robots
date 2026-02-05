@@ -34,26 +34,6 @@ struct switching_point {
     std::optional<arc_acceleration> backward_accel = std::nullopt;
 };
 
-// State machine states for TOTG integration algorithm.
-// Internal implementation detail - not exposed in public API.
-enum class integration_state : std::uint8_t {
-    k_forward_accelerating,              // Forward integration with maximum acceleration
-    k_forward_following_velocity_curve,  // Following velocity limit curve tangentially
-    k_backward_decelerating              // Backward integration with minimum acceleration
-};
-
-// Events that trigger state transitions during trajectory integration.
-// These are internal implementation details - external code observes via integration_observer callbacks.
-enum class integration_event : std::uint8_t {
-    k_none,                    // No event (remain in current state)
-    k_hit_velocity_curve,      // Hit velocity limit curve (can potentially follow tangentially)
-    k_hit_acceleration_curve,  // Hit acceleration limit curve (must search for switching point)
-    k_escaped_limit_curve,     // Dropped below limit curve (can resume normal acceleration)
-    k_reached_end,             // Reached end of path
-    k_reached_start,           // Reached start of path (backward integration)
-    k_hit_forward_trajectory   // Backward trajectory intersected forward trajectory
-};
-
 // Computes maximum path velocity (s_dot) from joint velocity and acceleration limits.
 // Two constraints apply: centripetal acceleration from path curvature (eq 31) and
 // direct velocity limits (eq 36). Returns both so caller can take the minimum.
@@ -511,6 +491,9 @@ enum class integration_event : std::uint8_t {
             // Should s_dot_max_acc_before and s_dot_max_acc_after be within epsilon of each other, then
             // there is no perceived discontinuity. Therefore, equation 38 cannot be fulfilled and we
             // proceed onwards.
+            //
+            // TODO: Should this actually be an epsilon wrapped comparison for equality first, before we look for step
+            // up / step down?
             continue;
         }
 
