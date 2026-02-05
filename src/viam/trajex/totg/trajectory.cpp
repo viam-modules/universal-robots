@@ -1632,36 +1632,78 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     }
                     traj.integration_points_.erase(truncate_begin, end(traj.integration_points_));
 
-                    // Reserve space to avoid reallocations during bulk append
+                    // Fix splice point kinematic consistency
+                    //
+                    // The last forward point has s_ddot computed for some point which we just removed. We need to
+                    // recompute its s_ddot to connect to the first backward point, and compute the appropriate dt that
+                    // makes this kinematically consistent.
+
+                    auto& last_forward_point = traj.integration_points_.back();
+
+                    // Access backwards points in reverse order (first backward point is closest to splice).
+                    const auto backwards_points_reversed = std::ranges::reverse_view(std::as_const(backwards_points));
+                    const auto& first_backward_point = backwards_points_reversed.front();
+
+                    // Compute the position delta and the average velocity across the points.
+                    const auto delta_s = first_backward_point.s - last_forward_point.s;
+                    const auto mean_sdot = midpoint(last_forward_point.s_dot, first_backward_point.s_dot);
+
+                    // Validate average velocity is non-zero to avoid division by zero.
+                    if (traj.options_.epsilon.wrap(mean_sdot) == traj.options_.epsilon.wrap(arc_velocity{0.0})) {
+                        throw std::runtime_error{"Splice point has near-zero average velocity - division by zero in dt computation"};
+                    }
+
+                    // Now we can compute the dt that moves us from the one point to the other.
+                    const auto dt = delta_s / mean_sdot;
+                    if (dt <= trajectory::seconds{0.0}) {
+                        throw std::runtime_error{"Computed negative or zero dt at splice point - intersection detection error"};
+                    }
+
+                    // Compute the acceleration that connects last_forward_point to first_backward_point.
+                    const auto computed_s_ddot = (first_backward_point.s_dot - last_forward_point.s_dot) / dt;
+
+                    // Query the path geometry at last_forward_point to validate that our computed acceleration is
+                    // actually feasible.
+                    backwards_cursor.seek(last_forward_point.s);
+                    const auto q_prime = backwards_cursor.tangent();
+                    const auto q_double_prime = backwards_cursor.curvature();
+
+                    const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
+                        q_prime, q_double_prime, last_forward_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
+
+                    if (traj.options_.epsilon.wrap(computed_s_ddot) < traj.options_.epsilon.wrap(s_ddot_min) ||
+                        traj.options_.epsilon.wrap(computed_s_ddot) > traj.options_.epsilon.wrap(s_ddot_max)) {
+                        std::ostringstream oss;
+                        oss << "Splice point requires infeasible acceleration: "
+                            << "computed=" << static_cast<double>(computed_s_ddot) << ", bounds=[" << static_cast<double>(s_ddot_min)
+                            << ", " << static_cast<double>(s_ddot_max) << "]";
+                        throw std::runtime_error{oss.str()};
+                    }
+
+                    // Correct the acceleration value at the last forward point.
+                    last_forward_point.s_ddot = computed_s_ddot;
+
+                    // Reserve space to avoid reallocations during bulk append.
                     traj.integration_points_.reserve(traj.integration_points_.size() + backwards_points.size());
 
-                    const auto backwards_points_reversed = std::ranges::reverse_view(std::as_const(backwards_points));
+                    // Append backward trajectory with corrected timestamps.
+                    const auto size = std::ranges::ssize(backwards_points_reversed);
+                    for (std::remove_const_t<decltype(size)> i = 0; i < size; ++i) {
+                        auto corrected = backwards_points_reversed[i];
 
-                    // Append backward trajectory.
+                        // All points in the backwards array were computed with a uniform delta, but we need to account
+                        // for the computed dt that happened at the splice.
+                        corrected.time = (last_forward_point.time + dt) + (i * traj.options_.delta);
 
-                    // TODO(RSDK-12982): We also need to 1) adjust the s_ddot of the last forward point,
-                    // since it currently points to the old next point, not the new next point from the
-                    // intersection with the backwards trajectory. We probably also need to do a better
-                    // job adjusting timestamps. There is no guarantee that simply replaying the deltas
-                    // like this really makes sense. We should compute some timestep between the last
-                    // forward and first from backwards, use that, and then increment all the others by
-                    // dt.
+                        // For all but the last point we will be adding, we assume the acceleration that took us
+                        // backward to that point is the acceleration we should use to move forward (erroneously, see
+                        // RSDK-12981 above), so we need to take it from its neighbor. For the last point, we need to
+                        // respect the switching point's forward acceleration if set, since we may not call forward
+                        // integration again if at the end of path.
+                        corrected.s_ddot = (i < size - 1)
+                                               ? backwards_points_reversed[i + 1].s_ddot
+                                               : where.forward_accel.value_or(arc_acceleration{std::numeric_limits<double>::quiet_NaN()});
 
-                    // Record intersection time - backward trajectory timestamps start here
-                    const auto intersection_time = traj.integration_points_.back().time;
-                    std::cout << "XXX ACM INTERSECTION_TIME: " << intersection_time << "\n";
-                    std::cout << "XXX ACM INTERSECTION POINTS: " << traj.integration_points_.size() << "\n";
-
-                    // Append backward trajectory with corrected timestamps
-                    // First backward point continues from intersection, subsequent points increment by delta
-                    //
-                    // TODO: What is up here with the size types?
-                    for (unsigned long i = 0; i < backwards_points_reversed.size(); ++i) {
-                        auto corrected = backwards_points_reversed[long(i)];
-                        corrected.time = intersection_time + seconds{static_cast<double>(i + 1) * traj.options_.delta.count()};
-                        corrected.s_ddot = ((i + 1) == backwards_points_reversed.size())
-                                               ? where.forward_accel.value_or(arc_acceleration{std::numeric_limits<double>::quiet_NaN()})
-                                               : backwards_points_reversed[long(i + 1)].s_ddot;
                         traj.integration_points_.push_back(corrected);
                     }
 
