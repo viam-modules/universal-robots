@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <compare>
+#include <numeric>
 #include <ostream>
 
 #include <viam/trajex/types/epsilon.hpp>
@@ -188,6 +189,33 @@ inline std::ostream& operator<<(std::ostream& os, arc_velocity vel) {
 ///
 inline arc_velocity abs(arc_velocity vel) noexcept {
     return arc_velocity{std::abs(static_cast<double>(vel))};
+}
+
+///
+/// Linear interpolation between two arc velocities.
+///
+/// Delegates to std::lerp for the underlying double values.
+///
+/// @param a Starting arc velocity
+/// @param b Ending arc velocity
+/// @param t Interpolation factor (0.0 yields a, 1.0 yields b)
+/// @return Interpolated arc velocity
+///
+inline arc_velocity lerp(arc_velocity a, arc_velocity b, double t) {
+    return arc_velocity{std::lerp(static_cast<double>(a), static_cast<double>(b), t)};
+}
+
+///
+/// Midpoint between two arc velocities.
+///
+/// Delegates to std::midpoint for the underlying double values.
+///
+/// @param a First arc velocity
+/// @param b Second arc velocity
+/// @return Midpoint arc velocity
+///
+inline arc_velocity midpoint(arc_velocity a, arc_velocity b) {
+    return arc_velocity{std::midpoint(static_cast<double>(a), static_cast<double>(b))};
 }
 
 }  // namespace viam::trajex

@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <compare>
+#include <numeric>
 #include <ostream>
 
 #include <viam/trajex/types/epsilon.hpp>
@@ -188,6 +189,33 @@ inline std::ostream& operator<<(std::ostream& os, arc_length len) {
 ///
 inline arc_length abs(arc_length len) noexcept {
     return arc_length{std::abs(static_cast<double>(len))};
+}
+
+///
+/// Linear interpolation between two arc lengths.
+///
+/// Delegates to std::lerp for the underlying double values.
+///
+/// @param a Starting arc length
+/// @param b Ending arc length
+/// @param t Interpolation factor (0.0 yields a, 1.0 yields b)
+/// @return Interpolated arc length
+///
+inline arc_length lerp(arc_length a, arc_length b, double t) {
+    return arc_length{std::lerp(static_cast<double>(a), static_cast<double>(b), t)};
+}
+
+///
+/// Midpoint between two arc lengths.
+///
+/// Delegates to std::midpoint for the underlying double values.
+///
+/// @param a First arc length
+/// @param b Second arc length
+/// @return Midpoint arc length
+///
+inline arc_length midpoint(arc_length a, arc_length b) {
+    return arc_length{std::midpoint(static_cast<double>(a), static_cast<double>(b))};
 }
 
 }  // namespace viam::trajex

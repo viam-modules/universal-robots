@@ -371,6 +371,7 @@ target_link_libraries(trajex-test
   PRIVATE
     trajex
     Boost::boost
+    trajectories
 )
 
 apply_wall_werror(trajex-test)

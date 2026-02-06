@@ -8,6 +8,7 @@
 #include <optional>
 #include <ranges>
 #include <stdexcept>
+#include <utility>
 
 #include <boost/range/adaptors.hpp>
 
@@ -15,8 +16,6 @@
 #include <viam/trajex/totg/private/phase_plane_slope.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/types/arc_operations.hpp>
-#include "viam/trajex/types/arc_acceleration.hpp"
-#include "viam/trajex/types/arc_velocity.hpp"
 
 namespace viam::trajex::totg {
 
@@ -31,26 +30,8 @@ namespace {
 struct switching_point {
     trajectory::phase_point point;
     trajectory::switching_point_kind kind;
-};
-
-// State machine states for TOTG integration algorithm.
-// Internal implementation detail - not exposed in public API.
-enum class integration_state : std::uint8_t {
-    k_forward_accelerating,              // Forward integration with maximum acceleration
-    k_forward_following_velocity_curve,  // Following velocity limit curve tangentially
-    k_backward_decelerating              // Backward integration with minimum acceleration
-};
-
-// Events that trigger state transitions during trajectory integration.
-// These are internal implementation details - external code observes via integration_observer callbacks.
-enum class integration_event : std::uint8_t {
-    k_none,                    // No event (remain in current state)
-    k_hit_velocity_curve,      // Hit velocity limit curve (can potentially follow tangentially)
-    k_hit_acceleration_curve,  // Hit acceleration limit curve (must search for switching point)
-    k_escaped_limit_curve,     // Dropped below limit curve (can resume normal acceleration)
-    k_reached_end,             // Reached end of path
-    k_reached_start,           // Reached start of path (backward integration)
-    k_hit_forward_trajectory   // Backward trajectory intersected forward trajectory
+    std::optional<arc_acceleration> forward_accel = std::nullopt;
+    std::optional<arc_acceleration> backward_accel = std::nullopt;
 };
 
 // Computes maximum path velocity (s_dot) from joint velocity and acceleration limits.
@@ -236,12 +217,8 @@ enum class integration_event : std::uint8_t {
 // Given current position, velocity, and applied acceleration, computes the next state.
 // Uses constant acceleration kinematic equations: v_new = v + a*dt, s_new = s + v*dt + 0.5*a*dt^2.
 // This is direction-agnostic - caller determines whether dt is positive (forward) or negative (backward).
-[[gnu::const]] auto euler_step(arc_length s, arc_velocity s_dot, arc_acceleration s_ddot, trajectory::seconds dt, class epsilon epsilon) {
-    struct result {
-        arc_length s;
-        arc_velocity s_dot;
-    };
-
+[[gnu::const]] trajectory::phase_point euler_step(
+    arc_length s, arc_velocity s_dot, arc_acceleration s_ddot, trajectory::seconds dt, class epsilon epsilon) {
     const auto s_dot_new = s_dot + (s_ddot * dt);
     const auto s_new = s + (s_dot * dt) + (0.5 * s_ddot * dt * dt);
 
@@ -251,7 +228,11 @@ enum class integration_event : std::uint8_t {
         }
     }
 
-    return result{s_new, s_dot_new};
+    return {s_new, s_dot_new};
+}
+
+[[gnu::const]] auto euler_step(trajectory::phase_point where, arc_acceleration s_ddot, trajectory::seconds dt, class epsilon epsilon) {
+    return euler_step(where.s, where.s_dot, s_ddot, dt, epsilon);
 }
 
 // Validates if a segment boundary is a valid acceleration switching point per
@@ -401,7 +382,9 @@ enum class integration_event : std::uint8_t {
             // If we found a valid extremum switching point, return it
             if (first_extremum) {
                 return switching_point{.point = {.s = *first_extremum, .s_dot = first_extremum_velocity},
-                                       .kind = trajectory::switching_point_kind::k_nondifferentiable_extremum};
+                                       .kind = trajectory::switching_point_kind::k_nondifferentiable_extremum,
+                                       .forward_accel = arc_acceleration{0.0},
+                                       .backward_accel = arc_acceleration{0.0}};
             }
         }
 
@@ -420,6 +403,10 @@ enum class integration_event : std::uint8_t {
         const auto q_prime_before = current_segment.tangent(boundary);
         const auto q_double_prime_before = current_segment.curvature(boundary);
 
+        // Compute s_dot_max_acc on both sides
+        const auto [s_dot_max_acc_before, s_dot_max_vel_before] =
+            compute_velocity_limits(q_prime_before, q_double_prime_before, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+
         // Move cursor to next segment
         cursor.seek(boundary);
         auto segment_after = *cursor;
@@ -428,22 +415,24 @@ enum class integration_event : std::uint8_t {
         const auto q_prime_after = segment_after.tangent(boundary);
         const auto q_double_prime_after = segment_after.curvature(boundary);
 
-        // Compute s_dot_max_acc on both sides
-        const auto [s_dot_max_acc_before, s_dot_max_vel_before] =
-            compute_velocity_limits(q_prime_before, q_double_prime_before, opt.max_velocity, opt.max_acceleration, opt.epsilon);
-
         const auto [s_dot_max_acc_after, s_dot_max_vel_after] =
             compute_velocity_limits(q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
+        // All computation happens at the smaller one
+        const auto s_dot_max_acc_switching_min = std::min(s_dot_max_acc_before, s_dot_max_acc_after);
+
         // Apply Kunz & Stilman equation 38
         // A discontinuity of s_dot_max_acc(s) is a switching point if and only if:
-        // Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) ∧ (s_ddot_max(s-, s_dot_max_acc(s-))/s_dot_max_acc(s-)) >= d/ds s_dot_max_acc(s-)]
-        // Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) ∧ (s_ddot_max(s+, s_dot_max_acc(s+))/s_dot_max_acc(s+)) <= d/ds s_dot_max_acc(s+)]
+        // Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) ∧ (s_ddot_max(s-, s_dot_max_acc(s-))/s_dot_max_acc(s-)) >= d/ds
+        // s_dot_max_acc(s-)] Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) ∧ (s_ddot_max(s+, s_dot_max_acc(s+))/s_dot_max_acc(s+)) <=
+        // d/ds s_dot_max_acc(s+)]
 
         bool is_switching_point = false;
+        switching_point sp{.point = {.s = boundary, .s_dot = s_dot_max_acc_switching_min},
+                           .kind = trajectory::switching_point_kind::k_discontinuous_curvature};
 
-        // Case A: Positive step (limit increases)
-        if (opt.epsilon.wrap(s_dot_max_acc_after) > opt.epsilon.wrap(s_dot_max_acc_before)) {
+        if (s_dot_max_acc_after > s_dot_max_acc_before) {
+            // Case A: Positive step (limit increases)
             const auto before_boundary = std::max(boundary - arc_length{opt.epsilon}, current_segment.start());
             const auto actual_step_left = boundary - before_boundary;
             if (actual_step_left < opt.epsilon * 0.5) {
@@ -451,7 +440,8 @@ enum class integration_event : std::uint8_t {
             }
             const auto q_prime_bb = current_segment.tangent(before_boundary);
             const auto q_double_prime_bb = current_segment.curvature(before_boundary);
-            const auto [s_dot_max_acc_bb, _5] =
+
+            const auto [s_dot_max_acc_bb, _1] =
                 compute_velocity_limits(q_prime_bb, q_double_prime_bb, opt.max_velocity, opt.max_acceleration, opt.epsilon);
             // This is d/ds s_dot_max_acc(s-)
             const auto slope_left = (s_dot_max_acc_before - s_dot_max_acc_bb) / actual_step_left;
@@ -460,16 +450,18 @@ enum class integration_event : std::uint8_t {
             //
             // NOTE: `Correction 7`: For this to be a sink, ALL feasible accelerations lead into the
             // infeasible region, so we check against the MIN, not the max.
-            const auto [s_ddot_min_at_s_minus, _2] = compute_acceleration_bounds(q_prime_before,
-                                                                                 q_double_prime_before,
-                                                                                 s_dot_max_acc_before,  // Evaluate at s-'s own limit
-                                                                                 opt.max_acceleration,
-                                                                                 opt.epsilon);
 
-            is_switching_point = opt.epsilon.wrap(s_ddot_min_at_s_minus / s_dot_max_acc_before) >= opt.epsilon.wrap(slope_left);
-        }
-        // Case B: Negative step (limit decreases)
-        else if (opt.epsilon.wrap(s_dot_max_acc_after) < opt.epsilon.wrap(s_dot_max_acc_before)) {
+            const auto [s_ddot_min_bb, s_ddot_max_bb] =
+                compute_acceleration_bounds(q_prime_bb, q_double_prime_bb, s_dot_max_acc_bb, opt.max_acceleration, opt.epsilon);
+
+            const auto phase_slope_left = s_ddot_min_bb / s_dot_max_acc_bb;
+            is_switching_point = phase_slope_left >= slope_left;
+
+            sp.forward_accel = s_ddot_max_bb;
+            sp.backward_accel = s_ddot_min_bb;
+
+        } else if (s_dot_max_acc_after < s_dot_max_acc_before) {
+            // Case B: Negative step (limit decreases)
             // Compute limit curve slopes using numerical approximation
             // TODO(RSDK-12850): Investigate computing numerical derivatives versus epsilon
             // TODO(RSDK-12851): Decide if it is safe to move onto the next switching point
@@ -480,37 +472,38 @@ enum class integration_event : std::uint8_t {
             }
             const auto q_prime_ab = segment_after.tangent(after_boundary);
             const auto q_double_prime_ab = segment_after.curvature(after_boundary);
-            const auto [s_dot_max_acc_ab, _6] =
+            const auto [s_dot_max_acc_ab, _1] =
                 compute_velocity_limits(q_prime_ab, q_double_prime_ab, opt.max_velocity, opt.max_acceleration, opt.epsilon);
             // This is d/ds s_dot_max_acc(s+)
             const auto slope_right = (s_dot_max_acc_ab - s_dot_max_acc_after) / actual_step_right;
 
             // Evaluate s_ddot_max at (s+, s_dot_max_acc(s+))
-            const auto [_1, s_ddot_max_at_s_plus] = compute_acceleration_bounds(q_prime_after,
-                                                                                q_double_prime_after,
-                                                                                s_dot_max_acc_after,  // Evaluate at s+'s own limit
-                                                                                opt.max_acceleration,
-                                                                                opt.epsilon);
+            const auto [s_ddot_min_ab, s_ddot_max_ab] =
+                compute_acceleration_bounds(q_prime_ab, q_double_prime_ab, s_dot_max_acc_ab, opt.max_acceleration, opt.epsilon);
 
-            is_switching_point = opt.epsilon.wrap(s_ddot_max_at_s_plus / s_dot_max_acc_after) <= opt.epsilon.wrap(slope_right);
+            const auto phase_slope_right = s_ddot_max_ab / s_dot_max_acc_ab;
+            is_switching_point = phase_slope_right <= slope_right;
+
+            sp.forward_accel = s_ddot_max_ab;
+            sp.backward_accel = s_ddot_min_ab;
+
         } else {
             // Should s_dot_max_acc_before and s_dot_max_acc_after be within epsilon of each other, then
             // there is no perceived discontinuity. Therefore, equation 38 cannot be fulfilled and we
             // proceed onwards.
+            //
+            // TODO: Should this actually be an epsilon wrapped comparison for equality first, before we look for step
+            // up / step down?
             continue;
         }
 
         if (is_switching_point) {
-            // Switching velocity is the minimum (where the discontinuity meets the feasible region)
-            const auto s_dot_max_acc_switching_min = std::min(s_dot_max_acc_before, s_dot_max_acc_after);
-
-            // But make sure we don't violate whichever side's velocity limit is constraining.
+            // Make sure we don't violate whichever side's velocity limit is constraining.
             const auto s_dot_max_vel_switching_min = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
 
             // Only accept this as switching point if it is also feasible with respect to the velocity limits.
             if (opt.epsilon.wrap(s_dot_max_acc_switching_min) <= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
-                return switching_point{.point = {.s = boundary, .s_dot = s_dot_max_acc_switching_min},
-                                       .kind = trajectory::switching_point_kind::k_discontinuous_curvature};
+                return sp;
             }
         }
     }
@@ -635,8 +628,8 @@ enum class integration_event : std::uint8_t {
         const auto trajectory_slope_before = s_ddot_min_before / s_dot_max_vel_before;
         const auto trajectory_slope_after = s_ddot_min_after / s_dot_max_vel_after;
 
-        const bool condition_41 = (opt.epsilon.wrap(trajectory_slope_before) >= opt.epsilon.wrap(curve_slope_before));
-        const bool condition_42 = (opt.epsilon.wrap(trajectory_slope_after) <= opt.epsilon.wrap(curve_slope_after));
+        const bool condition_41 = trajectory_slope_before >= curve_slope_before;
+        const bool condition_42 = trajectory_slope_after <= curve_slope_after;
 
         if (condition_41 && condition_42) {
             // Valid discontinuous switching point found
@@ -899,14 +892,7 @@ trajectory::trajectory(class path p, options opt, integration_points points)
     duration_ = integration_points_.back().time;
 }
 
-trajectory::trajectory(class path p, options opt) : path_{std::move(p)}, options_{std::move(opt)} {
-    // Verify NSDMI set duration to zero (safety check in case NSDMI is broken)
-    assert(duration_ == seconds{0.0});
-
-    // Start every trajectory at rest at the beginning
-    integration_points_.push_back(
-        {.time = seconds{0.0}, .s = arc_length{0.0}, .s_dot = arc_velocity{0.0}, .s_ddot = arc_acceleration{0.0}});
-}
+trajectory::trajectory(class path p, options opt) : path_{std::move(p)}, options_{std::move(opt)} {}
 
 trajectory trajectory::create(class path p, options opt, integration_points points) {
     if (opt.max_velocity.shape(0) != p.dof()) {
@@ -999,7 +985,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
             const auto s_offset = backward_s - pt0.s;
             const auto interpolation_factor = s_offset / s_range;
-            const auto forward_s_dot_interp = pt0.s_dot + (interpolation_factor * (pt1.s_dot - pt0.s_dot));
+            const auto forward_s_dot_interp = lerp(pt0.s_dot, pt1.s_dot, interpolation_factor);
 
             // Intersection occurs if backward's s_dot exceeds forward's interpolated s_dot.
             // Backward integration starts with low s_dot and increases as s decreases, eventually
@@ -1012,704 +998,578 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
             return std::nullopt;
         };
 
-        // State transition function - validates and performs state transitions based on events
-        const auto transition = [](integration_state current_state, integration_event event) -> integration_state {
-            // Handle self-transition uniformly for all states
-            if (event == integration_event::k_none) [[likely]] {
-                return current_state;
-            }
-
-            switch (current_state) {
-                case integration_state::k_forward_accelerating:
-                    switch (event) {
-                        case integration_event::k_hit_velocity_curve:
-                            // Hit velocity limit curve - can potentially follow it tangentially
-                            return integration_state::k_forward_following_velocity_curve;
-                        case integration_event::k_reached_end:
-                            // Reaching end means we found a switching point. Could be from normal forward
-                            // acceleration reaching the end, or from hitting acceleration curve and finding
-                            // a switching point (which gets handled inline and transitions via this event).
-                            return integration_state::k_backward_decelerating;
-                        default:
-                            throw std::logic_error{"Invalid event for k_forward_accelerating state"};
-                    }
-
-                case integration_state::k_forward_following_velocity_curve:
-                    switch (event) {
-                        case integration_event::k_escaped_limit_curve:
-                            return integration_state::k_forward_accelerating;
-                        case integration_event::k_reached_end:
-                            // Reaching end while on curve is a switching point - need backward pass
-                            return integration_state::k_backward_decelerating;
-                        default:
-                            throw std::logic_error{"Invalid event for k_forward_following_velocity_curve state"};
-                    }
-
-                case integration_state::k_backward_decelerating:
-                    switch (event) {
-                        case integration_event::k_hit_forward_trajectory:
-                            // Spliced backward into forward, resume forward integration
-                            return integration_state::k_forward_accelerating;
-                        default:
-                            // Note: k_reached_start is NOT a valid transition - backward integration
-                            // reaching s=0 without intersection is a physics violation (would require
-                            // non-zero initial velocity) and throws an error instead of transitioning.
-                            throw std::logic_error{"Invalid event for k_backward_decelerating state"};
-                    }
-            }
-
-            throw std::logic_error{"Unhandled state in transition function"};
-        };
-
-        // State machine for integration algorithm
-        integration_state state = integration_state::k_forward_accelerating;
-        integration_event event = integration_event::k_none;
-
-        // Create path cursor for querying geometry during integration
+        // TODO: If switching_point communicated s via cursor, this would be even cleaner.
         path::cursor path_cursor = traj.path_.create_cursor();
-
-        // Scratch buffer for backward integration points. Backward integration builds a trajectory
-        // moving from switching point toward start. Points are accumulated here, then reversed and
-        // spliced into the main trajectory when intersection with forward trajectory is found.
-        //
-        // TODO(RSDK-12769): Revisit how state is passed between integration states. Consider using stateful
-        // events that carry context, rather than state machine-scoped variables.
-        std::vector<integration_point> backward_points;
-
-        // Switching point classification for current backward integration.
-        // Set when finding switching point, required on entry to backward state, cleared after use.
-        std::optional<trajectory::switching_point_kind> switching_point_kind_;
-
-        // Observer latch for detecting state transitions. When a state change is detected,
-        // this latch gets armed with the observer pointer. Each state case checks and clears
-        // the latch on entry using std::exchange, calling the observer only on actual transitions.
-        // Initialize with the observer so the initial state entry is reported.
-        auto* observer_latch = traj.options_.observer;
-
-        // Integration loop runs until we've covered the entire path.
-        // Loop exits when last integration point reaches path end exactly.
-        while (traj.integration_points_.back().s != traj.path_.length()) {
-            switch (state) {
-                case integration_state::k_forward_accelerating: {
-                    // On entry to this state (detected via observer latch), notify observer
-                    if (auto* observer = std::exchange(observer_latch, nullptr)) {
-                        const auto& current_point = traj.integration_points_.back();
-                        observer->on_started_forward_integration(traj, {.start = {current_point.s, current_point.s_dot}});
-                    }
-
-                    // Starting point is the last integration point (known to be feasible)
-                    const auto& current_point = traj.integration_points_.back();
-
-                    // Position cursor at current integration point.  This ensures each state is self-contained and
-                    // doesn't depend on cursor position from previous state.
-                    path_cursor.seek(current_point.s);
-
-                    // Query path geometry at current position to compute maximum acceleration
-                    const auto q_prime = path_cursor.tangent();
-                    const auto q_double_prime = path_cursor.curvature();
-
-                    const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
-                        q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
-
-                    // Check if we're starting forward integration from a non-differentiable extremum
-                    // switching point. If so, use zero acceleration per Kunz & Stilman Section VII-A Case 2.
-                    auto starting_sp_kind = std::exchange(switching_point_kind_, std::nullopt);
-                    auto s_ddot_to_use = s_ddot_max;
-                    if (starting_sp_kind == trajectory::switching_point_kind::k_nondifferentiable_extremum) {
-                        s_ddot_to_use = arc_acceleration{0.0};
-                    }
-
-                    // Compute candidate next point via Euler integration with appropriate acceleration
-                    const auto [next_s, next_s_dot] =
-                        euler_step(current_point.s, current_point.s_dot, s_ddot_to_use, traj.options_.delta, traj.options_.epsilon);
-
-                    // Forward integration should move "up and to the right" in phase plane
-                    if ((next_s <= current_point.s) || (next_s_dot < current_point.s_dot)) [[unlikely]] {
-                        throw std::runtime_error{"TOTG algorithm error: forward integration must increase both s and s_dot"};
-                    }
-
-                    // Check if this step would take us past the end of the path
-                    if (next_s >= traj.path_.length()) {
-                        // Reached end - this is a switching point at rest. This becomes the initial point
-                        // for backward integration to correct the over-optimistic forward trajectory.
-                        integration_point switching_point{.time = current_point.time + traj.options_.delta,
-                                                          .s = traj.path_.length(),
-                                                          .s_dot = arc_velocity{0.0},
-                                                          .s_ddot = arc_acceleration{0.0}};
-
-                        // Store the kind for backward integration to use
-                        switching_point_kind_ = trajectory::switching_point_kind::k_path_end;
-
-                        // Initialize backward integration with switching point as starting position
-                        backward_points.push_back(std::move(switching_point));
-
-                        event = integration_event::k_reached_end;
-                        break;
-                    }
-
-                    // Probe the candidate next point to check if it would exceed limit curves.
-                    // Create a temporary cursor at the candidate position to query geometry there.
-                    auto probe_cursor = path_cursor;
-                    probe_cursor.seek(next_s);
-                    const auto probe_q_prime = probe_cursor.tangent();
-                    const auto probe_q_double_prime = probe_cursor.curvature();
-
-                    // Check if the candidate next point would violate velocity or acceleration limits
-                    const auto [s_dot_max_acc, s_dot_max_vel] = compute_velocity_limits(probe_q_prime,
-                                                                                        probe_q_double_prime,
-                                                                                        traj.options_.max_velocity,
-                                                                                        traj.options_.max_acceleration,
-                                                                                        traj.options_.epsilon);
-                    const auto s_dot_limit = std::min(s_dot_max_acc, s_dot_max_vel);
-
-                    if (s_dot_limit <= arc_velocity{0.0}) [[unlikely]] {
-                        throw std::runtime_error{"TOTG algorithm error: velocity limit curve is non-positive"};
-                    }
-
-                    // Check if the candidate point exceeds the limit curve
-                    if (traj.options_.epsilon.wrap(next_s_dot) > traj.options_.epsilon.wrap(s_dot_limit)) {
-                        // Candidate point would hit or exceed limit curve.
-                        //
-                        // TODO(RSDK-12708,RSDK-12709): For robustness (Section VIII-A of paper), we should:
-                        // 1. Use bisection to find exact intersection with limit curve
-                        // 2. Check if intersection point is a trajectory source or sink
-                        // 3. Only transition if it's a sink (not a source due to numerical overshoot)
-                        // For now, we transition immediately, which may be less robust with large dt.
-                        //
-                        // Note: The phase_point passed to observer is the INFEASIBLE candidate point
-                        // that exceeded limits, not a feasible point on the limit curve.
-
-                        if (traj.options_.observer) {
-                            traj.options_.observer->on_hit_limit_curve(
-                                traj, {.breach = {next_s, next_s_dot}, .s_dot_max_acc = s_dot_max_acc, .s_dot_max_vel = s_dot_max_vel});
-                        }
-
-                        // Determine which limit curve we hit by comparing the two curves.
-                        // The lower curve is the active constraint at this position.
-                        //
-                        // TODO(RSDK-12762): When curves are within close to each other, it's arbitrary whether we treat
-                        // this as hitting the velocity curve (and potentially following it) or the acceleration curve
-                        // (and searching for a switching point). Current choice: if curves are within epsilon, treat as
-                        // acceleration curve hit (search for switching point). This is conservative in the sense that
-                        // searching is always safe, while curve following requires the curve to be
-                        // well-defined. However, investigate whether there's a better heuristic (e.g., based on curve
-                        // derivatives or previous state).
-                        if ((traj.options_.epsilon.wrap(s_dot_max_acc) > traj.options_.epsilon.wrap(s_dot_max_vel))) {
-                            event = integration_event::k_hit_velocity_curve;
-                            break;
-                        }
-
-                        // Hit limit curve. Search forward along the path for a switching point where
-                        // backward integration can begin. The unified search checks for both acceleration
-                        // discontinuities and velocity escape points, returning whichever comes first.
-                        auto sp_result = find_switching_point(path_cursor, traj.options_);
-
-                        // Store the kind for backward integration to use
-                        switching_point_kind_ = sp_result.kind;
-
-                        // Initialize backward integration from switching point
-                        integration_point sp{.time = current_point.time + traj.options_.delta,  // Placeholder, corrected during splice
-                                             .s = sp_result.point.s,
-                                             .s_dot = sp_result.point.s_dot,
-                                             .s_ddot = arc_acceleration{0.0}};
-                        backward_points.push_back(std::move(sp));
-
-                        // Reuse k_reached_end event to transition to backward integration
-                        event = integration_event::k_reached_end;
-                        break;
-                    }
-
-                    // Candidate point is feasible - accept it and advance. Observe the tricky behavior around the
-                    // acceleration.  We need to update the acceleration of the current point: that's the acceleration
-                    // we selected at our current location in the phase plane in order to get to the next point. That
-                    // new point now has an indeterminate acceleration, which will not be computed until the next point,
-                    // etc.
-                    //
-                    // TODO(RSDK-13002): Recording zero for the s_ddot value isn't great. We should find a
-                    // better way so that invalid integration points are never present in the integration
-                    // points vector, or, if they are, they shouldn't have a potentially reasonable value like
-                    // 0.0.
-                    //
-                    // Note: Don't call maybe_on_trajectory_extended() here - forward points are tentative
-                    // and may be discarded during backward integration. Only finalized segments trigger that callback.
-                    integration_point next_point{.time = current_point.time + traj.options_.delta,
-                                                 .s = next_s,
-                                                 .s_dot = next_s_dot,
-                                                 .s_ddot = arc_acceleration{0.0}};
-                    traj.integration_points_.back().s_ddot = s_ddot_to_use;
-                    traj.integration_points_.push_back(std::move(next_point));
-
-                    // Continue in same state (no event)
-                    // Cursor will be repositioned on next iteration entry
-                    break;
+        const auto integrate_forward_from = [&](switching_point where) -> switching_point {
+            // If we have no integration points yet, then this is the beginning of time. Otherwise, we are starting from
+            // a switching point from which we started backwards integration. The backwards integration pass has put
+            // that point into integration_points, but we want to overwrite it, or we will end up creating a duplicate
+            // point. This is a little clunky, but we want backwards integration to put in the switching point so it can
+            // "cap" the trajectory at the very end, without requiring another call into forward integration.
+            auto current_time = [&]() {
+                if (traj.integration_points_.empty()) {
+                    return trajectory::seconds{0.0};
                 }
+                assert(traj.integration_points_.back().s == where.point.s);
+                assert(traj.integration_points_.back().s_dot == where.point.s_dot);
+                auto now = traj.integration_points_.back().time;
+                traj.integration_points_.pop_back();
+                traj.duration_ = traj.integration_points_.back().time;
+                return now;
+            }();
+            auto current_point{std::move(where.point)};
 
-                case integration_state::k_forward_following_velocity_curve: {
-                    // On entry to this state (detected via observer latch), notify observer we're
-                    // starting forward integration along the velocity limit curve.
-                    if (auto* observer = std::exchange(observer_latch, nullptr)) {
-                        const auto& current_point = traj.integration_points_.back();
-                        observer->on_started_forward_integration(traj, {.start = {current_point.s, current_point.s_dot}});
+            std::optional<switching_point_kind> current_kind{std::move(where.kind)};
+            auto* first_forward_observer{traj.options_.observer};
+
+            while (true) {
+                path_cursor.seek(current_point.s);
+
+                // Capture current segment before any seeking, so we can detect segment boundary crossings
+                const auto current_segment = *path_cursor;
+
+                // Select acceleration for this integration step based on local situation.
+                const auto [s_ddot_desired, following] = [&]() -> std::pair<arc_acceleration, bool> {
+                    if (std::exchange(current_kind, std::nullopt)) {
+                        if (where.forward_accel) {
+                            // TODO: is this false correct? What about vel sps?
+                            return {*where.forward_accel, false};
+                        }
                     }
 
-                    // Algorithm Step 3: Analyze velocity limit curve and decide whether to escape,
-                    // follow tangentially, or search for switching point.
-                    //
-                    // We know we're on a velocity curve (acceleration curves go directly to searching).
-                    // Check if we can escape back below the curve, must search for switching point,
-                    // or should follow the curve tangentially.
-
-                    // Starting point is the last feasible integration point
-                    const auto& current_point = traj.integration_points_.back();
-
-                    // Position cursor at current point to query geometry
-                    path_cursor.seek(current_point.s);
                     const auto q_prime = path_cursor.tangent();
                     const auto q_double_prime = path_cursor.curvature();
 
-                    // Compute the velocity limit at current position. We're following this curve,
-                    // so our trajectory velocity should be on or very close to this limit.
-                    const auto [s_dot_max_acc, s_dot_max_vel] = compute_velocity_limits(
+                    // Check if we are currently at the velocity limit. If so, use tangent acceleration
+                    // to follow the curve rather than max acceleration, which would immediately breach
+                    // the limit and trigger bisection.
+                    //
+                    // TODO: In some cases, we may already know these limits for `current` from work
+                    // done below on `next`, so we could eliminate this call.
+                    const auto [_1, s_dot_max_vel] = compute_velocity_limits(
                         q_prime, q_double_prime, traj.options_.max_velocity, traj.options_.max_acceleration, traj.options_.epsilon);
 
-                    // TODO(RSDK-12763): Revisit whether we need epsilon checks before dividing by s_dot_max_vel here. During forward
-                    // integration following the velocity curve, s_dot_max_vel should always be positive. However, if the
-                    // velocity limit itself becomes very small (e.g., tight curvature with low velocity limits), the division
-                    // could become numerically unstable. For now, throw if s_dot_max_vel is near zero as a canary.
-                    if (s_dot_max_vel < traj.options_.epsilon) [[unlikely]] {
-                        // TODO(RSDK-12768): Investigate whether we want a richer exception type for algorithm failures.
-                        // A custom exception hierarchy could distinguish between different failure modes
-                        // (infeasible path, numerical issues, constraint violations) for better error handling.
-                        throw std::runtime_error{
-                            "TOTG algorithm error: cannot evaluate curve exit conditions with near-zero velocity limit"};
-                    }
-
-                    // Check if acceleration limit curve has dropped below velocity limit curve.
-                    // While following the velocity curve, the acceleration curve can drop below us, meaning
-                    // the acceleration constraint becomes the active limit. This is symmetric to the check in
-                    // k_forward_accelerating that detects hitting the velocity curve from below.
-                    if (traj.options_.epsilon.wrap(s_dot_max_acc) < traj.options_.epsilon.wrap(s_dot_max_vel)) {
-                        if (traj.options_.observer) {
-                            traj.options_.observer->on_hit_limit_curve(traj,
-                                                                       {.breach = {current_point.s, current_point.s_dot},
-                                                                        .s_dot_max_acc = s_dot_max_acc,
-                                                                        .s_dot_max_vel = s_dot_max_vel});
-                        }
-
-                        // Acceleration curve is now below velocity curve - we've effectively hit the acceleration
-                        // limit curve from above. Need to search for switching point.
-                        auto sp_result = find_switching_point(path_cursor, traj.options_);
-
-                        // Store the kind for backward integration to use
-                        switching_point_kind_ = sp_result.kind;
-
-                        // Initialize backward integration from switching point
-                        integration_point sp{.time = current_point.time + traj.options_.delta,  // Placeholder, corrected during splice
-                                             .s = sp_result.point.s,
-                                             .s_dot = sp_result.point.s_dot,
-                                             .s_ddot = arc_acceleration{0.0}};
-                        backward_points.push_back(std::move(sp));
-
-                        // Reuse k_reached_end event to transition to backward integration
-                        event = integration_event::k_reached_end;
-                        break;
-                    }
-
-                    // Compute the slope of the velocity limit curve in phase plane. This is d/ds s_dot_max_vel(s),
-                    // telling us how the velocity limit changes along the path.
-                    //
-                    // Selecting the velocity limit derivative here is `Correction 2`.
-                    const auto curve_slope =
-                        compute_velocity_limit_derivative(q_prime, q_double_prime, traj.options_.max_velocity, traj.options_.epsilon);
-
-                    // Three cases (from Kunz & Stilman Section VI.3):
-                    // 1. s_ddot_max / s_dot < curve_slope: Can escape (trajectory curves below limit)
-                    // 2. s_ddot_min / s_dot > curve_slope: Must search (trapped on curve)
-                    // 3. Otherwise: Follow curve tangentially
-                    //
-                    // Note: We use s_dot_max_vel in the slope calculations per Algorithm Step 3.
-
-                    // Compute feasible acceleration bounds at the velocity limit per paper Algorithm Step 3.
-                    // The paper specifies evaluating s_ddot_min/max at s_dot_max_vel(s), not at current trajectory velocity.
-                    const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
-                        q_prime, q_double_prime, s_dot_max_vel, traj.options_.max_acceleration, traj.options_.epsilon);
-
-                    if (traj.options_.epsilon.wrap(s_ddot_max / current_point.s_dot) < traj.options_.epsilon.wrap(curve_slope)) {
-                        // Maximum acceleration trajectory curves away from the limit curve (less steeply upward).
-                        // The trajectory's slope (s_ddot_max / s_dot) is less than the limit curve's slope,
-                        // meaning we're moving upward more slowly than the curve, effectively dropping below it.
-                        // We can escape the curve and resume normal maximum acceleration integration.
-                        event = integration_event::k_escaped_limit_curve;
-                        break;
-                    }
-
-                    if (traj.options_.epsilon.wrap(s_ddot_min / current_point.s_dot) > traj.options_.epsilon.wrap(curve_slope)) {
-                        // Trapped on limit curve with no way to escape via normal acceleration.
-                        // Search forward for a switching point where backward integration can begin.
-                        // The unified search checks for both acceleration discontinuities and velocity
-                        // escape points, returning whichever comes first.
-                        auto sp_result = find_switching_point(path_cursor, traj.options_);
-
-                        // Store the kind for backward integration to use
-                        switching_point_kind_ = sp_result.kind;
-
-                        // Initialize backward integration from switching point
-                        integration_point sp{.time = current_point.time + traj.options_.delta,  // Placeholder, corrected during splice
-                                             .s = sp_result.point.s,
-                                             .s_dot = sp_result.point.s_dot,
-                                             .s_ddot = arc_acceleration{0.0}};
-                        backward_points.push_back(std::move(sp));
-
-                        // Reuse k_reached_end event to transition to backward integration
-                        event = integration_event::k_reached_end;
-                        break;
-                    }
-
-                    // Neither escape nor search conditions met - follow the limit curve tangentially.
-                    // Compute the tangent acceleration: the rate of change that keeps us on the curve.
-                    const auto s_ddot_curve = curve_slope * s_dot_max_vel;
-
-                    // Validate that tangent acceleration is within feasible bounds.
-                    // If the curve's tangent falls outside our acceleration capabilities, the trajectory
-                    // is infeasible at this point (algorithm error - shouldn't reach here).
-                    // TODO(RSDK-12768): Investigate whether we want a richer exception type for infeasible trajectories.
-                    // Could provide diagnostic information about which constraints failed and where.
-                    if (s_ddot_curve < s_ddot_min || s_ddot_curve > s_ddot_max) [[unlikely]] {
-                        throw std::runtime_error{
-                            "TOTG algorithm error: velocity curve tangent acceleration outside feasible bounds - "
-                            "trajectory is infeasible"};
-                    }
-
-                    // Integrate forward along the curve with tangent acceleration
-                    const auto [next_s, next_s_dot] =
-                        euler_step(current_point.s, current_point.s_dot, s_ddot_curve, traj.options_.delta, traj.options_.epsilon);
-
-                    // Curve following must advance along path (s increases), but s_dot can decrease
-                    // when following a descending velocity limit curve (negative slope).
-                    if (next_s <= current_point.s) [[unlikely]] {
-                        throw std::runtime_error{"TOTG algorithm error: curve following must increase s"};
-                    }
-
-                    // Check if we've reached the end of the path while following the curve
-                    if (next_s >= traj.path_.length()) {
-                        // Reached end while on velocity limit curve - this is a switching point at rest.
-                        // The forward trajectory hit the end with non-zero velocity (on the curve),
-                        // so we must perform backward integration to create a feasible deceleration.
-                        integration_point switching_point{.time = current_point.time + traj.options_.delta,
-                                                          .s = traj.path_.length(),
-                                                          .s_dot = arc_velocity{0.0},
-                                                          .s_ddot = arc_acceleration{0.0}};
-
-                        // Store the kind for backward integration to use
-                        switching_point_kind_ = trajectory::switching_point_kind::k_path_end;
-
-                        // Initialize backward integration with switching point as starting position
-                        backward_points.push_back(std::move(switching_point));
-
-                        event = integration_event::k_reached_end;
-                        break;
-                    }
-
-                    // Probe the candidate next point to check if it would exceed limit curves.
-                    // Create a temporary cursor at the candidate position to query geometry there.
-                    //
-                    // TODO(RSDK-12994): Looking at the amount of duplication between the forward following
-                    // limit case and the forward at max accel case, it is probably possible to unify them.
-                    auto probe_cursor = path_cursor;
-                    probe_cursor.seek(next_s);
-                    const auto probe_q_prime = probe_cursor.tangent();
-                    const auto probe_q_double_prime = probe_cursor.curvature();
-
-                    // Check if the candidate next point would violate velocity or acceleration limits
-                    const auto [s_dot_max_acc_probe, s_dot_max_vel_probe] = compute_velocity_limits(probe_q_prime,
-                                                                                                    probe_q_double_prime,
-                                                                                                    traj.options_.max_velocity,
-                                                                                                    traj.options_.max_acceleration,
-                                                                                                    traj.options_.epsilon);
-                    const auto s_dot_limit = std::min(s_dot_max_acc_probe, s_dot_max_vel_probe);
-
-                    if (s_dot_limit <= arc_velocity{0.0}) [[unlikely]] {
-                        throw std::runtime_error{"TOTG algorithm error: velocity limit curve is non-positive"};
-                    }
-
-                    // Check if the candidate point exceeds the limit curve
-                    if (traj.options_.epsilon.wrap(next_s_dot) > traj.options_.epsilon.wrap(s_dot_limit)) {
-                        // Candidate point would hit or exceed limit curve.
-                        //
-                        // TODO(RSDK-12708,RSDK-12709): For robustness (Section VIII-A of paper), we should:
-                        // 1. Use bisection to find exact intersection with limit curve
-                        // 2. Check if intersection point is a trajectory source or sink
-                        // 3. Only transition if it's a sink (not a source due to numerical overshoot)
-                        // For now, we transition immediately, which may be less robust with large dt.
-                        //
-                        // Note: The phase_point passed to observer is the INFEASIBLE candidate point
-                        // that exceeded limits, not a feasible point on the limit curve.
-
-                        if (traj.options_.observer) {
-                            traj.options_.observer->on_hit_limit_curve(traj,
-                                                                       {.breach = {next_s, next_s_dot},
-                                                                        .s_dot_max_acc = s_dot_max_acc_probe,
-                                                                        .s_dot_max_vel = s_dot_max_vel_probe});
-                        }
-
-                        // Hit limit curve. Search forward along the path for a switching point where
-                        // backward integration can begin. The unified search checks for both acceleration
-                        // discontinuities and velocity escape points, returning whichever comes first.
-                        auto sp_result = find_switching_point(path_cursor, traj.options_);
-
-                        // Store the kind for backward integration to use
-                        switching_point_kind_ = sp_result.kind;
-
-                        // Initialize backward integration from switching point
-                        integration_point sp{.time = current_point.time + traj.options_.delta,  // Placeholder, corrected during splice
-                                             .s = sp_result.point.s,
-                                             .s_dot = sp_result.point.s_dot,
-                                             .s_ddot = arc_acceleration{0.0}};
-                        backward_points.push_back(std::move(sp));
-
-                        // Reuse k_reached_end event to transition to backward integration
-                        event = integration_event::k_reached_end;
-                        break;
-                    }
-
-                    // Accept the point and continue following the curve.
-                    // The next iteration will re-evaluate whether we're still on the curve or can escape.
-                    //
-                    // NOTE: As above, we set the acceleration of the previous point here,
-                    // not the acceleration of the point we just created.
-                    integration_point next_point{.time = current_point.time + traj.options_.delta,
-                                                 .s = next_s,
-                                                 .s_dot = next_s_dot,
-                                                 .s_ddot = arc_acceleration{0.0}};
-                    traj.integration_points_.back().s_ddot = s_ddot_curve;
-                    traj.integration_points_.push_back(std::move(next_point));
-
-                    // No event - remain in same state and re-evaluate on next iteration
-                    // The loop will check exit conditions again with updated position
-                    break;
-                }
-
-                case integration_state::k_backward_decelerating: {
-                    // Backward integration from a switching point toward the start, building a trajectory
-                    // that decelerates to meet constraints. Uses minimum (negative) acceleration to move
-                    // "up and left" in phase plane: s decreases, s_dot increases.
-
-                    // On first entry to this state (detected by single point in backward_points),
-                    // validate that the switching point is geometrically correct.
-                    if (backward_points.size() == 1) {
-                        const auto& switching_point = backward_points.back();
-                        const auto& last_forward = traj.integration_points_.back();
-                        // Switching point must be "down and to the right" of last forward point:
-                        // - Higher s (further along path)
-                        // - Lower s_dot (slower, often at rest)
-                        // This ensures backward integration can increase s_dot while decreasing s.
-                        if ((switching_point.s <= last_forward.s) || (switching_point.s_dot >= last_forward.s_dot)) [[unlikely]] {
-                            throw std::runtime_error{
-                                "TOTG algorithm error: switching point must be down and to the right of last forward point "
-                                "(higher s, lower s_dot)"};
-                        }
-                    }
-
-                    // On entry to this state (detected via observer latch), notify observer
-                    if (auto* observer = std::exchange(observer_latch, nullptr)) {
-                        const auto& switching_point = backward_points.back();
-
-                        // Switching point kind must be set before entering backward integration
-                        assert(switching_point_kind_.has_value());
-
-                        observer->on_started_backward_integration(
-                            traj, {.start = {switching_point.s, switching_point.s_dot}, .kind = *switching_point_kind_});
-                    }
-
-                    // Starting point is the last backward integration point. On first entry to this state,
-                    // the initial backward point was pushed by the forward state that found the switching point.
-                    const auto& current_point = backward_points.back();
-
-                    // Position cursor at current backward point to query geometry (source of truth)
-                    path_cursor.seek(current_point.s);
-
-                    // Query path geometry at current position to compute minimum acceleration
-                    const auto q_prime = path_cursor.tangent();
-                    const auto q_double_prime = path_cursor.curvature();
-
+                    // Find the upper limit for acceleration at this phase point.
                     const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
 
-                    auto s_ddot_to_use = s_ddot_min;
+                    // If we are at the velocity limit, clamp our acceleration to follow it.
+                    const bool at_velocity_limit =
+                        traj.options_.epsilon.wrap(current_point.s_dot) == traj.options_.epsilon.wrap(s_dot_max_vel);
 
-                    // Per Kunz & Stilman Section VII-A Case 2, backward integration must use zero acceleration
-                    // at these points, not the local s_ddot_min, to avoid entering the infeasible region.
-                    if (switching_point_kind_ == trajectory::switching_point_kind::k_nondifferentiable_extremum) {
-                        s_ddot_to_use = arc_acceleration{0.0};
+                    if (at_velocity_limit) {
+                        const auto vel_curve_slope =
+                            compute_velocity_limit_derivative(q_prime, q_double_prime, traj.options_.max_velocity, traj.options_.epsilon);
+
+                        // The velocity curve could be moving up more steeply than our acceleration
+                        // bounds allow, so we need to take the smaller value. We don't need to
+                        // worry about the lower bound, because that condition should have been
+                        // handled as the "trapped" condition below and forced a switching point
+                        // search.
+                        assert(vel_curve_slope > s_ddot_min);
+                        const auto s_ddot_tangent = std::min(vel_curve_slope * current_point.s_dot, s_ddot_max);
+
+                        return {s_ddot_tangent, true};
                     }
+
+                    return {s_ddot_max, false};
+                }();
+
+                // Compute candidate next point via Euler integration with desired acceleration
+                auto next_point = euler_step(current_point, s_ddot_desired, traj.options_.delta, traj.options_.epsilon);
+
+                // Forward integration should move forward in the phase plane
+                if (next_point.s <= current_point.s) [[unlikely]] {
+                    throw std::runtime_error{"TOTG algorithm error: forward integration must increase s"};
+                }
+
+                // Don't integrate past the end of a segment. Instead, interpolate to the segment end. Otherwise, if we
+                // had a very short subsequent segment, but which contained a more limiting constraint, we might
+                // integrate right over it with a coarse `dt`, and tunnel through the infeasible region.
+                if (const auto segment = *path_cursor; next_point.s > segment.end()) {
+                    const auto delta_s_desired = next_point.s - current_point.s;
+                    const auto delta_s_achieved = segment.end() - current_point.s;
+                    next_point.s = segment.end();
+                    next_point.s_dot = lerp(current_point.s_dot, next_point.s_dot, delta_s_achieved / delta_s_desired);
+                }
+
+                // Advance the path cursor to the arc length we just computed above. Note that this intentionally
+                // moves us to the next segment if we are on a boundary. We want to evaluate limits against the constraints
+                // as we will see them moving forward.
+                path_cursor.seek(next_point.s);
+
+                auto next_q_prime = path_cursor.tangent();
+                auto next_q_double_prime = path_cursor.curvature();
+
+                // Compute the velocity limits at the probe point.
+                auto [next_s_dot_max_acc, next_s_dot_max_vel] = compute_velocity_limits(
+                    next_q_prime, next_q_double_prime, traj.options_.max_velocity, traj.options_.max_acceleration, traj.options_.epsilon);
+
+                // If we got here by following, but we clipped past the velocity limit curve, then
+                // clamp to it so we don't bisect.
+                //
+                // TODO: Do we need to check against accel bounds to do this safely? Is it still worth it if we need to?
+                if (following && next_point.s_dot > next_s_dot_max_vel) {
+                    next_point.s_dot = next_s_dot_max_vel;
+                }
+
+                // If we hit the a limit curve, bisect until we have `next_point` in bounds,
+                // `breach_point` out of bounds, and a separation less than our configured epsilon.
+                const auto limit_hit_event = [&]() mutable -> std::optional<integration_observer::limit_hit_event> {
+                    if (next_point.s_dot <= next_s_dot_max_acc && next_point.s_dot <= next_s_dot_max_vel) [[likely]] {
+                        return std::nullopt;
+                    }
+
+                    auto breach_point = next_point;
+                    next_point = current_point;
+
+                    auto breach_s_dot_max_acc = next_s_dot_max_acc;
+                    auto breach_s_dot_max_vel = next_s_dot_max_vel;
+
+                    while (traj.options_.epsilon.wrap(next_point.s) != traj.options_.epsilon.wrap(breach_point.s)) {
+                        const phase_point mid = {.s = midpoint(next_point.s, breach_point.s),
+                                                 .s_dot = midpoint(next_point.s_dot, breach_point.s_dot)};
+
+                        path_cursor.seek(mid.s);
+                        const auto mid_q_prime = path_cursor.tangent();
+                        const auto mid_q_double_prime = path_cursor.curvature();
+
+                        // Compute the velocity limits at the midpoint.
+                        const auto [midpoint_s_dot_max_acc, midpoint_s_dot_max_vel] =
+                            compute_velocity_limits(mid_q_prime,
+                                                    mid_q_double_prime,
+                                                    traj.options_.max_velocity,
+                                                    traj.options_.max_acceleration,
+                                                    traj.options_.epsilon);
+
+                        // Use > here, because we really want the breach point to be on the violating side of the curve.
+                        if (mid.s_dot > midpoint_s_dot_max_acc || mid.s_dot > midpoint_s_dot_max_vel) {
+                            breach_point = mid;
+                            breach_s_dot_max_acc = midpoint_s_dot_max_acc;
+                            breach_s_dot_max_vel = midpoint_s_dot_max_vel;
+                        } else {
+                            next_point = mid;
+                            next_q_prime = mid_q_prime;
+                            next_q_double_prime = mid_q_double_prime;
+                            next_s_dot_max_acc = midpoint_s_dot_max_acc;
+                            next_s_dot_max_vel = midpoint_s_dot_max_vel;
+                        }
+                    }
+
+                    path_cursor.seek(breach_point.s);
+                    const auto breach_segment = *path_cursor;
+
+                    // If we violated across a segment boundary, we need to do a switching point search.
+                    // Check if current_point and breach_point are in different segments.
+                    if (current_segment.start() != breach_segment.start()) {
+                        return integration_observer::limit_hit_event{
+                            .breach = breach_point, .s_dot_max_acc = breach_s_dot_max_acc, .s_dot_max_vel = breach_s_dot_max_vel};
+                    }
+
+                    // Determine which limit was violated and classify as source or sink.
+                    // If acceleration limit violated at all, it takes precedence - these curves can
+                    // cross and we may violate both simultaneously.
+                    //
+                    // We analyze the trajectory at next_point (the last feasible point) to determine
+                    // if it's heading into or away from the infeasible region.
+
+                    if (breach_point.s_dot >= breach_s_dot_max_acc) {
+                        // Check whether trajectory naturally escapes or drives deeper into infeasible region.
+
+                        // Compute phase slope at next_point (feasible) using already-available data.
+                        const auto [next_s_ddot_min, next_s_ddot_max] = compute_acceleration_bounds(
+                            next_q_prime, next_q_double_prime, next_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
+                        const auto next_phase_slope = next_s_ddot_max / next_point.s_dot;
+
+                        // Compute acceleration curve slope by looking at next_point and a point before it.
+                        const auto before_next = next_point.s - arc_length{traj.options_.epsilon};
+                        if (next_point.s - before_next < traj.options_.epsilon * 0.5) {
+                            // Couldn't get good separation, we need to search for a switching point.
+                            return integration_observer::limit_hit_event{
+                                .breach = breach_point, .s_dot_max_acc = breach_s_dot_max_acc, .s_dot_max_vel = breach_s_dot_max_vel};
+                        }
+
+                        path_cursor.seek(before_next);
+                        const auto before_next_q_prime = path_cursor.tangent();
+                        const auto before_next_q_double_prime = path_cursor.curvature();
+
+                        const auto [before_next_s_dot_max_acc, _1] = compute_velocity_limits(before_next_q_prime,
+                                                                                             before_next_q_double_prime,
+                                                                                             traj.options_.max_velocity,
+                                                                                             traj.options_.max_acceleration,
+                                                                                             traj.options_.epsilon);
+
+                        const auto next_acc_curve_slope = (next_s_dot_max_acc - before_next_s_dot_max_acc) / (next_point.s - before_next);
+                        if (next_phase_slope > next_acc_curve_slope) {
+                            // The acceleration limit drops faster than we can follow. We need a switching
+                            // point to start backward integration.
+                            return integration_observer::limit_hit_event{
+                                .breach = breach_point, .s_dot_max_acc = breach_s_dot_max_acc, .s_dot_max_vel = breach_s_dot_max_vel};
+                        }
+                        // The trajectory naturally escapes back to the feasible region. This was
+                        // numerical overshoot from a source point.
+                        return std::nullopt;
+                    }
+
+                    // We hit the velocity curve only. Check if we are trapped, can escape, or can follow.
+                    //
+                    // TODO: We might be able to avoid recomputing these since we could track them in the bisection loop
+                    // like we do for next.
+                    path_cursor.seek(breach_point.s);
+                    const auto breach_q_prime = path_cursor.tangent();
+                    const auto breach_q_double_prime = path_cursor.curvature();
+
+                    const auto [breach_s_ddot_min, breach_s_ddot_max] = compute_acceleration_bounds(
+                        breach_q_prime, breach_q_double_prime, breach_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
+                    const auto min_phase_slope = breach_s_ddot_min / breach_point.s_dot;
+                    const auto max_phase_slope = breach_s_ddot_max / breach_point.s_dot;
+                    const auto vel_curve_slope = compute_velocity_limit_derivative(
+                        breach_q_prime, breach_q_double_prime, traj.options_.max_velocity, traj.options_.epsilon);
+
+                    if (min_phase_slope > vel_curve_slope) {
+                        // The velocity curve drops faster than we can follow while respecting the
+                        // acceleration bounds. We are trapped and need a switching point.
+                        return integration_observer::limit_hit_event{
+                            .breach = breach_point, .s_dot_max_acc = breach_s_dot_max_acc, .s_dot_max_vel = breach_s_dot_max_vel};
+                    }
+
+                    if (max_phase_slope < vel_curve_slope) {
+                        // The velocity curve rises faster than we can accelerate, so the trajectory
+                        // naturally falls away from the limit. This was numerical overshoot. Accept
+                        // the breach point as valid since we'll naturally escape from it, but clamp
+                        // velocity to avoid starting in a forbidden region.
+                        next_point = breach_point;
+                        next_point.s_dot = breach_s_dot_max_vel;
+                        return std::nullopt;
+                    }
+
+                    // The curve slope is within our acceleration authority, so we can follow it
+                    // tangentially. Accept the breach point as our next position and clamp velocity
+                    // to the limit so the next iteration detects "at velocity limit" and uses tangent
+                    // acceleration rather than max acceleration, avoiding repeated bisection.
+                    next_point = breach_point;
+                    next_point.s_dot = breach_s_dot_max_vel;
+                    return std::nullopt;
+                }();
+
+                const auto delta_s = next_point.s - current_point.s;
+                const auto delta_s_dot = next_point.s_dot - current_point.s_dot;
+
+                // When bisection converges to the same arc length, we're at a segment boundary.
+                // The cursor has already advanced to the next segment during seek operations.
+                if (delta_s == arc_length{0.0}) {
+                    if (first_forward_observer != nullptr) {
+                        throw std::runtime_error{"Cannot advance from initial forward position"};
+                    }
+
+                    if (limit_hit_event) {
+                        // Stuck due to limit in new segment - record position for intersection detection.
+                        traj.integration_points_.push_back({.time = current_time,
+                                                            .s = current_point.s,
+                                                            .s_dot = current_point.s_dot,
+                                                            .s_ddot = arc_acceleration{std::numeric_limits<double>::quiet_NaN()}});
+
+                        if (traj.options_.observer) {
+                            traj.options_.observer->on_hit_limit_curve(traj, *limit_hit_event);
+                        }
+
+                        path_cursor.seek(current_point.s);
+                        return find_switching_point(path_cursor, traj.options_);
+                    }
+
+                    // Crossed segment boundary without hitting limit - try again with new segment geometry.
+                    continue;
+                }
+
+                const auto s_dot_average = midpoint(current_point.s_dot, next_point.s_dot);
+                const auto dt = delta_s / s_dot_average;
+                const auto s_ddot = delta_s_dot / dt;
+                const auto next_time = current_time + dt;
+
+                traj.integration_points_.push_back(
+                    {.time = current_time, .s = current_point.s, .s_dot = current_point.s_dot, .s_ddot = s_ddot});
+
+                if (auto* const observer = std::exchange(first_forward_observer, nullptr)) {
+                    observer->on_started_forward_integration(traj, {.start = {current_point.s, current_point.s_dot}});
+                }
+
+                if (limit_hit_event) {
+                    traj.integration_points_.push_back({.time = next_time,
+                                                        .s = next_point.s,
+                                                        .s_dot = next_point.s_dot,
+                                                        .s_ddot = arc_acceleration{std::numeric_limits<double>::quiet_NaN()}});
+
+                    if (traj.options_.observer) {
+                        traj.options_.observer->on_hit_limit_curve(traj, *limit_hit_event);
+                    }
+
+                    path_cursor.seek(next_point.s);
+                    return find_switching_point(path_cursor, traj.options_);
+                }
+
+                if (next_point.s == traj.path_.length()) {
+                    traj.integration_points_.push_back({.time = next_time,
+                                                        .s = next_point.s,
+                                                        .s_dot = next_point.s_dot,
+                                                        .s_ddot = arc_acceleration{std::numeric_limits<double>::quiet_NaN()}});
+
+                    path_cursor.seek(next_point.s);
+                    return {.point = {next_point.s, arc_velocity{0.0}},
+                            .kind = switching_point_kind::k_path_end,
+                            .forward_accel = arc_acceleration{0.0}};
+                }
+
+                current_point = next_point;
+                current_time = next_time;
+            }
+        };
+
+        // We could, in theory, accumulate backwards points into the `integration_points_` array. This has the downside
+        // that observers have access to those points. As currently designed, it would probably be unobservable since
+        // there aren't events that fire between the event to indicate that backwards integration has started, and the event
+        // that fires after a splice. But if such events were added later for some reason, the state of the integration points
+        // array might be quite confusing. For now, use a separate buffer. Scope it to the mutable lambda because we want
+        // to keep the allocation, at the logical cost of needing to clear it on entry to the function.
+
+        // The `where` parameter is `const` because we intend to return it so that it will feed back
+        // into `integrate_forward`. Intentional or accidental alteration would likely result in a bug.
+        auto integrate_backwards_from = [&, backwards_points = trajectory::integration_points{}](const switching_point where) mutable {
+            // Clear out any old state.
+            backwards_points.clear();
+
+            // Copy the cursor. We don't want to change path_cursor, because that's where we will start forward integration from.
+            //
+            // TODO: This might be cleaner if the switching_point struct contained a path cursor.
+            auto backwards_cursor = path_cursor;
+
+            if (where.point.s < traj.integration_points_.back().s || where.point.s_dot >= traj.integration_points_.back().s_dot) {
+                std::ostringstream oss;
+                oss << "TOTG algorithm error: switching point must be below and not before last forward point "
+                    << "(higher s, lower s_dot). "
+                    << "Switching point: s=" << where.point.s << " s_dot=" << where.point.s_dot << ". "
+                    << "Last forward point: s=" << traj.integration_points_.back().s << " s_dot=" << traj.integration_points_.back().s_dot;
+                throw std::runtime_error{oss.str()};
+            }
+
+            if (traj.options_.observer) {
+                traj.options_.observer->on_started_backward_integration(traj, {.start = where.point, .kind = where.kind});
+            }
+
+            auto current_point{where.point};
+            std::optional<switching_point_kind> current_kind{where.kind};
+
+            while (true) {
+                backwards_cursor.seek(current_point.s);
+
+                // Compute the maximum acceleration we are permitted at this phase point and switching point type.
+                const auto s_ddot_desired = [&] {
+                    if (std::exchange(current_kind, std::nullopt)) {
+                        if (where.backward_accel) {
+                            return *where.backward_accel;
+                        }
+                    };
+
+                    auto q_prime = backwards_cursor.tangent();
+                    auto q_double_prime = backwards_cursor.curvature();
+
+                    auto [s_ddot_min, _1] = compute_acceleration_bounds(
+                        q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
 
                     // Minimum acceleration must be negative to produce backward motion (decreasing s)
                     // Allow small tolerance for numerical precision at near-zero acceleration points
-                    if (s_ddot_to_use >= -traj.options_.epsilon) {
-                        if (s_ddot_to_use > traj.options_.epsilon) {
+                    if (s_ddot_min >= -traj.options_.epsilon) {
+                        if (s_ddot_min > traj.options_.epsilon) {
                             // Clearly positive - this is an error
                             throw std::runtime_error{"TOTG algorithm error: backward integration requires negative minimum acceleration"};
                         }
-                        // Near zero (degenerate switching point) - use zero acceleration per Kunz & Stilman Section VII-A-2.x
-                        // Forward progress is guaranteed as long as s_dot is non-zero.
-                        s_ddot_to_use = arc_acceleration{0.0};
+                        // Probably numerical noise, just clamp to zero. Backward integration will
+                        // make progress as long as s_dot is non-zero.
+                        return arc_acceleration{0.0};
                     }
 
-                    // Compute candidate next point via Euler integration with negative dt and minimum acceleration.
-                    // Negative dt reverses time direction, reconstructing velocities that led to current point.
-                    // With s_ddot_min < 0 and dt < 0, s_dot increases (up) while s decreases (left).
-                    //
-                    // TODO(RSDK-12981): There's no guarantee that the candidate we select here by going
-                    // backwards with `s_ddot_to_use` as determined at the switching point would then
-                    // integrate forwards from the candidate to the switching point.
-                    const auto [candidate_s, candidate_s_dot] =
-                        euler_step(current_point.s, current_point.s_dot, s_ddot_to_use, -traj.options_.delta, traj.options_.epsilon);
+                    return s_ddot_min;
+                }();
 
-                    // Backward integration must decrease s (move backward) and not decrease s_dot.
-                    // At degenerate points (s_ddot ≈ 0), s_dot may stay constant (horizontal movement).
-                    if ((candidate_s >= current_point.s) || (candidate_s_dot < current_point.s_dot)) [[unlikely]] {
-                        throw std::runtime_error{"TOTG algorithm error: backward integration must decrease s and not decrease s_dot"};
-                    }
+                // Compute candidate next point via Euler integration with negative dt and minimum acceleration.
+                // Negative dt reverses time direction, reconstructing velocities that led to current point.
+                // With s_ddot_min < 0 and dt < 0, s_dot increases (up) while s decreases (left).
+                //
+                // TODO(RSDK-12981): There's no guarantee that the candidate we select here by going
+                // backwards with `s_ddot_to_use` as determined at the switching point would then
+                // integrate forwards from the candidate to the switching point.
+                const auto next_point =
+                    euler_step(current_point.s, current_point.s_dot, s_ddot_desired, -traj.options_.delta, traj.options_.epsilon);
 
-                    // Check exit condition 1: Would candidate reach or pass the start of the path?
-                    if (candidate_s <= arc_length{0.0}) {
-                        // Backward integration reached s=0 without intersecting forward trajectory.
-                        // This is physically impossible: backward integration moves "up and to the left"
-                        // in phase plane (s decreasing, s_dot increasing), so at s=0 we would have s_dot > 0.
-                        // But the trajectory must start at rest (s=0, s_dot=0). This velocity discontinuity
-                        // indicates the trajectory is infeasible - there's no way to satisfy both the
-                        // initial condition (rest at start) and the switching point constraint (rest at end).
-                        throw std::runtime_error{
-                            "TOTG algorithm error: backward integration reached start without intersecting "
-                            "forward trajectory - trajectory is infeasible (would require non-zero initial velocity)"};
-                    }
+                // TODO: Do we need to avoid integrating across segment boundaries here too?
 
-                    // Check exit condition 2: Does candidate intersect forward trajectory in phase plane?
-                    // Intersection means backward's s_dot has dropped below forward's s_dot at same s position.
-                    //
-                    // Performance optimization: Skip intersection check if candidate is still beyond the last
-                    // forward point. While integrating backward from switching point, we start far from the
-                    // forward trajectory and gradually approach it. Early exit eliminates expensive binary
-                    // search until we're actually in range to intersect.
-                    //
-                    // NOTE: We do this check before checking to see if we have hit the velocity limit curve, since
-                    // we may be trying to intersect a forward trajectory that was following the curve. If we check
-                    // against the limit curve first, we might error out when we should have intersected.
-                    std::optional<size_t> intersection_index;
-                    if (candidate_s <= traj.integration_points_.back().s) {
-                        intersection_index = find_trajectory_intersection(candidate_s, candidate_s_dot);
-                    }
-
-                    if (intersection_index.has_value()) {
-                        // Found intersection - the candidate point crossed above the forward trajectory in
-                        // the phase plane. Note that we do not include it in the backward trajectory.
-
-                        // Splice backward trajectory into forward trajectory at intersection point.
-                        // The backward trajectory has lower velocities than the over-optimistic forward,
-                        // representing the constraint from needing to decelerate to the switching point.
-
-                        // Truncate forward trajectory after intersection point
-                        const auto truncate_index = static_cast<ptrdiff_t>(*intersection_index + 1);
-
-                        const auto truncate_begin = std::next(begin(traj.integration_points_), truncate_index);
-
-                        // Only preserve pruned points if observer needs them for event reporting
-                        if (traj.options_.observer) {
-                            traj.frosts_.emplace_back(std::make_move_iterator(truncate_begin),
-                                                      std::make_move_iterator(end(traj.integration_points_)));
-                        }
-                        traj.integration_points_.erase(truncate_begin, traj.integration_points_.end());
-
-                        // Record intersection time - backward trajectory timestamps start here
-                        const seconds intersection_time = traj.integration_points_.back().time;
-
-                        // Reverse backward trajectory to get correct chronological order (was built end→start, need start→end)
-                        std::ranges::reverse(backward_points);
-
-                        // Reserve space to avoid reallocations during bulk append
-                        traj.integration_points_.reserve(traj.integration_points_.size() + backward_points.size());
-
-                        // Append backward trajectory with corrected timestamps
-                        // First backward point continues from intersection, subsequent points increment by delta
-                        for (size_t i = 0; i < backward_points.size(); ++i) {
-                            auto corrected = backward_points[i];
-                            corrected.time = intersection_time + seconds{static_cast<double>(i + 1) * traj.options_.delta.count()};
-                            traj.integration_points_.push_back(corrected);
-                        }
-
-                        // TODO(RSDK-12982): We also need to 1) adjust the s_ddot of the last forward point,
-                        // since it currently points to the old next point, not the new next point from the
-                        // intersection with the backwards trajectory. We probably also need to do a better
-                        // job adjusting timestamps. There is no guarantee that simply replaying the deltas
-                        // like this really makes sense. We should compute some timestep between the last
-                        // forward and first from backwards, use that, and then increment all the others by
-                        // dt.
-
-                        // Update trajectory duration to reflect new endpoint before invoking callbacks.
-                        // Observers receiving the trajectory by reference may query its duration.
-                        traj.duration_ = traj.integration_points_.back().time;
-
-                        // Clear backward scratch buffer for potential reuse if algorithm continues
-                        backward_points.clear();
-
-                        // Note: switching_point_kind_ is NOT reset here. It will be consumed by forward
-                        // integration if needed (e.g., for non-differentiable extremum points).
-
-                        // Notify observer that trajectory has been extended with finalized backward segment
-                        if (traj.options_.observer) {
-                            // Observer exists, so frosts_ must have been populated above
-                            traj.options_.observer->on_trajectory_extended(traj, {.pruned = std::ranges::subrange(traj.frosts_.back())});
-                        }
-
-                        event = integration_event::k_hit_forward_trajectory;
-                        break;
-                    }
-
-                    // Query geometry at candidate position to check if it would hit limit curves.
-                    // Backward integration hitting a limit curve indicates the trajectory is infeasible -
-                    // we cannot decelerate from the switching point without violating joint constraints.
-                    auto probe_cursor = path_cursor;
-                    probe_cursor.seek(candidate_s);
-                    const auto probe_q_prime = probe_cursor.tangent();
-                    const auto probe_q_double_prime = probe_cursor.curvature();
-
-                    const auto [s_dot_max_acc, s_dot_max_vel] = compute_velocity_limits(probe_q_prime,
-                                                                                        probe_q_double_prime,
-                                                                                        traj.options_.max_velocity,
-                                                                                        traj.options_.max_acceleration,
-                                                                                        traj.options_.epsilon);
-                    const auto s_dot_limit = std::min(s_dot_max_acc, s_dot_max_vel);
-
-                    if (s_dot_limit <= arc_velocity{0.0}) [[unlikely]] {
-                        throw std::runtime_error{"TOTG algorithm error: velocity limit curve is non-positive during backward integration"};
-                    }
-
-                    // `Divergent Behavior 3`: Candidate exceeding limit curve is an algorithm error - trajectory is
-                    // infeasible. Being at the limit (within epsilon) is allowed - only exceeding it is rejected.
-                    if (traj.options_.epsilon.wrap(candidate_s_dot) > traj.options_.epsilon.wrap(s_dot_limit)) {
-                        throw std::runtime_error{
-                            "TOTG algorithm error: backward integration exceeded limit curve - trajectory is infeasible"};
-                    }
-
-                    // Candidate point is feasible - accept it and continue backward integration
-                    integration_point next_point{.time = current_point.time + traj.options_.delta,  // Placeholder, fixed during splice
-                                                 .s = candidate_s,
-                                                 .s_dot = candidate_s_dot,
-                                                 .s_ddot = s_ddot_to_use};
-                    backward_points.push_back(std::move(next_point));
-
-                    // Continue in same state (no event)
-                    // Cursor will be repositioned on next iteration entry
-                    break;
+                // Backward integration must decrease s.
+                if ((next_point.s >= current_point.s)) [[unlikely]] {
+                    throw std::runtime_error{"TOTG algorithm error: backward integration must decrease s and not decrease s_dot"};
                 }
-            }
 
-            // Processes the current event, applying it to the state machine. Computes state transition,
-            // arms observer latch if state changes, updates state, and resets event to k_none.
-            if (const auto new_state = transition(state, std::exchange(event, integration_event::k_none)); new_state != state) {
-                state = new_state;
-                observer_latch = traj.options_.observer;
+                // It should not be possible to integrate backwards to the beginning of time without
+                // intersecting the forward trajectory along the way.
+                if (next_point.s <= arc_length{0.0}) {
+                    throw std::runtime_error{
+                        "TOTG algorithm error: backward integration reached start without intersecting "
+                        "forward trajectory - trajectory is infeasible (would require non-zero initial velocity)"};
+                }
+
+                // Check if we have moved far enough backward in the phase plane that we are now at or before
+                // the last forward point. If we have, it is time to find the exact intersection.
+                //
+                // NOTE: We do this check before checking to see if we have hit the velocity limit curve, since
+                // we may be trying to intersect a forward trajectory that was following the curve. If we check
+                // against the limit curve first, we might error out when we should have intersected.
+                std::optional<size_t> intersection_index;
+                if (next_point.s <= traj.integration_points_.back().s) {
+                    intersection_index = find_trajectory_intersection(next_point.s, next_point.s_dot);
+                }
+
+                if (intersection_index) {
+                    // Splice the backward trajectory into forward trajectory at the intersection point.
+                    // Note that `next_point` will not be included in the backwards trajectory.
+
+                    // Truncate forward trajectory after intersection point
+
+                    const auto truncate_index = static_cast<ptrdiff_t>(*intersection_index + 1);
+                    const auto truncate_begin = std::next(begin(traj.integration_points_), truncate_index);
+
+                    // Only preserve pruned points if observer needs them for event reporting
+                    if (traj.options_.observer) {
+                        traj.frosts_.emplace_back(std::make_move_iterator(truncate_begin),
+                                                  std::make_move_iterator(end(traj.integration_points_)));
+                    }
+                    traj.integration_points_.erase(truncate_begin, end(traj.integration_points_));
+
+                    // Fix splice point kinematic consistency
+                    //
+                    // The last forward point has s_ddot computed for some point which we just removed. We need to
+                    // recompute its s_ddot to connect to the first backward point, and compute the appropriate dt that
+                    // makes this kinematically consistent.
+
+                    auto& last_forward_point = traj.integration_points_.back();
+
+                    // Access backwards points in reverse order (first backward point is closest to splice).
+                    const auto backwards_points_reversed = std::ranges::reverse_view(std::as_const(backwards_points));
+                    const auto& first_backward_point = backwards_points_reversed.front();
+
+                    // Compute the position delta and the average velocity across the points.
+                    const auto delta_s = first_backward_point.s - last_forward_point.s;
+                    const auto mean_sdot = midpoint(last_forward_point.s_dot, first_backward_point.s_dot);
+
+                    // Validate average velocity is non-zero to avoid division by zero.
+                    if (traj.options_.epsilon.wrap(mean_sdot) == traj.options_.epsilon.wrap(arc_velocity{0.0})) {
+                        throw std::runtime_error{"Splice point has near-zero average velocity - division by zero in dt computation"};
+                    }
+
+                    // Now we can compute the dt that moves us from the one point to the other.
+                    const auto dt = delta_s / mean_sdot;
+                    if (dt <= trajectory::seconds{0.0}) {
+                        throw std::runtime_error{"Computed negative or zero dt at splice point - intersection detection error"};
+                    }
+
+                    // Compute the acceleration that connects last_forward_point to first_backward_point.
+                    const auto computed_s_ddot = (first_backward_point.s_dot - last_forward_point.s_dot) / dt;
+
+                    // Query the path geometry at last_forward_point to validate that our computed acceleration is
+                    // actually feasible.
+                    backwards_cursor.seek(last_forward_point.s);
+                    const auto q_prime = backwards_cursor.tangent();
+                    const auto q_double_prime = backwards_cursor.curvature();
+
+                    const auto [s_ddot_min, s_ddot_max] = compute_acceleration_bounds(
+                        q_prime, q_double_prime, last_forward_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
+
+                    if (traj.options_.epsilon.wrap(computed_s_ddot) < traj.options_.epsilon.wrap(s_ddot_min) ||
+                        traj.options_.epsilon.wrap(computed_s_ddot) > traj.options_.epsilon.wrap(s_ddot_max)) {
+                        std::ostringstream oss;
+                        oss << "Splice point requires infeasible acceleration: "
+                            << "computed=" << static_cast<double>(computed_s_ddot) << ", bounds=[" << static_cast<double>(s_ddot_min)
+                            << ", " << static_cast<double>(s_ddot_max) << "]";
+                        throw std::runtime_error{oss.str()};
+                    }
+
+                    // Correct the acceleration value at the last forward point.
+                    last_forward_point.s_ddot = computed_s_ddot;
+
+                    // Reserve space to avoid reallocations during bulk append.
+                    traj.integration_points_.reserve(traj.integration_points_.size() + backwards_points.size());
+
+                    // Append backward trajectory with corrected timestamps.
+                    const auto size = std::ranges::ssize(backwards_points_reversed);
+                    for (std::remove_const_t<decltype(size)> i = 0; i < size; ++i) {
+                        auto corrected = backwards_points_reversed[i];
+
+                        // All points in the backwards array were computed with a uniform delta, but we need to account
+                        // for the computed dt that happened at the splice.
+                        corrected.time = (last_forward_point.time + dt) + (i * traj.options_.delta);
+
+                        // For all but the last point we will be adding, we assume the acceleration that took us
+                        // backward to that point is the acceleration we should use to move forward (erroneously, see
+                        // RSDK-12981 above), so we need to take it from its neighbor. For the last point, we need to
+                        // respect the switching point's forward acceleration if set, since we may not call forward
+                        // integration again if at the end of path.
+                        corrected.s_ddot = (i < size - 1)
+                                               ? backwards_points_reversed[i + 1].s_ddot
+                                               : where.forward_accel.value_or(arc_acceleration{std::numeric_limits<double>::quiet_NaN()});
+
+                        traj.integration_points_.push_back(corrected);
+                    }
+
+                    // Update trajectory duration to reflect new endpoint before invoking callbacks.
+                    // Observers receiving the trajectory by reference may query its duration.
+                    traj.duration_ = traj.integration_points_.back().time;
+
+                    // Notify observer that trajectory has been extended with finalized backward segment
+                    if (traj.options_.observer) {
+                        // Observer exists, so frosts_ must have been populated above
+                        traj.options_.observer->on_trajectory_extended(traj, {.pruned = std::ranges::subrange(traj.frosts_.back())});
+                    }
+
+                    // Backwards integration has completed. Return the switching point so that forward
+                    // integration can resume from there.
+                    return where;
+                }
+
+                // Query geometry at candidate position to check if it would hit limit curves.
+                // Backward integration hitting a limit curve indicates the trajectory is infeasible -
+                // we cannot decelerate from the switching point without violating joint constraints.
+                backwards_cursor.seek(next_point.s);
+                const auto next_q_prime = backwards_cursor.tangent();
+                const auto next_q_double_prime = backwards_cursor.curvature();
+
+                const auto [s_dot_max_acc, s_dot_max_vel] = compute_velocity_limits(
+                    next_q_prime, next_q_double_prime, traj.options_.max_velocity, traj.options_.max_acceleration, traj.options_.epsilon);
+                const auto s_dot_limit = std::min(s_dot_max_acc, s_dot_max_vel);
+
+                if (s_dot_limit <= arc_velocity{0.0}) [[unlikely]] {
+                    throw std::runtime_error{"TOTG algorithm error: velocity limit curve is non-positive during backward integration"};
+                }
+
+                // `Divergent Behavior 3`: Candidate exceeding limit curve is an algorithm error - trajectory is
+                // infeasible. Being at the limit (within epsilon) is allowed - only exceeding it is rejected.
+                if (traj.options_.epsilon.wrap(next_point.s_dot) > traj.options_.epsilon.wrap(s_dot_limit)) {
+                    throw std::runtime_error{"TOTG algorithm error: backward integration exceeded limit curve - trajectory is infeasible"};
+                }
+
+                // The point is feasible, so append it to the backwards trajectory points. Note that the timestamps
+                // are zero-based from the switching point, but will be fixed up when we splice.
+                const trajectory::seconds previous_time =
+                    backwards_points.empty() ? trajectory::seconds{0.0} : backwards_points.back().time;
+                backwards_points.push_back({.time = previous_time + traj.options_.delta,
+                                            .s = current_point.s,
+                                            .s_dot = current_point.s_dot,
+                                            .s_ddot = s_ddot_desired});
+
+                // Continue backward integration from the point we just added.
+                current_point = next_point;
             }
+        };
+
+        switching_point sp = {.point = {arc_length{0}, arc_velocity{0}}, .kind = switching_point_kind::k_path_begin};
+        while (sp.kind != switching_point_kind::k_path_end) {
+            sp = integrate_backwards_from(integrate_forward_from(sp));
         }
 
         return traj;

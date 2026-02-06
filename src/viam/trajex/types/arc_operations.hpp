@@ -85,4 +85,17 @@ constexpr std::chrono::duration<double> operator/(arc_velocity vel, arc_accelera
     return std::chrono::duration<double>{static_cast<double>(vel) / static_cast<double>(acc)};
 }
 
+///
+/// Divides arc length by arc velocity to get time duration.
+///
+/// Dimensional analysis: ds / (ds/dt) = dt
+///
+/// @param len Arc length
+/// @param vel Arc velocity
+/// @return Time duration
+///
+constexpr std::chrono::duration<double> operator/(arc_length len, arc_velocity vel) noexcept {
+    return std::chrono::duration<double>{static_cast<double>(len) / static_cast<double>(vel)};
+}
+
 }  // namespace viam::trajex
