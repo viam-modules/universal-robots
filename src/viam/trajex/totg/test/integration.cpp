@@ -629,9 +629,7 @@ struct trajectory_test_fixture {
 
         // Add collector if JSON output enabled
         if (json_output_filename_.has_value()) {
-            auto collector = std::make_shared<trajectory_integration_event_collector>();
-            composite_observer_.add_observer(collector);
-            collector_ = collector;
+            collector_ = composite_observer_.add_observer(std::make_shared<trajectory_integration_event_collector>());
         }
 
         // Generate trajectory

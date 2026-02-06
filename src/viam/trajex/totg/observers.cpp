@@ -34,14 +34,12 @@ class reentrancy_guard {
 composite_integration_observer::composite_integration_observer() = default;
 composite_integration_observer::~composite_integration_observer() = default;
 
-std::shared_ptr<trajectory::integration_observer> composite_integration_observer::add_observer(
-    std::shared_ptr<integration_observer> observer) {
+void composite_integration_observer::add_observer_(std::shared_ptr<integration_observer> observer) {
     if (!observer) {
         throw std::invalid_argument("Cannot add null observer to composite_integration_observer");
     }
     const reentrancy_guard guard(dispatching_);
-    observers_.push_back(observer);
-    return observer;
+    observers_.push_back(std::move(observer));
 }
 
 void composite_integration_observer::on_started_forward_integration(const trajectory& traj, started_forward_event event) {

@@ -98,7 +98,7 @@ BOOST_AUTO_TEST_CASE(composite_observer_forwards_to_multiple_observers) {
 
 BOOST_AUTO_TEST_CASE(composite_observer_throws_on_null_observer) {
     composite_integration_observer composite;
-    BOOST_CHECK_THROW(composite.add_observer(nullptr), std::invalid_argument);
+    BOOST_CHECK_THROW(composite.add_observer(std::shared_ptr<trajectory::integration_observer>()), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(composite_observer_add_returns_observer) {

@@ -39,12 +39,14 @@ class composite_integration_observer final : public trajectory::integration_obse
     /// Observers are called in the order they are added. Returns the observer
     /// to allow capturing it when adding inline.
     ///
+    /// @tparam T Observer type, must derive from integration_observer
     /// @param observer Observer to add
     /// @return The observer that was added
     /// @throws std::invalid_argument if observer is null
     /// @throws std::runtime_error if called while dispatching events (re-entrant call)
     ///
-    std::shared_ptr<integration_observer> add_observer(std::shared_ptr<integration_observer> observer);
+    template <std::derived_from<integration_observer> T>
+    std::shared_ptr<T> add_observer(std::shared_ptr<T> observer);
 
     ///
     /// Dispatches forward integration start to all observers.
@@ -79,6 +81,8 @@ class composite_integration_observer final : public trajectory::integration_obse
     void on_trajectory_extended(const trajectory& traj, splice_event event) override;
 
    private:
+    void add_observer_(std::shared_ptr<integration_observer> observer);
+
     std::vector<std::shared_ptr<integration_observer>> observers_;
     bool dispatching_ = false;
 };
@@ -158,5 +162,11 @@ class trajectory_integration_event_collector final : public trajectory::integrat
    private:
     std::vector<event> events_;
 };
+
+template <std::derived_from<trajectory::integration_observer> T>
+std::shared_ptr<T> composite_integration_observer::add_observer(std::shared_ptr<T> observer) {
+    add_observer_(observer);
+    return observer;
+}
 
 }  // namespace viam::trajex::totg
