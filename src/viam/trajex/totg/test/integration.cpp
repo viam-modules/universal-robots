@@ -1,7 +1,14 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <deque>
+#include <fstream>
+#include <sstream>
 
+#include <json/json.h>
+
+#include <boost/test/data/monomorphic.hpp>
+#include <boost/test/data/test_case.hpp>
 #include <boost/test/unit_test.hpp>
 
 #if defined(__has_include) && (__has_include(<xtensor/containers/xadapt.hpp>))
@@ -12,6 +19,8 @@
 
 #include <Eigen/Core>
 
+#include <viam/trajex/totg/json_serialization.hpp>
+#include <viam/trajex/totg/observers.hpp>
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/test/test_utils.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
@@ -381,7 +390,8 @@ void validate_trajectory_invariants(const trajectory& traj, double tolerance_per
 struct trajectory_test_fixture {
     path::options path_opts;
     trajectory::options traj_opts;
-    expectation_observer observer;
+    std::shared_ptr<expectation_observer> expectation_observer_;
+    composite_integration_observer composite_observer_;
     double validation_tolerance_percent = 0.1;
     size_t dof_;
     xt::xarray<double> waypoints_;
@@ -404,9 +414,19 @@ struct trajectory_test_fixture {
     bool compare_with_legacy_ = false;
     std::optional<double> legacy_duration_;
     std::optional<double> legacy_path_length_;
+    std::optional<double> legacy_generation_time_ms_;
+    double legacy_path_tolerance_percent = 5.0;
+    double legacy_duration_tolerance_percent = 5.0;
+
+    // Event validation control
+    bool allow_any_events_ = false;
+
+    // JSON output for visualization
+    std::optional<std::string> json_output_filename_;
+    std::shared_ptr<trajectory_integration_event_collector> collector_;
 
     explicit trajectory_test_fixture(size_t dof = 6, double expectation_tolerance_percent = 0.1)
-        : observer(expectation_tolerance_percent), dof_(dof) {}
+        : expectation_observer_(std::make_shared<expectation_observer>(expectation_tolerance_percent)), dof_(dof) {}
 
     trajectory_test_fixture& set_waypoints_deg(const xt::xarray<double>& waypoints_deg) {
         waypoints_ = degrees_to_radians(waypoints_deg);
@@ -453,6 +473,26 @@ struct trajectory_test_fixture {
         return *this;
     }
 
+    trajectory_test_fixture& allow_any_events() {
+        allow_any_events_ = true;
+        return *this;
+    }
+
+    trajectory_test_fixture& set_legacy_path_tolerance(double tolerance_percent) {
+        legacy_path_tolerance_percent = tolerance_percent;
+        return *this;
+    }
+
+    trajectory_test_fixture& set_legacy_duration_tolerance(double tolerance_percent) {
+        legacy_duration_tolerance_percent = tolerance_percent;
+        return *this;
+    }
+
+    trajectory_test_fixture& enable_json_output(std::string filename) {
+        json_output_filename_ = std::move(filename);
+        return *this;
+    }
+
     void try_legacy_comparison(const xt::xarray<double>& waypoints) {
         try {
             // Convert waypoints to legacy format (std::list<Eigen::VectorXd>)
@@ -473,9 +513,12 @@ struct trajectory_test_fixture {
                 legacy_max_acc(static_cast<Eigen::Index>(i)) = traj_opts.max_acceleration(i);
             }
 
-            // Create legacy path and trajectory
+            // Create legacy path and trajectory with timing
+            const auto legacy_start_time = std::chrono::high_resolution_clock::now();
             const Path legacy_path(legacy_waypoints, path_opts.max_blend_deviation());
             const Trajectory legacy_traj(legacy_path, legacy_max_vel, legacy_max_acc, traj_opts.delta.count());
+            const auto legacy_end_time = std::chrono::high_resolution_clock::now();
+            legacy_generation_time_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(legacy_end_time - legacy_start_time).count();
 
             if (legacy_traj.isValid()) {
                 legacy_duration_ = legacy_traj.getDuration();
@@ -501,8 +544,8 @@ struct trajectory_test_fixture {
                 std::cout << "[COMPARISON] Path: new=" << new_path_length << ", legacy=" << *legacy_path_length_ << ", "
                           << "ratio=" << path_ratio << ", diff=" << path_diff_percent << "%\n";
 
-                // Path should be about the same length (within 5%)
-                BOOST_CHECK_CLOSE(new_path_length, *legacy_path_length_, 5.0);
+                // Path should be within configured tolerance
+                BOOST_CHECK_CLOSE(new_path_length, *legacy_path_length_, legacy_path_tolerance_percent);
             }
 
             if (legacy_duration_.has_value()) {
@@ -512,9 +555,9 @@ struct trajectory_test_fixture {
                 std::cout << "[COMPARISON] Duration: new=" << new_duration << "s, legacy=" << *legacy_duration_ << "s, "
                           << "ratio=" << duration_ratio << ", diff=" << duration_diff_percent << "%\n";
 
-                // We should do NO WORSE than legacy: duration should be about the same or shorter
-                // Allow up to 5% slower (for numerical differences), but prefer faster
-                BOOST_CHECK_LE(new_duration, *legacy_duration_ * 1.05);
+                // We should do NO WORSE than legacy: duration should be within configured tolerance
+                const double duration_tolerance_multiplier = 1.0 + (legacy_duration_tolerance_percent / 100.0);
+                BOOST_CHECK_LE(new_duration, *legacy_duration_ * duration_tolerance_multiplier);
 
                 BOOST_TEST_MESSAGE("Duration comparison: new=" << new_duration << "s vs legacy=" << *legacy_duration_ << "s (ratio="
                                                                << duration_ratio << ", diff=" << duration_diff_percent << "%)");
@@ -541,46 +584,69 @@ struct trajectory_test_fixture {
             }
         }
 
-        // Validate that expectations follow TOTG invariant:
-        // Must have at least 3 events: forward_start, backward_start from endpoint, splice
-        const auto& expectations = observer.get_expectations();
-        BOOST_REQUIRE_MESSAGE(expectations.size() >= 3, "Must have at least 3 expected events (TOTG invariant)");
+        // Validate that expectations follow TOTG invariant (only if expectations were specified)
+        if (!allow_any_events_) {
+            // Must have at least 3 events: forward_start, backward_start from endpoint, splice
+            const auto& expectations = expectation_observer_->get_expectations();
+            BOOST_REQUIRE_MESSAGE(expectations.size() >= 3, "Must have at least 3 expected events (TOTG invariant)");
 
-        BOOST_TEST_CONTEXT("Expectation coherence (TOTG invariant)") {
-            // First must be forward_start
-            const auto* first_forward = std::get_if<expectation_observer::expected_forward_start>(&expectations.front());
-            BOOST_REQUIRE_MESSAGE(first_forward != nullptr, "First expectation must be forward_start (TOTG invariant)");
+            BOOST_TEST_CONTEXT("Expectation coherence (TOTG invariant)") {
+                // First must be forward_start
+                const auto* first_forward = std::get_if<expectation_observer::expected_forward_start>(&expectations.front());
+                BOOST_REQUIRE_MESSAGE(first_forward != nullptr, "First expectation must be forward_start (TOTG invariant)");
 
-            // Second-to-last must be backward_start (from endpoint)
-            const auto& second_last = expectations[expectations.size() - 2];
-            const auto* backward = std::get_if<expectation_observer::expected_backward_start>(&second_last);
-            BOOST_REQUIRE_MESSAGE(backward != nullptr, "Second-to-last expectation must be backward_start (TOTG invariant)");
+                // Second-to-last must be backward_start (from endpoint)
+                const auto& second_last = expectations[expectations.size() - 2];
+                const auto* backward = std::get_if<expectation_observer::expected_backward_start>(&second_last);
+                BOOST_REQUIRE_MESSAGE(backward != nullptr, "Second-to-last expectation must be backward_start (TOTG invariant)");
 
-            // Backward expectation must specify k_path_end kind (TOTG always ends with backward from endpoint)
-            BOOST_REQUIRE_MESSAGE(backward->kind.has_value(),
-                                  "Second-to-last expectation must specify switching point kind (TOTG invariant)");
-            BOOST_REQUIRE_MESSAGE(*backward->kind == trajectory::switching_point_kind::k_path_end,
-                                  "Second-to-last expectation must be backward_start with k_path_end kind (TOTG invariant)");
+                // Backward expectation must specify k_path_end kind (TOTG always ends with backward from endpoint)
+                BOOST_REQUIRE_MESSAGE(backward->kind.has_value(),
+                                      "Second-to-last expectation must specify switching point kind (TOTG invariant)");
+                BOOST_REQUIRE_MESSAGE(*backward->kind == trajectory::switching_point_kind::k_path_end,
+                                      "Second-to-last expectation must be backward_start with k_path_end kind (TOTG invariant)");
 
-            // Sanity check: backward expectation should be approximately at path endpoint (if s is specified)
-            if (backward->s.has_value()) {
-                const double backward_tol = backward->tolerance_percent.value_or(observer.get_default_tolerance_percent());
-                BOOST_CHECK_CLOSE(static_cast<double>(*backward->s), static_cast<double>(p.length()), backward_tol);
+                // Sanity check: backward expectation should be approximately at path endpoint (if s is specified)
+                if (backward->s.has_value()) {
+                    const double backward_tol =
+                        backward->tolerance_percent.value_or(expectation_observer_->get_default_tolerance_percent());
+                    BOOST_CHECK_CLOSE(static_cast<double>(*backward->s), static_cast<double>(p.length()), backward_tol);
+                }
+
+                // Last must be splice
+                const auto* splice = std::get_if<expectation_observer::expected_splice>(&expectations.back());
+                BOOST_REQUIRE_MESSAGE(splice != nullptr, "Last expectation must be splice (TOTG invariant)");
             }
-
-            // Last must be splice
-            const auto* splice = std::get_if<expectation_observer::expected_splice>(&expectations.back());
-            BOOST_REQUIRE_MESSAGE(splice != nullptr, "Last expectation must be splice (TOTG invariant)");
         }
 
-        // Attach observer
-        traj_opts.observer = &observer;
+        // Set up observer chain - always use composite observer
+        traj_opts.observer = &composite_observer_;
+
+        // Add expectation observer if validating events
+        if (!allow_any_events_) {
+            composite_observer_.add_observer(expectation_observer_);
+        }
+
+        // Add collector if JSON output enabled
+        if (json_output_filename_.has_value()) {
+            collector_ = composite_observer_.add_observer(std::make_shared<trajectory_integration_event_collector>());
+        }
 
         // Generate trajectory
         trajectory traj = trajectory::create(std::move(p), traj_opts);
 
-        // Verify all expectations were met
-        observer.verify_all_expectations_met();
+        // Write JSON if enabled
+        if (json_output_filename_.has_value() && collector_) {
+            std::ofstream out(*json_output_filename_);
+            write_trajectory_json(out, traj, *collector_);
+            out.close();
+            BOOST_TEST_MESSAGE("Wrote trajectory JSON to " << *json_output_filename_);
+        }
+
+        // Verify all expectations were met (only if expectations were specified)
+        if (!allow_any_events_) {
+            expectation_observer_->verify_all_expectations_met();
+        }
 
         // Validate trajectory-wide expectations
         if (expected_duration_.has_value()) {
@@ -607,6 +673,56 @@ struct trajectory_test_fixture {
         return traj;
     }
 };
+
+// Helper to get UR arm waypoints with reversals for incremental testing
+xt::xarray<double> get_ur_arm_waypoints_with_reversals_deg() {
+    static const xt::xarray<double> waypoints_deg = {
+        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 0: Start at zero
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 1
+        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 2
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 3: reversal back to position 1
+        {-90.0, 0.0, 0.0, 0.0, 0.0, 0.0},    // 4
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 5: reversal back to position 1 again
+        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 6
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 7
+        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 8: back to zero
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 9
+        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 10
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 11
+        {-90.0, 0.0, 0.0, 0.0, 0.0, 0.0},    // 12
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 13
+        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 14
+        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 15
+        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 16: back to zero again
+    };
+    return waypoints_deg;
+}
+
+// Constraint profile for parameterized trajectory testing
+struct constraint_profile {
+    std::string name;
+    xt::xarray<double> max_velocity;
+    xt::xarray<double> max_acceleration;
+};
+
+// Print operator for Boost.Test data framework
+std::ostream& operator<<(std::ostream& os, const constraint_profile& profile) {
+    return os << profile.name;
+}
+
+// Current constraint profiles for UR arm testing
+std::vector<constraint_profile> get_ur_arm_constraint_profiles() {
+    using namespace viam::trajex;
+    return {
+        {"all_accel_constrained",
+         degrees_to_radians(xt::ones<double>({6}) * 150.0),  // 150 deg/s
+         degrees_to_radians(xt::ones<double>({6}) * 5.0)},   // 5 deg/s^2
+
+        {"all_vel_constrained",
+         degrees_to_radians(xt::ones<double>({6}) * 5.0),     // 150 deg/s
+         degrees_to_radians(xt::ones<double>({6}) * 150.0)},  // 5 deg/s^2
+    };
+}
 
 }  // namespace
 
@@ -739,150 +855,81 @@ BOOST_AUTO_TEST_CASE(quantized_sampler_end_to_end) {
     BOOST_CHECK_EQUAL(last_time->count(), 1.0);  // Should hit endpoint exactly
 }
 
-BOOST_AUTO_TEST_CASE(ur_arm_incremental_waypoints_with_reversals) {
+BOOST_DATA_TEST_CASE(ur_arm_incremental_waypoints_with_reversals,
+                     boost::unit_test::data::xrange(size_t{2}, get_ur_arm_waypoints_with_reversals_deg().shape(0) + 1) *
+                         boost::unit_test::data::make([]() {
+                             static auto data = get_ur_arm_constraint_profiles();
+                             return boost::unit_test::data::make(data);
+                         }()),
+                     num_waypoints,
+                     profile) {
     using namespace viam::trajex::totg;
+    using namespace viam::trajex::totg::test;
     using namespace viam::trajex::types;
 
-    // Real UR arm waypoint sequence that includes direction reversals
-    // Values are in degrees, convert to radians
-    const xt::xarray<double> waypoints_deg = {
-        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 0: Start at zero
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 1
-        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 2
-        // TODO(RSDK-12711): Add these waypoints back in once we do not need to
-        // break up segments according to their dot product.
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 3: reversal back to position 1
-        {-90.0, 0.0, 0.0, 0.0, 0.0, 0.0},    // 4
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 5: reversal back to position 1 again
-        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 6
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 7
-        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 8: back to zero
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 9
-        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 10
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 11
-        {-90.0, 0.0, 0.0, 0.0, 0.0, 0.0},    // 12
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 13
-        {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0},  // 14
-        {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},  // 15
-        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},      // 16: back to zero again
-    };
+    std::cout << "\n=== Testing " << num_waypoints << " waypoints with " << profile.name << " ===\n";
 
-    xt::xarray<double> waypoints_rad = degrees_to_radians(waypoints_deg);
+    // NOTE: Using very relaxed tolerance (200%) due to known acceleration bound violations
+    // in some integration points for trajectories with reversals (likely RSDK-12981).
+    // Some violations are ~10x beyond normal bounds at specific integration points.
+    //
+    // The goal of the test is to drive this tolerance down across many profiles.
+    trajectory_test_fixture fixture(6, 0.1);
+    fixture.validation_tolerance_percent = 200.0;
 
-    // Typical UR arm constraints (from working configuration)
-    trajectory::options opts;
-    opts.max_velocity = degrees_to_radians(xt::ones<double>({6}) * 150.0);    // 50 deg/s
-    opts.max_acceleration = degrees_to_radians(xt::ones<double>({6}) * 5.0);  // 150 deg/s^2
+    fixture.allow_any_events();
 
-    // Observer to log integration events
-    class test_observer final : public trajectory::integration_observer {
-       public:
-        void on_started_forward_integration(const trajectory&, started_forward_event event) override {
-            std::cout << "[FORWARD START] s=" << event.start.s << " s_dot=" << event.start.s_dot << "\n";
-        }
-        void on_hit_limit_curve(const trajectory&, limit_hit_event event) override {
-            std::cout << "[HIT LIMIT] s=" << event.breach.s << " s_dot=" << event.breach.s_dot << " acc_limit=" << event.s_dot_max_acc
-                      << " vel_limit=" << event.s_dot_max_vel << "\n";
-        }
-        void on_started_backward_integration(const trajectory&, started_backward_event event) override {
-            std::cout << "[BACKWARD START] s=" << event.start.s << " s_dot=" << event.start.s_dot << "\n";
-        }
-        void on_trajectory_extended(const trajectory& traj, splice_event) override {
-            std::cout << "[SPLICE] points=" << traj.get_integration_points().size() << " duration=" << traj.duration().count() << "s\n";
-        }
-    };
-
-    // Try incrementally longer subsets: [0,1], [0,1,2], [0,1,2,3], etc.
-    for (size_t num_waypoints = 2; num_waypoints <= waypoints_deg.shape(0); ++num_waypoints) {
-        BOOST_TEST_CONTEXT("Testing " << num_waypoints << " waypoints") {
-            // Extract subset
-            const xt::xarray<double> subset = xt::view(waypoints_rad, xt::range(0, num_waypoints), xt::all());
-
-            // Create path with blending to make it differentiable at waypoints
-            // Max deviation of 0.1 radians allows circular blends around sharp corners
-            path::options path_opts;
-            path_opts.set_max_deviation(0.1);
-            path p = path::create(subset, path_opts);
-
-            std::cout << "\n=== Testing " << num_waypoints << " waypoints (path length=" << static_cast<double>(p.length()) << ") ===\n";
-
-            // Add observer to track what's happening
-            test_observer observer;
-            opts.observer = &observer;
-
-            // NEW: Also try legacy trajectory generator for comparison
-            double legacy_duration = -1.0;
-            bool legacy_valid = false;
-            try {
-                // Convert waypoints to legacy format (std::list<Eigen::VectorXd>)
-                std::list<Eigen::VectorXd> legacy_waypoints;
-                for (size_t i = 0; i < num_waypoints; ++i) {
-                    Eigen::VectorXd wp(6);
-                    for (size_t j = 0; j < 6; ++j) {
-                        wp(static_cast<Eigen::Index>(j)) = subset(i, j);
-                    }
-                    legacy_waypoints.push_back(wp);
-                }
-
-                // Convert limits to Eigen format
-                Eigen::VectorXd legacy_max_vel(6);
-                Eigen::VectorXd legacy_max_acc(6);
-                for (size_t i = 0; i < 6; ++i) {
-                    legacy_max_vel(static_cast<Eigen::Index>(i)) = opts.max_velocity(i);
-                    legacy_max_acc(static_cast<Eigen::Index>(i)) = opts.max_acceleration(i);
-                }
-
-                // Create legacy path and trajectory
-                const Path legacy_path(legacy_waypoints, 0.1);  // maxDeviation=0.1
-                const Trajectory legacy_traj(legacy_path, legacy_max_vel, legacy_max_acc, 0.001);
-
-                if (legacy_traj.isValid()) {
-                    legacy_duration = legacy_traj.getDuration();
-                    legacy_valid = true;
-                    std::cout << "[LEGACY] duration=" << legacy_duration << "s\n";
-                } else {
-                    std::cout << "[LEGACY] FAILED: invalid trajectory\n";
-                }
-            } catch (const std::exception& e) {
-                std::cout << "[LEGACY] FAILED: " << e.what() << "\n";
-            }
-
-            try {
-                const trajectory traj = trajectory::create(std::move(p), opts);
-
-                // If we succeeded, verify basic properties
-                BOOST_CHECK(traj.duration().count() > 0.0);
-
-                // Verify we can sample it
-                auto sampler = uniform_sampler::quantized_for_trajectory(traj, hertz{5.0});
-                int sample_count = 0;
-                for (const auto& s : traj.samples(sampler)) {
-                    BOOST_CHECK_EQUAL(s.configuration.shape(0), 6U);
-                    ++sample_count;
-                }
-                BOOST_CHECK(sample_count > 0);
-
-                // Compare with legacy if it succeeded
-                if (legacy_valid) {
-                    const double new_duration = traj.duration().count();
-                    const double duration_ratio = new_duration / legacy_duration;
-                    const double duration_diff_percent = ((new_duration - legacy_duration) / legacy_duration) * 100.0;
-
-                    std::cout << "[COMPARISON] new=" << new_duration << "s, legacy=" << legacy_duration << "s, "
-                              << "ratio=" << duration_ratio << ", diff=" << duration_diff_percent << "%\n";
-
-                    BOOST_TEST_MESSAGE("Duration comparison: new=" << new_duration << "s vs legacy=" << legacy_duration << "s (ratio="
-                                                                   << duration_ratio << ", diff=" << duration_diff_percent << "%)");
-                }
-
-                BOOST_TEST_MESSAGE("PASS: Succeeded with " << num_waypoints << " waypoints");
-            } catch (const std::exception& e) {
-                // Log the failure and fail the test (but continue testing other waypoint counts)
-                BOOST_TEST_MESSAGE("FAIL: " << num_waypoints << " waypoints: " << e.what());
-                BOOST_CHECK_MESSAGE(false, "Failed to generate trajectory for " << num_waypoints << " waypoints: " << e.what());
-            }
-        }
+    // Only enable legacy comparison for up to 5 waypoints (legacy generator crashes on 6+)
+    if (num_waypoints <= 5) {
+        fixture.enable_legacy_comparison()
+            .set_legacy_path_tolerance(10.0)       // Allow 10% path difference (known discrepancy)
+            .set_legacy_duration_tolerance(10.0);  // Allow 10% duration difference
     }
+
+    fixture.set_max_velocity(profile.max_velocity).set_max_acceleration(profile.max_acceleration).set_max_deviation(0.1);
+
+    // Extract subset of waypoints for this iteration
+    const xt::xarray<double>& full_waypoints_deg = get_ur_arm_waypoints_with_reversals_deg();
+    const xt::xarray<double> subset_deg = xt::view(full_waypoints_deg, xt::range(0, num_waypoints), xt::all());
+    fixture.set_waypoints_deg(subset_deg);
+
+    // Create and validate (exploratory test - no specific event expectations)
+    const auto start_time = std::chrono::high_resolution_clock::now();
+    const trajectory traj = fixture.create_and_validate();
+    const auto end_time = std::chrono::high_resolution_clock::now();
+    const auto generation_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time).count();
+
+    // Log trajectory summary
+    const auto& integration_points = traj.get_integration_points();
+    const double path_length = integration_points.empty() ? 0.0 : static_cast<double>(integration_points.back().s);
+    std::cout << "  Path length: " << path_length << " rad\n";
+    std::cout << "  Duration: " << traj.duration().count() << " s\n";
+    std::cout << "  Integration points: " << integration_points.size() << "\n";
+    std::cout << "  Generation time: " << generation_time_ms << " ms\n";
+
+    // Compare generation time with legacy if available
+    if (fixture.legacy_generation_time_ms_.has_value()) {
+        const double time_ratio = static_cast<double>(generation_time_ms) / *fixture.legacy_generation_time_ms_;
+        const double time_diff_percent =
+            ((static_cast<double>(generation_time_ms) - *fixture.legacy_generation_time_ms_) / *fixture.legacy_generation_time_ms_) * 100.0;
+
+        std::cout << "[COMPARISON] Generation time: new=" << generation_time_ms << "ms, legacy=" << *fixture.legacy_generation_time_ms_
+                  << "ms, "
+                  << "ratio=" << time_ratio << ", diff=" << time_diff_percent << "%\n";
+    }
+
+    // Verify sampling works
+    auto sampler = uniform_sampler::quantized_for_trajectory(traj, hertz{5.0});
+    int sample_count = 0;
+    for (const auto& s : traj.samples(sampler)) {
+        BOOST_CHECK_EQUAL(s.configuration.shape(0), 6U);
+        ++sample_count;
+    }
+    BOOST_CHECK(sample_count > 0);
+
+    BOOST_TEST_MESSAGE("PASS: " << profile.name << " with " << num_waypoints << " waypoints, "
+                                << "duration=" << traj.duration().count() << "s, "
+                                << "points=" << traj.get_integration_points().size());
 }
 
 BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
@@ -905,7 +952,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
     // Set waypoints
     fixture.set_waypoints_deg({{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0}});
 
-    fixture.observer.expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
+    fixture.expectation_observer_->expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
         .expect_hit_limit(arc_length{0.718023},
                           arc_velocity{0.18827},
                           arc_velocity{0.15297},  // acc_limit
@@ -940,7 +987,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_vel_constrained) {
     // Set waypoints
     fixture.set_waypoints_deg({{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0}});
 
-    fixture.observer.expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
+    fixture.expectation_observer_->expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
         .expect_backward_start(arc_length{1.85532488}, arc_velocity{0}, trajectory::switching_point_kind::k_path_end)
         .expect_splice(trajectory::seconds{90.02000000}, size_t{101});
 
@@ -966,8 +1013,8 @@ BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_
     // Very high velocity limits (essentially unconstrained)
     // Very low acceleration limits (the actual constraint)
     fixture.enable_legacy_comparison()
-        .set_max_velocity(xt::xarray<double>{100.0, 100.0})
-        .set_max_acceleration(xt::xarray<double>{0.05, 0.05})
+        .set_max_velocity(xt::xarray<double>{0.165, 0.167})
+        .set_max_acceleration(xt::xarray<double>{0.05, 0.04})
         .set_max_deviation(0.05);  // Enable curves
 
     fixture.traj_opts.delta = trajectory::seconds{0.002};
@@ -977,7 +1024,7 @@ BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_
 
     // Expectations - looking for acceleration-constrained pattern:
     // forward_start -> hit_limit -> backward_start (NDE) -> splice -> forward_start -> backward_start (endpoint) -> splice
-    fixture.observer.expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
+    fixture.expectation_observer_->expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
         .expect_hit_limit()
         .expect_backward_start(std::nullopt, std::nullopt, trajectory::switching_point_kind::k_discontinuous_curvature)
         .expect_splice()
@@ -990,6 +1037,54 @@ BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_
         .expect_splice();
 
     const trajectory traj = fixture.create_and_validate();
+}
+
+BOOST_AUTO_TEST_CASE(trajectory_json_serialization) {
+    using namespace viam::trajex::totg;
+    using namespace viam::trajex::types;
+
+    // Create simple path with 3 waypoints
+    const xt::xarray<double> waypoints = {{0.0, 0.0, 0.0}, {1.0, 1.0, 1.0}, {2.0, 0.0, 0.0}};
+
+    path p = path::create(waypoints, path::options{});
+
+    // Attach collector
+    trajectory_integration_event_collector collector;
+    trajectory::options opts;
+    opts.max_velocity = xt::ones<double>({3}) * 1.0;
+    opts.max_acceleration = xt::ones<double>({3}) * 1.0;
+    opts.observer = &collector;
+
+    // Generate trajectory
+    const trajectory traj = trajectory::create(std::move(p), opts);
+
+    // Serialize to JSON
+    const std::string json = serialize_trajectory_to_json(traj, collector);
+
+    // Validate JSON structure
+    const Json::CharReaderBuilder reader;
+    Json::Value root;
+    std::istringstream ss(json);
+    BOOST_REQUIRE(Json::parseFromStream(reader, ss, &root, nullptr));
+
+    // Check metadata
+    BOOST_REQUIRE(root.isMember("metadata"));
+    BOOST_REQUIRE(root["metadata"]["dof"].asInt() == 3);
+    BOOST_REQUIRE(root["metadata"].isMember("duration"));
+
+    // Check integration_points structure
+    BOOST_REQUIRE(root.isMember("integration_points"));
+    BOOST_REQUIRE(root["integration_points"]["time"].isArray());
+    BOOST_REQUIRE(root["integration_points"]["s"].isArray());
+
+    // Check events structure
+    BOOST_REQUIRE(root.isMember("events"));
+    BOOST_REQUIRE(root["events"]["forward_starts"].isArray());
+    BOOST_REQUIRE(root["events"]["backward_starts"].isArray());
+
+    // Should have at least 1 forward start and 1 backward start
+    BOOST_CHECK_GT(root["events"]["forward_starts"].size(), 0);
+    BOOST_CHECK_GT(root["events"]["backward_starts"].size(), 0);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

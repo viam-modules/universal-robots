@@ -1,8 +1,91 @@
 #pragma once
 
+#include <memory>
+#include <vector>
+
 #include <viam/trajex/totg/trajectory.hpp>
 
 namespace viam::trajex::totg {
+
+///
+/// Observer that dispatches integration events to multiple observers.
+///
+/// Allows attaching multiple observers to a single trajectory generation,
+/// useful for combining expectation checking with data collection for
+/// visualization or debugging.
+///
+/// @code
+/// composite_integration_observer composite;
+/// composite.add_observer(std::make_shared<some_integration_observer>());
+/// composite.add_observer(std::make_shared<another_integration_observer>());
+/// options.observer = &composite;
+/// @endcode
+///
+class composite_integration_observer final : public trajectory::integration_observer {
+   public:
+    ///
+    /// Constructs an empty composite observer.
+    ///
+    composite_integration_observer();
+
+    ///
+    /// Destructor.
+    ///
+    ~composite_integration_observer() override;
+
+    ///
+    /// Adds an observer to receive events.
+    ///
+    /// Observers are called in the order they are added. Returns the observer
+    /// to allow capturing it when adding inline.
+    ///
+    /// @tparam T Observer type, must derive from integration_observer
+    /// @param observer Observer to add
+    /// @return The observer that was added
+    /// @throws std::invalid_argument if observer is null
+    /// @throws std::runtime_error if called while dispatching events (re-entrant call)
+    ///
+    template <std::derived_from<integration_observer> T>
+    std::shared_ptr<T> add_observer(std::shared_ptr<T> observer);
+
+    ///
+    /// Dispatches forward integration start to all observers.
+    ///
+    /// @param traj Trajectory being integrated
+    /// @param event Forward integration start event
+    ///
+    void on_started_forward_integration(const trajectory& traj, started_forward_event event) override;
+
+    ///
+    /// Dispatches limit curve hit to all observers.
+    ///
+    /// @param traj Trajectory being integrated
+    /// @param event Limit curve hit event
+    ///
+    void on_hit_limit_curve(const trajectory& traj, limit_hit_event event) override;
+
+    ///
+    /// Dispatches backward integration start to all observers.
+    ///
+    /// @param traj Trajectory being integrated
+    /// @param event Backward integration start event
+    ///
+    void on_started_backward_integration(const trajectory& traj, started_backward_event event) override;
+
+    ///
+    /// Dispatches trajectory splice to all observers.
+    ///
+    /// @param traj Trajectory being integrated
+    /// @param event Trajectory splice event
+    ///
+    void on_trajectory_extended(const trajectory& traj, splice_event event) override;
+
+   private:
+    void add_observer_(std::shared_ptr<integration_observer> observer);
+
+    std::vector<std::shared_ptr<integration_observer>> observers_;
+    bool dispatching_ = false;
+};
 
 ///
 /// Observer that collects all integration events for later inspection.
@@ -79,5 +162,11 @@ class trajectory_integration_event_collector final : public trajectory::integrat
    private:
     std::vector<event> events_;
 };
+
+template <std::derived_from<trajectory::integration_observer> T>
+std::shared_ptr<T> composite_integration_observer::add_observer(std::shared_ptr<T> observer) {
+    add_observer_(observer);
+    return observer;
+}
 
 }  // namespace viam::trajex::totg
