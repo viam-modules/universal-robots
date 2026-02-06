@@ -32,7 +32,7 @@ using viam::trajex::arc_length;
 using viam::trajex::arc_velocity;
 using viam::trajex::degrees_to_radians;
 
-constexpr bool k_log_met_expectations = true;
+constexpr bool k_log_met_expectations = false;
 
 trajectory create_trajectory_with_integration_points(path p, std::vector<trajectory::integration_point> points) {
     const trajectory::options opts{.max_velocity = xt::ones<double>({p.dof()}), .max_acceleration = xt::ones<double>({p.dof()})};
