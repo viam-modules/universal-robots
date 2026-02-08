@@ -61,11 +61,23 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Dependencies
 #
 
-find_package(Eigen3 CONFIG REQUIRED)
-find_package(xtl CONFIG REQUIRED)
-find_package(xtensor CONFIG REQUIRED)
-find_package(Boost CONFIG REQUIRED COMPONENTS headers)
-find_package(jsoncpp CONFIG REQUIRED)
+# Guard find_package calls so they're skipped when consumed via
+# FetchContent from a parent project that already found these.
+if(NOT TARGET Eigen3::Eigen)
+  find_package(Eigen3 CONFIG REQUIRED)
+endif()
+if(NOT TARGET xtl)
+  find_package(xtl CONFIG REQUIRED)
+endif()
+if(NOT TARGET xtensor)
+  find_package(xtensor CONFIG REQUIRED)
+endif()
+if(NOT TARGET Boost::boost)
+  find_package(Boost CONFIG REQUIRED COMPONENTS headers)
+endif()
+if(NOT TARGET jsoncpp_lib)
+  find_package(jsoncpp CONFIG REQUIRED)
+endif()
 
 
 #

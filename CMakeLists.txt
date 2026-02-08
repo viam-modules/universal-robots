@@ -164,74 +164,17 @@ find_package(Boost CONFIG REQUIRED
     headers
 )
 
+FetchContent_Declare(
+  trajex
+  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex
+)
+FetchContent_MakeAvailable(trajex)
+
 enable_testing()
 
 #
 # Declare targets
 #
-
-add_library(trajectories)
-
-set_target_properties(trajectories PROPERTIES SYSTEM TRUE)
-
-target_sources(trajectories
-  PRIVATE
-    src/third_party/trajectories/Trajectory.cpp
-    src/third_party/trajectories/Path.cpp
-)
-
-target_include_directories(trajectories
-  INTERFACE
-    src
-)
-
-target_precompile_headers(trajectories PRIVATE <assert.h>)
-
-target_link_libraries(trajectories
-  PUBLIC
-    Eigen3::Eigen
-)
-
-install(
-  TARGETS
-    trajectories
-)
-
-
-add_library(trajex)
-
-target_sources(trajex
-  PRIVATE
-    src/viam/trajex/trajex.cpp
-    src/viam/trajex/totg/json_serialization.cpp
-    src/viam/trajex/totg/observers.cpp
-    src/viam/trajex/totg/path.cpp
-    src/viam/trajex/totg/trajectory.cpp
-    src/viam/trajex/totg/uniform_sampler.cpp
-    src/viam/trajex/totg/waypoint_accumulator.cpp
-)
-
-target_include_directories(trajex
-  PUBLIC
-    src
-)
-
-target_link_libraries(trajex
-  PUBLIC
-    xtensor
-    xtl
-  PRIVATE
-    Boost::boost
-    jsoncpp_lib
-)
-
-apply_wall_werror(trajex)
-
-install(
-  TARGETS
-    trajex
-)
-
 
 add_library(viam-ur)
 
@@ -296,8 +239,8 @@ target_compile_definitions(viam-ur
 
 target_link_libraries(viam-ur
   PUBLIC
-    trajectories
-    trajex
+    trajex_totg_legacy
+    trajex_totg
     urcl
     viam-cpp-sdk::viamapi # Proxy for gRPC
     viam-cpp-sdk::viamsdk
@@ -350,64 +293,6 @@ add_test(
   NAME universal-robots
   COMMAND universal-robots-test
 )
-
-add_executable(trajex-test)
-
-target_sources(trajex-test
-  PRIVATE
-    src/viam/trajex/totg/test/main.cpp
-    src/viam/trajex/totg/test/test_utils.cpp
-    src/viam/trajex/totg/test/waypoint_accumulator.cpp
-    src/viam/trajex/totg/test/path_basic.cpp
-    src/viam/trajex/totg/test/path_coalescing.cpp
-    src/viam/trajex/totg/test/path_blends.cpp
-    src/viam/trajex/totg/test/path_segments.cpp
-    src/viam/trajex/totg/test/path_cursor.cpp
-    src/viam/trajex/totg/test/trajectory.cpp
-    src/viam/trajex/totg/test/uniform_sampler.cpp
-    src/viam/trajex/totg/test/integration.cpp
-    src/viam/trajex/totg/test/observers.cpp
-)
-
-target_link_libraries(trajex-test
-  PRIVATE
-    trajex
-    Boost::boost
-    trajectories
-    jsoncpp_lib
-)
-
-apply_wall_werror(trajex-test)
-
-add_test(
-  NAME trajex
-  COMMAND trajex-test
-)
-
-add_executable(trajex-types-test)
-
-target_sources(trajex-types-test
-  PRIVATE
-    src/viam/trajex/types/test.cpp
-)
-
-target_include_directories(trajex-types-test
-  PRIVATE
-    src
-)
-
-target_link_libraries(trajex-types-test
-  PRIVATE
-    Boost::boost
-)
-
-apply_wall_werror(trajex-types-test)
-
-add_test(
-  NAME trajex-types
-  COMMAND trajex-types-test
-)
-
 
 #
 # Installation and packaging
