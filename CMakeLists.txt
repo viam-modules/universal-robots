@@ -239,8 +239,8 @@ target_compile_definitions(viam-ur
 
 target_link_libraries(viam-ur
   PUBLIC
-    trajex_totg_legacy
-    trajex_totg
+    viam::trajex::totg-legacy
+    viam::trajex::totg
     urcl
     viam-cpp-sdk::viamapi # Proxy for gRPC
     viam-cpp-sdk::viamsdk

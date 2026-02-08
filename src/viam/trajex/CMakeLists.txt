@@ -156,7 +156,7 @@ if(VIAM_TRAJEX_BUILD_SERVICE)
 
   target_link_libraries(trajex-service
     PRIVATE
-      trajex_totg
+      viam::trajex::totg
       viam-cpp-sdk::viamsdk
   )
 
@@ -190,9 +190,9 @@ target_sources(trajex-test
 
 target_link_libraries(trajex-test
   PRIVATE
-    trajex_totg
+    viam::trajex::totg
     Boost::boost
-    trajex_totg_legacy
+    viam::trajex::totg-legacy
     jsoncpp_lib
 )
 
