@@ -61,20 +61,14 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Dependencies
 #
 
-# Guard find_package calls so they're skipped when consumed via
-# FetchContent from a parent project that already found these.
-if(NOT TARGET Eigen3::Eigen)
-  find_package(Eigen3 CONFIG REQUIRED)
-endif()
-if(NOT TARGET xtl)
-  find_package(xtl CONFIG REQUIRED)
-endif()
-if(NOT TARGET xtensor)
-  find_package(xtensor CONFIG REQUIRED)
-endif()
-if(NOT TARGET Boost::boost)
-  find_package(Boost CONFIG REQUIRED COMPONENTS headers)
-endif()
+find_package(Eigen3 CONFIG REQUIRED)
+find_package(xtl CONFIG REQUIRED)
+find_package(xtensor CONFIG REQUIRED)
+find_package(Boost CONFIG REQUIRED COMPONENTS headers)
+
+# jsoncppConfig.cmake doesn't guard against re-import, so a second
+# find_package creates a duplicate imported target and fails. Guard it
+# for the FetchContent case where the parent already found jsoncpp.
 if(NOT TARGET jsoncpp_lib)
   find_package(jsoncpp CONFIG REQUIRED)
 endif()
@@ -143,6 +137,31 @@ target_link_libraries(trajex_totg
 apply_wall_werror(trajex_totg)
 
 add_library(viam::trajex::totg ALIAS trajex_totg)
+
+
+#
+# Optional service layer
+#
+
+option(VIAM_TRAJEX_BUILD_SERVICE "Build Viam MLModelService wrapper" OFF)
+
+if(VIAM_TRAJEX_BUILD_SERVICE)
+  if(NOT TARGET viam-cpp-sdk::viamsdk)
+    find_package(viam-cpp-sdk CONFIG REQUIRED viamsdk)
+  endif()
+
+  add_executable(trajex-service
+    src/viam/trajex/service/main.cpp
+  )
+
+  target_link_libraries(trajex-service
+    PRIVATE
+      trajex_totg
+      viam-cpp-sdk::viamsdk
+  )
+
+  apply_wall_werror(trajex-service)
+endif()
 
 
 #
