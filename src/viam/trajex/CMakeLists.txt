@@ -79,36 +79,36 @@ endif()
 #
 
 # Legacy target: reference implementation from third_party/trajectories submodule
-add_library(trajex_totg_legacy)
+add_library(viam-trajex-totg-legacy)
 
-set_target_properties(trajex_totg_legacy PROPERTIES SYSTEM TRUE)
+set_target_properties(viam-trajex-totg-legacy PROPERTIES SYSTEM TRUE)
 
-target_sources(trajex_totg_legacy
+target_sources(viam-trajex-totg-legacy
   PRIVATE
     src/third_party/trajectories/Trajectory.cpp
     src/third_party/trajectories/Path.cpp
 )
 
-target_include_directories(trajex_totg_legacy
+target_include_directories(viam-trajex-totg-legacy
   INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     $<INSTALL_INTERFACE:include>
 )
 
-target_precompile_headers(trajex_totg_legacy PRIVATE <assert.h>)
+target_precompile_headers(viam-trajex-totg-legacy PRIVATE <assert.h>)
 
-target_link_libraries(trajex_totg_legacy
+target_link_libraries(viam-trajex-totg-legacy
   PUBLIC
     Eigen3::Eigen
 )
 
-add_library(viam::trajex::totg-legacy ALIAS trajex_totg_legacy)
+add_library(viam::trajex::totg-legacy ALIAS viam-trajex-totg-legacy)
 
 
 # Core target: TOTG implementation
-add_library(trajex_totg)
+add_library(viam-trajex-totg)
 
-target_sources(trajex_totg
+target_sources(viam-trajex-totg
   PRIVATE
     src/viam/trajex/trajex.cpp
     src/viam/trajex/totg/json_serialization.cpp
@@ -119,13 +119,13 @@ target_sources(trajex_totg
     src/viam/trajex/totg/waypoint_accumulator.cpp
 )
 
-target_include_directories(trajex_totg
+target_include_directories(viam-trajex-totg
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(trajex_totg
+target_link_libraries(viam-trajex-totg
   PUBLIC
     xtensor
     xtl
@@ -134,9 +134,9 @@ target_link_libraries(trajex_totg
     jsoncpp_lib
 )
 
-apply_wall_werror(trajex_totg)
+apply_wall_werror(viam-trajex-totg)
 
-add_library(viam::trajex::totg ALIAS trajex_totg)
+add_library(viam::trajex::totg ALIAS viam-trajex-totg)
 
 
 #
@@ -238,8 +238,8 @@ include(GNUInstallDirs)
 # Install runtime libraries for module packaging
 install(
   TARGETS
-    trajex_totg_legacy
-    trajex_totg
+  viam-trajex-totg-legacy
+  viam-trajex-totg
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
