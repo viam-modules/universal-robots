@@ -13,6 +13,7 @@
 #include <boost/accumulators/statistics/stats.hpp>
 #include <boost/accumulators/statistics/variance.hpp>
 #include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/split.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
 #include <boost/io/ostream_joiner.hpp>
@@ -103,7 +104,7 @@ URArm::state_::state_(private_,
                       std::optional<vector6d_t> max_velocity_limits,
                       std::optional<vector6d_t> max_acceleration_limits,
                       double trajectory_sampling_freq_hz,
-                      bool telemetry_output_path_append_traceid,
+                      std::string telemetry_output_path_append_traceid_template,
                       const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
       resource_name_{std::move(resource_name)},
@@ -122,7 +123,7 @@ URArm::state_::state_(private_,
       max_velocity_limits_(std::move(max_velocity_limits)),
       max_acceleration_limits_(std::move(max_acceleration_limits)),
       trajectory_sampling_freq_hz_(trajectory_sampling_freq_hz),
-      telemetry_output_path_append_traceid_(telemetry_output_path_append_traceid) {}
+      telemetry_output_path_append_traceid_template_(std::move(telemetry_output_path_append_traceid_template)) {}
 
 URArm::state_::~state_() {
     shutdown();
@@ -193,8 +194,20 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     const double trajectory_sampling_freq_hz =
         find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(URArm::k_default_trajectory_sampling_freq_hz);
 
-    const bool telemetry_output_path_append_traceid =
-        find_config_attribute<bool>(config, "telemetry_output_path_append_traceid").value_or(false);
+    // Parse `telemetry_output_path_append_traceid` — accepts bool (backward compat) or template string with {trace_id}
+    const auto telemetry_output_path_append_traceid_template = [&]() -> std::string {
+        const auto it = config.attributes().find("telemetry_output_path_append_traceid");
+        if (it == config.attributes().end()) {
+            return {};
+        }
+        if (const auto* s = it->second.get<std::string>()) {
+            return *s;
+        }
+        if (const auto* b = it->second.get<bool>(); b && *b) {
+            return "{trace_id}";
+        }
+        return {};
+    }();
 
     // Look for the optional settings to place an upper bound on what velocity and acceleration limits may be
     // configured, or set via DoCommand or applied via MoveOptions. Note that the parse/validate function automatically
@@ -227,7 +240,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           std::move(max_velocity_limits),
                                           std::move(max_acceleration_limits),
                                           trajectory_sampling_freq_hz,
-                                          telemetry_output_path_append_traceid,
+                                          telemetry_output_path_append_traceid_template,
                                           ports);
 
     state->set_velocity_limits(parse_and_validate_joint_limits(config, "speed_degs_per_sec"));
@@ -332,8 +345,8 @@ URArm::state_::tcp_state_snapshot URArm::state_::read_tcp_state_snapshot() const
 }
 
 std::filesystem::path URArm::state_::telemetry_output_path() const {
-    // If trace-id appending is not enabled, return the base path
-    if (!telemetry_output_path_append_traceid_) {
+    // If no template is set, trace-id appending is disabled
+    if (telemetry_output_path_append_traceid_template_.empty()) {
         return telemetry_output_path_;
     }
 
@@ -356,8 +369,9 @@ std::filesystem::path URArm::state_::telemetry_output_path() const {
         return telemetry_output_path_;
     }
 
-    // Append trace-id as a subdirectory
-    auto result = telemetry_output_path_ / *trace_id;
+    // Expand the template by replacing {trace_id} with the actual trace-id
+    auto expanded = boost::replace_all_copy(telemetry_output_path_append_traceid_template_, "{trace_id}", *trace_id);
+    auto result = telemetry_output_path_ / expanded;
 
     // Ensure the directory exists before returning
     std::error_code ec;
@@ -383,8 +397,8 @@ const std::string& URArm::state_::resource_name() const {
     return resource_name_;
 }
 
-bool URArm::state_::telemetry_output_path_append_traceid() const {
-    return telemetry_output_path_append_traceid_;
+const std::string& URArm::state_::telemetry_output_path_append_traceid() const {
+    return telemetry_output_path_append_traceid_template_;
 }
 
 vector6d_t URArm::state_::set_velocity_limits(vector6d_t velocity) {
