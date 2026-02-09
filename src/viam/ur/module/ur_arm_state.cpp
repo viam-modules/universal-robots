@@ -12,9 +12,6 @@
 #include <boost/accumulators/statistics/median.hpp>
 #include <boost/accumulators/statistics/stats.hpp>
 #include <boost/accumulators/statistics/variance.hpp>
-#include <boost/algorithm/string/classification.hpp>
-#include <boost/algorithm/string/replace.hpp>
-#include <boost/algorithm/string/split.hpp>
 #include <boost/dll/runtime_symbol_info.hpp>
 #include <boost/io/ostream_joiner.hpp>
 #include <boost/range/adaptor/transformed.hpp>
@@ -27,45 +24,6 @@
 #include "utils.hpp"
 
 namespace {
-
-// Extracts trace-id from W3C Trace Context traceparent header.
-// Format: <version>-<trace-id>-<parent-id>-<trace-flags>
-// Example: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
-// Returns std::nullopt if parsing fails or format is invalid.
-std::optional<std::string> extract_trace_id_from_traceparent(std::string_view traceparent) {
-    std::vector<std::string_view> parts;
-    boost::split(parts, traceparent, boost::is_any_of("-"));
-
-    // W3C Trace Context format requires exactly 4 components
-    if (parts.size() != 4) {
-        return std::nullopt;
-    }
-
-    // Validate version field (parts[0]) - should be "00" for current spec
-    if (parts[0] != "00") {
-        return std::nullopt;
-    }
-
-    // Validate trace-id (parts[1]) - must be 32 hex characters
-    if (parts[1].size() != 32) {
-        return std::nullopt;
-    }
-
-    // Validate parent-id (parts[2]) - must be 16 hex characters
-    if (parts[2].size() != 16) {
-        return std::nullopt;
-    }
-
-    // Validate trace-flags (parts[3]) - must be 2 hex characters
-    if (parts[3].size() != 2) {
-        return std::nullopt;
-    }
-
-    // Could add validation that characters are actually hex, but not strictly necessary
-    // since an invalid trace-id subdirectory name is harmless
-
-    return std::string(parts[1]);
-}
 
 void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::string& unix_time, std::size_t attempt) {
     of << unix_time << "," << attempt << ",";
@@ -370,8 +328,7 @@ std::filesystem::path URArm::state_::telemetry_output_path() const {
     }
 
     // Expand the template by replacing {trace_id} with the actual trace-id
-    auto expanded = boost::replace_all_copy(telemetry_output_path_append_traceid_template_, "{trace_id}", *trace_id);
-    auto result = telemetry_output_path_ / expanded;
+    auto result = expand_telemetry_path(telemetry_output_path_, telemetry_output_path_append_traceid_template_, *trace_id);
 
     // Ensure the directory exists before returning
     std::error_code ec;

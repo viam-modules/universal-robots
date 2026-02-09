@@ -5,6 +5,9 @@
 #include <ur_client_library/log.h>
 
 #include <Eigen/Dense>
+#include <boost/algorithm/string/classification.hpp>
+#include <boost/algorithm/string/replace.hpp>
+#include <boost/algorithm/string/split.hpp>
 #include <boost/format.hpp>
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/resource/resource.hpp>
@@ -245,4 +248,43 @@ vector6d_t parse_and_validate_joint_limits(const viam::sdk::ResourceConfig& cfg,
         throw std::invalid_argument(str(format("`%1%` is required") % param_name));
     }
     return parse_and_validate_joint_limits(key->second, param_name);
+}
+
+std::optional<std::string> extract_trace_id_from_traceparent(std::string_view traceparent) {
+    std::vector<std::string_view> parts;
+    boost::split(parts, traceparent, boost::is_any_of("-"));
+
+    // W3C Trace Context format requires exactly 4 components
+    if (parts.size() != 4) {
+        return std::nullopt;
+    }
+
+    // Validate version field (parts[0]) - should be "00" for current spec
+    if (parts[0] != "00") {
+        return std::nullopt;
+    }
+
+    // Validate trace-id (parts[1]) - must be 32 hex characters
+    if (parts[1].size() != 32) {
+        return std::nullopt;
+    }
+
+    // Validate parent-id (parts[2]) - must be 16 hex characters
+    if (parts[2].size() != 16) {
+        return std::nullopt;
+    }
+
+    // Validate trace-flags (parts[3]) - must be 2 hex characters
+    if (parts[3].size() != 2) {
+        return std::nullopt;
+    }
+
+    return std::string(parts[1]);
+}
+
+std::filesystem::path expand_telemetry_path(const std::filesystem::path& base_path,
+                                            const std::string& traceid_template,
+                                            const std::string& trace_id) {
+    auto expanded = boost::replace_all_copy(traceid_template, "{trace_id}", trace_id);
+    return base_path / expanded;
 }
