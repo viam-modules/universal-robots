@@ -15,7 +15,7 @@
 	docker-arm64-ci \
 	docker-amd64-ci
 
-SOURCE_FILES := $(shell find src/viam/ur/module src/viam/trajex -type f \( -name '*.cpp' -o -name '*.hpp' \))
+SOURCE_FILES := $(shell find src/viam/ur/module src/viam/trajex/src/viam -type f \( -name '*.cpp' -o -name '*.hpp' \))
 CPP_FILES := $(filter %.cpp,$(SOURCE_FILES))
 
 default: module.tar.gz
