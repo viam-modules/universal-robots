@@ -255,8 +255,20 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
         }
     }
 
-    // Validate telemetry_output_path_append_traceid is a bool if present
-    find_config_attribute<bool>(cfg, "telemetry_output_path_append_traceid");
+    // Validate telemetry_output_path_append_traceid: accepts bool (backward compat) or template string containing {trace_id}
+    {
+        const auto it = cfg.attributes().find("telemetry_output_path_append_traceid");
+        if (it != cfg.attributes().end()) {
+            if (const auto* s = it->second.get<std::string>()) {
+                if (s->find("{trace_id}") == std::string::npos) {
+                    throw std::invalid_argument("`telemetry_output_path_append_traceid` template string must contain `{trace_id}`");
+                }
+            } else if (!it->second.get<bool>()) {
+                throw std::invalid_argument(
+                    "`telemetry_output_path_append_traceid` must be a boolean or a template string containing `{trace_id}`");
+            }
+        }
+    }
 
     return {};
 }

@@ -33,7 +33,7 @@ class URArm::state_ {
                     std::optional<vector6d_t> max_velocity_limits,
                     std::optional<vector6d_t> max_acceleration_limits,
                     double trajectory_sampling_freq_hz,
-                    bool telemetry_output_path_append_traceid,
+                    std::string telemetry_output_path_append_traceid_template,
                     const struct ports_& ports);
     ~state_();
 
@@ -60,7 +60,7 @@ class URArm::state_ {
     const std::filesystem::path& urcl_resource_root() const;
 
     const std::string& resource_name() const;
-    bool telemetry_output_path_append_traceid() const;
+    const std::string& telemetry_output_path_append_traceid() const;
 
     // All values here are in radians/s.
     vector6d_t set_velocity_limits(vector6d_t velocity);
@@ -410,7 +410,7 @@ class URArm::state_ {
     const std::optional<vector6d_t> max_velocity_limits_;
     const std::optional<vector6d_t> max_acceleration_limits_;
     const double trajectory_sampling_freq_hz_;
-    const bool telemetry_output_path_append_traceid_;
+    const std::string telemetry_output_path_append_traceid_template_;
 
     mutable std::mutex mutex_;
     state_variant_ current_state_{state_disconnected_{}};

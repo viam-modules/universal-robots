@@ -34,7 +34,7 @@ The following attributes are available for `viam:universal-robots` arms:
 | `reject_move_request_threshold_deg` | float | Optional | Rejects move requests when the difference between the current position and first waypoint is above threshold |
 | `robot_control_freq_hz` | float | Optional | Sets the processing frequency for communication with the arm in cycles/second. If the machine running this model is using WiFi, we recommend configuring this to a lower frequency, such as 10 Hz. **Default 100 Hz** |
 | `telemetry_output_path` | string | Optional | Path for writing telemetry data files (waypoints, trajectories, joint positions, failure diagnostics). Files are written in CSV and JSON formats with ISO8601 timestamps. **Default: VIAM_MODULE_DATA environment variable** |
-| `telemetry_output_path_append_traceid` | bool | Optional | When true, appends the trace ID from the current span to the telemetry output path, creating a subdirectory for each trace. Useful for organizing telemetry data by request when distributed tracing is enabled. **Default: false** |
+| `telemetry_output_path_append_traceid` | bool or string | Optional | Controls whether and how the trace ID from the current span is appended to the telemetry output path. When set to `true`, appends the raw trace ID as a subdirectory. When set to a template string containing `{trace_id}`, the placeholder is replaced with the actual trace ID, giving full control over the subdirectory name (e.g. `"tag={trace_id}"`, `"{trace_id}-run"`, `"traces/{trace_id}/data"`). **Default: false** |
 
 ### Example configurations:
 
@@ -85,6 +85,17 @@ The following attributes are available for `viam:universal-robots` arms:
     "acceleration_degs_per_sec2": 8,
     "telemetry_output_path": "/var/log/arm_telemetry",
     "telemetry_output_path_append_traceid": true
+}
+```
+
+#### Telemetry output with custom trace ID template
+```json
+{
+    "host": "10.1.10.84",
+    "speed_degs_per_sec": 120,
+    "acceleration_degs_per_sec2": 8,
+    "telemetry_output_path": "/var/log/arm_telemetry",
+    "telemetry_output_path_append_traceid": "trace-{trace_id}"
 }
 ```
 

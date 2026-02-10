@@ -919,6 +919,75 @@ BOOST_AUTO_TEST_CASE(test_deduplicate_linf_norm) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
+BOOST_AUTO_TEST_SUITE(telemetry_output_path_tests)
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_valid) {
+    const auto result = extract_trace_id_from_traceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
+    BOOST_REQUIRE(result.has_value());
+    BOOST_CHECK_EQUAL(*result, "0af7651916cd43dd8448eb211c80319c");
+}
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_wrong_version) {
+    BOOST_CHECK(!extract_trace_id_from_traceparent("01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"));
+}
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_too_few_parts) {
+    BOOST_CHECK(!extract_trace_id_from_traceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331"));
+}
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_bad_trace_id_length) {
+    BOOST_CHECK(!extract_trace_id_from_traceparent("00-shortid-b7ad6b7169203331-01"));
+}
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_bad_parent_id_length) {
+    BOOST_CHECK(!extract_trace_id_from_traceparent("00-0af7651916cd43dd8448eb211c80319c-short-01"));
+}
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_bad_flags_length) {
+    BOOST_CHECK(!extract_trace_id_from_traceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-001"));
+}
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_empty_string) {
+    BOOST_CHECK(!extract_trace_id_from_traceparent(""));
+}
+
+BOOST_AUTO_TEST_CASE(test_expand_telemetry_path_default_template) {
+    // When `telemetry_output_path_append_traceid` is `true`, the template is "{trace_id}"
+    const std::filesystem::path base = "/viam_home/capture";
+    const auto result = expand_telemetry_path(base, "{trace_id}", "0af7651916cd43dd8448eb211c80319c");
+    BOOST_CHECK_EQUAL(result, std::filesystem::path("/viam_home/capture/0af7651916cd43dd8448eb211c80319c"));
+}
+
+BOOST_AUTO_TEST_CASE(test_expand_telemetry_path_tag_prefix) {
+    // User's example: tag={trace_id} as the template
+    const std::filesystem::path base = "/viam_home/capture";
+    const auto result = expand_telemetry_path(base, "tag={trace_id}", "0af7651916cd43dd8448eb211c80319c");
+    BOOST_CHECK_EQUAL(result, std::filesystem::path("/viam_home/capture/tag=0af7651916cd43dd8448eb211c80319c"));
+}
+
+BOOST_AUTO_TEST_CASE(test_expand_telemetry_path_prefix_and_suffix) {
+    const std::filesystem::path base = "/data/telemetry";
+    const auto result = expand_telemetry_path(base, "trace-{trace_id}-run", "0af7651916cd43dd8448eb211c80319c");
+    BOOST_CHECK_EQUAL(result, std::filesystem::path("/data/telemetry/trace-0af7651916cd43dd8448eb211c80319c-run"));
+}
+
+BOOST_AUTO_TEST_CASE(test_expand_telemetry_path_nested_subdirectory) {
+    const std::filesystem::path base = "/data";
+    const auto result = expand_telemetry_path(base, "traces/{trace_id}/data", "0af7651916cd43dd8448eb211c80319c");
+    BOOST_CHECK_EQUAL(result, std::filesystem::path("/data/traces/0af7651916cd43dd8448eb211c80319c/data"));
+}
+
+BOOST_AUTO_TEST_CASE(test_expand_telemetry_path_with_filename) {
+    // Verifying the user's full example: $VIAM_HOME/capture/tag={trace-id}/some_file.ex1
+    // The expand_telemetry_path produces the directory; the filename is appended by callers
+    const std::filesystem::path base = "/viam_home/capture";
+    const auto dir = expand_telemetry_path(base, "tag={trace_id}", "0af7651916cd43dd8448eb211c80319c");
+    const auto full_path = dir / "some_file.ex1";
+    BOOST_CHECK_EQUAL(full_path, std::filesystem::path("/viam_home/capture/tag=0af7651916cd43dd8448eb211c80319c/some_file.ex1"));
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
 BOOST_AUTO_TEST_SUITE(failed_trajectory_tests)
 
 BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
