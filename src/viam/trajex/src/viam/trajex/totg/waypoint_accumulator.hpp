@@ -32,12 +32,25 @@ namespace viam::trajex::totg {
 class waypoint_accumulator {
    public:
     ///
+    /// View type for individual waypoints.
+    ///
+    using waypoint_view_t = decltype(xt::view(std::declval<const xt::xarray<double>&>(), std::declval<size_t>(), xt::all()));
+
+    ///
     /// Constructs with initial waypoints.
     ///
     /// @param waypoints 2D array (num_waypoints, num_joints)
     /// @note The waypoints array must outlive the waypoint_accumulator object
     ///
     explicit waypoint_accumulator(const xt::xarray<double>& waypoints);
+
+    ///
+    /// Constructs with a single waypoint view.
+    ///
+    /// @param first_waypoint View to first waypoint (establishes DOF)
+    /// @note The underlying array must outlive the waypoint_accumulator object
+    ///
+    explicit waypoint_accumulator(const waypoint_view_t& first_waypoint);
 
     ///
     /// Move constructs a waypoint_accumulator.
@@ -65,6 +78,16 @@ class waypoint_accumulator {
     waypoint_accumulator& add_waypoints(const xt::xarray<double>& waypoints);
 
     ///
+    /// Adds a single waypoint view.
+    ///
+    /// @param waypoint View to waypoint to add
+    /// @return Reference to this for method chaining
+    /// @throws std::invalid_argument if waypoint DOF doesn't match
+    /// @note The underlying array must outlive the waypoint_accumulator object
+    ///
+    waypoint_accumulator& add_waypoint(const waypoint_view_t& waypoint);
+
+    ///
     /// Gets the number of degrees of freedom.
     ///
     /// @return Number of DOF
@@ -84,11 +107,6 @@ class waypoint_accumulator {
     /// @return True if no waypoints
     ///
     bool empty() const noexcept;
-
-    ///
-    /// View type for individual waypoints.
-    ///
-    using waypoint_view_t = decltype(xt::view(std::declval<const xt::xarray<double>&>(), std::declval<size_t>(), xt::all()));
 
     ///
     /// Iterator type for waypoint views.

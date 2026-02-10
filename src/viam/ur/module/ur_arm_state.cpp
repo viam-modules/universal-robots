@@ -774,7 +774,7 @@ void URArm::state_::program_running_callback_(bool running) {
 
 vector6d_t URArm::state_::clamp_limits_(vector6d_t desired, const std::optional<vector6d_t>& limits) {
     if (limits) {
-        std::ranges::transform(desired, *limits, begin(desired), [](auto d, auto l) { return std::min(d, l); });
+        std::ranges::transform(desired, *limits, begin(desired), [](auto dd, auto ll) { return std::min(dd, ll); });
     }
     return desired;
 }

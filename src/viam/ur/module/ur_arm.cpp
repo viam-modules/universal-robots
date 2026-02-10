@@ -45,7 +45,22 @@
 #include <viam/trajex/totg/totg.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
+#include <viam/trajex/totg/waypoint_accumulator.hpp>
+#include <viam/trajex/totg/waypoint_utils.hpp>
+#include <viam/trajex/types/angles.hpp>
 #include <viam/trajex/types/hertz.hpp>
+
+#if __has_include(<xtensor/containers/xarray.hpp>)
+#include <xtensor/containers/xadapt.hpp>
+#include <xtensor/containers/xarray.hpp>
+#include <xtensor/core/xmath.hpp>
+#include <xtensor/reducers/xnorm.hpp>
+#else
+#include <xtensor/xadapt.hpp>
+#include <xtensor/xarray.hpp>
+#include <xtensor/xmath.hpp>
+#include <xtensor/xnorm.hpp>
+#endif
 
 #include "ur_arm_state.hpp"
 #include "utils.hpp"
@@ -73,28 +88,6 @@ constexpr double k_min_duration_secs = 0.1;
 constexpr double k_max_duration_secs = 3600.0;
 constexpr double k_min_sampling_freq_hz = 1.0;
 constexpr double k_max_sampling_freq_hz = 500.0;
-
-// Convert Eigen waypoint list to xt::xarray for trajex/totg
-xt::xarray<double> eigen_waypoints_to_xarray(const std::list<Eigen::VectorXd>& waypoints) {
-    if (waypoints.empty()) {
-        return xt::xarray<double>::from_shape({0, 0});
-    }
-
-    const size_t num_waypoints = waypoints.size();
-    const size_t dof = static_cast<size_t>(waypoints.front().size());
-
-    xt::xarray<double> result = xt::zeros<double>({num_waypoints, dof});
-
-    size_t i = 0;
-    for (const auto& waypoint : waypoints) {
-        for (size_t j = 0; j < dof; ++j) {
-            result(i, j) = waypoint[static_cast<Eigen::Index>(j)];
-        }
-        ++i;
-    }
-
-    return result;
-}
 
 // Type aliases for smart pointers managing FFI memory
 using unique_orientation_vector = std::unique_ptr<void, decltype(&free_orientation_vector_memory)>;
@@ -323,19 +316,10 @@ void write_pose_to_file(const std::string& filepath, const pose_sample& sample) 
     of.close();
 }
 
-void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::VectorXd>& waypoints) {
-    unsigned i;
+void write_waypoints_to_csv(const std::string& filepath, const viam::trajex::totg::waypoint_accumulator& waypoints) {
     std::ofstream of(filepath);
-    for (const auto& vec : waypoints) {
-        i = 0;
-        for (const auto& n : vec) {
-            i++;
-            if (i == vec.size()) {
-                of << n;
-            } else {
-                of << n << ",";
-            }
-        }
+    for (const auto& waypoint : waypoints) {
+        boost::copy(waypoint, boost::io::make_ostream_joiner(of, ","));
         of << "\n";
     }
     of.close();
@@ -391,9 +375,9 @@ std::string unix_time_iso8601() {
     return stream.str();
 }
 
-std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>& waypoints,
-                                                const Eigen::VectorXd& max_velocity_vec,
-                                                const Eigen::VectorXd& max_acceleration_vec,
+std::string serialize_failed_trajectory_to_json(const viam::trajex::totg::waypoint_accumulator& waypoints,
+                                                const xt::xarray<double>& max_velocity_vec,
+                                                const xt::xarray<double>& max_acceleration_vec,
                                                 double path_tolerance_delta_rads,
                                                 const std::optional<double>& path_colinearization_ratio) {
     namespace json = Json;
@@ -425,7 +409,7 @@ std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>
     json::Value waypoints_array(json::arrayValue);
     waypoints_array.resize((json::ArrayIndex)waypoints.size());
     for (const auto& [waypoint, json_waypoint] : boost::combine(waypoints, waypoints_array)) {
-        std::ranges::for_each(waypoint, [&](double item) {
+        std::ranges::for_each(waypoint, [&](auto item) {
             std::stringstream ss;
             ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
             // NOLINTBEGIN(clang-analyzer-core.CallAndMessage): json_waypoint is initialized as a nullValue and then lazily initialized
@@ -557,18 +541,11 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
-    auto next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size()));
-    auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg));
-    std::list<Eigen::VectorXd> waypoints;
-    waypoints.emplace_back(std::move(next_waypoint_rad));
+    const std::array<std::size_t, 2> shape = {1, positions.size()};
+    const auto waypoint_deg = xt::adapt(positions.data(), positions.size(), xt::no_ownership(), shape);
+    const xt::xarray<double> waypoint_rad = viam::trajex::degrees_to_radians(waypoint_deg);
 
-    const auto unix_time = unix_time_iso8601();
-    const auto filename = waypoints_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
-
-    write_waypoints_to_csv(filename, waypoints);
-
-    // move will throw if an error occurs
-    move_joint_space_(std::move(rlock), std::move(waypoints), MoveOptions{}, unix_time);
+    move_joint_space_(std::move(rlock), waypoint_rad, MoveOptions{});
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -581,19 +558,14 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         return;
     }
 
-    // Convert from vector<vector<double>> (degrees) to list<Eigen::VectorXd> (radians)
-    constexpr auto to_radians = [](const auto& position) {
-        auto deg = Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
-        return degrees_to_radians(std::move(deg)).eval();
-    };
-    auto waypoints_range = positions | std::views::transform(to_radians);
-    std::list<Eigen::VectorXd> waypoints(std::ranges::begin(waypoints_range), std::ranges::end(waypoints_range));
+    xt::xarray<double> waypoints_rad = xt::zeros<double>({positions.size(), positions[0].size()});
+    for (size_t i = 0; i < positions.size(); ++i) {
+        const std::array<std::size_t, 1> shape = {positions[i].size()};
+        auto row_deg = xt::adapt(positions[i].data(), positions[i].size(), xt::no_ownership(), shape);
+        xt::view(waypoints_rad, i, xt::all()) = viam::trajex::degrees_to_radians(row_deg);
+    }
 
-    const auto unix_time = unix_time_iso8601();
-    const auto filename = waypoints_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
-    write_waypoints_to_csv(filename, waypoints);
-
-    move_joint_space_(std::move(rlock), std::move(waypoints), options, unix_time);
+    move_joint_space_(std::move(rlock), waypoints_rad, options);
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {
@@ -860,10 +832,11 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 }
 
 void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
-                              std::list<Eigen::VectorXd> waypoints,
-                              const MoveOptions& options,
-                              const std::string& unix_time) {
+                              const xt::xarray<double>& waypoints,
+                              const MoveOptions& options) {
     auto our_config_rlock = std::move(config_rlock);
+
+    const auto unix_time = unix_time_iso8601();
 
     auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
         if (!observer) {
@@ -878,39 +851,49 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     // slipped in while we were planning.
     auto current_move_epoch = current_state_->get_move_epoch();
 
-    VIAM_SDK_LOG(debug) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
+    VIAM_SDK_LOG(debug) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.shape()[0];
     const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move: end unix_time " << unix_time; });
 
-    // get current joint position and add that as starting pose to waypoints
+    // Tack our current position on as the first waypoint, log those waypoints, and then deduplicate. If, after deduplication, there
+    // is only one waypoint left, then we can conclude that we were asked to move to our own current position, so there is no work to
+    // do.
+
     auto curr_joint_pos = get_joint_positions_rad_(our_config_rlock);
-    auto curr_joint_pos_rad = Eigen::Map<Eigen::VectorXd>(curr_joint_pos.data(), curr_joint_pos.size());
+    const std::array<std::size_t, 2> shape = {1, curr_joint_pos.size()};
+    auto current_position = xt::adapt(curr_joint_pos.data(), curr_joint_pos.size(), xt::no_ownership(), shape);
 
-    // Unconditionally prepend current position, then deduplicate
-    waypoints.emplace_front(curr_joint_pos_rad);
-    deduplicate_waypoints(waypoints, current_state_->get_waypoint_deduplication_tolerance_rad());
+    viam::trajex::totg::waypoint_accumulator waypoint_sequence(current_position);
+    waypoint_sequence.add_waypoints(waypoints);
 
-    if (waypoints.size() == 1) {  // this tells us if we are already at the goal
+    const auto filename = waypoints_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
+    write_waypoints_to_csv(filename, waypoint_sequence);
+
+    waypoint_sequence =
+        viam::trajex::totg::deduplicate_waypoints(waypoint_sequence, current_state_->get_waypoint_deduplication_tolerance_rad());
+
+    if (waypoint_sequence.size() == 1) {
         VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
         return;
     }
 
+    // If we have been configured to do so, reject requests where the delta between the first waypoint (current position) and the next
+    // (first user-requested position) differ by more than the threshold.
     if (const auto& threshold = current_state_->get_reject_move_request_threshold_rad()) {
-        auto current_joint_position = waypoints.begin();
+        auto current_joint_position = waypoint_sequence.begin();
         auto first_waypoint = std::next(current_joint_position);
+        const auto delta = *first_waypoint - *current_joint_position;
+        const auto max_diff = xt::norm_linf(delta)();
 
-        auto delta_pos = (*first_waypoint - *current_joint_position);
-
-        if (delta_pos.lpNorm<Eigen::Infinity>() > *threshold) {
+        if (max_diff > *threshold) {
             std::stringstream err_string;
-
             err_string << "rejecting move request : difference between starting trajectory position [(";
-            boost::copy(*first_waypoint | boost::adaptors::transformed(radians_to_degrees<const double&>),
+            boost::copy(boost::adaptors::transform(*first_waypoint, radians_to_degrees<const double&>),
                         boost::io::make_ostream_joiner(err_string, ", "));
             err_string << ")] and joint position [(";
-            boost::copy(*current_joint_position | boost::adaptors::transformed(radians_to_degrees<const double&>),
+            boost::copy(boost::adaptors::transform(*current_joint_position, radians_to_degrees<const double&>),
                         boost::io::make_ostream_joiner(err_string, ", "));
-            err_string << ")] is above threshold " << radians_to_degrees(delta_pos.lpNorm<Eigen::Infinity>()) << " > "
-                       << radians_to_degrees(*threshold);
+            err_string << ")] is above threshold " << viam::trajex::radians_to_degrees(max_diff) << " > "
+                       << viam::trajex::radians_to_degrees(*threshold);
             VIAM_SDK_LOG(error) << err_string.str();
             throw std::runtime_error(err_string.str());
         }
@@ -918,35 +901,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
 
-    // Walk all interior points of the waypoints list, if any. If the
-    // point of current interest is the cusp of a direction reversal
-    // w.r.t. the points immediately before and after it, then splice
-    // all waypoints up to and including the cusp point into a new
-    // segment, and then begin accumulating a new segment starting at
-    // the cusp point. The cusp point is duplicated, forming both the
-    // end of one segment and the beginning of the next segment. After
-    // exiting the loop, any remaining waypoints form the last (and if
-    // no cusps were identified the only) segment. If one or more cusp
-    // points were identified, the waypoints list will always have at
-    // least two residual waypoints, since the last waypoint is never
-    // examined, and the splice call never removes the waypoint being
-    // visited.
-    //
-    // NOTE: This assumes waypoints have been de-duplicated to avoid
-    // zero-length segments that would cause numerical issues in
-    // normalized() calculations.
-    std::vector<decltype(waypoints)> segments;
-    for (auto where = next(begin(waypoints)); where != prev(end(waypoints)); ++where) {
-        const auto segment_ab = *where - *prev(where);
-        const auto segment_bc = *next(where) - *where;
-        const auto dot = segment_ab.normalized().dot(segment_bc.normalized());
-        if (std::fabs(dot + 1.0) < 1e-3) {
-            segments.emplace_back();
-            segments.back().splice(segments.back().begin(), waypoints, waypoints.begin(), where);
-            segments.back().push_back(*where);
-        }
-    }
-    segments.push_back(std::move(waypoints));
+    auto segments = viam::trajex::totg::segment_at_reversals(std::move(waypoint_sequence));
 
     auto velocity_limits_data = current_state_->get_velocity_limits();
     // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
@@ -954,7 +909,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         velocity_limits_data.fill(degrees_to_radians(options.max_vel_degs_per_sec.get()));
         velocity_limits_data = current_state_->clamp_velocity_limits(velocity_limits_data);
     }
-    const auto velocity_limits = Eigen::Map<const Eigen::VectorXd>(velocity_limits_data.data(), velocity_limits_data.size());
 
     auto acceleration_limits_data = current_state_->get_acceleration_limits();
     // TODO(RSDK-12375) Remove 0 acc check when RDK stops sending 0 velocities
@@ -962,7 +916,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         acceleration_limits_data.fill(degrees_to_radians(options.max_acc_degs_per_sec2.get()));
         acceleration_limits_data = current_state_->clamp_acceleration_limits(acceleration_limits_data);
     }
-    const auto acceleration_limits = Eigen::Map<const Eigen::VectorXd>(acceleration_limits_data.data(), acceleration_limits_data.size());
 
     const auto new_trajectory = [&]() -> std::optional<std::vector<trajectory_sample_point>> {
         if (!current_state_->use_new_trajectory_planner()) {
@@ -977,10 +930,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             using namespace viam::trajex;
 
             totg::trajectory::options trajex_opts;
-            trajex_opts.max_velocity = xt::xarray<double>::from_shape({velocity_limits_data.size()});
-            trajex_opts.max_acceleration = xt::xarray<double>::from_shape({acceleration_limits_data.size()});
-            std::ranges::copy(velocity_limits_data, trajex_opts.max_velocity.begin());
-            std::ranges::copy(acceleration_limits_data, trajex_opts.max_acceleration.begin());
+            trajex_opts.max_velocity = xt::adapt(velocity_limits_data);
+            trajex_opts.max_acceleration = xt::adapt(acceleration_limits_data);
 
             std::vector<trajectory_sample_point> all_trajex_samples;
 
@@ -988,16 +939,13 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
             for (const auto& segment : segments) {
                 try {
-                    const auto segment_xarray = eigen_waypoints_to_xarray(segment);
-                    const totg::waypoint_accumulator trajex_waypoints(segment_xarray);
-
                     auto path_opts = totg::path::options{}.set_max_blend_deviation(current_state_->get_path_tolerance_delta_rads());
 
                     if (auto ratio = current_state_->get_path_colinearization_ratio()) {
                         path_opts.set_max_linear_deviation(current_state_->get_path_tolerance_delta_rads() * (*ratio));
                     }
 
-                    auto trajex_path = totg::path::create(trajex_waypoints, path_opts);
+                    auto trajex_path = totg::path::create(segment, path_opts);
 
                     // Create a copy of trajex_opts for each segment since it's consumed by create()
                     totg::trajectory::options segment_opts = trajex_opts;
@@ -1036,8 +984,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                        << ", arc length: " << trajex_trajectory.path().length();
                 } catch (...) {
                     const std::string json_content = serialize_failed_trajectory_to_json(segment,
-                                                                                         velocity_limits,
-                                                                                         acceleration_limits,
+                                                                                         xt::adapt(velocity_limits_data),
+                                                                                         xt::adapt(acceleration_limits_data),
                                                                                          current_state_->get_path_tolerance_delta_rads(),
                                                                                          current_state_->get_path_colinearization_ratio());
 
@@ -1073,29 +1021,37 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     const auto legacy_generation_start = std::chrono::steady_clock::now();
 
-    VIAM_SDK_LOG(debug) << "generating trajectory with max speed: " << radians_to_degrees(velocity_limits[0]);
+    VIAM_SDK_LOG(debug) << "generating trajectory with max speed: " << radians_to_degrees(velocity_limits_data[0]);
 
     std::vector<trajectory_sample_point> samples;
     double total_duration = 0.0;
     double total_arc_length = 0.0;
     size_t total_waypoints = 0;
 
-    for (auto& segment : segments) {
+    for (const auto& segment : segments) {
+        // Convert segment (waypoint_accumulator) to list<Eigen::VectorXd> for legacy
+        auto transformed = segment | std::views::transform([](const auto& view) {
+                               return Eigen::Map<const Eigen::VectorXd>(view.data(), static_cast<Eigen::Index>(view.size())).eval();
+                           });
+        std::list<Eigen::VectorXd> eigen_segment(std::begin(transformed), std::end(transformed));
+
         // Apply colinearization to reduce waypoints
         if (auto ratio = current_state_->get_path_colinearization_ratio()) {
-            apply_colinearization(segment, current_state_->get_path_tolerance_delta_rads() * (*ratio));
+            apply_colinearization(eigen_segment, current_state_->get_path_tolerance_delta_rads() * (*ratio));
         }
 
-        total_waypoints += segment.size();
-        const Path path(segment, current_state_->get_path_tolerance_delta_rads());
+        total_waypoints += eigen_segment.size();
+        const Path path(eigen_segment, current_state_->get_path_tolerance_delta_rads());
         total_arc_length += path.getLength();
-        const Trajectory trajectory(path, velocity_limits, acceleration_limits);
+        const Trajectory trajectory(path,
+                                    Eigen::Map<const Eigen::VectorXd>(velocity_limits_data.data(), velocity_limits_data.size()),
+                                    Eigen::Map<const Eigen::VectorXd>(acceleration_limits_data.data(), acceleration_limits_data.size()));
         if (!trajectory.isValid()) {
             // When the trajectory cannot be generated save the all the waypoints, velocity, acceleration and path tolerance in a
             // JSON. We should be able to feed it back to the trajectory generator and confirm it is failing
             const std::string json_content = serialize_failed_trajectory_to_json(segment,
-                                                                                 velocity_limits,
-                                                                                 acceleration_limits,
+                                                                                 xt::adapt(velocity_limits_data),
+                                                                                 xt::adapt(acceleration_limits_data),
                                                                                  current_state_->get_path_tolerance_delta_rads(),
                                                                                  current_state_->get_path_colinearization_ratio());
 

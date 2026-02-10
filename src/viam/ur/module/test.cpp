@@ -14,6 +14,12 @@
 
 #include <json/json.h>
 
+#if __has_include(<xtensor/containers/xadapt.hpp>)
+#include <xtensor/containers/xadapt.hpp>
+#else
+#include <xtensor/xadapt.hpp>
+#endif
+
 #include <third_party/trajectories/Path.h>
 #include <third_party/trajectories/Trajectory.h>
 
@@ -78,16 +84,15 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
 }
 
 BOOST_AUTO_TEST_CASE(test_write_waypoints_to_csv) {
-    const std::list<Eigen::VectorXd> waypoints = {
-        makeVector({10.1, 0, 0, 0, 0, 0}),
-        makeVector({20.2, 0, 0, 0, 0, 0}),
-        makeVector({30.3, 0, 0, 0, 0, 0}),
-        makeVector({40.4, 0, 0, 0, 0, 0}),
-        makeVector({50.5, 0, 0, 0, 0, 0}),
-        makeVector({60.6, 0, 0, 0, 0, 0}),
-        makeVector({70.7, 0, 0, 0, 0, 0}),
-        makeVector({80.8, 0, 0, 0, 0, 0}),
-    };
+    const xt::xarray<double> waypoints_array = {{10.1, 0, 0, 0, 0, 0},
+                                                {20.2, 0, 0, 0, 0, 0},
+                                                {30.3, 0, 0, 0, 0, 0},
+                                                {40.4, 0, 0, 0, 0, 0},
+                                                {50.5, 0, 0, 0, 0, 0},
+                                                {60.6, 0, 0, 0, 0, 0},
+                                                {70.7, 0, 0, 0, 0, 0},
+                                                {80.8, 0, 0, 0, 0, 0}};
+    const viam::trajex::totg::waypoint_accumulator waypoints(waypoints_array);
 
     const auto* const expected =
         "10.1,0,0,0,0,0\n"
@@ -1010,10 +1015,11 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     const Path path(waypoints, k_tolerance);
 
     // Create trajectory with normal velocity/acceleration constraints
-    const auto max_velocity_vec = Eigen::VectorXd::Constant(6, 1.0);
-    const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, 1.0);
+    constexpr std::array<double, 6> k_max_velocity = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+    constexpr std::array<double, 6> k_max_acceleration = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
 
-    const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+    const Trajectory trajectory(
+        path, Eigen::Map<const Eigen::VectorXd>(k_max_velocity.data(), 6), Eigen::Map<const Eigen::VectorXd>(k_max_acceleration.data(), 6));
 
     BOOST_REQUIRE(!trajectory.isValid());
     const std::string k_test_path = std::filesystem::temp_directory_path();
@@ -1021,8 +1027,20 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     const std::string k_timestamp = unix_time_iso8601();
     const std::string k_filename = failed_trajectory_filename(k_test_path, k_resource_name, k_timestamp);
 
+    // Convert waypoints to xarray for serialize_failed_trajectory_to_json
+    const std::array<std::size_t, 2> shape = {waypoints.size(), 6};
+    xt::xarray<double> waypoints_xarray = xt::zeros<double>(shape);
+    size_t i = 0;
+    for (const auto& waypoint : waypoints) {
+        for (size_t j = 0; j < 6; ++j) {
+            waypoints_xarray(i, j) = waypoint(static_cast<Eigen::Index>(j));
+        }
+        ++i;
+    }
+    const viam::trajex::totg::waypoint_accumulator waypoint_acc(waypoints_xarray);
+
     const std::string json_content =
-        serialize_failed_trajectory_to_json(waypoints, max_velocity_vec, max_acceleration_vec, k_tolerance, 0.05);
+        serialize_failed_trajectory_to_json(waypoint_acc, xt::adapt(k_max_velocity), xt::adapt(k_max_acceleration), k_tolerance, 0.05);
 
     // Write the failed trajectory JSON
     std::ofstream json_file(k_filename);
