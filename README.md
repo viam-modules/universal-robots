@@ -186,6 +186,16 @@ example output:
 }
 ```
 
+#### get_capture_dir DoCommand
+
+`get_capture_dir` returns the configured telemetry capture directory path. If `telemetry_output_path_append_traceid` is set, the returned path includes the template with a literal `{trace_id}` placeholder (e.g. `/var/log/arm_telemetry/tag={trace_id}`).
+
+```json
+{
+  "get_capture_dir": ""
+}
+```
+
 ### Interacting with the Arm
 First ensure that your machine is displaying as **Live** on the Viam App. Then you can interact with your Universal Robots arm in a couple ways:
 - To simply view data from and manipulate your arm, use the **CONTROL** tab of the Viam App.
