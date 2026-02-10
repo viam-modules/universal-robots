@@ -342,6 +342,10 @@ std::filesystem::path URArm::state_::telemetry_output_path() const {
     return result;
 }
 
+const std::filesystem::path& URArm::state_::telemetry_output_base_path() const {
+    return telemetry_output_path_;
+}
+
 const std::filesystem::path& URArm::state_::resource_root() const {
     return resource_root_;
 }

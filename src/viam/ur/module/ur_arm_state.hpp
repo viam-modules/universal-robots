@@ -56,6 +56,7 @@ class URArm::state_ {
     tcp_state_snapshot read_tcp_state_snapshot() const;
 
     std::filesystem::path telemetry_output_path() const;
+    const std::filesystem::path& telemetry_output_base_path() const;
     const std::filesystem::path& resource_root() const;
     const std::filesystem::path& urcl_resource_root() const;
 
