@@ -719,7 +719,6 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     constexpr char k_clear_pstop[] = "clear_pstop";
     constexpr char k_is_controllable[] = "is_controllable_state";
     constexpr char k_get_state_description[] = "get_state_description";
-    constexpr char k_get_capture_dir[] = "get_capture_dir";
 
     // Cache TCP state to ensure atomic read of pose and forces from same timestamp
     std::optional<decltype(current_state_->read_tcp_state_snapshot())> cached_tcp_state;
@@ -790,11 +789,6 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
                 cached_controlled_info->controlled = current_state_->is_current_state_controlled(&cached_controlled_info->description);
             }
             resp.emplace(k_get_state_description, cached_controlled_info->description);
-        } else if (kv.first == k_get_capture_dir) {
-            const auto& tmpl = current_state_->telemetry_output_path_append_traceid();
-            const auto& base = current_state_->telemetry_output_base_path();
-            auto path = tmpl.empty() ? base : expand_telemetry_path(base, tmpl, "{trace_id}");
-            resp.emplace(k_get_capture_dir, path.string());
         } else {
             throw std::runtime_error("unsupported do_command key: " + kv.first);
         }
