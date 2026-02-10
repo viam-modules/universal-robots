@@ -252,7 +252,7 @@ vector6d_t parse_and_validate_joint_limits(const viam::sdk::ResourceConfig& cfg,
 
 std::optional<std::string> extract_trace_id_from_traceparent(std::string_view traceparent) {
     std::vector<std::string_view> parts;
-    boost::split(parts, traceparent, boost::is_any_of("-"));
+    boost::split(parts, traceparent, boost::is_any_of("-"));  // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
 
     // W3C Trace Context format requires exactly 4 components
     if (parts.size() != 4) {
