@@ -43,6 +43,7 @@ class waypoint_accumulator {
     /// @note The waypoints array must outlive the waypoint_accumulator object
     ///
     explicit waypoint_accumulator(const xt::xarray<double>& waypoints);
+    explicit waypoint_accumulator(xt::xarray<double>&& waypoints) = delete;
 
     ///
     /// Constructs with a single waypoint view.
@@ -76,6 +77,7 @@ class waypoint_accumulator {
     /// @note The waypoints array must outlive the waypoint_accumulator object
     ///
     waypoint_accumulator& add_waypoints(const xt::xarray<double>& waypoints);
+    waypoint_accumulator& add_waypoints(xt::xarray<double>&& waypoints) = delete;
 
     ///
     /// Adds a single waypoint view.

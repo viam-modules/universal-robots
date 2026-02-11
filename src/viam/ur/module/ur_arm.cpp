@@ -859,10 +859,10 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     // do.
 
     auto curr_joint_pos = get_joint_positions_rad_(our_config_rlock);
-    const std::array<std::size_t, 2> shape = {1, curr_joint_pos.size()};
-    auto current_position = xt::adapt(curr_joint_pos.data(), curr_joint_pos.size(), xt::no_ownership(), shape);
+    const std::array<std::size_t, 2> shape{1, curr_joint_pos.size()};
+    const xt::xarray<double> current_position_xarray{xt::adapt(curr_joint_pos, shape)};
 
-    viam::trajex::totg::waypoint_accumulator waypoint_sequence(current_position);
+    viam::trajex::totg::waypoint_accumulator waypoint_sequence{current_position_xarray};
     waypoint_sequence.add_waypoints(waypoints);
 
     const auto filename = waypoints_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
@@ -901,7 +901,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
 
-    auto segments = viam::trajex::totg::segment_at_reversals(std::move(waypoint_sequence));
+    const auto segments = viam::trajex::totg::segment_at_reversals(std::move(waypoint_sequence));
 
     auto velocity_limits_data = current_state_->get_velocity_limits();
     // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
@@ -1030,9 +1030,12 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     for (const auto& segment : segments) {
         // Convert segment (waypoint_accumulator) to list<Eigen::VectorXd> for legacy
-        auto transformed = segment | std::views::transform([](const auto& view) {
-                               return Eigen::Map<const Eigen::VectorXd>(view.data(), static_cast<Eigen::Index>(view.size())).eval();
-                           });
+        constexpr auto transformer = [](const auto& view) {
+            const auto* const data = view.data() + view.data_offset();
+            const auto size = static_cast<Eigen::Index>(view.shape(0));
+            return Eigen::Map<const Eigen::VectorXd>(data, size);
+        };
+        auto transformed = segment | std::views::transform(transformer);
         std::list<Eigen::VectorXd> eigen_segment(std::begin(transformed), std::end(transformed));
 
         // Apply colinearization to reduce waypoints
