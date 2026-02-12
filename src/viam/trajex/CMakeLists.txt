@@ -117,6 +117,7 @@ target_sources(viam-trajex-totg
     src/viam/trajex/totg/trajectory.cpp
     src/viam/trajex/totg/uniform_sampler.cpp
     src/viam/trajex/totg/waypoint_accumulator.cpp
+    src/viam/trajex/totg/waypoint_utils.cpp
 )
 
 target_include_directories(viam-trajex-totg

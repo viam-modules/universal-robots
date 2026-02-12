@@ -20,6 +20,11 @@ waypoint_accumulator::waypoint_accumulator(const xt::xarray<double>& waypoints) 
     add_waypoints(waypoints);
 }
 
+waypoint_accumulator::waypoint_accumulator(const waypoint_view_t& first_waypoint) {
+    dof_ = first_waypoint.shape()[0];
+    waypoints_.push_back(first_waypoint);
+}
+
 waypoint_accumulator& waypoint_accumulator::add_waypoints(const xt::xarray<double>& waypoints) {
     if (waypoints.dimension() != 2) {
         throw std::invalid_argument{"Waypoints must be 2-dimensional"};
@@ -34,6 +39,14 @@ waypoint_accumulator& waypoint_accumulator::add_waypoints(const xt::xarray<doubl
         waypoints_.push_back(xt::view(waypoints, i, xt::all()));
     }
 
+    return *this;
+}
+
+waypoint_accumulator& waypoint_accumulator::add_waypoint(const waypoint_view_t& waypoint) {
+    if (waypoint.shape()[0] != dof_) {
+        throw std::invalid_argument{"Waypoint DOF must match existing DOF"};
+    }
+    waypoints_.push_back(waypoint);
     return *this;
 }
 
