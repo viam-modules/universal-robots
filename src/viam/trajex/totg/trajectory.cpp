@@ -215,8 +215,9 @@ struct switching_point {
 
 // Try to evaluate Eq. 40 delta:
 //   Δ(s) = s_ddot_min(s, s_dot_max_vel(s)) / s_dot_max_vel(s) - d/ds s_dot_max_vel(s)
-// Returns std::nullopt when Eq. 40 is not evaluable at this geometry (degenerate,
-// Divergence-2 region, singular derivative, or infeasible acceleration bounds).
+// Returns std::nullopt when Eq. 40 is not evaluable at this geometry (degenerate
+// velocity limit, acceleration limit below velocity limit, singular derivative,
+// or infeasible acceleration bounds).
 [[nodiscard]] std::optional<phase_plane_slope> try_compute_eq40_delta(path::cursor& cursor, arc_length s, const trajectory::options& opt) {
     cursor.seek(s);
     const auto q_prime = cursor.tangent();
@@ -697,8 +698,8 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
         if (delta.has_value()) {
             if (previous_delta.has_value()) {
                 const bool previous_positive = opt.epsilon.wrap(*previous_delta) > opt.epsilon.wrap(k_zero_delta);
-                const bool current_positive = opt.epsilon.wrap(*delta) > opt.epsilon.wrap(k_zero_delta);
-                if (previous_positive && !current_positive) {
+                const bool current_nonpositive = opt.epsilon.wrap(*delta) <= opt.epsilon.wrap(k_zero_delta);
+                if (previous_positive && current_nonpositive) {
                     return eq40_escape_bracket{.before = previous_position, .after = current_position};
                 }
             }
@@ -743,37 +744,43 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
     }
 
     const bool before_positive = opt.epsilon.wrap(*before_delta) > opt.epsilon.wrap(k_zero_delta);
-    const bool after_positive = opt.epsilon.wrap(*after_delta) > opt.epsilon.wrap(k_zero_delta);
-    if (before_positive == after_positive) {
+    const bool after_nonpositive = opt.epsilon.wrap(*after_delta) <= opt.epsilon.wrap(k_zero_delta);
+    if (!(before_positive && after_nonpositive)) {
         return std::nullopt;
     }
 
-    auto positive_side = before_positive ? before : after;
-    auto nonpositive_side = before_positive ? after : before;
-    auto nonpositive_valid = nonpositive_side;
+    auto positive_side = before;
+    auto nonpositive_side = after;
+    auto nonpositive_valid = after;
 
-    // TODO(RSDK-12767): Eliminate this hardcoded constant.
-    constexpr int max_bisection_iterations = 100;
-    for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
-        if (opt.epsilon.wrap(positive_side) == opt.epsilon.wrap(nonpositive_side)) {
-            break;
-        }
+    // If the coarse step already landed on the root (delta within epsilon of zero),
+    // skip bisection entirely.
+    if (opt.epsilon.wrap(*after_delta) == opt.epsilon.wrap(k_zero_delta)) {
+        // Fall through to the feasibility check below.
+    } else {
+        // TODO(RSDK-12767): Eliminate this hardcoded constant.
+        constexpr int max_bisection_iterations = 100;
+        for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
+            if (opt.epsilon.wrap(positive_side) == opt.epsilon.wrap(nonpositive_side)) {
+                break;
+            }
 
-        const auto mid = positive_side + ((nonpositive_side - positive_side) / 2.0);
-        const auto mid_delta = try_compute_eq40_delta(search_cursor, mid, opt);
-        if (!mid_delta.has_value()) {
-            // Midpoint is non-evaluable (degenerate/singular/divergence). Contract from the
-            // positive side to preserve the known Δ ≤ 0 endpoint and approach the root from
-            // the trapped (Δ > 0) direction.
-            positive_side = mid;
-            continue;
-        }
+            const auto mid = positive_side + ((nonpositive_side - positive_side) / 2.0);
+            const auto mid_delta = try_compute_eq40_delta(search_cursor, mid, opt);
+            if (!mid_delta.has_value()) {
+                // Midpoint is non-evaluable (degenerate/singular). Contract from the
+                // positive side to preserve the known Δ ≤ 0 endpoint and approach the root from
+                // the trapped (Δ > 0) direction.
+                positive_side = mid;
+                continue;
+            }
 
-        if (opt.epsilon.wrap(*mid_delta) <= opt.epsilon.wrap(k_zero_delta)) {
-            nonpositive_side = mid;
-            nonpositive_valid = mid;
-        } else {
-            positive_side = mid;
+            if (opt.epsilon.wrap(*mid_delta) <= opt.epsilon.wrap(k_zero_delta)) {
+                nonpositive_side = mid;
+                nonpositive_valid = mid;
+            } else {
+                positive_side = mid;
+            }
         }
     }
 

@@ -1767,8 +1767,8 @@ BOOST_AUTO_TEST_CASE(multi_turn_low_accel_switching_point_search) {
 // with linear/circular segments because blend-end boundaries always have
 // curve_slope_after = 0 (linear after-segment, q''=0) and
 // trajectory_slope_after < 0 (minimum deceleration), making c42 trivially
-// true.  Blend-start boundaries are filtered by the D2 guard before
-// reaching the c41/c42 evaluation.
+// true.  Blend-start boundaries are filtered before reaching the
+// c41/c42 evaluation because s_dot_max_accel < s_dot_max_vel there.
 // ---------------------------------------------------------------------------
 BOOST_AUTO_TEST_CASE(condition_41_false_gates_boundary) {
     using namespace viam::trajex::totg;
