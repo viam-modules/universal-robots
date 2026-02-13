@@ -96,7 +96,7 @@ class URArm final : public Arm, public Reconfigurable {
     ///
     /// Default waypoint segmentation threshold.
     ///
-    static constexpr double k_default_segmentation_threshold = 0.005;
+    static constexpr double k_default_segmentation_threshold = 5e-3;
 
     ///
     /// Default trajectory sampling frequency in Hz.
