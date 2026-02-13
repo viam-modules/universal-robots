@@ -52,6 +52,7 @@ BOOST_AUTO_TEST_CASE(fewer_than_two_waypoints_skips_algorithms) {
 
     auto result = trajectory_planner<test_receiver>(simple_config())
                       .with_waypoint_provider([](auto& p) { return stash_waypoints(p, {{1.0, 2.0, 3.0}}); })
+                      .with_trajex([](test_receiver&, const waypoint_accumulator&, const totg::trajectory&, auto) {})
                       .execute([&](const auto& planner, const auto& trajex, const auto& legacy) -> std::optional<test_receiver> {
                           decider_called = true;
                           BOOST_CHECK_EQUAL(planner.processed_waypoint_count(), 1U);
@@ -161,6 +162,7 @@ BOOST_AUTO_TEST_CASE(validator_can_reject_move) {
     BOOST_CHECK_THROW(trajectory_planner<test_receiver>(simple_config())
                           .with_waypoint_provider([](auto& p) { return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}); })
                           .with_move_validator([](auto&, const waypoint_accumulator&) { throw std::runtime_error("move rejected"); })
+                          .with_trajex([](test_receiver&, const waypoint_accumulator&, const totg::trajectory&, auto) {})
                           .execute([](const auto&, const auto&, const auto&) -> std::optional<test_receiver> {
                               BOOST_FAIL("decider should not be called after validation failure");
                               return std::nullopt;
@@ -257,6 +259,7 @@ BOOST_AUTO_TEST_CASE(processed_waypoint_count_reflects_preprocessing) {
             [](auto& p) { return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {2.0, 0.0, 0.0}}); })
         .with_waypoint_preprocessor(
             [](auto&, waypoint_accumulator& accumulator) { accumulator = deduplicate_waypoints(accumulator, 1e-6); })
+        .with_trajex([](test_receiver&, const waypoint_accumulator&, const totg::trajectory&, auto) {})
         .execute([](const auto& planner, const auto&, const auto&) -> std::optional<test_receiver> {
             BOOST_CHECK_EQUAL(planner.processed_waypoint_count(), 3U);
             return std::nullopt;

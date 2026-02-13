@@ -192,6 +192,10 @@ class trajectory_planner : public trajectory_planner_base {
             throw std::logic_error("waypoint provider not set");
         }
 
+        if (!trajex_on_success_ && !legacy_on_success_) {
+            throw std::logic_error("no algorithms registered");
+        }
+
         auto accumulator = waypoint_provider_(*this);
 
         if (preprocessor_) {
