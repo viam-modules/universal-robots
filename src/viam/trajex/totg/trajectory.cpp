@@ -568,8 +568,8 @@ struct switching_point {
 // Phase 1: Search segment boundaries for a discontinuous velocity-limit switching point
 // (Kunz & Stilman equations 41-42).
 std::optional<switching_point> find_discontinuous_velocity_switching_point(path::cursor cursor,
-                                                                            const trajectory::options& opt,
-                                                                            arc_length path_length) {
+                                                                           const trajectory::options& opt,
+                                                                           arc_length path_length) {
     auto boundary_cursor = cursor;
     auto last_evaluated_boundary = arc_length{-std::numeric_limits<double>::infinity()};
     while (boundary_cursor.position() < path_length) {
@@ -667,7 +667,7 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
             // Only accept if feasible against the acceleration-limited velocity curve.
             if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
                 return switching_point{.point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
-                                    .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
+                                       .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
             }
         }
     }
@@ -732,9 +732,9 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
 // Phase 3: Refine the coarse Eq. 40 bracket via bisection and accept only a feasible
 // velocity-escape switching point.
 std::optional<switching_point> refine_continuous_velocity_switching_point(path::cursor& search_cursor,
-                                                                           arc_length before,
-                                                                           arc_length after,
-                                                                           const trajectory::options& opt) {
+                                                                          arc_length before,
+                                                                          arc_length after,
+                                                                          const trajectory::options& opt) {
     constexpr phase_plane_slope k_zero_delta{0.0};
 
     const auto before_delta = try_compute_eq40_delta(search_cursor, before, opt);
