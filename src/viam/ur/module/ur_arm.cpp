@@ -909,7 +909,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
 
-    const auto segments = viam::trajex::totg::segment_at_reversals(std::move(waypoint_sequence), current_state_->get_segmentation_threshold());
+    const auto segments =
+        viam::trajex::totg::segment_at_reversals(std::move(waypoint_sequence), current_state_->get_segmentation_threshold());
 
     auto velocity_limits_data = current_state_->get_velocity_limits();
     // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
