@@ -661,19 +661,17 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         const bool condition_42 =
             opt.epsilon.wrap(trajectory_slope_after) <= opt.epsilon.wrap(curve_slope_after);
 
-        if (!(condition_41 && condition_42)) {
-            continue;
-        }
+        if (condition_41 && condition_42) {
+            // Switching velocity is the minimum of velocity limits on both sides.
+            // TODO(RSDK-12848): Investigate the correctness of taking the minimum.
+            const auto s_dot_max_vel_switching_min = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
+            const auto s_dot_max_accel_switching_min = std::min(s_dot_max_accel_before, s_dot_max_accel_after);
 
-        // Switching velocity is the minimum of velocity limits on both sides.
-        // TODO(RSDK-12848): Investigate the correctness of taking the minimum.
-        const auto s_dot_max_vel_switching_min = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
-        const auto s_dot_max_accel_switching_min = std::min(s_dot_max_accel_before, s_dot_max_accel_after);
-
-        // Only accept if feasible against the acceleration-limited velocity curve.
-        if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
-            return switching_point{.point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
-                                   .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
+            // Only accept if feasible against the acceleration-limited velocity curve.
+            if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
+                return switching_point{.point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
+                                    .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
+            } 
         }
     }
 
