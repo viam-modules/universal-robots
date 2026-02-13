@@ -1158,9 +1158,11 @@ BOOST_AUTO_TEST_SUITE_END()
 // Velocity switching point search tests
 //
 // These tests exercise the continuous and discontinuous velocity switching point
-// detection (Kunz & Stilman equations 40-42). In all cases the velocity limit
-// curve is below the acceleration limit curve for all s, so the trajectory is
-// velocity-dominated and the switching points come from the velocity curve shape.
+// detection (Kunz & Stilman equations 40-42). Cases 1-11 use high acceleration
+// limits so the velocity curve is below the acceleration curve everywhere,
+// making the trajectory velocity-dominated. Cases 12-15 use tight curvature
+// (small deviation) where the centripetal term pushes the acceleration curve
+// below the velocity curve in some regions, testing mixed regimes.
 // =============================================================================
 
 BOOST_AUTO_TEST_SUITE(velocity_switching_point_search)
