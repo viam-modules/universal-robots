@@ -187,6 +187,7 @@ target_sources(trajex-test
     src/viam/trajex/totg/test/uniform_sampler.cpp
     src/viam/trajex/totg/test/integration.cpp
     src/viam/trajex/totg/test/observers.cpp
+    src/viam/trajex/service/test/trajectory_planner.cpp
 )
 
 target_link_libraries(trajex-test
