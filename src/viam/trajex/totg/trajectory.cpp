@@ -621,7 +621,8 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
                                    .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
         }
 
-        // We can't call compute_acceleration_bounds unless this holds (Divergence 2 guard).
+        // We can't call compute_acceleration_bounds at s_dot_max_vel if it exceeds s_dot_max_accel,
+        // because the centripetal term would already exceed the acceleration budget at that velocity.
         if (opt.epsilon.wrap(s_dot_max_accel_before) <= opt.epsilon.wrap(s_dot_max_vel_before)
             || opt.epsilon.wrap(s_dot_max_accel_after) <= opt.epsilon.wrap(s_dot_max_vel_after)) {
             continue;
@@ -671,7 +672,7 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
             if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
                 return switching_point{.point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
                                     .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
-            } 
+            }
         }
     }
 

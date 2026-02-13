@@ -706,6 +706,23 @@ get_backward_events_by_kind(const trajectory_integration_event_collector& collec
     return events;
 }
 
+void report_backward_events(const trajectory_integration_event_collector& collector) {
+    for (const auto& ev : collector.events()) {
+        if (const auto* bw = std::get_if<trajectory::integration_observer::started_backward_event>(&ev)) {
+            const char* kind = "?";
+            switch (bw->kind) {
+                case trajectory::switching_point_kind::k_path_begin: kind = "path_begin"; break;
+                case trajectory::switching_point_kind::k_discontinuous_curvature: kind = "disc_curvature"; break;
+                case trajectory::switching_point_kind::k_nondifferentiable_extremum: kind = "nondiff_extremum"; break;
+                case trajectory::switching_point_kind::k_velocity_escape: kind = "vel_escape"; break;
+                case trajectory::switching_point_kind::k_discontinuous_velocity_limit: kind = "disc_vel_limit"; break;
+                case trajectory::switching_point_kind::k_path_end: kind = "path_end"; break;
+            }
+            BOOST_TEST_MESSAGE("  backward(s=" << static_cast<double>(bw->start.s)
+                               << ", s_dot=" << static_cast<double>(bw->start.s_dot) << ", kind=" << kind << ")");
+        }
+    }
+}
 
 double estimate_eq40_delta(const trajectory& traj, arc_length s) {
     auto cursor = traj.path().create_cursor();
@@ -1626,104 +1643,6 @@ BOOST_AUTO_TEST_CASE(near_start_velocity_escape_has_eq40_sign_bracket) {
 }
 
 // ---------------------------------------------------------------------------
-// Exploratory tests: trying to produce k_discontinuous_velocity_limit.
-// ---------------------------------------------------------------------------
-BOOST_AUTO_TEST_CASE(explore_discontinuous_velocity_limit_low_accel) {
-    using namespace viam::trajex::totg;
-    using namespace viam::trajex::types;
-
-    trajectory_test_fixture fixture(2, 1.0);
-    fixture.validation_tolerance_percent = 1.0;
-
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{1.0, 1.0})
-        .set_max_deviation(0.03);
-
-    fixture.traj_opts.delta = trajectory::seconds{0.001};
-    fixture.set_waypoints_rad({{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}});
-    fixture.allow_any_events();
-    const trajectory traj_a = fixture.create_and_validate();
-    BOOST_TEST_MESSAGE("Explore A (low accel): duration=" << traj_a.duration().count() << "s");
-}
-
-BOOST_AUTO_TEST_CASE(explore_discontinuous_velocity_limit_3dof) {
-    using namespace viam::trajex::totg;
-    using namespace viam::trajex::types;
-
-    trajectory_test_fixture fixture(3, 1.0);
-    fixture.validation_tolerance_percent = 1.0;
-
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08, 0.3})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0, 10.0})
-        .set_max_deviation(0.03);
-
-    fixture.traj_opts.delta = trajectory::seconds{0.001};
-    fixture.set_waypoints_rad({{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {1.0, 1.0, 0.5}});
-    fixture.allow_any_events();
-    const trajectory traj_b = fixture.create_and_validate();
-    BOOST_TEST_MESSAGE("Explore B (3dof): duration=" << traj_b.duration().count() << "s");
-}
-
-BOOST_AUTO_TEST_CASE(explore_discontinuous_velocity_limit_6dof) {
-    using namespace viam::trajex::totg;
-    using namespace viam::trajex::types;
-
-    trajectory_test_fixture fixture(6, 1.0);
-    fixture.validation_tolerance_percent = 1.0;
-
-    fixture.set_max_velocity(degrees_to_radians(xt::xarray<double>{5.0, 3.0, 5.0, 10.0, 10.0, 10.0}))
-        .set_max_acceleration(degrees_to_radians(xt::ones<double>({6}) * 10.0))
-        .set_max_deviation(0.1);
-
-    fixture.traj_opts.delta = trajectory::seconds{0.001};
-    fixture.set_waypoints_deg({{0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
-                               {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0},
-                               {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0}});
-    fixture.allow_any_events();
-    const trajectory traj_c = fixture.create_and_validate();
-    BOOST_TEST_MESSAGE("Explore C (6dof): duration=" << traj_c.duration().count() << "s");
-}
-
-BOOST_AUTO_TEST_CASE(explore_discontinuous_velocity_limit_asymmetric_accel) {
-    using namespace viam::trajex::totg;
-    using namespace viam::trajex::types;
-
-    trajectory_test_fixture fixture(2, 1.0);
-    fixture.validation_tolerance_percent = 1.0;
-
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 0.5})
-        .set_max_deviation(0.03);
-
-    fixture.traj_opts.delta = trajectory::seconds{0.001};
-    fixture.set_waypoints_rad({{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}});
-    fixture.allow_any_events();
-    const trajectory traj_d = fixture.create_and_validate();
-    BOOST_TEST_MESSAGE("Explore D (asymmetric accel): duration=" << traj_d.duration().count() << "s");
-}
-
-// ---------------------------------------------------------------------------
-// Helper: report all backward events from a collector for test development.
-// ---------------------------------------------------------------------------
-void report_backward_events(const trajectory_integration_event_collector& collector) {
-    for (const auto& ev : collector.events()) {
-        if (const auto* bw = std::get_if<trajectory::integration_observer::started_backward_event>(&ev)) {
-            const char* kind = "?";
-            switch (bw->kind) {
-                case trajectory::switching_point_kind::k_path_begin: kind = "path_begin"; break;
-                case trajectory::switching_point_kind::k_discontinuous_curvature: kind = "disc_curvature"; break;
-                case trajectory::switching_point_kind::k_nondifferentiable_extremum: kind = "nondiff_extremum"; break;
-                case trajectory::switching_point_kind::k_velocity_escape: kind = "vel_escape"; break;
-                case trajectory::switching_point_kind::k_discontinuous_velocity_limit: kind = "disc_vel_limit"; break;
-                case trajectory::switching_point_kind::k_path_end: kind = "path_end"; break;
-            }
-            BOOST_TEST_MESSAGE("  backward(s=" << static_cast<double>(bw->start.s)
-                               << ", s_dot=" << static_cast<double>(bw->start.s_dot) << ", kind=" << kind << ")");
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Case 13: Boundary produces k_discontinuous_velocity_limit.
 //
 // Extreme velocity ratio with a tiny blend so the velocity curve drops
@@ -1749,6 +1668,7 @@ BOOST_AUTO_TEST_CASE(boundary_produces_discontinuous_velocity_limit) {
 
     // Relaxed tolerance: the geometry that triggers eqs 41-42 requires tight curvature
     // which pushes TOTG near its numerical limits.
+    // TODO: tighten once TOTG handles high-curvature blends better.
     validate_trajectory_invariants(traj, 50.0);
     report_backward_events(collector);
 
@@ -1782,15 +1702,17 @@ BOOST_AUTO_TEST_CASE(both_discontinuous_velocity_limit_and_velocity_escape) {
         trajectory::seconds{0.001},
         collector);
 
+    // TODO: tighten once TOTG handles high-curvature blends better.
     validate_trajectory_invariants(traj, 50.0);
     report_backward_events(collector);
 
     const auto disc = get_backward_events_by_kind(collector, trajectory::switching_point_kind::k_discontinuous_velocity_limit);
     const auto vel = get_backward_events_by_kind(collector, trajectory::switching_point_kind::k_velocity_escape);
 
-    // Both types should be present
+    // Both types must be present.
     BOOST_TEST_MESSAGE("Discontinuous: " << disc.size() << ", Velocity escapes: " << vel.size());
-    BOOST_CHECK_GE(disc.size() + vel.size(), 2U);
+    BOOST_CHECK_GE(disc.size(), 1U);
+    BOOST_CHECK_GE(vel.size(), 1U);
 }
 
 // ---------------------------------------------------------------------------
@@ -1824,6 +1746,53 @@ BOOST_AUTO_TEST_CASE(multi_turn_low_accel_switching_point_search) {
         collector, trajectory::switching_point_kind::k_velocity_escape);
     BOOST_CHECK_GE(vel_escapes.size(), 1U);
     BOOST_CHECK_GT(traj.duration().count(), 0.0);
+}
+
+// ---------------------------------------------------------------------------
+// Case 16: Condition 41 false gates a boundary that would otherwise qualify.
+//
+// Same 30° geometry as Case 13, but with a larger blend deviation (0.005
+// vs 0.0007).  The larger deviation reduces curvature at the blend, which
+// makes curve_slope_before much shallower.  trajectory_slope_before ends up
+// MORE negative than curve_slope_before, so condition 41
+// (trajectory_slope_before >= curve_slope_before) is false.  Condition 42
+// remains true (linear after-segment → curve_slope_after=0, and
+// trajectory_slope_after < 0).
+//
+// This verifies that a single false condition gates the boundary decision,
+// preventing a switching point that Case 13 (with tighter curvature) does
+// produce.
+//
+// Note: condition 42 false is structurally unreachable at integration level
+// with linear/circular segments because blend-end boundaries always have
+// curve_slope_after = 0 (linear after-segment, q''=0) and
+// trajectory_slope_after < 0 (minimum deceleration), making c42 trivially
+// true.  Blend-start boundaries are filtered by the D2 guard before
+// reaching the c41/c42 evaluation.
+// ---------------------------------------------------------------------------
+BOOST_AUTO_TEST_CASE(condition_41_false_gates_boundary) {
+    using namespace viam::trajex::totg;
+    using namespace viam::trajex::types;
+
+    trajectory_integration_event_collector collector;
+    // Same waypoints, velocities, accelerations as Case 13, but deviation=0.005
+    // instead of 0.0007.  The larger blend radius reduces curvature enough that
+    // condition 41 flips to false.
+    const trajectory traj = create_velocity_switching_test_trajectory(
+        xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}},
+        xt::xarray<double>{0.5, 0.1},        // 5:1 ratio (same as Case 13)
+        xt::xarray<double>{3.0, 3.0},        // same accel
+        0.005,                                // larger deviation → lower curvature
+        trajectory::seconds{0.001},
+        collector);
+
+    validate_trajectory_invariants(traj, 50.0);
+    report_backward_events(collector);
+
+    // With condition 41 false, no discontinuous velocity switching point should be produced.
+    const auto disc = get_backward_events_by_kind(
+        collector, trajectory::switching_point_kind::k_discontinuous_velocity_limit);
+    BOOST_CHECK_EQUAL(disc.size(), 0U);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
