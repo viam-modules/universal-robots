@@ -885,7 +885,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         .acceleration_limits = xt::adapt(acceleration_limits_data),
         .path_blend_tolerance = current_state_->get_path_tolerance_delta_rads(),
         .colinearization_ratio = current_state_->get_path_colinearization_ratio(),
-        .max_trajectory_duration = current_state_->get_max_trajectory_duration_secs(),
     });
 
     planner
@@ -1078,6 +1077,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     if (!result) {
         VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " (no result)";
         return;
+    } else if (result->total_duration > current_state_->get_max_trajectory_duration_secs()) {
+        throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
     } else if (result->total_duration < k_min_timestep_sec) {
         VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " (duration too small)";
         return;

@@ -34,7 +34,6 @@ struct trajectory_planner_base {
         xt::xarray<double> acceleration_limits;
         double path_blend_tolerance = 0.0;
         std::optional<double> colinearization_ratio;
-        double max_trajectory_duration = 0.0;
         bool segment_trajex = true;
     };
 };
@@ -242,7 +241,6 @@ class trajectory_planner : public trajectory_planner_base {
 
         algorithm_outcome outcome;
         outcome.receiver.emplace();
-        double cumulative_duration = 0.0;
 
         for (const auto& segment : segments) {
             if (!outcome.receiver) {
@@ -261,12 +259,6 @@ class trajectory_planner : public trajectory_planner_base {
                 auto start = std::chrono::steady_clock::now();
                 auto traj = totg::trajectory::create(std::move(p), std::move(topts));
                 auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start);
-
-                cumulative_duration += traj.duration().count();
-                if (cumulative_duration > config_.max_trajectory_duration) {
-                    throw std::runtime_error("trajectory duration exceeds maximum (" + std::to_string(cumulative_duration) + "s > " +
-                                             std::to_string(config_.max_trajectory_duration) + "s)");
-                }
 
                 trajex_on_success_(*outcome.receiver, segment, traj, elapsed);
 
@@ -289,7 +281,6 @@ class trajectory_planner : public trajectory_planner_base {
 
         algorithm_outcome outcome;
         outcome.receiver.emplace();
-        double cumulative_duration = 0.0;
 
         for (const auto& segment : segments) {
             if (!outcome.receiver) {
@@ -325,12 +316,6 @@ class trajectory_planner : public trajectory_planner_base {
 
                 if (!traj.isValid()) {
                     throw std::runtime_error("legacy trajectory generator produced invalid result");
-                }
-
-                cumulative_duration += traj.getDuration();
-                if (cumulative_duration > config_.max_trajectory_duration) {
-                    throw std::runtime_error("trajectory duration exceeds maximum (" + std::to_string(cumulative_duration) + "s > " +
-                                             std::to_string(config_.max_trajectory_duration) + "s)");
                 }
 
                 legacy_on_success_(*outcome.receiver, segment, legacy_path, traj, elapsed);

@@ -20,6 +20,7 @@
 #include <xtensor/xarray.hpp>
 #endif
 
+#include <viam/trajex/service/sampling_utils.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 
 using namespace viam::sdk;
@@ -41,28 +42,7 @@ struct pose_sample {
 
 template <typename Func>
 void sampling_func(std::vector<trajectory_sample_point>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
-    if (duration_sec <= 0.0 || sampling_frequency_hz <= 0.0) {
-        throw std::invalid_argument("duration_sec and sampling_frequency_hz are not both positive");
-    }
-    static constexpr std::size_t k_max_samples = 1000000;
-    const auto putative_samples = duration_sec * sampling_frequency_hz;
-    if (!std::isfinite(putative_samples) || putative_samples > k_max_samples) {
-        throw std::invalid_argument("duration_sec and sampling_frequency_hz exceed the maximum allowable samples");
-    }
-
-    // Calculate the number of samples needed. this will always be at least 2.
-    const auto num_samples = static_cast<std::size_t>(std::ceil(putative_samples) + 1);
-
-    // Calculate the actual step size
-    const double step = duration_sec / static_cast<double>((num_samples - 1));
-
-    // Generate samples by evaluating f at each time point
-    for (std::size_t i = 1; i < num_samples - 1; ++i) {
-        samples.push_back(f(static_cast<double>(i) * step, step));
-    }
-
-    // Ensure the last sample uses exactly the duration_sec
-    samples.push_back(f(duration_sec, step));
+    viam::trajex::for_each_sample(duration_sec, sampling_frequency_hz, [&](double t, double step) { samples.push_back(f(t, step)); });
 }
 
 void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples);

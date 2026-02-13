@@ -25,7 +25,6 @@ trajectory_planner<test_receiver>::config simple_config() {
         .acceleration_limits = xt::xarray<double>{1.0, 1.0, 1.0},
         .path_blend_tolerance = 0.001,
         .colinearization_ratio = std::nullopt,
-        .max_trajectory_duration = 100.0,
     };
 }
 
@@ -264,25 +263,6 @@ BOOST_AUTO_TEST_CASE(processed_waypoint_count_reflects_preprocessing) {
             BOOST_CHECK_EQUAL(planner.processed_waypoint_count(), 3U);
             return std::nullopt;
         });
-}
-
-BOOST_AUTO_TEST_CASE(max_duration_exceeded_triggers_failure) {
-    auto cfg = simple_config();
-    cfg.max_trajectory_duration = 0.0;
-
-    bool failure_called = false;
-
-    trajectory_planner<test_receiver>(std::move(cfg))
-        .with_waypoint_provider([](auto& p) { return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}); })
-        .with_trajex([](test_receiver&, const waypoint_accumulator&, const totg::trajectory&, auto) {},
-                     [&](const test_receiver&, const waypoint_accumulator&, const std::exception&) { failure_called = true; })
-        .execute([](const auto&, const auto& trajex, const auto&) -> std::optional<test_receiver> {
-            BOOST_CHECK(!trajex.receiver);
-            BOOST_CHECK(trajex.error != nullptr);
-            return std::nullopt;
-        });
-
-    BOOST_CHECK(failure_called);
 }
 
 BOOST_AUTO_TEST_CASE(decider_return_type_is_flexible) {
