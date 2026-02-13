@@ -78,7 +78,8 @@ std::string serialize_failed_trajectory_to_json(const viam::trajex::totg::waypoi
                                                 const xt::xarray<double>& max_velocity_vec,
                                                 const xt::xarray<double>& max_acceleration_vec,
                                                 double path_tolerance_delta_rads,
-                                                const std::optional<double>& path_colinearization_ratio);
+                                                const std::optional<double>& path_colinearization_ratio,
+                                                double segmentation_threshold);
 
 class URArm final : public Arm, public Reconfigurable {
    public:
@@ -91,6 +92,11 @@ class URArm final : public Arm, public Reconfigurable {
     /// Default maximum trajectory duration in seconds.
     ///
     static constexpr double k_default_max_trajectory_duration_secs = 600.0;
+
+    ///
+    /// Default waypoint segmentation threshold.
+    ///
+    static constexpr double k_default_segmentation_threshold = 5e-3;
 
     ///
     /// Default trajectory sampling frequency in Hz.
