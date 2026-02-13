@@ -61,7 +61,7 @@ class waypoint_accumulator {
     ///
     /// Move constructs a waypoint_accumulator.
     ///
-    waypoint_accumulator(waypoint_accumulator&&);
+    waypoint_accumulator(waypoint_accumulator&&) noexcept;
 
     ///
     /// Copy assigns a waypoint_accumulator.
@@ -75,7 +75,7 @@ class waypoint_accumulator {
     ///
     /// @return Reference to this
     ///
-    waypoint_accumulator& operator=(waypoint_accumulator&&);
+    waypoint_accumulator& operator=(waypoint_accumulator&&) noexcept;
 
     ///
     /// Adds additional waypoints.

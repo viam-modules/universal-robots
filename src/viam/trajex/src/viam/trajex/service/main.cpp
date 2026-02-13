@@ -42,8 +42,9 @@ class trajex_mlmodel_service : public vsdk::MLModelService, public vsdk::Reconfi
         //   - waypoint_deduplication_tolerance_rads [1] -> double
         //   - trajectory_sampling_freq_hz [1] -> double
         (void)inputs;
-        throw std::runtime_error("trajex_mlmodel_service::infer not yet implemented: "
-                                 "input tensor parsing and output packing are TODO");
+        throw std::runtime_error(
+            "trajex_mlmodel_service::infer not yet implemented: "
+            "input tensor parsing and output packing are TODO");
 
         // Planner framework (compiles once input parsing is wired up):
         //

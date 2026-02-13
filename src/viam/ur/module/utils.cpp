@@ -81,7 +81,6 @@ vector6d_t convert_tcp_force_to_tool_frame(const vector6d_t& tcp_pose, const vec
     return {force_tool[0], force_tool[1], force_tool[2], torque_tool[0], torque_tool[1], torque_tool[2]};
 }
 
-
 void deduplicate_waypoints(std::list<Eigen::VectorXd>& waypoints, double tolerance) {
     const auto close_enough = [tolerance](const Eigen::VectorXd& a, const Eigen::VectorXd& b) -> bool {
         return (a - b).lpNorm<Eigen::Infinity>() <= tolerance;

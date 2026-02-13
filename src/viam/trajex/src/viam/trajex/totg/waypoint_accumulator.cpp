@@ -26,7 +26,7 @@ waypoint_accumulator::waypoint_accumulator(const waypoint_view_t& first_waypoint
 }
 
 waypoint_accumulator::waypoint_accumulator(const waypoint_accumulator&) = default;
-waypoint_accumulator::waypoint_accumulator(waypoint_accumulator&&) = default;
+waypoint_accumulator::waypoint_accumulator(waypoint_accumulator&&) noexcept = default;
 
 // Copy assignment via copy-and-swap. Default copy assignment fails because
 // std::vector::operator= tries to assign through existing xview elements,
@@ -41,7 +41,7 @@ waypoint_accumulator& waypoint_accumulator::operator=(const waypoint_accumulator
     return *this;
 }
 
-waypoint_accumulator& waypoint_accumulator::operator=(waypoint_accumulator&&) = default;
+waypoint_accumulator& waypoint_accumulator::operator=(waypoint_accumulator&&) noexcept = default;
 
 waypoint_accumulator& waypoint_accumulator::add_waypoints(const xt::xarray<double>& waypoints) {
     if (waypoints.dimension() != 2) {

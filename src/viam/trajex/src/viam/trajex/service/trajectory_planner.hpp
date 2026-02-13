@@ -74,38 +74,24 @@ class trajectory_planner : public trajectory_planner_base {
 
     /// @name Handler type aliases
     /// @{
-    using waypoint_provider_fn =
-        std::function<totg::waypoint_accumulator(trajectory_planner&)>;
+    using waypoint_provider_fn = std::function<totg::waypoint_accumulator(trajectory_planner&)>;
 
-    using waypoint_preprocessor_fn =
-        std::function<void(trajectory_planner&, totg::waypoint_accumulator&)>;
+    using waypoint_preprocessor_fn = std::function<void(trajectory_planner&, totg::waypoint_accumulator&)>;
 
-    using move_validator_fn =
-        std::function<void(trajectory_planner&, const totg::waypoint_accumulator&)>;
+    using move_validator_fn = std::function<void(trajectory_planner&, const totg::waypoint_accumulator&)>;
 
-    using segmenter_fn =
-        std::function<std::vector<totg::waypoint_accumulator>(
-            trajectory_planner&, totg::waypoint_accumulator)>;
+    using segmenter_fn = std::function<std::vector<totg::waypoint_accumulator>(trajectory_planner&, totg::waypoint_accumulator)>;
 
     using trajex_success_fn =
-        std::function<void(Receiver&,
-                           const totg::waypoint_accumulator&,
-                           const totg::trajectory&,
-                           std::chrono::duration<double>)>;
+        std::function<void(Receiver&, const totg::waypoint_accumulator&, const totg::trajectory&, std::chrono::duration<double>)>;
 
     using legacy_success_fn =
-        std::function<void(Receiver&,
-                           const totg::waypoint_accumulator&,
-                           const Path&,
-                           const Trajectory&,
-                           std::chrono::duration<double>)>;
+        std::function<void(Receiver&, const totg::waypoint_accumulator&, const Path&, const Trajectory&, std::chrono::duration<double>)>;
 
-    using algorithm_failure_fn =
-        std::function<void(const Receiver&, const totg::waypoint_accumulator&, const std::exception&)>;
+    using algorithm_failure_fn = std::function<void(const Receiver&, const totg::waypoint_accumulator&, const std::exception&)>;
     /// @}
 
-    explicit trajectory_planner(config cfg)
-        : config_(std::move(cfg)) {}
+    explicit trajectory_planner(config cfg) : config_(std::move(cfg)) {}
 
     ///
     /// Extends the lifetime of data created inside callbacks.
@@ -167,8 +153,7 @@ class trajectory_planner : public trajectory_planner_base {
     ///
     /// Enables the trajex/totg algorithm.
     ///
-    trajectory_planner& with_trajex(trajex_success_fn on_success,
-                                    algorithm_failure_fn on_failure = nullptr) {
+    trajectory_planner& with_trajex(trajex_success_fn on_success, algorithm_failure_fn on_failure = nullptr) {
         trajex_on_success_ = std::move(on_success);
         trajex_on_failure_ = std::move(on_failure);
         return *this;
@@ -177,8 +162,7 @@ class trajectory_planner : public trajectory_planner_base {
     ///
     /// Enables the legacy generator.
     ///
-    trajectory_planner& with_legacy(legacy_success_fn on_success,
-                                    algorithm_failure_fn on_failure = nullptr) {
+    trajectory_planner& with_legacy(legacy_success_fn on_success, algorithm_failure_fn on_failure = nullptr) {
         legacy_on_success_ = std::move(on_success);
         legacy_on_failure_ = std::move(on_failure);
         return *this;
@@ -203,11 +187,7 @@ class trajectory_planner : public trajectory_planner_base {
     ///        algorithm_outcome, algorithm_outcome). Return type is deduced.
     ///
     template <typename Decider>
-    auto execute(Decider&& decider)
-        -> std::invoke_result_t<Decider,
-                                const trajectory_planner&,
-                                algorithm_outcome,
-                                algorithm_outcome> {
+    auto execute(Decider&& decider) -> std::invoke_result_t<Decider, const trajectory_planner&, algorithm_outcome, algorithm_outcome> {
         if (!waypoint_provider_) {
             throw std::logic_error("waypoint provider not set");
         }
@@ -220,8 +200,7 @@ class trajectory_planner : public trajectory_planner_base {
 
         processed_waypoint_count_ = accumulator.size();
         if (processed_waypoint_count_ < 2) {
-            return std::forward<Decider>(decider)(
-                *this, algorithm_outcome{}, algorithm_outcome{});
+            return std::forward<Decider>(decider)(*this, algorithm_outcome{}, algorithm_outcome{});
         }
 
         if (validator_) {
@@ -243,19 +222,16 @@ class trajectory_planner : public trajectory_planner_base {
             segments.push_back(std::move(accumulator));
         }
 
-        const auto& trajex_segments =
-            unsegmented_for_trajex ? *unsegmented_for_trajex : segments;
+        const auto& trajex_segments = unsegmented_for_trajex ? *unsegmented_for_trajex : segments;
 
         auto trajex_outcome = run_trajex_(trajex_segments);
         auto legacy_outcome = run_legacy_(segments);
 
-        return std::forward<Decider>(decider)(
-            *this, std::move(trajex_outcome), std::move(legacy_outcome));
+        return std::forward<Decider>(decider)(*this, std::move(trajex_outcome), std::move(legacy_outcome));
     }
 
    private:
-    algorithm_outcome run_trajex_(
-        const std::vector<totg::waypoint_accumulator>& segments) {
+    algorithm_outcome run_trajex_(const std::vector<totg::waypoint_accumulator>& segments) {
         if (!trajex_on_success_) {
             return {};
         }
@@ -270,8 +246,7 @@ class trajectory_planner : public trajectory_planner_base {
             }
 
             try {
-                auto path_opts = totg::path::options{}.set_max_deviation(
-                    config_.path_blend_tolerance);
+                auto path_opts = totg::path::options{}.set_max_deviation(config_.path_blend_tolerance);
 
                 auto p = totg::path::create(segment, path_opts);
 
@@ -281,15 +256,12 @@ class trajectory_planner : public trajectory_planner_base {
 
                 auto start = std::chrono::steady_clock::now();
                 auto traj = totg::trajectory::create(std::move(p), std::move(topts));
-                auto elapsed = std::chrono::duration<double>(
-                    std::chrono::steady_clock::now() - start);
+                auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start);
 
                 cumulative_duration += traj.duration().count();
                 if (cumulative_duration > config_.max_trajectory_duration) {
-                    throw std::runtime_error(
-                        "trajectory duration exceeds maximum ("
-                        + std::to_string(cumulative_duration) + "s > "
-                        + std::to_string(config_.max_trajectory_duration) + "s)");
+                    throw std::runtime_error("trajectory duration exceeds maximum (" + std::to_string(cumulative_duration) + "s > " +
+                                             std::to_string(config_.max_trajectory_duration) + "s)");
                 }
 
                 trajex_on_success_(*outcome.receiver, segment, traj, elapsed);
@@ -306,8 +278,7 @@ class trajectory_planner : public trajectory_planner_base {
         return outcome;
     }
 
-    algorithm_outcome run_legacy_(
-        const std::vector<totg::waypoint_accumulator>& segments) {
+    algorithm_outcome run_legacy_(const std::vector<totg::waypoint_accumulator>& segments) {
         if (!legacy_on_success_) {
             return {};
         }
@@ -332,39 +303,30 @@ class trajectory_planner : public trajectory_planner_base {
                     return Eigen::Map<const Eigen::VectorXd>(data, size);
                 };
                 auto transformed = segment | std::views::transform(to_eigen);
-                std::list<Eigen::VectorXd> eigen_waypoints(
-                    std::begin(transformed), std::end(transformed));
+                std::list<Eigen::VectorXd> eigen_waypoints(std::begin(transformed), std::end(transformed));
 
                 if (config_.colinearization_ratio) {
-                    apply_colinearization(
-                        eigen_waypoints,
-                        config_.path_blend_tolerance * *config_.colinearization_ratio);
+                    apply_colinearization(eigen_waypoints, config_.path_blend_tolerance * *config_.colinearization_ratio);
                 }
 
                 Path legacy_path(eigen_waypoints, config_.path_blend_tolerance);
 
-                auto vel_eigen = Eigen::Map<const Eigen::VectorXd>(
-                    config_.velocity_limits.data(),
-                    static_cast<Eigen::Index>(config_.velocity_limits.size()));
-                auto acc_eigen = Eigen::Map<const Eigen::VectorXd>(
-                    config_.acceleration_limits.data(),
-                    static_cast<Eigen::Index>(config_.acceleration_limits.size()));
+                auto vel_eigen = Eigen::Map<const Eigen::VectorXd>(config_.velocity_limits.data(),
+                                                                   static_cast<Eigen::Index>(config_.velocity_limits.size()));
+                auto acc_eigen = Eigen::Map<const Eigen::VectorXd>(config_.acceleration_limits.data(),
+                                                                   static_cast<Eigen::Index>(config_.acceleration_limits.size()));
 
                 Trajectory traj(legacy_path, vel_eigen, acc_eigen);
-                auto elapsed = std::chrono::duration<double>(
-                    std::chrono::steady_clock::now() - start);
+                auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - start);
 
                 if (!traj.isValid()) {
-                    throw std::runtime_error(
-                        "legacy trajectory generator produced invalid result");
+                    throw std::runtime_error("legacy trajectory generator produced invalid result");
                 }
 
                 cumulative_duration += traj.getDuration();
                 if (cumulative_duration > config_.max_trajectory_duration) {
-                    throw std::runtime_error(
-                        "trajectory duration exceeds maximum ("
-                        + std::to_string(cumulative_duration) + "s > "
-                        + std::to_string(config_.max_trajectory_duration) + "s)");
+                    throw std::runtime_error("trajectory duration exceeds maximum (" + std::to_string(cumulative_duration) + "s > " +
+                                             std::to_string(config_.max_trajectory_duration) + "s)");
                 }
 
                 legacy_on_success_(*outcome.receiver, segment, legacy_path, traj, elapsed);

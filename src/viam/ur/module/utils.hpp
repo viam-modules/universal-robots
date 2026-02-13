@@ -84,8 +84,8 @@ urcl::vector6d_t convert_tcp_force_to_tool_frame(const urcl::vector6d_t& tcp_pos
 
 // Colinearization functions live in trajex service layer. Import them here
 // for backward compatibility with existing call sites (test.cpp).
-using viam::trajex::within_colinearization_tolerance;
 using viam::trajex::apply_colinearization;
+using viam::trajex::within_colinearization_tolerance;
 
 ///
 /// Deduplicate waypoints in-place using L-infinity norm.
