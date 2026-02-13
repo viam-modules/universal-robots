@@ -13,7 +13,6 @@ namespace {
 using namespace viam::trajex;
 using namespace viam::trajex::totg;
 
-// Simple receiver that counts segments and accumulates duration
 struct test_receiver {
     int segment_count = 0;
     double total_duration = 0.0;
@@ -30,7 +29,6 @@ trajectory_planner<test_receiver>::config simple_config() {
     };
 }
 
-// Helper: stash waypoints and return a waypoint_accumulator viewing them.
 // waypoint_accumulator views data, doesn't own it, so the xarray must
 // outlive the accumulator. Stash is the mechanism for that.
 waypoint_accumulator stash_waypoints(trajectory_planner<test_receiver>& planner,
@@ -58,7 +56,7 @@ BOOST_AUTO_TEST_CASE(fewer_than_two_waypoints_skips_algorithms) {
 
     auto result =
         trajectory_planner<test_receiver>(simple_config())
-            .with_waypoint_provider([](auto& p) -> waypoint_accumulator {
+            .with_waypoint_provider([](auto& p) {
                 return stash_waypoints(p, {{1.0, 2.0, 3.0}});
             })
             .execute([&](const auto& planner, auto trajex, auto legacy)
@@ -81,11 +79,12 @@ BOOST_AUTO_TEST_CASE(trajex_only_success) {
 
     auto result =
         trajectory_planner<test_receiver>(simple_config())
-            .with_waypoint_provider([](auto& p) -> waypoint_accumulator {
+            .with_waypoint_provider([](auto& p) {
                 return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}});
             })
             .with_trajex(
-                [&](test_receiver& acc, const totg::trajectory& traj, auto elapsed) {
+                [&](test_receiver& acc, const waypoint_accumulator&,
+                    const totg::trajectory& traj, auto elapsed) {
                     success_called = true;
                     acc.segment_count++;
                     acc.total_duration += traj.duration().count();
@@ -110,11 +109,12 @@ BOOST_AUTO_TEST_CASE(legacy_only_success) {
 
     auto result =
         trajectory_planner<test_receiver>(simple_config())
-            .with_waypoint_provider([](auto& p) -> waypoint_accumulator {
+            .with_waypoint_provider([](auto& p) {
                 return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}});
             })
             .with_legacy(
-                [&](test_receiver& acc, const Trajectory& traj, auto elapsed) {
+                [&](test_receiver& acc, const waypoint_accumulator&, const Path&,
+                    const Trajectory& traj, auto elapsed) {
                     success_called = true;
                     acc.segment_count++;
                     acc.total_duration += traj.getDuration();
@@ -139,15 +139,17 @@ BOOST_AUTO_TEST_CASE(both_algorithms_success) {
 
     auto result =
         trajectory_planner<test_receiver>(simple_config())
-            .with_waypoint_provider([](auto& p) -> waypoint_accumulator {
+            .with_waypoint_provider([](auto& p) {
                 return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}});
             })
-            .with_trajex([&](test_receiver& acc, const totg::trajectory& traj, auto) {
+            .with_trajex([&](test_receiver& acc, const waypoint_accumulator&,
+                             const totg::trajectory& traj, auto) {
                 trajex_called = true;
                 acc.segment_count++;
                 acc.total_duration += traj.duration().count();
             })
-            .with_legacy([&](test_receiver& acc, const Trajectory& traj, auto) {
+            .with_legacy([&](test_receiver& acc, const waypoint_accumulator&, const Path&,
+                             const Trajectory& traj, auto) {
                 legacy_called = true;
                 acc.segment_count++;
                 acc.total_duration += traj.getDuration();
@@ -165,17 +167,16 @@ BOOST_AUTO_TEST_CASE(both_algorithms_success) {
 }
 
 BOOST_AUTO_TEST_CASE(preprocessor_runs_before_algorithms) {
-    // Deduplication with a very large tolerance collapses all waypoints to one,
-    // so algorithms never run.
     auto result =
         trajectory_planner<test_receiver>(simple_config())
-            .with_waypoint_provider([](auto& p) -> waypoint_accumulator {
+            .with_waypoint_provider([](auto& p) {
                 return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}});
             })
-            .with_waypoint_preprocessor([](auto&, waypoint_accumulator& wa) {
-                wa = deduplicate_waypoints(wa, 1000.0);
+            .with_waypoint_preprocessor([](auto&, waypoint_accumulator& accumulator) {
+                accumulator = deduplicate_waypoints(accumulator, 1000.0);
             })
-            .with_trajex([](test_receiver&, const totg::trajectory&, auto) {
+            .with_trajex([](test_receiver&, const waypoint_accumulator&,
+                            const totg::trajectory&, auto) {
                 BOOST_FAIL("trajex should not run on < 2 waypoints");
             })
             .execute([](const auto& planner, auto trajex, auto)
@@ -191,7 +192,7 @@ BOOST_AUTO_TEST_CASE(preprocessor_runs_before_algorithms) {
 BOOST_AUTO_TEST_CASE(validator_can_reject_move) {
     BOOST_CHECK_THROW(
         trajectory_planner<test_receiver>(simple_config())
-            .with_waypoint_provider([](auto& p) -> waypoint_accumulator {
+            .with_waypoint_provider([](auto& p) {
                 return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}});
             })
             .with_move_validator([](auto&, const waypoint_accumulator&) {
@@ -209,15 +210,16 @@ BOOST_AUTO_TEST_CASE(segmenter_produces_multiple_segments) {
 
     auto result =
         trajectory_planner<test_receiver>(simple_config())
-            .with_waypoint_provider([](auto& p) -> waypoint_accumulator {
+            .with_waypoint_provider([](auto& p) {
                 return stash_waypoints(
                     p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 0.0, 0.0}});
             })
-            .with_segmenter([](auto&, waypoint_accumulator wa) {
-                return segment_at_reversals(std::move(wa));
+            .with_segmenter([](auto&, waypoint_accumulator accumulator) {
+                return segment_at_reversals(std::move(accumulator));
             })
             .with_trajex(
-                [&](test_receiver& acc, const totg::trajectory&, auto) {
+                [&](test_receiver& acc, const waypoint_accumulator&,
+                    const totg::trajectory&, auto) {
                     trajex_segment_count++;
                     acc.segment_count++;
                 })
@@ -236,15 +238,16 @@ BOOST_AUTO_TEST_CASE(failure_disengages_receiver_for_remaining_segments) {
 
     auto result =
         trajectory_planner<test_receiver>(simple_config())
-            .with_waypoint_provider([](auto& p) -> waypoint_accumulator {
+            .with_waypoint_provider([](auto& p) {
                 return stash_waypoints(
                     p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 0.0, 0.0}});
             })
-            .with_segmenter([](auto&, waypoint_accumulator wa) {
-                return segment_at_reversals(std::move(wa));
+            .with_segmenter([](auto&, waypoint_accumulator accumulator) {
+                return segment_at_reversals(std::move(accumulator));
             })
             .with_trajex(
-                [&](test_receiver&, const totg::trajectory&, auto) {
+                [&](test_receiver&, const waypoint_accumulator&,
+                    const totg::trajectory&, auto) {
                     success_count++;
                     throw std::runtime_error("synthetic failure");
                 },
@@ -265,18 +268,17 @@ BOOST_AUTO_TEST_CASE(failure_disengages_receiver_for_remaining_segments) {
 }
 
 BOOST_AUTO_TEST_CASE(stash_extends_data_lifetime) {
-    // Stash an xtensor array inside the waypoint provider, verify the
-    // waypoint_accumulator that views it remains valid through execute()
     auto result =
         trajectory_planner<test_receiver>(simple_config())
-            .with_waypoint_provider([](auto& planner) -> waypoint_accumulator {
+            .with_waypoint_provider([](auto& planner) {
                 auto data = planner.stash(xt::xarray<double>{{0.0, 0.0, 0.0}});
-                waypoint_accumulator wa{*data};
+                waypoint_accumulator accumulator{*data};
                 auto more = planner.stash(xt::xarray<double>{{1.0, 0.0, 0.0}});
-                wa.add_waypoints(*more);
-                return wa;
+                accumulator.add_waypoints(*more);
+                return accumulator;
             })
-            .with_trajex([](test_receiver& acc, const totg::trajectory&, auto) {
+            .with_trajex([](test_receiver& acc, const waypoint_accumulator&,
+                            const totg::trajectory&, auto) {
                 acc.segment_count++;
             })
             .execute([](const auto&, auto trajex, auto) -> std::optional<test_receiver> {
@@ -295,41 +297,40 @@ BOOST_AUTO_TEST_CASE(segment_trajex_false_passes_unsegmented_to_trajex) {
     cfg.segment_trajex = false;
 
     trajectory_planner<test_receiver>(std::move(cfg))
-        .with_waypoint_provider([](auto& p) -> waypoint_accumulator {
+        .with_waypoint_provider([](auto& p) {
             return stash_waypoints(
                 p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 0.0, 0.0}});
         })
-        .with_segmenter([](auto&, waypoint_accumulator wa) {
-            return segment_at_reversals(std::move(wa));
+        .with_segmenter([](auto&, waypoint_accumulator accumulator) {
+            return segment_at_reversals(std::move(accumulator));
         })
-        .with_trajex([&](test_receiver&, const totg::trajectory&, auto) {
+        .with_trajex([&](test_receiver&, const waypoint_accumulator&,
+                         const totg::trajectory&, auto) {
             trajex_segments_seen++;
         })
-        .with_legacy([&](test_receiver&, const Trajectory&, auto) {
+        .with_legacy([&](test_receiver&, const waypoint_accumulator&, const Path&,
+                         const Trajectory&, auto) {
             legacy_segments_seen++;
         })
         .execute([](const auto&, auto, auto) -> std::optional<test_receiver> {
             return std::nullopt;
         });
 
-    // Trajex gets the original unsegmented waypoints as one segment,
-    // legacy gets the segmented output (two segments from the reversal)
     BOOST_CHECK_EQUAL(trajex_segments_seen, 1);
     BOOST_CHECK_EQUAL(legacy_segments_seen, 2);
 }
 
 BOOST_AUTO_TEST_CASE(processed_waypoint_count_reflects_preprocessing) {
     trajectory_planner<test_receiver>(simple_config())
-        .with_waypoint_provider([](auto& p) -> waypoint_accumulator {
+        .with_waypoint_provider([](auto& p) {
             return stash_waypoints(
                 p,
                 {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {2.0, 0.0, 0.0}});
         })
-        .with_waypoint_preprocessor([](auto&, waypoint_accumulator& wa) {
-            wa = deduplicate_waypoints(wa, 1e-6);
+        .with_waypoint_preprocessor([](auto&, waypoint_accumulator& accumulator) {
+            accumulator = deduplicate_waypoints(accumulator, 1e-6);
         })
         .execute([](const auto& planner, auto, auto) -> std::optional<test_receiver> {
-            // Duplicate removed: 4 -> 3
             BOOST_CHECK_EQUAL(planner.processed_waypoint_count(), 3u);
             return std::nullopt;
         });
@@ -342,11 +343,12 @@ BOOST_AUTO_TEST_CASE(max_duration_exceeded_triggers_failure) {
     bool failure_called = false;
 
     trajectory_planner<test_receiver>(std::move(cfg))
-        .with_waypoint_provider([](auto& p) -> waypoint_accumulator {
+        .with_waypoint_provider([](auto& p) {
             return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}});
         })
         .with_trajex(
-            [](test_receiver&, const totg::trajectory&, auto) {},
+            [](test_receiver&, const waypoint_accumulator&,
+               const totg::trajectory&, auto) {},
             [&](const test_receiver&, const waypoint_accumulator&, const std::exception&) {
                 failure_called = true;
             })
@@ -361,10 +363,11 @@ BOOST_AUTO_TEST_CASE(max_duration_exceeded_triggers_failure) {
 
 BOOST_AUTO_TEST_CASE(decider_return_type_is_flexible) {
     int result = trajectory_planner<test_receiver>(simple_config())
-                     .with_waypoint_provider([](auto& p) -> waypoint_accumulator {
+                     .with_waypoint_provider([](auto& p) {
                          return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}});
                      })
-                     .with_trajex([](test_receiver&, const totg::trajectory&, auto) {})
+                     .with_trajex([](test_receiver&, const waypoint_accumulator&,
+                                     const totg::trajectory&, auto) {})
                      .execute([](const auto&, auto trajex, auto) -> int {
                          return trajex.receiver ? 42 : -1;
                      });

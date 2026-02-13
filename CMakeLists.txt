@@ -241,6 +241,7 @@ target_link_libraries(viam-ur
   PUBLIC
     viam::trajex::totg-legacy
     viam::trajex::totg
+    viam::trajex::service-utils
     urcl
     viam-cpp-sdk::viamapi # Proxy for gRPC
     viam-cpp-sdk::viamsdk

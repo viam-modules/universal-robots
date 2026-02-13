@@ -42,13 +42,13 @@
 #include <third_party/trajectories/Trajectory.h>
 
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
-#include <viam/trajex/service/trajectory_planner.hpp>
 #include <viam/trajex/totg/totg.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 #include <viam/trajex/totg/waypoint_utils.hpp>
 #include <viam/trajex/types/angles.hpp>
+#include <viam/trajex/service/trajectory_planner.hpp>
 #include <viam/trajex/types/hertz.hpp>
 
 #if __has_include(<xtensor/containers/xarray.hpp>)
@@ -848,6 +848,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         return result;
     };
 
+    // Capture the current movement epoch, so we can later detect if another caller
+    // slipped in while we were planning.
     auto current_move_epoch = current_state_->get_move_epoch();
 
     VIAM_SDK_LOG(debug) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.shape()[0];
@@ -868,11 +870,12 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         acceleration_limits_data = current_state_->clamp_acceleration_limits(acceleration_limits_data);
     }
 
-    // Receiver accumulates per-segment samples across all segments for one algorithm
     struct segment_accumulator {
         std::vector<trajectory_sample_point> samples;
         double total_duration = 0.0;
-        double total_gen_time = 0.0;
+        double total_generation_time = 0.0;
+        size_t total_waypoints = 0;
+        double total_arc_length = 0.0;
     };
 
     VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
@@ -885,30 +888,30 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         .max_trajectory_duration = current_state_->get_max_trajectory_duration_secs(),
     })
 
-    .with_waypoint_provider([&](auto& planner) -> viam::trajex::totg::waypoint_accumulator {
+    .with_waypoint_provider([&](auto& planner) {
         auto curr_joint_pos = get_joint_positions_rad_(our_config_rlock);
         const std::array<std::size_t, 2> shape{1, curr_joint_pos.size()};
         auto current_pos = planner.stash(
             xt::xarray<double>{xt::adapt(curr_joint_pos, shape)});
 
-        viam::trajex::totg::waypoint_accumulator wa{*current_pos};
-        wa.add_waypoints(waypoints);
+        viam::trajex::totg::waypoint_accumulator accumulator{*current_pos};
+        accumulator.add_waypoints(waypoints);
 
         write_waypoints_to_csv(
             waypoints_filename(current_state_->telemetry_output_path(),
                                current_state_->resource_name(), unix_time),
-            wa);
-        return wa;
+            accumulator);
+        return accumulator;
     })
 
-    .with_waypoint_preprocessor([&](auto&, viam::trajex::totg::waypoint_accumulator& wa) {
-        wa = viam::trajex::totg::deduplicate_waypoints(
-            wa, current_state_->get_waypoint_deduplication_tolerance_rad());
+    .with_waypoint_preprocessor([&](auto&, viam::trajex::totg::waypoint_accumulator& accumulator) {
+        accumulator = viam::trajex::totg::deduplicate_waypoints(
+            accumulator, current_state_->get_waypoint_deduplication_tolerance_rad());
     })
 
-    .with_move_validator([&](auto&, const viam::trajex::totg::waypoint_accumulator& wa) {
+    .with_move_validator([&](auto&, const viam::trajex::totg::waypoint_accumulator& accumulator) {
         if (const auto& threshold = current_state_->get_reject_move_request_threshold_rad()) {
-            auto current_joint_position = wa.begin();
+            auto current_joint_position = accumulator.begin();
             auto first_waypoint = std::next(current_joint_position);
             const auto delta = *first_waypoint - *current_joint_position;
             const auto max_diff = xt::norm_linf(delta)();
@@ -929,14 +932,17 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         }
     })
 
-    .with_segmenter([](auto&, viam::trajex::totg::waypoint_accumulator wa) {
-        return viam::trajex::totg::segment_at_reversals(std::move(wa));
+    .with_segmenter([](auto&, viam::trajex::totg::waypoint_accumulator accumulator) {
+        return viam::trajex::totg::segment_at_reversals(std::move(accumulator));
     })
 
     .with_trajex(
-        [&](segment_accumulator& acc, const viam::trajex::totg::trajectory& traj, auto elapsed) {
-            acc.total_gen_time += elapsed.count();
+        [&](segment_accumulator& acc, const viam::trajex::totg::waypoint_accumulator& segment,
+            const viam::trajex::totg::trajectory& traj, auto elapsed) {
+            acc.total_generation_time += elapsed.count();
             acc.total_duration += traj.duration().count();
+            acc.total_waypoints += segment.size();
+            acc.total_arc_length += static_cast<double>(traj.path().length());
 
             auto sampler = viam::trajex::totg::uniform_sampler::quantized_for_trajectory(
                 traj, viam::trajex::types::hertz{current_state_->get_trajectory_sampling_freq_hz()});
@@ -956,13 +962,17 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 previous_time = current_time;
             }
 
-            VIAM_SDK_LOG(info) << "trajex segment: duration=" << traj.duration().count()
-                               << "s, gen_time=" << elapsed.count() << "s"
-                               << ", samples=" << acc.samples.size();
+            VIAM_SDK_LOG(info) << "trajex/totg segment generated successfully"
+                               << ", waypoints: " << traj.path().size()
+                               << ", duration: " << traj.duration().count()
+                               << "s, samples: " << acc.samples.size()
+                               << ", arc length: " << traj.path().length();
         },
-        [&](const segment_accumulator&, const viam::trajex::totg::waypoint_accumulator& seg,
+        [&](const segment_accumulator& acc, const viam::trajex::totg::waypoint_accumulator& seg,
             const std::exception& e) {
-            VIAM_SDK_LOG(warn) << "trajex failed: " << e.what();
+            VIAM_SDK_LOG(warn) << "trajectory generation with trajex failed with an exception"
+                               << ", waypoints: " << acc.total_waypoints
+                               << ", exception: " << e.what();
             const std::string json_content = serialize_failed_trajectory_to_json(
                 seg, xt::adapt(velocity_limits_data), xt::adapt(acceleration_limits_data),
                 current_state_->get_path_tolerance_delta_rads(),
@@ -976,11 +986,12 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     )
 
     .with_legacy(
-        [&](segment_accumulator& acc, const Trajectory& traj, auto elapsed) {
-            acc.total_gen_time += elapsed.count();
+        [&](segment_accumulator& acc, const viam::trajex::totg::waypoint_accumulator& segment,
+            const Path& legacy_path, const Trajectory& traj, auto elapsed) {
+            acc.total_generation_time += elapsed.count();
             acc.total_duration += traj.getDuration();
-
-            traj.outputPhasePlaneTrajectory();
+            acc.total_waypoints += segment.size();
+            acc.total_arc_length += legacy_path.getLength();
 
             sampling_func(acc.samples, traj.getDuration(),
                           current_state_->get_trajectory_sampling_freq_hz(),
@@ -992,14 +1003,10 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                     {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
                     boost::numeric_cast<float>(step)};
             });
-
-            VIAM_SDK_LOG(info) << "legacy segment: duration=" << traj.getDuration()
-                               << "s, gen_time=" << elapsed.count() << "s"
-                               << ", samples=" << acc.samples.size();
         },
         [&](const segment_accumulator&, const viam::trajex::totg::waypoint_accumulator& seg,
             const std::exception& e) {
-            VIAM_SDK_LOG(error) << "legacy failed: " << e.what();
+            VIAM_SDK_LOG(error) << "trajectory generation with legacy failed with an exception: " << e.what();
             const std::string json_content = serialize_failed_trajectory_to_json(
                 seg, xt::adapt(velocity_limits_data), xt::adapt(acceleration_limits_data),
                 current_state_->get_path_tolerance_delta_rads(),
@@ -1012,9 +1019,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         }
     )
 
-    .execute([&](const auto& planner,
-                 viam::trajex::algorithm_outcome<segment_accumulator> trajex,
-                 viam::trajex::algorithm_outcome<segment_accumulator> legacy)
+    .execute([&](const auto& planner, auto trajex, auto legacy)
         -> std::optional<segment_accumulator> {
 
         if (planner.processed_waypoint_count() < 2) {
@@ -1022,13 +1027,30 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             return std::nullopt;
         }
 
-        if (trajex.receiver && legacy.receiver) {
-            VIAM_SDK_LOG(info) << "trajex: duration=" << trajex.receiver->total_duration
-                               << "s, gen_time=" << trajex.receiver->total_gen_time
-                               << "s, samples=" << trajex.receiver->samples.size()
-                               << " | legacy: duration=" << legacy.receiver->total_duration
-                               << "s, gen_time=" << legacy.receiver->total_gen_time
-                               << "s, samples=" << legacy.receiver->samples.size();
+        // Log trajex summary if it ran
+        if (trajex.receiver) {
+            VIAM_SDK_LOG(info) << "trajex/totg trajectory generated successfully"
+                               << ", total waypoints: " << trajex.receiver->total_waypoints
+                               << ", total duration: " << trajex.receiver->total_duration
+                               << "s, total samples: " << trajex.receiver->samples.size()
+                               << ", total arc length: " << trajex.receiver->total_arc_length
+                               << ", generation_time: " << trajex.receiver->total_generation_time << "s";
+        }
+
+        // Log legacy summary. When the new planner is active, log at info for comparison
+        // visibility; otherwise log at debug (routine operation).
+        if (legacy.receiver && current_state_->use_new_trajectory_planner()) {
+            VIAM_SDK_LOG(info) << "legacy trajectory generated successfully"
+                               << ", waypoints: " << legacy.receiver->total_waypoints
+                               << ", duration: " << legacy.receiver->total_duration
+                               << "s, samples: " << legacy.receiver->samples.size()
+                               << ", generation_time: " << legacy.receiver->total_generation_time << "s";
+        } else if (legacy.receiver) {
+            VIAM_SDK_LOG(debug) << "legacy trajectory generated successfully"
+                                << ", waypoints: " << legacy.receiver->total_waypoints
+                                << ", duration: " << legacy.receiver->total_duration
+                                << "s, samples: " << legacy.receiver->samples.size()
+                                << ", generation_time: " << legacy.receiver->total_generation_time << "s";
         }
 
         if (current_state_->use_new_trajectory_planner() && trajex.receiver)
@@ -1038,7 +1060,6 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         if (trajex.receiver)
             return std::move(trajex.receiver);
 
-        // Both failed
         if (trajex.error) std::rethrow_exception(trajex.error);
         if (legacy.error) std::rethrow_exception(legacy.error);
         throw std::runtime_error("all trajectory planners failed");

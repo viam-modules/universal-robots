@@ -140,6 +140,30 @@ apply_wall_werror(viam-trajex-totg)
 add_library(viam::trajex::totg ALIAS viam-trajex-totg)
 
 
+# Service utilities: Eigen-dependent helpers used by trajectory_planner
+add_library(viam-trajex-service-utils)
+
+target_sources(viam-trajex-service-utils
+  PRIVATE
+    src/viam/trajex/service/colinearization.cpp
+)
+
+target_include_directories(viam-trajex-service-utils
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(viam-trajex-service-utils
+  PUBLIC
+    Eigen3::Eigen
+)
+
+apply_wall_werror(viam-trajex-service-utils)
+
+add_library(viam::trajex::service-utils ALIAS viam-trajex-service-utils)
+
+
 #
 # Optional service layer
 #
@@ -175,6 +199,7 @@ add_executable(trajex-test)
 
 target_sources(trajex-test
   PRIVATE
+    src/viam/trajex/service/test/trajectory_planner.cpp
     src/viam/trajex/totg/test/main.cpp
     src/viam/trajex/totg/test/test_utils.cpp
     src/viam/trajex/totg/test/waypoint_accumulator.cpp
@@ -187,12 +212,12 @@ target_sources(trajex-test
     src/viam/trajex/totg/test/uniform_sampler.cpp
     src/viam/trajex/totg/test/integration.cpp
     src/viam/trajex/totg/test/observers.cpp
-    src/viam/trajex/service/test/trajectory_planner.cpp
 )
 
 target_link_libraries(trajex-test
   PRIVATE
     viam::trajex::totg
+    viam::trajex::service-utils
     Boost::boost
     viam::trajex::totg-legacy
     jsoncpp_lib

@@ -6,15 +6,17 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 #include <Eigen/Dense>
 
 #include <ur_client_library/log.h>
 #include <ur_client_library/types.h>
 
-#include <tuple>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
+
+#include <viam/trajex/service/colinearization.hpp>
 #include <viam/trajex/types/angles.hpp>
 
 inline constexpr auto k_ur_arm_dof = std::tuple_size_v<urcl::vector6d_t>;
@@ -80,9 +82,8 @@ Eigen::Vector3d transform_vector(const Eigen::Vector3d& vector, const Eigen::Mat
 
 urcl::vector6d_t convert_tcp_force_to_tool_frame(const urcl::vector6d_t& tcp_pose, const urcl::vector6d_t& tcp_force_base_frame);
 
-// Colinearization functions moved to shared trajex service header.
-// Imported here for backward compatibility with existing call sites.
-#include <viam/trajex/service/colinearization.hpp>
+// Colinearization functions live in trajex service layer. Import them here
+// for backward compatibility with existing call sites (test.cpp).
 using viam::trajex::within_colinearization_tolerance;
 using viam::trajex::apply_colinearization;
 
