@@ -583,7 +583,7 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
             break;
         }
 
-        // Only check boundaries ahead of our starting position.
+        // Only check boundaries ahead of our starting position
         if (opt.epsilon.wrap(boundary) <= opt.epsilon.wrap(cursor.position())) {
             boundary_cursor.seek(boundary);
             continue;
@@ -591,25 +591,26 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         last_evaluated_boundary = boundary;
 
-        // Sample geometry from segment ending at boundary.
+        // Sample geometry from segment ending at boundary
         const auto q_prime_before = current_segment.tangent(boundary);
         const auto q_double_prime_before = current_segment.curvature(boundary);
 
-        // Advance cursor to boundary (moves to next segment).
+        // Advance cursor to boundary (moves to next segment)
         boundary_cursor.seek(boundary);
         auto segment_after = *boundary_cursor;
 
-        // Sample geometry from segment starting at boundary.
+        // Sample geometry from segment starting at boundary
         const auto q_prime_after = segment_after.tangent(boundary);
         const auto q_double_prime_after = segment_after.curvature(boundary);
 
-        // Compute velocity limits on both sides.
+        // Compute velocity limits on both sides
         const auto [s_dot_max_accel_before, s_dot_max_vel_before] =
             compute_velocity_limits(q_prime_before, q_double_prime_before, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+
         const auto [s_dot_max_accel_after, s_dot_max_vel_after] =
             compute_velocity_limits(q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        // Degenerate velocity limit on either side means the trajectory must stop at this boundary.
+        // If velocity limit is degenerate (near zero) on either side, this is a switching point where we must come to rest.
         if (opt.epsilon.wrap(s_dot_max_vel_before) == opt.epsilon.wrap(arc_velocity{0.0}) ||
             opt.epsilon.wrap(s_dot_max_vel_after) == opt.epsilon.wrap(arc_velocity{0.0})) {
             const auto switching_velocity = std::min(std::min(s_dot_max_vel_before, s_dot_max_vel_after), arc_velocity{0.0});
@@ -635,7 +636,7 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
             continue;
         }
 
-        // Compute minimum accelerations at velocity limits on both sides.
+        // Compute minimum accelerations at velocity limits on both sides
         std::optional<trajectory::acceleration_bounds> accel_before;
         std::optional<trajectory::acceleration_bounds> accel_after;
         try {
@@ -651,16 +652,19 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         const auto trajectory_slope_before = s_ddot_min_before / s_dot_max_vel_before;
         const auto trajectory_slope_after = s_ddot_min_after / s_dot_max_vel_after;
+
         const bool condition_41 = opt.epsilon.wrap(trajectory_slope_before) >= opt.epsilon.wrap(curve_slope_before);
         const bool condition_42 = opt.epsilon.wrap(trajectory_slope_after) <= opt.epsilon.wrap(curve_slope_after);
 
         if (condition_41 && condition_42) {
+            // Valid discontinuous switching point found.
             // Switching velocity is the minimum of velocity limits on both sides.
-            // TODO(RSDK-12848): Investigate the correctness of taking the minimum.
+            // TODO(RSDK-12848): Investigate the correctness of taking the minimum of these two switching points.
             const auto s_dot_max_vel_switching_min = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
             const auto s_dot_max_accel_switching_min = std::min(s_dot_max_accel_before, s_dot_max_accel_after);
 
-            // Only accept if feasible against the acceleration-limited velocity curve.
+            // Only accept the velocity switching point if it is feasible with respect to the acceleration
+            // limit curve.
             if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
                 return switching_point{.point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
                                        .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
