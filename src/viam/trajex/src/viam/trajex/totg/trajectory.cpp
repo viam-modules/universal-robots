@@ -678,6 +678,8 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 struct eq40_escape_bracket {
     arc_length before;
     arc_length after;
+    phase_plane_slope before_delta;
+    phase_plane_slope after_delta;
 };
 
 // Phase 2: Coarse forward scan for an Eq. 40 sign bracket:
@@ -700,7 +702,10 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
                 const bool previous_positive = opt.epsilon.wrap(*previous_delta) > opt.epsilon.wrap(k_zero_delta);
                 const bool current_nonpositive = opt.epsilon.wrap(*delta) <= opt.epsilon.wrap(k_zero_delta);
                 if (previous_positive && current_nonpositive) {
-                    return eq40_escape_bracket{.before = previous_position, .after = current_position};
+                    return eq40_escape_bracket{.before = previous_position,
+                                               .after = current_position,
+                                               .before_delta = *previous_delta,
+                                               .after_delta = *delta};
                 }
             }
             // When previous_delta is nullopt (first evaluable point or after a non-evaluable gap),
@@ -732,32 +737,16 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
 // Phase 3: Refine the coarse Eq. 40 bracket via bisection and accept only a feasible
 // velocity-escape switching point.
 std::optional<switching_point> refine_continuous_velocity_switching_point(path::cursor& search_cursor,
-                                                                          arc_length before,
-                                                                          arc_length after,
+                                                                          const eq40_escape_bracket& bracket,
                                                                           const trajectory::options& opt) {
     constexpr phase_plane_slope k_zero_delta{0.0};
 
-    const auto before_delta = try_compute_eq40_delta(search_cursor, before, opt);
-    const auto after_delta = try_compute_eq40_delta(search_cursor, after, opt);
-    if (!before_delta.has_value() || !after_delta.has_value()) {
-        return std::nullopt;
-    }
+    auto positive_side = bracket.before;
+    auto nonpositive_side = bracket.after;
+    auto nonpositive_valid = bracket.after;
 
-    const bool before_positive = opt.epsilon.wrap(*before_delta) > opt.epsilon.wrap(k_zero_delta);
-    const bool after_nonpositive = opt.epsilon.wrap(*after_delta) <= opt.epsilon.wrap(k_zero_delta);
-    if (!(before_positive && after_nonpositive)) {
-        return std::nullopt;
-    }
-
-    auto positive_side = before;
-    auto nonpositive_side = after;
-    auto nonpositive_valid = after;
-
-    // If the coarse step already landed on the root (delta within epsilon of zero),
-    // skip bisection entirely.
-    if (opt.epsilon.wrap(*after_delta) == opt.epsilon.wrap(k_zero_delta)) {
-        // Fall through to the feasibility check below.
-    } else {
+    // Bisect to refine the bracket, unless the coarse step already landed on the root.
+    if (opt.epsilon.wrap(bracket.after_delta) != opt.epsilon.wrap(k_zero_delta)) {
         // TODO(RSDK-12767): Eliminate this hardcoded constant.
         constexpr int max_bisection_iterations = 100;
         for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
@@ -784,21 +773,14 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         }
     }
 
-    // Final acceptance: Eq. 40 must hold and the point must be feasible against acceleration-limited velocity.
-    const auto refined_delta = try_compute_eq40_delta(search_cursor, nonpositive_valid, opt);
-    if (!refined_delta.has_value() || opt.epsilon.wrap(*refined_delta) > opt.epsilon.wrap(k_zero_delta)) {
-        return std::nullopt;
-    }
-
+    // Compute s_dot_max_vel at the refined point for the switching point result.
+    // Feasibility (s_dot_max_acc >= s_dot_max_vel) and Eq. 40 (delta <= 0) are already
+    // guaranteed by try_compute_eq40_delta having returned a value at nonpositive_valid.
     search_cursor.seek(nonpositive_valid);
     const auto q_prime = search_cursor.tangent();
     const auto q_double_prime = search_cursor.curvature();
     const auto [s_dot_max_acc, s_dot_max_vel] =
         compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
-
-    if (opt.epsilon.wrap(s_dot_max_vel) > opt.epsilon.wrap(s_dot_max_acc)) {
-        return std::nullopt;
-    }
 
     return switching_point{.point = {.s = nonpositive_valid, .s_dot = s_dot_max_vel},
                            .kind = trajectory::switching_point_kind::k_velocity_escape};
@@ -828,7 +810,7 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
             break;
         }
 
-        const auto refined = refine_continuous_velocity_switching_point(search_cursor, coarse_bracket->before, coarse_bracket->after, opt);
+        const auto refined = refine_continuous_velocity_switching_point(search_cursor, *coarse_bracket, opt);
         if (refined.has_value()) {
             continuous_switching_point = *refined;
             break;
