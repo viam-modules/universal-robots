@@ -78,7 +78,8 @@ std::string serialize_failed_trajectory_to_json(const viam::trajex::totg::waypoi
                                                 const xt::xarray<double>& max_velocity_vec,
                                                 const xt::xarray<double>& max_acceleration_vec,
                                                 double path_tolerance_delta_rads,
-                                                const std::optional<double>& path_colinearization_ratio);
+                                                const std::optional<double>& path_colinearization_ratio,
+                                                double segmentation_threshold);
 
 class URArm final : public Arm, public Reconfigurable {
    public:

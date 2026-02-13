@@ -379,12 +379,14 @@ std::string serialize_failed_trajectory_to_json(const viam::trajex::totg::waypoi
                                                 const xt::xarray<double>& max_velocity_vec,
                                                 const xt::xarray<double>& max_acceleration_vec,
                                                 double path_tolerance_delta_rads,
-                                                const std::optional<double>& path_colinearization_ratio) {
+                                                const std::optional<double>& path_colinearization_ratio,
+                                                double segmentation_threshold) {
     namespace json = Json;
 
     json::Value root;
     root["timestamp"] = unix_time_iso8601();
     root["path_tolerance_delta_rads"] = path_tolerance_delta_rads;
+    root["segmentation_threshold"] = segmentation_threshold;
 
     if (path_colinearization_ratio) {
         root["path_colinearization_ratio"] = *path_colinearization_ratio;
@@ -901,7 +903,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
 
-    const auto segments = viam::trajex::totg::segment_at_reversals(std::move(waypoint_sequence));
+    const auto segments = viam::trajex::totg::segment_at_reversals(std::move(waypoint_sequence), current_state_->get_segmentation_threshold());
 
     auto velocity_limits_data = current_state_->get_velocity_limits();
     // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
@@ -987,7 +989,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                                                                          xt::adapt(velocity_limits_data),
                                                                                          xt::adapt(acceleration_limits_data),
                                                                                          current_state_->get_path_tolerance_delta_rads(),
-                                                                                         current_state_->get_path_colinearization_ratio());
+                                                                                         current_state_->get_path_colinearization_ratio(),
+                                                                                         current_state_->get_segmentation_threshold());
 
                     const std::string& path_dir = current_state_->telemetry_output_path();
                     const std::string filename =
@@ -1010,7 +1013,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
             VIAM_SDK_LOG(info) << "trajex/totg trajectory generated successfully, total waypoints: " << total_waypoints
                                << ", total duration: " << total_duration << "s, total samples: " << all_trajex_samples.size()
-                               << ", total arc length: " << total_arc_length << ", generation_time: " << generation_time << "s";
+                               << ", total arc length: " << total_arc_length << ", generation_time: " << generation_time
+                               << "s, number of reversals: " << segments.size();
 
             return all_trajex_samples;
         } catch (const std::exception& e) {
@@ -1056,7 +1060,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                                                                  xt::adapt(velocity_limits_data),
                                                                                  xt::adapt(acceleration_limits_data),
                                                                                  current_state_->get_path_tolerance_delta_rads(),
-                                                                                 current_state_->get_path_colinearization_ratio());
+                                                                                 current_state_->get_path_colinearization_ratio(),
+                                                                                 current_state_->get_segmentation_threshold());
 
             const std::string& path_dir = current_state_->telemetry_output_path();
             const std::string filename = failed_trajectory_filename(path_dir, current_state_->resource_name(), unix_time);
@@ -1100,11 +1105,11 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     if (current_state_->use_new_trajectory_planner()) {
         VIAM_SDK_LOG(info) << "legacy trajectory generated successfully, waypoints: " << total_waypoints << ", duration: " << total_duration
                            << "s, samples: " << samples.size() << ", arc length: " << total_arc_length
-                           << ", generation_time: " << legacy_generation_time << "s";
+                           << ", generation_time: " << legacy_generation_time << "s, number of reversals: " << segments.size();
     } else {
         VIAM_SDK_LOG(debug) << "legacy trajectory generated successfully, waypoints: " << total_waypoints
                             << ", duration: " << total_duration << "s, samples: " << samples.size() << ", arc length: " << total_arc_length
-                            << ", generation_time: " << legacy_generation_time << "s";
+                            << ", generation_time: " << legacy_generation_time << "s, number of reversals: " << segments.size();
     }
 
     if (new_trajectory) {

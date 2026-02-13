@@ -1040,7 +1040,7 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     const viam::trajex::totg::waypoint_accumulator waypoint_acc(waypoints_xarray);
 
     const std::string json_content =
-        serialize_failed_trajectory_to_json(waypoint_acc, xt::adapt(k_max_velocity), xt::adapt(k_max_acceleration), k_tolerance, 0.05);
+        serialize_failed_trajectory_to_json(waypoint_acc, xt::adapt(k_max_velocity), xt::adapt(k_max_acceleration), k_tolerance, 0.05, 0.005);
 
     // Write the failed trajectory JSON
     std::ofstream json_file(k_filename);
@@ -1067,6 +1067,7 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     BOOST_REQUIRE(readback_parsed["timestamp"].isString());
     BOOST_REQUIRE(readback_parsed["path_tolerance_delta_rads"].isDouble());
     BOOST_REQUIRE(readback_parsed["path_colinearization_ratio"].isDouble());
+    BOOST_REQUIRE(readback_parsed["segmentation_threshold"].isDouble());
     BOOST_REQUIRE(readback_parsed["max_velocity_vec_rads_per_sec"].isArray());
     BOOST_REQUIRE(readback_parsed["max_acceleration_vec_rads_per_sec2"].isArray());
     BOOST_REQUIRE(readback_parsed["waypoints_rads"].isArray());
