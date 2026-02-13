@@ -217,9 +217,11 @@ struct switching_point {
 //   Δ(s) = s_ddot_min(s, s_dot_max_vel(s)) / s_dot_max_vel(s) - d/ds s_dot_max_vel(s)
 // Returns std::nullopt when Eq. 40 is not evaluable at this geometry (degenerate,
 // Divergence-2 region, singular derivative, or infeasible acceleration bounds).
-[[nodiscard]] std::optional<phase_plane_slope> try_compute_eq40_delta(const xt::xarray<double>& q_prime,
-                                                                       const xt::xarray<double>& q_double_prime,
-                                                                       const trajectory::options& opt) {
+[[nodiscard]] std::optional<phase_plane_slope> try_compute_eq40_delta(path::cursor& cursor, arc_length s, const trajectory::options& opt) {
+    cursor.seek(s);
+    const auto q_prime = cursor.tangent();
+    const auto q_double_prime = cursor.curvature();
+
     const auto [s_dot_max_acc, s_dot_max_vel] =
         compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
@@ -248,13 +250,6 @@ struct switching_point {
     const auto& [s_ddot_min, s_ddot_max] = *accel_bounds;
     const auto trajectory_slope = s_ddot_min / s_dot_max_vel;
     return trajectory_slope - curve_slope;
-}
-
-[[nodiscard]] std::optional<phase_plane_slope> try_compute_eq40_delta(path::cursor& cursor, arc_length s, const trajectory::options& opt) {
-    cursor.seek(s);
-    const auto q_prime = cursor.tangent();
-    const auto q_double_prime = cursor.curvature();
-    return try_compute_eq40_delta(q_prime, q_double_prime, opt);
 }
 
 // Performs a single Euler integration step in phase plane (s, s_dot).
@@ -566,7 +561,7 @@ struct switching_point {
     }
 
     // Return whichever comes first along the path
-    return (epsilon.wrap(sp1.point.s) < epsilon.wrap(sp2.point.s)) ? sp1 : sp2;
+    return (sp1.point.s < sp2.point.s) ? sp1 : sp2;
 }
 
 // Phase 1: Search segment boundaries for a discontinuous velocity-limit switching point
@@ -697,9 +692,7 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
 
     while (search_cursor.position() < search_limit) {
         const auto current_position = search_cursor.position();
-        const auto q_prime = search_cursor.tangent();
-        const auto q_double_prime = search_cursor.curvature();
-        const auto delta = try_compute_eq40_delta(q_prime, q_double_prime, opt);
+        const auto delta = try_compute_eq40_delta(search_cursor, current_position, opt);
 
         if (delta.has_value()) {
             if (previous_delta.has_value()) {
