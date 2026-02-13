@@ -94,6 +94,11 @@ class URArm final : public Arm, public Reconfigurable {
     static constexpr double k_default_max_trajectory_duration_secs = 600.0;
 
     ///
+    /// Default waypoint segmentation threshold.
+    ///
+    static constexpr double k_default_segmentation_threshold = 600.0;
+
+    ///
     /// Default trajectory sampling frequency in Hz.
     ///
     static constexpr double k_default_trajectory_sampling_freq_hz = 10.0;
