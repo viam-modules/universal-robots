@@ -150,7 +150,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     const double segmentation_threshold =
         find_config_attribute<double>(config, "segmentation_threshold").value_or(URArm::k_default_segmentation_threshold);
 
-    const double max_trajectory_duration_secs = find_config_attribute<double>(config, "max_trajectory_duration_secs").value_or();
+    const double max_trajectory_duration_secs = find_config_attribute<double>(config, "max_trajectory_duration_secs").value_or(URArm::k_default_max_trajectory_duration_secs);
 
     const double trajectory_sampling_freq_hz =
         find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(URArm::k_default_trajectory_sampling_freq_hz);
