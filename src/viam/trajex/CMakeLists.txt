@@ -192,6 +192,8 @@ if(VIAM_TRAJEX_BUILD_SERVICE)
     src/viam/trajex/service/main.cpp
   )
 
+  set_target_properties(trajex-service PROPERTIES OUTPUT_NAME viam-trajex-service)
+
   target_link_libraries(trajex-service
     PRIVATE
       viam::trajex::service
@@ -294,7 +296,16 @@ install(
   TARGETS
   viam-trajex-totg-legacy
   viam-trajex-totg
+  viam-trajex-service
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
+
+if(VIAM_TRAJEX_BUILD_SERVICE)
+  install(
+    TARGETS
+    trajex-service
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  )
+endif()

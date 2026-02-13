@@ -10,16 +10,16 @@
 #include <string>
 #include <vector>
 
-#include <viam/sdk/config/resource.hpp>
-#include <viam/sdk/services/mlmodel.hpp>
-
-#include <viam/trajex/service/trajex_mlmodel_service.hpp>
-
 #if __has_include(<xtensor/containers/xarray.hpp>)
 #include <xtensor/containers/xarray.hpp>
 #else
 #include <xtensor/xarray.hpp>
 #endif
+
+#include <viam/sdk/config/resource.hpp>
+#include <viam/sdk/services/mlmodel.hpp>
+
+#include <viam/trajex/service/trajex_mlmodel_service.hpp>
 
 namespace {
 
@@ -123,7 +123,7 @@ BOOST_AUTO_TEST_SUITE(trajex_service_input_validation_tests)
 
 BOOST_AUTO_TEST_CASE(missing_tensor_throws) {
     auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config());
-    trajex_mlmodel_service::named_tensor_views empty_inputs;
+    const trajex_mlmodel_service::named_tensor_views empty_inputs;
     BOOST_CHECK_THROW(service->infer(empty_inputs, {}), std::invalid_argument);
 }
 
@@ -193,6 +193,49 @@ BOOST_AUTO_TEST_CASE(single_waypoint_returns_empty) {
     // Single waypoint: nothing to do, should return empty views
     BOOST_REQUIRE(result);
     BOOST_CHECK(result->empty());
+}
+
+BOOST_AUTO_TEST_CASE(totg_trajectory_has_samples_and_accelerations) {
+    vsdk::ProtoStruct attrs;
+    attrs.emplace("generator_sequence", std::vector<vsdk::ProtoValue>{vsdk::ProtoValue{"totg"}});
+
+    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config(attrs));
+    auto result = service->infer(make_simple_inputs(), {});
+
+    BOOST_REQUIRE(result);
+    BOOST_CHECK(result->count("sample_times_sec") > 0);
+    BOOST_CHECK(result->count("configurations_rads") > 0);
+    BOOST_CHECK(result->count("velocities_rads_per_sec") > 0);
+    BOOST_CHECK(result->count("accelerations_rads_per_sec2") > 0);
+
+    // All output tensors should be float64
+    for (const auto& key : {"sample_times_sec", "configurations_rads", "velocities_rads_per_sec", "accelerations_rads_per_sec2"}) {
+        BOOST_CHECK_EQUAL(vsdk::MLModelService::tensor_info::tensor_views_to_data_type(result->at(key)),
+                          vsdk::MLModelService::tensor_info::data_types::k_float64);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(legacy_trajectory_has_samples_but_no_accelerations) {
+    vsdk::ProtoStruct attrs;
+    attrs.emplace("generator_sequence", std::vector<vsdk::ProtoValue>{vsdk::ProtoValue{"legacy"}});
+
+    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config(attrs));
+    auto result = service->infer(make_simple_inputs(), {});
+
+    BOOST_REQUIRE(result);
+    BOOST_CHECK(result->count("sample_times_sec") > 0);
+    BOOST_CHECK(result->count("configurations_rads") > 0);
+    BOOST_CHECK(result->count("velocities_rads_per_sec") > 0);
+    BOOST_CHECK_EQUAL(result->count("accelerations_rads_per_sec2"), 0U);
+}
+
+BOOST_AUTO_TEST_CASE(dual_algorithm_prefers_totg) {
+    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config());
+    auto result = service->infer(make_simple_inputs(), {});
+
+    BOOST_REQUIRE(result);
+    // Default config runs both; totg result should be preferred (has accelerations)
+    BOOST_CHECK(result->count("accelerations_rads_per_sec2") > 0);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

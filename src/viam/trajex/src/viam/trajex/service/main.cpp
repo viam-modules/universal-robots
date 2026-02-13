@@ -14,14 +14,15 @@ namespace {
 namespace vsdk = ::viam::sdk;
 
 int serve(const std::string& socket_path) try {
-    vsdk::Instance inst;
+    const vsdk::Instance inst;
 
-    auto registration = std::make_shared<vsdk::ModelRegistration>(vsdk::API::get<vsdk::MLModelService>(),
-                                                                  vsdk::Model{"viam", "mlmodelservice", "trajex"},
-                                                                  [](vsdk::Dependencies deps, vsdk::ResourceConfig config) {
-                                                                      return std::make_shared<viam::trajex::trajex_mlmodel_service>(
-                                                                          std::move(deps), std::move(config));
-                                                                  });
+    auto registration = std::make_shared<vsdk::ModelRegistration>(
+        vsdk::API::get<vsdk::MLModelService>(),
+        vsdk::Model{"viam", "mlmodelservice", "trajex"},
+        [](vsdk::Dependencies deps, vsdk::ResourceConfig config) {
+            return std::make_shared<viam::trajex::trajex_mlmodel_service>(std::move(deps), std::move(config));
+        },
+        &viam::trajex::trajex_mlmodel_service::validate);
 
     vsdk::Registry::get().register_model(registration);
 
@@ -31,10 +32,10 @@ int serve(const std::string& socket_path) try {
 
     return EXIT_SUCCESS;
 } catch (const std::exception& ex) {
-    std::cerr << "ERROR: " << ex.what() << std::endl;
+    std::cerr << "ERROR: " << ex.what() << '\n';
     return EXIT_FAILURE;
 } catch (...) {
-    std::cerr << "ERROR: Unknown exception" << std::endl;
+    std::cerr << "ERROR: Unknown exception" << '\n';
     return EXIT_FAILURE;
 }
 
@@ -42,7 +43,7 @@ int serve(const std::string& socket_path) try {
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        std::cerr << "usage: trajex-service /path/to/unix/socket" << std::endl;
+        std::cerr << "usage: trajex-service /path/to/unix/socket" << '\n';
         return EXIT_FAILURE;
     }
     return serve(argv[1]);

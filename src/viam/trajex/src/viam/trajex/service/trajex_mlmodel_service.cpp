@@ -6,11 +6,18 @@
 #include <ranges>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <Eigen/Dense>
 
 #include <boost/variant/get.hpp>
+
+#if __has_include(<xtensor/containers/xarray.hpp>)
+#include <xtensor/containers/xarray.hpp>
+#else
+#include <xtensor/xarray.hpp>
+#endif
 
 #include <viam/sdk/log/logging.hpp>
 
@@ -20,17 +27,11 @@
 #include <viam/trajex/totg/waypoint_utils.hpp>
 #include <viam/trajex/types/hertz.hpp>
 
-#if __has_include(<xtensor/containers/xarray.hpp>)
-#include <xtensor/containers/xarray.hpp>
-#else
-#include <xtensor/xarray.hpp>
-#endif
-
 namespace viam::trajex {
 
-namespace {
-
 namespace vsdk = ::viam::sdk;
+
+namespace {
 
 // Result type for the trajectory planner. Accumulates samples as flat vectors
 // for zero-copy output packing.
@@ -50,43 +51,73 @@ struct infer_result {
     trajex_mlmodel_service::named_tensor_views views;
 };
 
-// Extract a required tensor_view<double> from the input map.
-const auto& get_double_tensor(const trajex_mlmodel_service::named_tensor_views& inputs, const std::string& name) {
-    const auto it = inputs.find(name);
+const auto& get_double_tensor(const trajex_mlmodel_service::named_tensor_views& inputs, std::string_view name) {
+    const auto it = inputs.find(std::string(name));
     if (it == inputs.end()) {
-        throw std::invalid_argument("missing required input tensor: " + name);
+        throw std::invalid_argument("missing required input tensor: " + std::string(name));
     }
     const auto* view = boost::get<trajex_mlmodel_service::tensor_view<double>>(&it->second);
     if (!view) {
-        throw std::invalid_argument("input tensor '" + name + "' has wrong type (expected float64)");
+        throw std::invalid_argument("input tensor '" + std::string(name) + "' has wrong type (expected float64)");
     }
     return *view;
 }
 
-// Extract a required tensor_view<int64_t> from the input map.
-const auto& get_int64_tensor(const trajex_mlmodel_service::named_tensor_views& inputs, const std::string& name) {
-    const auto it = inputs.find(name);
+const auto& get_int64_tensor(const trajex_mlmodel_service::named_tensor_views& inputs, std::string_view name) {
+    const auto it = inputs.find(std::string(name));
     if (it == inputs.end()) {
-        throw std::invalid_argument("missing required input tensor: " + name);
+        throw std::invalid_argument("missing required input tensor: " + std::string(name));
     }
     const auto* view = boost::get<trajex_mlmodel_service::tensor_view<std::int64_t>>(&it->second);
     if (!view) {
-        throw std::invalid_argument("input tensor '" + name + "' has wrong type (expected int64)");
+        throw std::invalid_argument("input tensor '" + std::string(name) + "' has wrong type (expected int64)");
     }
     return *view;
 }
 
-// Extract a scalar double from a shape-[1] tensor.
-double get_scalar_double(const trajex_mlmodel_service::named_tensor_views& inputs, const std::string& name) {
+double get_scalar_double(const trajex_mlmodel_service::named_tensor_views& inputs, std::string_view name) {
     const auto& view = get_double_tensor(inputs, name);
     if (view.size() != 1) {
-        throw std::invalid_argument("input tensor '" + name + "' must be a scalar (shape [1])");
+        throw std::invalid_argument("input tensor '" + std::string(name) + "' must be a scalar (shape [1])");
     }
     return view.flat(0);
 }
 
 }  // namespace
 
+std::vector<std::string> trajex_mlmodel_service::validate(const vsdk::ResourceConfig& cfg) {
+    std::vector<std::string> errors;
+
+    auto seq_attr = cfg.attributes().find("generator_sequence");
+    if (seq_attr != cfg.attributes().end()) {
+        const auto* arr = seq_attr->second.get<std::vector<vsdk::ProtoValue>>();
+        if (!arr || arr->empty()) {
+            errors.emplace_back("generator_sequence must be a non-empty array of strings");
+        } else {
+            for (const auto& elem : *arr) {
+                const auto* str = elem.get<std::string>();
+                if (!str) {
+                    errors.emplace_back("generator_sequence entries must be strings");
+                    break;
+                }
+                if (*str != "totg" && *str != "legacy") {
+                    errors.emplace_back("generator_sequence: unknown algorithm '" + *str + "' (expected 'totg' or 'legacy')");
+                }
+            }
+        }
+    }
+
+    auto seg_attr = cfg.attributes().find("segment_for_totg");
+    if (seg_attr != cfg.attributes().end()) {
+        if (!seg_attr->second.get<bool>()) {
+            errors.emplace_back("segment_for_totg must be a boolean");
+        }
+    }
+
+    return errors;
+}
+
+// NOLINTNEXTLINE(performance-unnecessary-value-param): Signature fixed by ModelRegistration factory.
 trajex_mlmodel_service::trajex_mlmodel_service(vsdk::Dependencies deps, vsdk::ResourceConfig config) : MLModelService(config.name()) {
     reconfigure(deps, config);
 }
@@ -268,6 +299,16 @@ std::shared_ptr<trajex_mlmodel_service::named_tensor_views> trajex_mlmodel_servi
 
     const auto n_samples = result_holder->data.times.size();
     const auto output_dof = result_holder->data.dof;
+
+    // Validate output consistency: flat vector sizes must be n_samples * dof
+    if (result_holder->data.configurations.size() != n_samples * output_dof ||
+        result_holder->data.velocities.size() != n_samples * output_dof) {
+        throw std::logic_error("output tensor size mismatch: expected " + std::to_string(n_samples) + " samples x " +
+                               std::to_string(output_dof) + " dof");
+    }
+    if (result_holder->data.accelerations && result_holder->data.accelerations->size() != n_samples * output_dof) {
+        throw std::logic_error("acceleration output tensor size mismatch");
+    }
 
     result_holder->views.emplace("sample_times_sec", make_tensor_view(result_holder->data.times.data(), n_samples, {n_samples}));
 
