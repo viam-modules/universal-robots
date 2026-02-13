@@ -578,8 +578,8 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         // Guard: if the boundary hasn't advanced past the last one we evaluated,
         // we're stuck on a zero-length segment. Break to avoid an infinite loop.
-        if (opt.epsilon.wrap(boundary) <= opt.epsilon.wrap(last_evaluated_boundary)
-            || opt.epsilon.wrap(boundary) >= opt.epsilon.wrap(path_length)) {
+        if (opt.epsilon.wrap(boundary) <= opt.epsilon.wrap(last_evaluated_boundary) ||
+            opt.epsilon.wrap(boundary) >= opt.epsilon.wrap(path_length)) {
             break;
         }
 
@@ -610,8 +610,8 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
             compute_velocity_limits(q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
         // Degenerate velocity limit on either side means the trajectory must stop at this boundary.
-        if (opt.epsilon.wrap(s_dot_max_vel_before) == opt.epsilon.wrap(arc_velocity{0.0})
-            || opt.epsilon.wrap(s_dot_max_vel_after) == opt.epsilon.wrap(arc_velocity{0.0})) {
+        if (opt.epsilon.wrap(s_dot_max_vel_before) == opt.epsilon.wrap(arc_velocity{0.0}) ||
+            opt.epsilon.wrap(s_dot_max_vel_after) == opt.epsilon.wrap(arc_velocity{0.0})) {
             const auto switching_velocity = std::min(std::min(s_dot_max_vel_before, s_dot_max_vel_after), arc_velocity{0.0});
             return switching_point{.point = {.s = boundary, .s_dot = switching_velocity},
                                    .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
@@ -619,8 +619,8 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         // We can't call compute_acceleration_bounds at s_dot_max_vel if it exceeds s_dot_max_accel,
         // because the centripetal term would already exceed the acceleration budget at that velocity.
-        if (opt.epsilon.wrap(s_dot_max_accel_before) <= opt.epsilon.wrap(s_dot_max_vel_before)
-            || opt.epsilon.wrap(s_dot_max_accel_after) <= opt.epsilon.wrap(s_dot_max_vel_after)) {
+        if (opt.epsilon.wrap(s_dot_max_accel_before) <= opt.epsilon.wrap(s_dot_max_vel_before) ||
+            opt.epsilon.wrap(s_dot_max_accel_after) <= opt.epsilon.wrap(s_dot_max_vel_after)) {
             continue;
         }
 
@@ -629,10 +629,8 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         phase_plane_slope curve_slope_before{0.0};
         phase_plane_slope curve_slope_after{0.0};
         try {
-            curve_slope_before =
-                compute_velocity_limit_derivative(q_prime_before, q_double_prime_before, opt.max_velocity, opt.epsilon);
-            curve_slope_after =
-                compute_velocity_limit_derivative(q_prime_after, q_double_prime_after, opt.max_velocity, opt.epsilon);
+            curve_slope_before = compute_velocity_limit_derivative(q_prime_before, q_double_prime_before, opt.max_velocity, opt.epsilon);
+            curve_slope_after = compute_velocity_limit_derivative(q_prime_after, q_double_prime_after, opt.max_velocity, opt.epsilon);
         } catch (const std::runtime_error&) {
             continue;
         }
@@ -653,10 +651,8 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         const auto trajectory_slope_before = s_ddot_min_before / s_dot_max_vel_before;
         const auto trajectory_slope_after = s_ddot_min_after / s_dot_max_vel_after;
-        const bool condition_41 =
-            opt.epsilon.wrap(trajectory_slope_before) >= opt.epsilon.wrap(curve_slope_before);
-        const bool condition_42 =
-            opt.epsilon.wrap(trajectory_slope_after) <= opt.epsilon.wrap(curve_slope_after);
+        const bool condition_41 = opt.epsilon.wrap(trajectory_slope_before) >= opt.epsilon.wrap(curve_slope_before);
+        const bool condition_42 = opt.epsilon.wrap(trajectory_slope_after) <= opt.epsilon.wrap(curve_slope_after);
 
         if (condition_41 && condition_42) {
             // Switching velocity is the minimum of velocity limits on both sides.
@@ -828,8 +824,7 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
             break;
         }
 
-        const auto refined = refine_continuous_velocity_switching_point(
-            search_cursor, coarse_bracket->before, coarse_bracket->after, opt);
+        const auto refined = refine_continuous_velocity_switching_point(search_cursor, coarse_bracket->before, coarse_bracket->after, opt);
         if (refined.has_value()) {
             continuous_switching_point = *refined;
             break;

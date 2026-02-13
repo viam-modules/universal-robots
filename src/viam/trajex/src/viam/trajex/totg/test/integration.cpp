@@ -693,8 +693,8 @@ trajectory create_velocity_switching_test_trajectory(const xt::xarray<double>& w
     return trajectory::create(std::move(p), topt);
 }
 
-std::vector<trajectory::integration_observer::started_backward_event>
-get_backward_events_by_kind(const trajectory_integration_event_collector& collector, trajectory::switching_point_kind kind) {
+std::vector<trajectory::integration_observer::started_backward_event> get_backward_events_by_kind(
+    const trajectory_integration_event_collector& collector, trajectory::switching_point_kind kind) {
     std::vector<trajectory::integration_observer::started_backward_event> events;
     for (const auto& ev : collector.events()) {
         if (const auto* backward = std::get_if<trajectory::integration_observer::started_backward_event>(&ev)) {
@@ -725,8 +725,8 @@ double estimate_eq40_delta(const trajectory& traj, arc_length s) {
     cursor.seek(arc_length{s_after});
     const auto limits_after = traj.get_velocity_limits(cursor);
 
-    const double curve_slope = (static_cast<double>(limits_after.s_dot_max_vel) - static_cast<double>(limits_before.s_dot_max_vel))
-                               / (s_after - s_before);
+    const double curve_slope =
+        (static_cast<double>(limits_after.s_dot_max_vel) - static_cast<double>(limits_before.s_dot_max_vel)) / (s_after - s_before);
 
     cursor.seek(s);
     const auto limits = traj.get_velocity_limits(cursor);
@@ -1185,9 +1185,7 @@ BOOST_AUTO_TEST_CASE(sharp_velocity_curve_drop_produces_velocity_escape) {
 
     fixture.validation_tolerance_percent = 0.5;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_deviation(0.03);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.03);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1221,9 +1219,7 @@ BOOST_AUTO_TEST_CASE(rising_velocity_curve_no_velocity_switching_point) {
 
     fixture.validation_tolerance_percent = 0.5;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_deviation(0.03);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.03);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1255,9 +1251,7 @@ BOOST_AUTO_TEST_CASE(gradual_velocity_curve_drop_bisection_accuracy) {
     // drops more gradually across the blend region.
     fixture.validation_tolerance_percent = 0.5;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_deviation(0.05);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.05);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1291,9 +1285,7 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_drops_finds_first_switching_point) {
 
     fixture.validation_tolerance_percent = 0.5;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_deviation(0.03);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.03);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1331,9 +1323,7 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_escapes_wider_blends) {
 
     fixture.validation_tolerance_percent = 0.5;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_deviation(0.05);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.05);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1369,9 +1359,7 @@ BOOST_AUTO_TEST_CASE(constant_velocity_curve_no_switching_point) {
     // Straight line — no blends, constant q', constant velocity limit.
     trajectory_test_fixture fixture(2, 1.0);
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.5})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_deviation(0.1);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.5}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.1);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1404,9 +1392,7 @@ BOOST_AUTO_TEST_CASE(velocity_switching_point_near_path_start) {
 
     fixture.validation_tolerance_percent = 0.5;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
-        .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
-        .set_max_deviation(0.03);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.03);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1435,13 +1421,12 @@ BOOST_AUTO_TEST_CASE(eq40_sign_change_brackets_velocity_escape_switching_point) 
     using namespace viam::trajex::types;
 
     trajectory_integration_event_collector collector;
-    const trajectory traj = create_velocity_switching_test_trajectory(
-        xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}},
-        xt::xarray<double>{0.5, 0.08},
-        xt::xarray<double>{10.0, 10.0},
-        0.03,
-        trajectory::seconds{0.001},
-        collector);
+    const trajectory traj = create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}},
+                                                                      xt::xarray<double>{0.5, 0.08},
+                                                                      xt::xarray<double>{10.0, 10.0},
+                                                                      0.03,
+                                                                      trajectory::seconds{0.001},
+                                                                      collector);
 
     validate_trajectory_invariants(traj, 0.5);
 
@@ -1471,13 +1456,12 @@ BOOST_AUTO_TEST_CASE(rising_velocity_curve_has_no_eq40_escape_transition) {
     using namespace viam::trajex::types;
 
     trajectory_integration_event_collector collector;
-    const trajectory traj = create_velocity_switching_test_trajectory(
-        xt::xarray<double>{{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}},
-        xt::xarray<double>{0.5, 0.08},
-        xt::xarray<double>{10.0, 10.0},
-        0.03,
-        trajectory::seconds{0.001},
-        collector);
+    const trajectory traj = create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}},
+                                                                      xt::xarray<double>{0.5, 0.08},
+                                                                      xt::xarray<double>{10.0, 10.0},
+                                                                      0.03,
+                                                                      trajectory::seconds{0.001},
+                                                                      collector);
 
     validate_trajectory_invariants(traj, 0.5);
 
@@ -1494,8 +1478,8 @@ BOOST_AUTO_TEST_CASE(rising_velocity_curve_has_no_eq40_escape_transition) {
         cursor.seek(s);
 
         const auto limits = traj.get_velocity_limits(cursor);
-        if (static_cast<double>(limits.s_dot_max_vel) <= 0.0
-            || static_cast<double>(limits.s_dot_max_acc) < static_cast<double>(limits.s_dot_max_vel)) {
+        if (static_cast<double>(limits.s_dot_max_vel) <= 0.0 ||
+            static_cast<double>(limits.s_dot_max_acc) < static_cast<double>(limits.s_dot_max_vel)) {
             previous_delta.reset();
             continue;
         }
@@ -1522,13 +1506,13 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_escapes_are_ordered_and_feasible) {
     using namespace viam::trajex::types;
 
     trajectory_integration_event_collector collector;
-    const trajectory traj = create_velocity_switching_test_trajectory(
-        xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}},
-        xt::xarray<double>{0.5, 0.08},
-        xt::xarray<double>{10.0, 10.0},
-        0.03,
-        trajectory::seconds{0.001},
-        collector);
+    const trajectory traj =
+        create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}},
+                                                  xt::xarray<double>{0.5, 0.08},
+                                                  xt::xarray<double>{10.0, 10.0},
+                                                  0.03,
+                                                  trajectory::seconds{0.001},
+                                                  collector);
 
     validate_trajectory_invariants(traj, 0.5);
 
@@ -1557,13 +1541,12 @@ BOOST_AUTO_TEST_CASE(near_start_velocity_escape_has_eq40_sign_bracket) {
     using namespace viam::trajex::types;
 
     trajectory_integration_event_collector collector;
-    const trajectory traj = create_velocity_switching_test_trajectory(
-        xt::xarray<double>{{0.0, 0.0}, {0.5, 0.0}, {0.5, 1.0}},
-        xt::xarray<double>{0.5, 0.08},
-        xt::xarray<double>{10.0, 10.0},
-        0.03,
-        trajectory::seconds{0.001},
-        collector);
+    const trajectory traj = create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {0.5, 0.0}, {0.5, 1.0}},
+                                                                      xt::xarray<double>{0.5, 0.08},
+                                                                      xt::xarray<double>{10.0, 10.0},
+                                                                      0.03,
+                                                                      trajectory::seconds{0.001},
+                                                                      collector);
 
     validate_trajectory_invariants(traj, 0.5);
 
@@ -1600,13 +1583,13 @@ BOOST_AUTO_TEST_CASE(boundary_produces_discontinuous_velocity_limit) {
     // less negative than curve_slope (condition 41 holds), while the gentler curvature
     // avoids backward-integration failure.
     trajectory_integration_event_collector collector;
-    const trajectory traj = create_velocity_switching_test_trajectory(
-        xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}},
-        xt::xarray<double>{0.5, 0.1},        // 5:1 ratio
-        xt::xarray<double>{3.0, 3.0},        // accel tuned so c41 holds and trajectory constructs
-        0.0007,                               // κ ≈ 49 for 30° turn
-        trajectory::seconds{0.001},           // normal step
-        collector);
+    const trajectory traj =
+        create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}},
+                                                  xt::xarray<double>{0.5, 0.1},  // 5:1 ratio
+                                                  xt::xarray<double>{3.0, 3.0},  // accel tuned so c41 holds and trajectory constructs
+                                                  0.0007,                        // κ ≈ 49 for 30° turn
+                                                  trajectory::seconds{0.001},    // normal step
+                                                  collector);
 
     // Relaxed tolerance: the geometry that triggers eqs 41-42 requires tight curvature
     // which pushes TOTG near its numerical limits.
@@ -1635,13 +1618,13 @@ BOOST_AUTO_TEST_CASE(both_discontinuous_velocity_limit_and_velocity_escape) {
     // First turn (30°) triggers discontinuous velocity limit (same as Case 12).
     // Second turn (90°, fast→slow) triggers continuous velocity escape.
     trajectory_integration_event_collector collector;
-    const trajectory traj = create_velocity_switching_test_trajectory(
-        xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}, {1.866, 1.5}},
-        xt::xarray<double>{0.5, 0.1},
-        xt::xarray<double>{3.0, 3.0},
-        0.0007,
-        trajectory::seconds{0.001},
-        collector);
+    const trajectory traj =
+        create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}, {1.866, 1.5}},
+                                                  xt::xarray<double>{0.5, 0.1},
+                                                  xt::xarray<double>{3.0, 3.0},
+                                                  0.0007,
+                                                  trajectory::seconds{0.001},
+                                                  collector);
 
     // TODO: tighten once TOTG handles high-curvature blends better.
     validate_trajectory_invariants(traj, 50.0);
@@ -1670,19 +1653,18 @@ BOOST_AUTO_TEST_CASE(multi_turn_low_accel_switching_point_search) {
 
     trajectory_integration_event_collector collector;
     // Two 90-degree turns with low acceleration and asymmetric velocity limits.
-    const trajectory traj = create_velocity_switching_test_trajectory(
-        xt::xarray<double>{{0.0, 0.0}, {0.5, 0.0}, {0.5, 0.5}, {1.0, 0.5}, {1.0, 1.0}},
-        xt::xarray<double>{0.5, 0.08},   // asymmetric velocity
-        xt::xarray<double>{2.0, 2.0},    // low-ish acceleration
-        0.05,                             // moderate deviation
-        trajectory::seconds{0.001},
-        collector);
+    const trajectory traj =
+        create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {0.5, 0.0}, {0.5, 0.5}, {1.0, 0.5}, {1.0, 1.0}},
+                                                  xt::xarray<double>{0.5, 0.08},  // asymmetric velocity
+                                                  xt::xarray<double>{2.0, 2.0},   // low-ish acceleration
+                                                  0.05,                           // moderate deviation
+                                                  trajectory::seconds{0.001},
+                                                  collector);
 
     validate_trajectory_invariants(traj, 5.0);
 
     // The search must find velocity escapes at the turns.
-    const auto vel_escapes = get_backward_events_by_kind(
-        collector, trajectory::switching_point_kind::k_velocity_escape);
+    const auto vel_escapes = get_backward_events_by_kind(collector, trajectory::switching_point_kind::k_velocity_escape);
     BOOST_CHECK_GE(vel_escapes.size(), 1U);
     BOOST_CHECK_GT(traj.duration().count(), 0.0);
 }
@@ -1717,19 +1699,17 @@ BOOST_AUTO_TEST_CASE(condition_41_false_gates_boundary) {
     // Same waypoints, velocities, accelerations as Case 12, but deviation=0.005
     // instead of 0.0007.  The larger blend radius reduces curvature enough that
     // condition 41 flips to false.
-    const trajectory traj = create_velocity_switching_test_trajectory(
-        xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}},
-        xt::xarray<double>{0.5, 0.1},        // 5:1 ratio (same as Case 12)
-        xt::xarray<double>{3.0, 3.0},        // same accel
-        0.005,                                // larger deviation → lower curvature
-        trajectory::seconds{0.001},
-        collector);
+    const trajectory traj = create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}},
+                                                                      xt::xarray<double>{0.5, 0.1},  // 5:1 ratio (same as Case 12)
+                                                                      xt::xarray<double>{3.0, 3.0},  // same accel
+                                                                      0.005,                         // larger deviation → lower curvature
+                                                                      trajectory::seconds{0.001},
+                                                                      collector);
 
     validate_trajectory_invariants(traj, 50.0);
 
     // With condition 41 false, no discontinuous velocity switching point should be produced.
-    const auto disc = get_backward_events_by_kind(
-        collector, trajectory::switching_point_kind::k_discontinuous_velocity_limit);
+    const auto disc = get_backward_events_by_kind(collector, trajectory::switching_point_kind::k_discontinuous_velocity_limit);
     BOOST_CHECK_EQUAL(disc.size(), 0U);
 }
 
