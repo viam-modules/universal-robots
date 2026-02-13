@@ -1536,6 +1536,11 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // Correct the acceleration value at the last forward point.
                     last_forward_point.s_ddot = computed_s_ddot;
 
+                    // In the loop below, we need the time of the last forward point, but we are going
+                    // to be writing to the vector that holds that point. Extract the time to a local variable
+                    // so it doesn't get destroyed out from under us on a reallocation.
+                    auto last_forward_point_time = last_forward_point.time;
+
                     // Reserve space to avoid reallocations during bulk append.
                     traj.integration_points_.reserve(traj.integration_points_.size() + backwards_points.size());
 
@@ -1546,7 +1551,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                         // All points in the backwards array were computed with a uniform delta, but we need to account
                         // for the computed dt that happened at the splice.
-                        corrected.time = (last_forward_point.time + dt) + (i * traj.options_.delta);
+                        corrected.time = (last_forward_point_time + dt) + (i * traj.options_.delta);
 
                         // For all but the last point we will be adding, we assume the acceleration that took us
                         // backward to that point is the acceleration we should use to move forward (erroneously, see

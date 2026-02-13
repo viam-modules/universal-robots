@@ -14,6 +14,14 @@
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/reconfigurable.hpp>
 
+#if __has_include(<xtensor/containers/xarray.hpp>)
+#include <xtensor/containers/xarray.hpp>
+#else
+#include <xtensor/xarray.hpp>
+#endif
+
+#include <viam/trajex/totg/waypoint_accumulator.hpp>
+
 using namespace viam::sdk;
 using namespace urcl;
 
@@ -59,16 +67,16 @@ void sampling_func(std::vector<trajectory_sample_point>& samples, double duratio
 
 void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples);
 void write_pose_to_file(const std::string& filepath, const pose_sample& sample);
-void write_waypoints_to_csv(const std::string& filepath, const std::list<Eigen::VectorXd>& waypoints);
+void write_waypoints_to_csv(const std::string& filepath, const viam::trajex::totg::waypoint_accumulator& waypoints);
 std::string waypoints_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string arm_joint_positions_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string move_to_position_pose_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string unix_time_iso8601();
-std::string serialize_failed_trajectory_to_json(const std::list<Eigen::VectorXd>& waypoints,
-                                                const Eigen::VectorXd& max_velocity_vec,
-                                                const Eigen::VectorXd& max_acceleration_vec,
+std::string serialize_failed_trajectory_to_json(const viam::trajex::totg::waypoint_accumulator& waypoints,
+                                                const xt::xarray<double>& max_velocity_vec,
+                                                const xt::xarray<double>& max_acceleration_vec,
                                                 double path_tolerance_delta_rads,
                                                 const std::optional<double>& path_colinearization_ratio);
 
@@ -184,9 +192,8 @@ class URArm final : public Arm, public Reconfigurable {
     vector6d_t get_joint_positions_rad_(const std::shared_lock<std::shared_mutex>&);
 
     void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
-                           std::list<Eigen::VectorXd> waypoints,
-                           const MoveOptions& options,
-                           const std::string& unix_time_ms);
+                           const xt::xarray<double>& waypoints,
+                           const MoveOptions& options);
 
     void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time_ms);
 

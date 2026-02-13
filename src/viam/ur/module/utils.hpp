@@ -1,8 +1,11 @@
 #pragma once
 
+#include <filesystem>
 #include <list>
 #include <optional>
 #include <sstream>
+#include <string>
+#include <string_view>
 
 #include <Eigen/Dense>
 
@@ -140,3 +143,26 @@ urcl::vector6d_t parse_and_validate_joint_limits(const viam::sdk::ProtoValue& va
 /// @throws std::invalid_argument if validation fails
 ///
 urcl::vector6d_t parse_and_validate_joint_limits(const viam::sdk::ResourceConfig& cfg, const std::string& param_name);
+
+///
+/// Extract trace-id from W3C Trace Context traceparent header.
+///
+/// @param traceparent Header value, e.g. "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+/// @return The 32-character hex trace-id, or std::nullopt if parsing fails
+///
+std::optional<std::string> extract_trace_id_from_traceparent(std::string_view traceparent);
+
+///
+/// Expand telemetry path by applying a trace-id template.
+///
+/// Replaces `{trace_id}` in the template with the actual trace-id and appends
+/// the result as a subdirectory of the base path.
+///
+/// @param base_path The telemetry output base directory
+/// @param traceid_template Template string containing `{trace_id}`, e.g. "tag={trace_id}"
+/// @param trace_id The actual trace-id to substitute
+/// @return The expanded path, e.g. base_path / "tag=0af765..."
+///
+std::filesystem::path expand_telemetry_path(const std::filesystem::path& base_path,
+                                            const std::string& traceid_template,
+                                            const std::string& trace_id);

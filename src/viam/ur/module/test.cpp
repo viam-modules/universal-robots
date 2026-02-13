@@ -14,6 +14,12 @@
 
 #include <json/json.h>
 
+#if __has_include(<xtensor/containers/xadapt.hpp>)
+#include <xtensor/containers/xadapt.hpp>
+#else
+#include <xtensor/xadapt.hpp>
+#endif
+
 #include <third_party/trajectories/Path.h>
 #include <third_party/trajectories/Trajectory.h>
 
@@ -78,16 +84,15 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
 }
 
 BOOST_AUTO_TEST_CASE(test_write_waypoints_to_csv) {
-    const std::list<Eigen::VectorXd> waypoints = {
-        makeVector({10.1, 0, 0, 0, 0, 0}),
-        makeVector({20.2, 0, 0, 0, 0, 0}),
-        makeVector({30.3, 0, 0, 0, 0, 0}),
-        makeVector({40.4, 0, 0, 0, 0, 0}),
-        makeVector({50.5, 0, 0, 0, 0, 0}),
-        makeVector({60.6, 0, 0, 0, 0, 0}),
-        makeVector({70.7, 0, 0, 0, 0, 0}),
-        makeVector({80.8, 0, 0, 0, 0, 0}),
-    };
+    const xt::xarray<double> waypoints_array = {{10.1, 0, 0, 0, 0, 0},
+                                                {20.2, 0, 0, 0, 0, 0},
+                                                {30.3, 0, 0, 0, 0, 0},
+                                                {40.4, 0, 0, 0, 0, 0},
+                                                {50.5, 0, 0, 0, 0, 0},
+                                                {60.6, 0, 0, 0, 0, 0},
+                                                {70.7, 0, 0, 0, 0, 0},
+                                                {80.8, 0, 0, 0, 0, 0}};
+    const viam::trajex::totg::waypoint_accumulator waypoints(waypoints_array);
 
     const auto* const expected =
         "10.1,0,0,0,0,0\n"
@@ -919,6 +924,75 @@ BOOST_AUTO_TEST_CASE(test_deduplicate_linf_norm) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
+BOOST_AUTO_TEST_SUITE(telemetry_output_path_tests)
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_valid) {
+    const auto result = extract_trace_id_from_traceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01");
+    BOOST_REQUIRE(result.has_value());
+    BOOST_CHECK_EQUAL(*result, "0af7651916cd43dd8448eb211c80319c");
+}
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_wrong_version) {
+    BOOST_CHECK(!extract_trace_id_from_traceparent("01-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"));
+}
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_too_few_parts) {
+    BOOST_CHECK(!extract_trace_id_from_traceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331"));
+}
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_bad_trace_id_length) {
+    BOOST_CHECK(!extract_trace_id_from_traceparent("00-shortid-b7ad6b7169203331-01"));
+}
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_bad_parent_id_length) {
+    BOOST_CHECK(!extract_trace_id_from_traceparent("00-0af7651916cd43dd8448eb211c80319c-short-01"));
+}
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_bad_flags_length) {
+    BOOST_CHECK(!extract_trace_id_from_traceparent("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-001"));
+}
+
+BOOST_AUTO_TEST_CASE(test_extract_trace_id_empty_string) {
+    BOOST_CHECK(!extract_trace_id_from_traceparent(""));
+}
+
+BOOST_AUTO_TEST_CASE(test_expand_telemetry_path_default_template) {
+    // When `telemetry_output_path_append_traceid` is `true`, the template is "{trace_id}"
+    const std::filesystem::path base = "/viam_home/capture";
+    const auto result = expand_telemetry_path(base, "{trace_id}", "0af7651916cd43dd8448eb211c80319c");
+    BOOST_CHECK_EQUAL(result, std::filesystem::path("/viam_home/capture/0af7651916cd43dd8448eb211c80319c"));
+}
+
+BOOST_AUTO_TEST_CASE(test_expand_telemetry_path_tag_prefix) {
+    // User's example: tag={trace_id} as the template
+    const std::filesystem::path base = "/viam_home/capture";
+    const auto result = expand_telemetry_path(base, "tag={trace_id}", "0af7651916cd43dd8448eb211c80319c");
+    BOOST_CHECK_EQUAL(result, std::filesystem::path("/viam_home/capture/tag=0af7651916cd43dd8448eb211c80319c"));
+}
+
+BOOST_AUTO_TEST_CASE(test_expand_telemetry_path_prefix_and_suffix) {
+    const std::filesystem::path base = "/data/telemetry";
+    const auto result = expand_telemetry_path(base, "trace-{trace_id}-run", "0af7651916cd43dd8448eb211c80319c");
+    BOOST_CHECK_EQUAL(result, std::filesystem::path("/data/telemetry/trace-0af7651916cd43dd8448eb211c80319c-run"));
+}
+
+BOOST_AUTO_TEST_CASE(test_expand_telemetry_path_nested_subdirectory) {
+    const std::filesystem::path base = "/data";
+    const auto result = expand_telemetry_path(base, "traces/{trace_id}/data", "0af7651916cd43dd8448eb211c80319c");
+    BOOST_CHECK_EQUAL(result, std::filesystem::path("/data/traces/0af7651916cd43dd8448eb211c80319c/data"));
+}
+
+BOOST_AUTO_TEST_CASE(test_expand_telemetry_path_with_filename) {
+    // Verifying the user's full example: $VIAM_HOME/capture/tag={trace-id}/some_file.ex1
+    // The expand_telemetry_path produces the directory; the filename is appended by callers
+    const std::filesystem::path base = "/viam_home/capture";
+    const auto dir = expand_telemetry_path(base, "tag={trace_id}", "0af7651916cd43dd8448eb211c80319c");
+    const auto full_path = dir / "some_file.ex1";
+    BOOST_CHECK_EQUAL(full_path, std::filesystem::path("/viam_home/capture/tag=0af7651916cd43dd8448eb211c80319c/some_file.ex1"));
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
 BOOST_AUTO_TEST_SUITE(failed_trajectory_tests)
 
 BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
@@ -941,10 +1015,11 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     const Path path(waypoints, k_tolerance);
 
     // Create trajectory with normal velocity/acceleration constraints
-    const auto max_velocity_vec = Eigen::VectorXd::Constant(6, 1.0);
-    const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, 1.0);
+    constexpr std::array<double, 6> k_max_velocity = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+    constexpr std::array<double, 6> k_max_acceleration = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
 
-    const Trajectory trajectory(path, max_velocity_vec, max_acceleration_vec);
+    const Trajectory trajectory(
+        path, Eigen::Map<const Eigen::VectorXd>(k_max_velocity.data(), 6), Eigen::Map<const Eigen::VectorXd>(k_max_acceleration.data(), 6));
 
     BOOST_REQUIRE(!trajectory.isValid());
     const std::string k_test_path = std::filesystem::temp_directory_path();
@@ -952,8 +1027,20 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     const std::string k_timestamp = unix_time_iso8601();
     const std::string k_filename = failed_trajectory_filename(k_test_path, k_resource_name, k_timestamp);
 
+    // Convert waypoints to xarray for serialize_failed_trajectory_to_json
+    const std::array<std::size_t, 2> shape = {waypoints.size(), 6};
+    xt::xarray<double> waypoints_xarray = xt::zeros<double>(shape);
+    size_t i = 0;
+    for (const auto& waypoint : waypoints) {
+        for (size_t j = 0; j < 6; ++j) {
+            waypoints_xarray(i, j) = waypoint(static_cast<Eigen::Index>(j));
+        }
+        ++i;
+    }
+    const viam::trajex::totg::waypoint_accumulator waypoint_acc(waypoints_xarray);
+
     const std::string json_content =
-        serialize_failed_trajectory_to_json(waypoints, max_velocity_vec, max_acceleration_vec, k_tolerance, 0.05);
+        serialize_failed_trajectory_to_json(waypoint_acc, xt::adapt(k_max_velocity), xt::adapt(k_max_acceleration), k_tolerance, 0.05);
 
     // Write the failed trajectory JSON
     std::ofstream json_file(k_filename);
