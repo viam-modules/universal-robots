@@ -235,6 +235,12 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
             boost::str(boost::format("attribute `path_colinearization_ratio` must be >= 0 and <= 2, it is: %1%") % *colinearization_ratio));
     }
 
+    auto segmentation_threshold = find_config_attribute<double>(cfg, "segmentation_threshold");
+    if (segmentation_threshold && (*segmentation_threshold <= 0 || *segmentation_threshold > 0.01)) {
+        throw std::invalid_argument(
+            boost::str(boost::format("attribute `segmentation_threshold` must be > 0 and <= 0.01, it is: %1%") % *segmentation_threshold));
+    }
+
     // Validate telemetry_output_path is a string if present
     const auto telemetry_output_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
 

@@ -147,7 +147,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     auto path_tolerance_rad = path_tolerance_deg ? degrees_to_radians(*path_tolerance_deg) : URArm::k_default_path_tolerance_delta_rads;
 
     auto colinearization_ratio = find_config_attribute<double>(config, "path_colinearization_ratio");
-    const double segmentation_threshold = find_config_attribute<double>(config, "segmentation_threshold").value_or(0.001);
+    const double segmentation_threshold = find_config_attribute<double>(config, "segmentation_threshold").value_or(0.005);
 
     const double max_trajectory_duration_secs =
         find_config_attribute<double>(config, "max_trajectory_duration_secs").value_or(URArm::k_default_max_trajectory_duration_secs);
