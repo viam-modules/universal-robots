@@ -709,10 +709,19 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
     auto previous_position = search_position;
     std::optional<phase_plane_slope> previous_delta;
     search_cursor.seek(search_position);
+    auto previous_segment_end = (*search_cursor).end();
 
     while (search_cursor.position() < search_limit) {
         const auto current_position = search_cursor.position();
         const auto result = try_compute_eq40_delta(search_cursor, current_position, opt);
+
+        // If we crossed a segment boundary, reset the baseline. A delta sign change
+        // across a boundary is a geometric discontinuity, not a continuous Eq. 40 escape.
+        const auto current_segment_end = (*search_cursor).end();
+        if (current_segment_end != previous_segment_end) {
+            previous_delta.reset();
+            previous_segment_end = current_segment_end;
+        }
 
         if (result.has_value()) {
             if (previous_delta.has_value()) {
@@ -797,6 +806,29 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
                            .kind = trajectory::switching_point_kind::k_velocity_escape};
 }
 
+// Phase 2+3: Coarse Eq. 40 bracket search + bisection refinement.
+// Searches for the first valid continuous velocity-escape switching point in [cursor.position(), search_limit).
+std::optional<switching_point> find_continuous_velocity_switching_point(path::cursor cursor,
+                                                                        arc_length search_limit,
+                                                                        const trajectory::options& opt) {
+    auto search_position = cursor.position();
+    while (opt.epsilon.wrap(search_position) < opt.epsilon.wrap(search_limit)) {
+        const auto coarse_bracket = find_eq40_escape_bracket(cursor, search_position, search_limit, opt);
+        if (!coarse_bracket.has_value()) {
+            break;
+        }
+
+        const auto refined = refine_continuous_velocity_switching_point(cursor, *coarse_bracket, opt);
+        if (refined.has_value()) {
+            return refined;
+        }
+
+        search_position = coarse_bracket->after;
+    }
+
+    return std::nullopt;
+}
+
 // Searches for a velocity switching point where escape from velocity curve becomes possible.
 // Implements both continuous (Kunz & Stilman equation 40, with `Correction 5`) and discontinuous
 // (Kunz & Stilman equations 41-42, with `Correction 6`) cases from Section VII-B.
@@ -809,27 +841,9 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
     // Phase 1: boundary discontinuity search.
     const auto discontinuous_switching_point = find_discontinuous_velocity_switching_point(cursor, opt, path_length);
 
-    // Phase 2+3: coarse Eq. 40 bracket search + bisection refinement.
-    std::optional<switching_point> continuous_switching_point;
+    // Phase 2+3: continuous escape search, bounded by the discontinuous result if one was found.
     const auto search_limit = discontinuous_switching_point.has_value() ? discontinuous_switching_point->point.s : path_length;
-    auto search_position = cursor.position();
-    auto search_cursor = cursor;
-
-    while (opt.epsilon.wrap(search_position) < opt.epsilon.wrap(search_limit)) {
-        const auto coarse_bracket = find_eq40_escape_bracket(search_cursor, search_position, search_limit, opt);
-        if (!coarse_bracket.has_value()) {
-            break;
-        }
-
-        const auto refined = refine_continuous_velocity_switching_point(search_cursor, *coarse_bracket, opt);
-        if (refined.has_value()) {
-            continuous_switching_point = *refined;
-            break;
-        }
-
-        // Rejected — resume coarse search past this escape region.
-        search_position = coarse_bracket->after;
-    }
+    const auto continuous_switching_point = find_continuous_velocity_switching_point(cursor, search_limit, opt);
 
     // Phase 4: return whichever switching point comes first.
     if (discontinuous_switching_point && continuous_switching_point) {
