@@ -706,7 +706,8 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
                                                             const trajectory::options& opt) {
     constexpr phase_plane_slope k_zero_delta{0.0};
     auto previous_position = search_position;
-    std::optional<phase_plane_slope> previous_delta = std::nullopt;
+    bool has_previous_delta = false;
+    phase_plane_slope previous_delta{0.0};
     search_cursor.seek(search_position);
     auto previous_segment_end = (*search_cursor).end();
 
@@ -718,13 +719,13 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
         // across a boundary is a geometric discontinuity, not a continuous Eq. 40 escape.
         const auto current_segment_end = (*search_cursor).end();
         if (current_segment_end != previous_segment_end) {
-            previous_delta.reset();
+            has_previous_delta = false;
             previous_segment_end = current_segment_end;
         }
 
         if (result.has_value()) {
-            if (previous_delta.has_value()) {
-                const bool previous_positive = opt.epsilon.wrap(*previous_delta) > opt.epsilon.wrap(k_zero_delta);
+            if (has_previous_delta) {
+                const bool previous_positive = opt.epsilon.wrap(previous_delta) > opt.epsilon.wrap(k_zero_delta);
                 const bool current_nonpositive = opt.epsilon.wrap(result->delta) <= opt.epsilon.wrap(k_zero_delta);
                 if (previous_positive && current_nonpositive) {
                     return eq40_escape_bracket{.before = previous_position,
@@ -733,13 +734,14 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
                                                .after_s_dot_max_vel = result->s_dot_max_vel};
                 }
             }
-            // When previous_delta is nullopt (first evaluable point or after a non-evaluable gap),
+            // When has_previous_delta is false (first evaluable point or after a non-evaluable gap),
             // we only record the value as a baseline. A non-positive Δ here means escape is already
             // possible, but the algorithm requires a sign *transition* (Δ > 0 → Δ ≤ 0) to identify
             // the switching point where the trajectory first becomes able to leave the velocity curve.
             previous_delta = result->delta;
+            has_previous_delta = true;
         } else {
-            previous_delta.reset();
+            has_previous_delta = false;
         }
 
         previous_position = current_position;
