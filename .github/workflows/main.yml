@@ -204,3 +204,140 @@ jobs:
           key-value: ${{ secrets.viam_key_value }}
           do-update: ${{ github.event_name == 'release' && !github.event.release.prerelease }}
           do-upload: ${{ github.event_name == 'release' }}
+
+  build-trajex-artifacts:
+    name: Build Trajex Release Artifacts
+    needs: [check-recent-commits, build-test-lint]
+    # Same triggers as UR: tags, manual dispatch, or scheduled builds
+    if: |
+      startsWith(github.ref, 'refs/tags/v') ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' &&
+       (needs.check-recent-commits.outputs.has_recent_commits == 'true' ||
+        github.event.schedule == '0 10 * * 0'))
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds in Ubuntu Jammy container
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            container: ubuntu:jammy
+            setup_type: debian
+            artifact_name: trajex-linux-amd64
+          - platform: linux/arm64
+            runner: ubuntu-4cpu-arm
+            container: ubuntu:jammy
+            setup_type: debian
+            artifact_name: trajex-linux-arm64
+          # macOS native build
+          - platform: darwin/arm64
+            runner: macos-latest
+            setup_type: macos
+            artifact_name: trajex-darwin-arm64
+
+    container: ${{ matrix.container }}
+
+    steps:
+      # Debian/Ubuntu setup: Install system dependencies (same as UR)
+      - name: Install system dependencies (Debian)
+        if: matrix.setup_type == 'debian'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            curl \
+            g++ \
+            git \
+            gnupg \
+            jq \
+            lsb-release \
+            ninja-build \
+            pkg-config \
+            python3 \
+            python3-pip \
+            sudo \
+            wget
+
+          # Install CMake 3.30 from Kitware
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | \
+            gpg --dearmor - | \
+            tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" | \
+            tee /etc/apt/sources.list.d/kitware.list >/dev/null
+          apt-get update
+          apt-get install -y --no-install-recommends cmake=3.30.* cmake-data=3.30.*
+
+      - name: Install Conan (Debian)
+        if: matrix.setup_type == 'debian'
+        run: |
+          python3 -m pip install conan
+          conan profile detect
+
+      - name: Install Conan (macOS)
+        if: matrix.setup_type == 'macos'
+        run: |
+          brew install conan jq
+          conan profile detect
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      # Build trajex module using its own scripts
+      - name: Setup C++ SDK for Trajex
+        run: cd src/viam/trajex && ./bin/setup.sh
+
+      - name: Build Trajex module
+        run: cd src/viam/trajex && ./bin/build.sh
+
+      # Move artifact to root for easier upload
+      - name: Move artifact to root
+        run: mv src/viam/trajex/module.tar.gz trajex-module.tar.gz
+
+      - name: Attach build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: trajex-module.tar.gz
+          retention-days: 7
+          if-no-files-found: error
+
+  publish-trajex:
+    name: Publish Trajex to Viam Module Registry
+    needs: [build-trajex-artifacts]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            artifact_name: trajex-linux-amd64
+          - platform: linux/arm64
+            artifact_name: trajex-linux-arm64
+          - platform: darwin/arm64
+            artifact_name: trajex-darwin-arm64
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+
+      - name: Extract meta.json from trajex module archive
+        run: tar -xzf trajex-module.tar.gz meta.json
+
+      - name: Upload trajex module to Viam
+        uses: viamrobotics/upload-module@v1
+        with:
+          module-path: trajex-module.tar.gz
+          platform: ${{ matrix.platform }}
+          version: ${{ github.ref_name }}
+          key-id: ${{ secrets.viam_key_id }}
+          key-value: ${{ secrets.viam_key_value }}
+          do-update: ${{ github.event_name == 'release' && !github.event.release.prerelease }}
+          do-upload: ${{ github.event_name == 'release' }}

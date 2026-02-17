@@ -18,7 +18,7 @@ int serve(const std::string& socket_path) try {
 
     auto registration = std::make_shared<vsdk::ModelRegistration>(
         vsdk::API::get<vsdk::MLModelService>(),
-        vsdk::Model{"viam", "mlmodelservice", "trajex"},
+        vsdk::Model{"viam", "trajex", "mlmodel"},
         [](vsdk::Dependencies deps, vsdk::ResourceConfig config) {
             return std::make_shared<viam::trajex::trajex_mlmodel_service>(std::move(deps), std::move(config));
         },
