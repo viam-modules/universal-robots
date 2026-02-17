@@ -140,8 +140,35 @@ apply_wall_werror(viam-trajex-totg)
 add_library(viam::trajex::totg ALIAS viam-trajex-totg)
 
 
+# Service layer: Eigen-dependent helpers (always built) and the MLModelService
+# wrapper (conditionally built when VIAM_TRAJEX_BUILD_SERVICE is ON).
+add_library(viam-trajex-service)
+
+target_sources(viam-trajex-service
+  PRIVATE
+    src/viam/trajex/service/colinearization.cpp
+)
+
+target_include_directories(viam-trajex-service
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(viam-trajex-service
+  PUBLIC
+    Eigen3::Eigen
+    viam::trajex::totg
+    viam::trajex::totg-legacy
+)
+
+apply_wall_werror(viam-trajex-service)
+
+add_library(viam::trajex::service ALIAS viam-trajex-service)
+
+
 #
-# Optional service layer
+# Optional service executable and SDK-dependent sources
 #
 
 option(VIAM_TRAJEX_BUILD_SERVICE "Build Viam MLModelService wrapper" OFF)
@@ -151,17 +178,45 @@ if(VIAM_TRAJEX_BUILD_SERVICE)
     find_package(viam-cpp-sdk CONFIG REQUIRED viamsdk)
   endif()
 
+  target_sources(viam-trajex-service
+    PRIVATE
+      src/viam/trajex/service/trajex_mlmodel_service.cpp
+  )
+
+  target_link_libraries(viam-trajex-service
+    PUBLIC
+      viam-cpp-sdk::viamsdk
+  )
+
   add_executable(trajex-service
     src/viam/trajex/service/main.cpp
   )
 
+  set_target_properties(trajex-service PROPERTIES OUTPUT_NAME viam-trajex-service)
+
   target_link_libraries(trajex-service
     PRIVATE
-      viam::trajex::totg
-      viam-cpp-sdk::viamsdk
+      viam::trajex::service
   )
 
   apply_wall_werror(trajex-service)
+
+  add_executable(trajex-service-test
+    src/viam/trajex/service/test/trajex_mlmodel_service.cpp
+  )
+
+  target_link_libraries(trajex-service-test
+    PRIVATE
+      viam::trajex::service
+      Boost::boost
+  )
+
+  apply_wall_werror(trajex-service-test)
+
+  add_test(
+    NAME trajex-service
+    COMMAND trajex-service-test
+  )
 endif()
 
 
@@ -175,6 +230,7 @@ add_executable(trajex-test)
 
 target_sources(trajex-test
   PRIVATE
+    src/viam/trajex/service/test/trajectory_planner.cpp
     src/viam/trajex/totg/test/main.cpp
     src/viam/trajex/totg/test/test_utils.cpp
     src/viam/trajex/totg/test/waypoint_accumulator.cpp
@@ -191,9 +247,8 @@ target_sources(trajex-test
 
 target_link_libraries(trajex-test
   PRIVATE
-    viam::trajex::totg
+    viam::trajex::service
     Boost::boost
-    viam::trajex::totg-legacy
     jsoncpp_lib
 )
 
@@ -241,7 +296,16 @@ install(
   TARGETS
   viam-trajex-totg-legacy
   viam-trajex-totg
+  viam-trajex-service
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
+
+if(VIAM_TRAJEX_BUILD_SERVICE)
+  install(
+    TARGETS
+    trajex-service
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  )
+endif()

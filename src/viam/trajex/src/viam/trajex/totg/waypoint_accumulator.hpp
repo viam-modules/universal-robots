@@ -54,20 +54,28 @@ class waypoint_accumulator {
     explicit waypoint_accumulator(const waypoint_view_t& first_waypoint);
 
     ///
+    /// Copy constructs a waypoint_accumulator.
+    ///
+    waypoint_accumulator(const waypoint_accumulator&);
+
+    ///
     /// Move constructs a waypoint_accumulator.
     ///
-    waypoint_accumulator(waypoint_accumulator&&) = default;
+    waypoint_accumulator(waypoint_accumulator&&) noexcept;
+
+    ///
+    /// Copy assigns a waypoint_accumulator.
+    ///
+    /// @return Reference to this
+    ///
+    waypoint_accumulator& operator=(const waypoint_accumulator&);
 
     ///
     /// Move assigns a waypoint_accumulator.
     ///
     /// @return Reference to this
     ///
-    waypoint_accumulator& operator=(waypoint_accumulator&&) = default;
-
-    // Deleted copy operations - move-only type
-    waypoint_accumulator(const waypoint_accumulator&) = delete;
-    waypoint_accumulator& operator=(const waypoint_accumulator&) = delete;
+    waypoint_accumulator& operator=(waypoint_accumulator&&) noexcept;
 
     ///
     /// Adds additional waypoints.
