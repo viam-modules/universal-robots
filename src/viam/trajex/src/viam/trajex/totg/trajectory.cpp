@@ -694,7 +694,6 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 struct eq40_escape_bracket {
     arc_length before;
     arc_length after;
-    phase_plane_slope before_delta;
     phase_plane_slope after_delta;
     arc_velocity after_s_dot_max_vel;
 };
@@ -730,7 +729,6 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
                 if (previous_positive && current_nonpositive) {
                     return eq40_escape_bracket{.before = previous_position,
                                                .after = current_position,
-                                               .before_delta = *previous_delta,
                                                .after_delta = result->delta,
                                                .after_s_dot_max_vel = result->s_dot_max_vel};
                 }
@@ -761,49 +759,59 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
     return std::nullopt;
 }
 
-// Phase 3: Refine the coarse Eq. 40 bracket via bisection and accept only a feasible
-// velocity-escape switching point.
+// Phase 3: Refine the coarse Eq. 40 bracket via bisection and accept only if
+// delta converges to zero (within epsilon).
 std::optional<switching_point> refine_continuous_velocity_switching_point(path::cursor& search_cursor,
                                                                           const eq40_escape_bracket& bracket,
                                                                           const trajectory::options& opt) {
     constexpr phase_plane_slope k_zero_delta{0.0};
 
+    // If the coarse step already landed on the root, no bisection needed.
+    if (opt.epsilon.wrap(bracket.after_delta) == opt.epsilon.wrap(k_zero_delta)) {
+        return switching_point{.point = {.s = bracket.after, .s_dot = bracket.after_s_dot_max_vel},
+                               .kind = trajectory::switching_point_kind::k_velocity_escape};
+    }
+
+    // TODO(RSDK-12767): Eliminate this hardcoded constant.
+    constexpr int max_bisection_iterations = 100;
     auto positive_side = bracket.before;
     auto nonpositive_side = bracket.after;
-    auto nonpositive_valid = bracket.after;
-    auto nonpositive_s_dot_max_vel = bracket.after_s_dot_max_vel;
+    auto best_s_dot_max_vel = bracket.after_s_dot_max_vel;
 
-    // Bisect to refine the bracket, unless the coarse step already landed on the root.
-    if (opt.epsilon.wrap(bracket.after_delta) != opt.epsilon.wrap(k_zero_delta)) {
-        // TODO(RSDK-12767): Eliminate this hardcoded constant.
-        constexpr int max_bisection_iterations = 100;
-        for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
-            if (opt.epsilon.wrap(positive_side) == opt.epsilon.wrap(nonpositive_side)) {
-                break;
-            }
+    for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
+        // Positions converged — the sign change is localized within epsilon.
+        if (opt.epsilon.wrap(positive_side) == opt.epsilon.wrap(nonpositive_side)) {
+            return switching_point{.point = {.s = nonpositive_side, .s_dot = best_s_dot_max_vel},
+                                   .kind = trajectory::switching_point_kind::k_velocity_escape};
+        }
 
-            const auto mid = positive_side + ((nonpositive_side - positive_side) / 2.0);
-            const auto mid_result = try_compute_eq40_delta(search_cursor, mid, opt);
-            if (!mid_result.has_value()) {
-                // Midpoint is non-evaluable (degenerate/singular). Contract from the
-                // positive side to preserve the known Δ ≤ 0 endpoint and approach the root from
-                // the trapped (Δ > 0) direction.
-                positive_side = mid;
-                continue;
-            }
+        const auto mid = positive_side + ((nonpositive_side - positive_side) / 2.0);
+        const auto mid_result = try_compute_eq40_delta(search_cursor, mid, opt);
+        if (!mid_result.has_value()) {
+            // Midpoint is non-evaluable (degenerate/singular). Contract from the
+            // positive side to preserve the known Δ ≤ 0 endpoint and approach the root from
+            // the trapped (Δ > 0) direction.
+            positive_side = mid;
+            continue;
+        }
 
-            if (opt.epsilon.wrap(mid_result->delta) <= opt.epsilon.wrap(k_zero_delta)) {
-                nonpositive_side = mid;
-                nonpositive_valid = mid;
-                nonpositive_s_dot_max_vel = mid_result->s_dot_max_vel;
-            } else {
-                positive_side = mid;
-            }
+        // Found the root — return immediately.
+        if (opt.epsilon.wrap(mid_result->delta) == opt.epsilon.wrap(k_zero_delta)) {
+            return switching_point{.point = {.s = mid, .s_dot = mid_result->s_dot_max_vel},
+                                   .kind = trajectory::switching_point_kind::k_velocity_escape};
+        }
+
+        if (opt.epsilon.wrap(mid_result->delta) < opt.epsilon.wrap(k_zero_delta)) {
+            nonpositive_side = mid;
+            best_s_dot_max_vel = mid_result->s_dot_max_vel;
+        } else {
+            positive_side = mid;
         }
     }
 
-    return switching_point{.point = {.s = nonpositive_valid, .s_dot = nonpositive_s_dot_max_vel},
-                           .kind = trajectory::switching_point_kind::k_velocity_escape};
+    // 100 iterations on a verified sign-change bracket yields 2^-100 precision —
+    // this path is effectively unreachable but kept as a defensive safety net.
+    return std::nullopt;
 }
 
 // Phase 2+3: Coarse Eq. 40 bracket search + bisection refinement.
