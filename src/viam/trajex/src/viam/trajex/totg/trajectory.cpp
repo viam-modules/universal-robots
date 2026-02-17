@@ -706,7 +706,7 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
                                                             const trajectory::options& opt) {
     constexpr phase_plane_slope k_zero_delta{0.0};
     auto previous_position = search_position;
-    std::optional<phase_plane_slope> previous_delta;
+    std::optional<phase_plane_slope> previous_delta = std::nullopt;
     search_cursor.seek(search_position);
     auto previous_segment_end = (*search_cursor).end();
 
