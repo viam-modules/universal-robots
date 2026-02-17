@@ -884,6 +884,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         double total_generation_time = 0.0;
         size_t total_waypoints = 0;
         double total_arc_length = 0.0;
+        size_t segment_count = 0;
     };
 
     VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
@@ -951,6 +952,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 acc.total_duration += traj.duration().count();
                 acc.total_waypoints += segment.size();
                 acc.total_arc_length += static_cast<double>(traj.path().length());
+                acc.segment_count++;
 
                 auto sampler = viam::trajex::totg::uniform_sampler::quantized_for_trajectory(
                     traj, viam::trajex::types::hertz{current_state_->get_trajectory_sampling_freq_hz()});
@@ -1000,6 +1002,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             acc.total_duration += traj.getDuration();
             acc.total_waypoints += segment.size();
             acc.total_arc_length += legacy_path.getLength();
+            acc.segment_count++;
 
             sampling_func(
                 acc.samples, traj.getDuration(), current_state_->get_trajectory_sampling_freq_hz(), [&](const double t, const double step) {
@@ -1032,7 +1035,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                << ", total duration: " << trajex.receiver->total_duration
                                << "s, total samples: " << trajex.receiver->samples.size()
                                << ", total arc length: " << trajex.receiver->total_arc_length
-                               << ", generation_time: " << trajex.receiver->total_generation_time << "s";
+                               << ", generation_time: " << trajex.receiver->total_generation_time
+                               << "s, number of segments: " << trajex.receiver->segment_count;
         }
 
         // Log legacy summary. When the new planner is active, log at info for comparison
@@ -1041,12 +1045,14 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             VIAM_SDK_LOG(info) << "legacy trajectory generated successfully"
                                << ", waypoints: " << legacy.receiver->total_waypoints << ", duration: " << legacy.receiver->total_duration
                                << "s, samples: " << legacy.receiver->samples.size()
-                               << ", generation_time: " << legacy.receiver->total_generation_time << "s";
+                               << ", generation_time: " << legacy.receiver->total_generation_time
+                               << "s, number of segments: " << legacy.receiver->segment_count;
         } else if (legacy.receiver) {
             VIAM_SDK_LOG(debug) << "legacy trajectory generated successfully"
                                 << ", waypoints: " << legacy.receiver->total_waypoints << ", duration: " << legacy.receiver->total_duration
                                 << "s, samples: " << legacy.receiver->samples.size()
-                                << ", generation_time: " << legacy.receiver->total_generation_time << "s";
+                                << ", generation_time: " << legacy.receiver->total_generation_time
+                                << "s, number of segments: " << legacy.receiver->segment_count;
         }
 
         // Prefer trajex when enabled and successful
