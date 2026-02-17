@@ -28,6 +28,7 @@ class URArm::state_ {
                     std::optional<double> robot_control_freq_hz,
                     double path_tolerance_delta_rads,
                     std::optional<double> path_colinearization_ratio,
+                    double segmentation_threshold,
                     bool use_new_trajectory_planner,
                     double max_trajectory_duration_secs,
                     std::optional<vector6d_t> max_velocity_limits,
@@ -76,6 +77,7 @@ class URArm::state_ {
 
     double get_path_tolerance_delta_rads() const;
     const std::optional<double>& get_path_colinearization_ratio() const;
+    double get_segmentation_threshold() const;
 
     bool use_new_trajectory_planner() const;
 
@@ -404,6 +406,7 @@ class URArm::state_ {
 
     const double path_tolerance_delta_rads_;
     const std::optional<double> path_colinearization_ratio_;
+    const double segmentation_threshold_;
 
     const bool use_new_trajectory_planner_;
     const double max_trajectory_duration_secs_;

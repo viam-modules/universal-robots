@@ -236,6 +236,12 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
             boost::str(boost::format("attribute `path_colinearization_ratio` must be >= 0 and <= 2, it is: %1%") % *colinearization_ratio));
     }
 
+    auto segmentation_threshold = find_config_attribute<double>(cfg, "segmentation_threshold");
+    if (segmentation_threshold && (*segmentation_threshold <= 0 || *segmentation_threshold > 0.01)) {
+        throw std::invalid_argument(
+            boost::str(boost::format("attribute `segmentation_threshold` must be > 0 and <= 0.01, it is: %1%") % *segmentation_threshold));
+    }
+
     // Validate telemetry_output_path is a string if present
     const auto telemetry_output_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
 
@@ -380,12 +386,14 @@ std::string serialize_failed_trajectory_to_json(const viam::trajex::totg::waypoi
                                                 const xt::xarray<double>& max_velocity_vec,
                                                 const xt::xarray<double>& max_acceleration_vec,
                                                 double path_tolerance_delta_rads,
-                                                const std::optional<double>& path_colinearization_ratio) {
+                                                const std::optional<double>& path_colinearization_ratio,
+                                                double segmentation_threshold) {
     namespace json = Json;
 
     json::Value root;
     root["timestamp"] = unix_time_iso8601();
     root["path_tolerance_delta_rads"] = path_tolerance_delta_rads;
+    root["segmentation_threshold"] = segmentation_threshold;
 
     if (path_colinearization_ratio) {
         root["path_colinearization_ratio"] = *path_colinearization_ratio;
@@ -929,8 +937,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             }
         })
 
-        .with_segmenter([](auto&, viam::trajex::totg::waypoint_accumulator accumulator) {
-            return viam::trajex::totg::segment_at_reversals(std::move(accumulator));
+        .with_segmenter([&](auto&, viam::trajex::totg::waypoint_accumulator accumulator) {
+            return viam::trajex::totg::segment_at_reversals(std::move(accumulator), current_state_->get_segmentation_threshold());
         });
 
     if (current_state_->use_new_trajectory_planner()) {
@@ -973,7 +981,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                                                                      xt::adapt(velocity_limits_data),
                                                                                      xt::adapt(acceleration_limits_data),
                                                                                      current_state_->get_path_tolerance_delta_rads(),
-                                                                                     current_state_->get_path_colinearization_ratio());
+                                                                                     current_state_->get_path_colinearization_ratio(),
+                                                                                     current_state_->get_segmentation_threshold());
                 const auto filename = failed_trajectory_filename(
                     current_state_->telemetry_output_path(), current_state_->resource_name() + "_trajex", unix_time);
                 std::ofstream json_file(filename);
@@ -1007,7 +1016,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                                                                  xt::adapt(velocity_limits_data),
                                                                                  xt::adapt(acceleration_limits_data),
                                                                                  current_state_->get_path_tolerance_delta_rads(),
-                                                                                 current_state_->get_path_colinearization_ratio());
+                                                                                 current_state_->get_path_colinearization_ratio(),
+                                                                                 current_state_->get_segmentation_threshold());
             const auto filename =
                 failed_trajectory_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
             std::ofstream json_file(filename);

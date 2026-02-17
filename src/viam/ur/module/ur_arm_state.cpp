@@ -57,6 +57,7 @@ URArm::state_::state_(private_,
                       std::optional<double> robot_control_freq_hz,
                       double path_tolerance_delta_rads,
                       std::optional<double> path_colinearization_ratio,
+                      double segmentation_threshold,
                       bool use_new_trajectory_planner,
                       double max_trajectory_duration_secs,
                       std::optional<vector6d_t> max_velocity_limits,
@@ -76,6 +77,7 @@ URArm::state_::state_(private_,
       waypoint_deduplication_tolerance_rad_(waypoint_deduplication_tolerance_rad),
       path_tolerance_delta_rads_(path_tolerance_delta_rads),
       path_colinearization_ratio_(path_colinearization_ratio),
+      segmentation_threshold_(segmentation_threshold),
       use_new_trajectory_planner_(use_new_trajectory_planner),
       max_trajectory_duration_secs_(max_trajectory_duration_secs),
       max_velocity_limits_(std::move(max_velocity_limits)),
@@ -145,6 +147,8 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     auto path_tolerance_rad = path_tolerance_deg ? degrees_to_radians(*path_tolerance_deg) : URArm::k_default_path_tolerance_delta_rads;
 
     auto colinearization_ratio = find_config_attribute<double>(config, "path_colinearization_ratio");
+    const double segmentation_threshold =
+        find_config_attribute<double>(config, "segmentation_threshold").value_or(URArm::k_default_segmentation_threshold);
 
     const double max_trajectory_duration_secs =
         find_config_attribute<double>(config, "max_trajectory_duration_secs").value_or(URArm::k_default_max_trajectory_duration_secs);
@@ -193,6 +197,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           std::move(frequency),
                                           path_tolerance_rad,
                                           colinearization_ratio,
+                                          segmentation_threshold,
                                           use_new_planner,
                                           max_trajectory_duration_secs,
                                           std::move(max_velocity_limits),
@@ -426,6 +431,10 @@ double URArm::state_::get_path_tolerance_delta_rads() const {
 
 const std::optional<double>& URArm::state_::get_path_colinearization_ratio() const {
     return path_colinearization_ratio_;
+}
+
+double URArm::state_::get_segmentation_threshold() const {
+    return segmentation_threshold_;
 }
 
 bool URArm::state_::use_new_trajectory_planner() const {
