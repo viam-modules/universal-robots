@@ -28,7 +28,7 @@ format-check:
 	clang-format-19 --style=file --dry-run --Werror $(SOURCE_FILES)
 
 configure:
-	cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DVIAM_TRAJEX_BUILD_SERVICE=ON -G Ninja
+	cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -G Ninja
 
 build: configure
 	cmake --build build --target all -- -j4
