@@ -190,10 +190,10 @@ struct switching_point {
     // TODO(RSDK-12759): This check can trigger even when limiting_joint was validly selected, because a joint
     // with |q'| slightly above epsilon (e.g., 1.1*epsilon) produces a denominator of |q'|^2 which
     // can be below epsilon (e.g., 1.21*epsilon^2 << epsilon for small epsilon). This represents a
-    // numerically singular case where the joint is barely moving along the path (q' ≈ 0) but happens
+    // numerically singular case where the joint is barely moving along the path (q' ~= 0) but happens
     // to be the limiting constraint. The derivative d/ds(1/|q'|) becomes huge and ill-defined.
     //
-    // Physical interpretation: When |q'| ≈ 0, the velocity limit s_dot_max = q_dot_max / |q'| is
+    // Physical interpretation: When |q'| ~= 0, the velocity limit s_dot_max = q_dot_max / |q'| is
     // enormous, meaning this joint isn't really constraining velocity in any meaningful sense. The
     // fact that it's the "limiting joint" may be an artifact rather than a real constraint.
     //
@@ -219,7 +219,7 @@ struct eq40_result {
 };
 
 // Try to evaluate Eq. 40 delta:
-//   Δ(s) = s_ddot_min(s, s_dot_max_vel(s)) / s_dot_max_vel(s) - d/ds s_dot_max_vel(s)
+//   Delta(s) = s_ddot_min(s, s_dot_max_vel(s)) / s_dot_max_vel(s) - d/ds s_dot_max_vel(s)
 // Returns std::nullopt when Eq. 40 is not evaluable at this geometry (degenerate
 // velocity limit, acceleration limit below velocity limit, singular derivative,
 // or infeasible acceleration bounds).
@@ -468,8 +468,8 @@ struct eq40_result {
 
         // Apply Kunz & Stilman equation 38
         // A discontinuity of s_dot_max_acc(s) is a switching point if and only if:
-        // Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) ∧ (s_ddot_max(s-, s_dot_max_acc(s-))/s_dot_max_acc(s-)) >= d/ds
-        // s_dot_max_acc(s-)] Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) ∧ (s_ddot_max(s+, s_dot_max_acc(s+))/s_dot_max_acc(s+)) <=
+        // Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) and (s_ddot_max(s-, s_dot_max_acc(s-))/s_dot_max_acc(s-)) >= d/ds
+        // s_dot_max_acc(s-)] Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) and (s_ddot_max(s+, s_dot_max_acc(s+))/s_dot_max_acc(s+)) <=
         // d/ds s_dot_max_acc(s+)]
 
         bool is_switching_point = false;
@@ -653,7 +653,7 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
             continue;
         }
 
-        // Condition 41 passed — now evaluate condition 42 (after-side).
+        // Condition 41 passed -- now evaluate condition 42 (after-side).
         phase_plane_slope curve_slope_after{0.0};
         try {
             curve_slope_after = compute_velocity_limit_derivative(q_prime_after, q_double_prime_after, opt.max_velocity, opt.epsilon);
@@ -699,7 +699,7 @@ struct eq40_escape_bracket {
 };
 
 // Phase 2: Coarse forward scan for an Eq. 40 sign bracket:
-// previous/current Δ values on opposite sides of zero.
+// previous/current Delta values on opposite sides of zero.
 std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search_cursor,
                                                             arc_length search_position,
                                                             arc_length search_limit,
@@ -735,8 +735,8 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
                 }
             }
             // When has_previous_delta is false (first evaluable point or after a non-evaluable gap),
-            // we only record the value as a baseline. A non-positive Δ here means escape is already
-            // possible, but the algorithm requires a sign *transition* (Δ > 0 → Δ ≤ 0) to identify
+            // we only record the value as a baseline. A non-positive Delta here means escape is already
+            // possible, but the algorithm requires a sign *transition* (Delta > 0 -> Delta <= 0) to identify
             // the switching point where the trajectory first becomes able to leave the velocity curve.
             previous_delta = result->delta;
             has_previous_delta = true;
@@ -781,7 +781,7 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
     auto best_s_dot_max_vel = bracket.after_s_dot_max_vel;
 
     for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
-        // Positions converged — the sign change is localized within epsilon.
+        // Positions converged -- the sign change is localized within epsilon.
         if (opt.epsilon.wrap(positive_side) == opt.epsilon.wrap(nonpositive_side)) {
             return switching_point{.point = {.s = nonpositive_side, .s_dot = best_s_dot_max_vel},
                                    .kind = trajectory::switching_point_kind::k_velocity_escape};
@@ -791,13 +791,13 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         const auto mid_result = try_compute_eq40_delta(search_cursor, mid, opt);
         if (!mid_result.has_value()) {
             // Midpoint is non-evaluable (degenerate/singular). Contract from the
-            // positive side to preserve the known Δ ≤ 0 endpoint and approach the root from
-            // the trapped (Δ > 0) direction.
+            // positive side to preserve the known Delta <= 0 endpoint and approach the root from
+            // the trapped (Delta > 0) direction.
             positive_side = mid;
             continue;
         }
 
-        // Found the root — return immediately.
+        // Found the root -- return immediately.
         if (opt.epsilon.wrap(mid_result->delta) == opt.epsilon.wrap(k_zero_delta)) {
             return switching_point{.point = {.s = mid, .s_dot = mid_result->s_dot_max_vel},
                                    .kind = trajectory::switching_point_kind::k_velocity_escape};
@@ -811,7 +811,7 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         }
     }
 
-    // 100 iterations on a verified sign-change bracket yields 2^-100 precision —
+    // 100 iterations on a verified sign-change bracket yields 2^-100 precision
     // this path is effectively unreachable but kept as a defensive safety net.
     return std::nullopt;
 }
@@ -980,7 +980,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
     if (points.empty()) {
         // Production path: run the TOTG algorithm to compute time-optimal parameterization.
-        // Algorithm from Kunz & Stilman Section VI: phase plane (s, ṡ) integration.
+        // Algorithm from Kunz & Stilman Section VI: phase plane (s, s_dot) integration.
 
         // Construct trajectory object early so we can pass it to observers during integration
         // Constructor initializes trajectory with initial point at rest (0, 0)

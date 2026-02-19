@@ -1168,7 +1168,7 @@ BOOST_AUTO_TEST_SUITE_END()
 BOOST_AUTO_TEST_SUITE(velocity_switching_point_search)
 
 // ---------------------------------------------------------------------------
-// Case 1: Velocity curve drops sharply → velocity escape switching point.
+// Case 1: Velocity curve drops sharply -> velocity escape switching point.
 //
 // Path turns from a direction where one joint has a high velocity limit to a
 // direction where a slower joint becomes the constraint. The velocity curve
@@ -1179,7 +1179,7 @@ BOOST_AUTO_TEST_CASE(sharp_velocity_curve_drop_produces_velocity_escape) {
     using namespace viam::trajex::types;
 
     // 2-DOF robot: joint 1 is fast, joint 2 is slow.
-    // Path goes along joint 1 then turns 90° toward joint 2.
+    // Path goes along joint 1 then turns 90 deg toward joint 2.
     // Velocity curve drops from ~v_max_1 to ~v_max_2 across the blend.
     // Tight blend so the trajectory hits the velocity curve before the blend,
     // then the curve drops sharply.
@@ -1205,7 +1205,7 @@ BOOST_AUTO_TEST_CASE(sharp_velocity_curve_drop_produces_velocity_escape) {
 }
 
 // ---------------------------------------------------------------------------
-// Case 2: Velocity curve rises steeply → no velocity switching point.
+// Case 2: Velocity curve rises steeply -> no velocity switching point.
 //
 // Path goes along the slow joint first, then turns toward the fast joint.
 // The velocity curve rises, so the trajectory never needs to leave it due to
@@ -1216,7 +1216,7 @@ BOOST_AUTO_TEST_CASE(rising_velocity_curve_no_velocity_switching_point) {
     using namespace viam::trajex::types;
 
     // Opposite of Case 1: path goes along joint 2 (slow) then turns to joint 1 (fast).
-    // Same limits as Case 1 but opposite path direction — velocity curve rises instead of drops.
+    // Same limits as Case 1 but opposite path direction -- velocity curve rises instead of drops.
     trajectory_test_fixture fixture(2, 1.0);
 
     fixture.validation_tolerance_percent = 0.5;
@@ -1227,7 +1227,7 @@ BOOST_AUTO_TEST_CASE(rising_velocity_curve_no_velocity_switching_point) {
 
     fixture.set_waypoints_rad({{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}});
 
-    // No velocity switching point expected — velocity curve rises, not drops.
+    // No velocity switching point expected -- velocity curve rises, not drops.
     fixture.expectation_observer_->expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
         .expect_backward_start(std::nullopt, arc_velocity{0.0}, trajectory::switching_point_kind::k_path_end)
         .expect_splice();
@@ -1236,7 +1236,7 @@ BOOST_AUTO_TEST_CASE(rising_velocity_curve_no_velocity_switching_point) {
 }
 
 // ---------------------------------------------------------------------------
-// Case 3: Gradual velocity curve drop → switching point found via bisection.
+// Case 3: Gradual velocity curve drop -> switching point found via bisection.
 //
 // Similar to Case 1 but with a wider blend (larger deviation), creating a more
 // gradual velocity curve transition. Tests that bisection accurately locates
@@ -1248,7 +1248,7 @@ BOOST_AUTO_TEST_CASE(gradual_velocity_curve_drop_bisection_accuracy) {
 
     trajectory_test_fixture fixture(2, 1.0);
 
-    // Moderate blend deviation → wider blend → more gradual velocity curve transition.
+    // Moderate blend deviation -> wider blend -> more gradual velocity curve transition.
     // Same velocity limits as Case 1 but with a wider blend, so the velocity curve
     // drops more gradually across the blend region.
     fixture.validation_tolerance_percent = 0.5;
@@ -1271,7 +1271,7 @@ BOOST_AUTO_TEST_CASE(gradual_velocity_curve_drop_bisection_accuracy) {
 }
 
 // ---------------------------------------------------------------------------
-// Case 4: Multiple velocity switching points → finds the first.
+// Case 4: Multiple velocity switching points -> finds the first.
 //
 // Path with multiple turns, each causing the velocity curve to drop. The
 // search should find the earliest switching point.
@@ -1280,7 +1280,7 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_drops_finds_first_switching_point) {
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
 
-    // Zigzag path: joint 1 direction → joint 2 direction → joint 1 direction → joint 2 direction.
+    // Zigzag path: joint 1 direction -> joint 2 direction -> joint 1 direction -> joint 2 direction.
     // Each turn from joint 1 to joint 2 creates a velocity drop.
     // Same limits as Case 1 which produces velocity_escape.
     trajectory_test_fixture fixture(2, 1.0);
@@ -1312,7 +1312,7 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_drops_finds_first_switching_point) {
 // ---------------------------------------------------------------------------
 // Case 5: Multiple velocity escapes on a multi-turn path with wider blends.
 //
-// Zigzag path with three 90° turns at moderate deviation. Each turn from the
+// Zigzag path with three 90 deg turns at moderate deviation. Each turn from the
 // fast joint toward the slow joint creates a velocity drop. Tests that the
 // search correctly finds velocity escapes across multiple blend regions with
 // wider arcs than Cases 1/3.
@@ -1349,26 +1349,26 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_escapes_wider_blends) {
 }
 
 // ---------------------------------------------------------------------------
-// Case 6: Constant velocity curve → no velocity switching point.
+// Case 6: Constant velocity curve -> no velocity switching point.
 //
 // Straight-line path with uniform velocity limits. The velocity curve is flat,
-// so there is no sign change in Δ(s). Only path-end switching point occurs.
+// so there is no sign change in Delta(s). Only path-end switching point occurs.
 // ---------------------------------------------------------------------------
 BOOST_AUTO_TEST_CASE(constant_velocity_curve_no_switching_point) {
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
 
-    // Straight line — no blends, constant q', constant velocity limit.
+    // Straight line -- no blends, constant q', constant velocity limit.
     trajectory_test_fixture fixture(2, 1.0);
 
     fixture.set_max_velocity(xt::xarray<double>{0.5, 0.5}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.1);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
-    // Diagonal straight line: both joints move equally, q' = (1/√2, 1/√2).
+    // Diagonal straight line: both joints move equally, q' = (1/sqrt(2), 1/sqrt(2)).
     fixture.set_waypoints_rad({{0.0, 0.0}, {1.0, 1.0}});
 
-    // No velocity switching point — constant velocity curve on a straight line.
+    // No velocity switching point -- constant velocity curve on a straight line.
     fixture.expectation_observer_->expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
         .expect_backward_start(std::nullopt, arc_velocity{0.0}, trajectory::switching_point_kind::k_path_end)
         .expect_splice();
@@ -1398,7 +1398,7 @@ BOOST_AUTO_TEST_CASE(velocity_switching_point_near_path_start) {
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
-    // Moderate first segment (0.5 rad), then 90° turn.
+    // Moderate first segment (0.5 rad), then 90 deg turn.
     fixture.set_waypoints_rad({{0.0, 0.0}, {0.5, 0.0}, {0.5, 1.0}});
 
     fixture.expectation_observer_->expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
@@ -1415,7 +1415,7 @@ BOOST_AUTO_TEST_CASE(velocity_switching_point_near_path_start) {
 // ---------------------------------------------------------------------------
 // Case 8: Eq. 40 sign bracket at a velocity escape switching point.
 //
-// For a velocity escape switching point, Δ(s) = s_ddot_min/s_dot_max_vel - d/ds(s_dot_max_vel)
+// For a velocity escape switching point, Delta(s) = s_ddot_min/s_dot_max_vel - d/ds(s_dot_max_vel)
 // should transition from positive (trapped) to non-positive (escape possible).
 // ---------------------------------------------------------------------------
 BOOST_AUTO_TEST_CASE(eq40_sign_change_brackets_velocity_escape_switching_point) {
@@ -1450,7 +1450,7 @@ BOOST_AUTO_TEST_CASE(eq40_sign_change_brackets_velocity_escape_switching_point) 
 // ---------------------------------------------------------------------------
 // Case 9: Rising velocity curve has no Eq. 40 escape transition.
 //
-// In this geometry the velocity curve rises, so there should be no Δ > 0 to Δ ≤ 0
+// In this geometry the velocity curve rises, so there should be no Delta > 0 to Delta <= 0
 // transition and no velocity-escape switching point.
 // ---------------------------------------------------------------------------
 BOOST_AUTO_TEST_CASE(rising_velocity_curve_has_no_eq40_escape_transition) {
@@ -1580,8 +1580,8 @@ BOOST_AUTO_TEST_CASE(boundary_produces_discontinuous_velocity_limit) {
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
 
-    // 30° turn: the velocity curve has a steep slope at the blend-end boundary.
-    // With moderate curvature (κ ≈ 50), centripetal acceleration makes trajectory_slope
+    // 30 deg turn: the velocity curve has a steep slope at the blend-end boundary.
+    // With moderate curvature (kappa ~= 50), centripetal acceleration makes trajectory_slope
     // less negative than curve_slope (condition 41 holds), while the gentler curvature
     // avoids backward-integration failure.
     trajectory_integration_event_collector collector;
@@ -1589,7 +1589,7 @@ BOOST_AUTO_TEST_CASE(boundary_produces_discontinuous_velocity_limit) {
         create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}},
                                                   xt::xarray<double>{0.5, 0.1},  // 5:1 ratio
                                                   xt::xarray<double>{3.0, 3.0},  // accel tuned so c41 holds and trajectory constructs
-                                                  0.0007,                        // κ ≈ 49 for 30° turn
+                                                  0.0007,                        // kappa ~= 49 for 30 deg turn
                                                   trajectory::seconds{0.001},    // normal step
                                                   collector);
 
@@ -1601,7 +1601,7 @@ BOOST_AUTO_TEST_CASE(boundary_produces_discontinuous_velocity_limit) {
     const auto disc = get_backward_events_by_kind(collector, trajectory::switching_point_kind::k_discontinuous_velocity_limit);
     BOOST_REQUIRE_GE(disc.size(), 1U);
 
-    // Verify the switching point is at the blend-end boundary (around s ≈ 1.0)
+    // Verify the switching point is at the blend-end boundary (around s ~= 1.0)
     BOOST_CHECK_CLOSE(static_cast<double>(disc.front().start.s), 1.0, 5.0);
 }
 
@@ -1617,8 +1617,8 @@ BOOST_AUTO_TEST_CASE(both_discontinuous_velocity_limit_and_velocity_escape) {
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
 
-    // First turn (30°) triggers discontinuous velocity limit (same as Case 12).
-    // Second turn (90°, fast→slow) triggers continuous velocity escape.
+    // First turn (30 deg) triggers discontinuous velocity limit (same as Case 12).
+    // Second turn (90 deg, fast->slow) triggers continuous velocity escape.
     trajectory_integration_event_collector collector;
     const trajectory traj =
         create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}, {1.866, 1.5}},
@@ -1641,7 +1641,7 @@ BOOST_AUTO_TEST_CASE(both_discontinuous_velocity_limit_and_velocity_escape) {
 }
 
 // ---------------------------------------------------------------------------
-// Case 14: Multi-turn path with low acceleration — stress test for switching
+// Case 14: Multi-turn path with low acceleration -- stress test for switching
 // point search (RSDK-12980 regression coverage).
 //
 // Uses two 90-degree turns with low acceleration, creating multiple regions where
@@ -1674,12 +1674,12 @@ BOOST_AUTO_TEST_CASE(multi_turn_low_accel_switching_point_search) {
 // ---------------------------------------------------------------------------
 // Case 15: Condition 41 false gates a boundary that would otherwise qualify.
 //
-// Same 30° geometry as Case 12, but with a larger blend deviation (0.005
+// Same 30 deg geometry as Case 12, but with a larger blend deviation (0.005
 // vs 0.0007).  The larger deviation reduces curvature at the blend, which
 // makes curve_slope_before much shallower.  trajectory_slope_before ends up
 // MORE negative than curve_slope_before, so condition 41
 // (trajectory_slope_before >= curve_slope_before) is false.  Condition 42
-// remains true (linear after-segment → curve_slope_after=0, and
+// remains true (linear after-segment -> curve_slope_after=0, and
 // trajectory_slope_after < 0).
 //
 // This verifies that a single false condition gates the boundary decision,
@@ -1704,7 +1704,7 @@ BOOST_AUTO_TEST_CASE(condition_41_false_gates_boundary) {
     const trajectory traj = create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.866, 0.5}},
                                                                       xt::xarray<double>{0.5, 0.1},  // 5:1 ratio (same as Case 12)
                                                                       xt::xarray<double>{3.0, 3.0},  // same accel
-                                                                      0.005,                         // larger deviation → lower curvature
+                                                                      0.005,                         // larger deviation -> lower curvature
                                                                       trajectory::seconds{0.001},
                                                                       collector);
 
