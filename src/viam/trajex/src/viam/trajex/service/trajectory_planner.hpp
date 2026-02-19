@@ -276,7 +276,10 @@ class trajectory_planner : public trajectory_planner_base {
             }
 
             try {
-                auto path_opts = totg::path::options{}.set_max_deviation(config_.path_blend_tolerance);
+                auto path_opts = totg::path::options{}.set_max_blend_deviation(config_.path_blend_tolerance);
+                if (config_.colinearization_ratio) {
+                    path_opts.set_max_linear_deviation(config_.path_blend_tolerance * *config_.colinearization_ratio);
+                }
 
                 auto p = totg::path::create(segment, path_opts);
 

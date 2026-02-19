@@ -72,15 +72,17 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         [this, &state](auto& cmd) -> std::optional<event_variant_> {
             using T = std::decay_t<decltype(cmd)>;
 
-            if constexpr (std::is_same_v<T, std::vector<trajectory_sample_point>>) {
+            if constexpr (std::is_same_v<T, trajectory_samples>) {
                 // Operating in joint-space
 
-                if (!cmd.empty() && !state.move_request_->cancellation_request) {
+                const auto cmd_empty = std::visit([](const auto& v) { return v.empty(); }, cmd);
+
+                if (!cmd_empty && !state.move_request_->cancellation_request) {
                     // Have samples to send, no cancellation requested
                     VIAM_SDK_LOG(debug) << "URArm sending trajectory";
 
                     auto to_send = std::move(cmd);
-                    const auto num_samples = to_send.size();
+                    const auto num_samples = std::visit([](const auto& v) { return v.size(); }, to_send);
 
                     if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
                                                                           static_cast<int>(num_samples),
@@ -90,18 +92,35 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                         return event_connection_lost_::trajectory_control_failure();
                     }
 
-                    for (size_t i = 0; i < num_samples; ++i) {
-                        if (!arm_conn_->driver->writeTrajectorySplinePoint(to_send[i].p, to_send[i].v, to_send[i].timestep)) {
-                            VIAM_SDK_LOG(error) << "send_trajectory: spline point failed; dropping connection";
-                            std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point");
-                            return event_connection_lost_::trajectory_control_failure();
-                        }
+                    if (auto err = std::visit(
+                            [this, &state](const auto& pts) -> std::optional<event_variant_> {
+                                const auto write_point = [&](const auto& pt) {
+                                    if constexpr (requires { pt.a; }) {
+                                        return arm_conn_->driver->writeTrajectorySplinePoint(pt.p, pt.v, pt.a, pt.timestep);
+                                    } else {
+                                        return arm_conn_->driver->writeTrajectorySplinePoint(pt.p, pt.v, pt.timestep);
+                                    }
+                                };
+                                for (const auto& pt : pts) {
+                                    if (!write_point(pt)) {
+                                        VIAM_SDK_LOG(error) << "send_trajectory: spline point failed; dropping connection";
+                                        std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point");
+                                        return event_connection_lost_::trajectory_control_failure();
+                                    }
+                                }
+                                return std::nullopt;
+                            },
+                            to_send)) {
+                        return err;
                     }
+
                     VIAM_SDK_LOG(debug) << "URArm trajectory sent";
-                    state.move_request_->move_command = std::vector<trajectory_sample_point>{};
+
+                    // Move-assign from a fresh empty vector to release the storage for the points.
+                    std::visit([](auto& v) { v = {}; }, cmd);
                     return std::nullopt;
 
-                } else if (cmd.empty() && state.move_request_->cancellation_request && !state.move_request_->cancellation_request->issued) {
+                } else if (cmd_empty && state.move_request_->cancellation_request && !state.move_request_->cancellation_request->issued) {
                     // We have a move request, the samples have been forwarded,
                     // and cancellation is requested but has not yet been issued. Issue a cancel.
                     state.move_request_->cancellation_request->issued = true;
@@ -112,7 +131,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                         return event_connection_lost_::trajectory_control_failure();
                     }
                     return std::nullopt;
-                } else if (!cmd.empty() && state.move_request_->cancellation_request) {
+                } else if (!cmd_empty && state.move_request_->cancellation_request) {
                     // We have a move request that we haven't issued but a
                     // cancel is already pending. Don't issue it, just cancel it.
                     std::exchange(state.move_request_, {})->complete_cancelled();
