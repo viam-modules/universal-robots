@@ -239,19 +239,8 @@ struct eq40_result {
         return std::nullopt;
     }
 
-    phase_plane_slope curve_slope{0.0};
-    try {
-        curve_slope = compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
-    } catch (const std::runtime_error&) {
-        return std::nullopt;
-    }
-
-    std::optional<trajectory::acceleration_bounds> accel_bounds;
-    try {
-        accel_bounds = compute_acceleration_bounds(q_prime, q_double_prime, s_dot_max_vel, opt.max_acceleration, opt.epsilon);
-    } catch (const std::runtime_error&) {
-        return std::nullopt;
-    }
+    auto curve_slope = compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
+    auto accel_bounds = compute_acceleration_bounds(q_prime, q_double_prime, s_dot_max_vel, opt.max_acceleration, opt.epsilon);
 
     const auto& [s_ddot_min, s_ddot_max] = *accel_bounds;
     const auto trajectory_slope = s_ddot_min / s_dot_max_vel;
@@ -632,20 +621,8 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         // Evaluate condition 41 (before-side only) first to avoid computing after-side
         // derivatives and acceleration bounds when the before-side already disqualifies.
-        phase_plane_slope curve_slope_before{0.0};
-        try {
-            curve_slope_before = compute_velocity_limit_derivative(q_prime_before, q_double_prime_before, opt.max_velocity, opt.epsilon);
-        } catch (const std::runtime_error&) {
-            continue;
-        }
-
-        std::optional<trajectory::acceleration_bounds> accel_before;
-        try {
-            accel_before =
-                compute_acceleration_bounds(q_prime_before, q_double_prime_before, s_dot_max_vel_before, opt.max_acceleration, opt.epsilon);
-        } catch (const std::runtime_error&) {
-            continue;
-        }
+        const auto curve_slope_before = compute_velocity_limit_derivative(q_prime_before, q_double_prime_before, opt.max_velocity, opt.epsilon);
+        const auto accel_before = compute_acceleration_bounds(q_prime_before, q_double_prime_before, s_dot_max_vel_before, opt.max_acceleration, opt.epsilon);
         const auto& [s_ddot_min_before, s_ddot_max_before] = *accel_before;
         const auto trajectory_slope_before = s_ddot_min_before / s_dot_max_vel_before;
         const bool condition_41 = opt.epsilon.wrap(trajectory_slope_before) >= opt.epsilon.wrap(curve_slope_before);
@@ -654,20 +631,8 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         }
 
         // Condition 41 passed -- now evaluate condition 42 (after-side).
-        phase_plane_slope curve_slope_after{0.0};
-        try {
-            curve_slope_after = compute_velocity_limit_derivative(q_prime_after, q_double_prime_after, opt.max_velocity, opt.epsilon);
-        } catch (const std::runtime_error&) {
-            continue;
-        }
-
-        std::optional<trajectory::acceleration_bounds> accel_after;
-        try {
-            accel_after =
-                compute_acceleration_bounds(q_prime_after, q_double_prime_after, s_dot_max_vel_after, opt.max_acceleration, opt.epsilon);
-        } catch (const std::runtime_error&) {
-            continue;
-        }
+        const auto curve_slope_after = compute_velocity_limit_derivative(q_prime_after, q_double_prime_after, opt.max_velocity, opt.epsilon);
+        const auto accel_after = compute_acceleration_bounds(q_prime_after, q_double_prime_after, s_dot_max_vel_after, opt.max_acceleration, opt.epsilon);
         const auto& [s_ddot_min_after, s_ddot_max_after] = *accel_after;
         const auto trajectory_slope_after = s_ddot_min_after / s_dot_max_vel_after;
         const bool condition_42 = opt.epsilon.wrap(trajectory_slope_after) <= opt.epsilon.wrap(curve_slope_after);
