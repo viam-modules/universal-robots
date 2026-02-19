@@ -1268,7 +1268,37 @@ BOOST_AUTO_TEST_CASE(gradual_velocity_curve_drop_bisection_accuracy) {
         .expect_backward_start(arc_length{1.94819}, arc_velocity{0.0}, trajectory::switching_point_kind::k_path_end)
         .expect_splice(trajectory::seconds{14.3069}, size_t{5});
 
-    const trajectory traj = fixture.create_and_validate();
+    fixture.create_and_validate();
+
+    trajectory_integration_event_collector collector;
+    const trajectory observed_traj =
+        create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}},
+                                                  xt::xarray<double>{0.5, 0.08},
+                                                  xt::xarray<double>{10.0, 10.0},
+                                                  0.05,
+                                                  trajectory::seconds{0.001},
+                                                  collector);
+
+    const auto velocity_escapes = get_backward_events_by_kind(collector, trajectory::switching_point_kind::k_velocity_escape);
+    BOOST_REQUIRE_EQUAL(velocity_escapes.size(), 1U);
+
+    const auto s_switch = velocity_escapes.front().start.s;
+    const double coarse_step = 0.001;
+    const double coarse_index = static_cast<double>(s_switch) / coarse_step;
+    const double grid_residual = std::abs(coarse_index - std::round(coarse_index));
+
+    // Coarse scan samples at multiples of delta. Off-grid switching point implies bisection refinement.
+    BOOST_CHECK_GT(grid_residual, 1e-6);
+
+    const auto sample_offset = arc_length{1e-4};
+    const auto s_before = std::max(arc_length{0.0}, s_switch - sample_offset);
+    const auto s_after = std::min(observed_traj.path().length(), s_switch + sample_offset);
+
+    const double delta_before = estimate_eq40_delta(observed_traj, s_before);
+    const double delta_after = estimate_eq40_delta(observed_traj, s_after);
+
+    BOOST_CHECK_GT(delta_before, 0.0);
+    BOOST_CHECK_LE(delta_after, 0.0);
 }
 
 // ---------------------------------------------------------------------------
