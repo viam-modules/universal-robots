@@ -41,24 +41,24 @@ BOOST_AUTO_TEST_SUITE(test_1)
 BOOST_AUTO_TEST_CASE(test_sampling_func) {
     // test a random set of samples
     {
-        std::vector<trajectory_sample_point> test_samples = {};
+        std::vector<trajectory_sample_point_pv> test_samples = {};
         const double test_duration_sec = 5;
         const double test_freq_hz = 5;
         // we are not testing the behavior of the trajectory generation, so we create a simple lambda function.
         // this allows us to get a good idea of what sampling_func is doing
         sampling_func(test_samples, test_duration_sec, test_freq_hz, [](const double t, const double step) {
-            return trajectory_sample_point{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
+            return trajectory_sample_point_pv{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
         });
         BOOST_CHECK_EQUAL(test_samples.size(), static_cast<std::size_t>(std::ceil(test_duration_sec * test_freq_hz)));
     }
     // check for durations smaller than the sampling frequency
     {
-        std::vector<trajectory_sample_point> test_samples = {};
+        std::vector<trajectory_sample_point_pv> test_samples = {};
         const double test_duration_sec = 1;
         const double test_freq_hz = 0.5;  // 1 sample every 2 seconds
 
         sampling_func(test_samples, test_duration_sec, test_freq_hz, [](const double t, const double step) {
-            return trajectory_sample_point{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
+            return trajectory_sample_point_pv{{t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
         });
         BOOST_CHECK_EQUAL(test_samples.size(), 1);
         BOOST_CHECK_EQUAL(test_samples[0].p[0], test_duration_sec);
@@ -67,7 +67,7 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
     }
     // test invalid input
     {
-        std::vector<trajectory_sample_point> test_samples = {};
+        std::vector<trajectory_sample_point_pv> test_samples = {};
         const double test_duration_sec = 0;
         const double test_freq_hz = 0.5;  // 1 sample every 2 seconds
 
@@ -76,7 +76,7 @@ BOOST_AUTO_TEST_CASE(test_sampling_func) {
                                         test_freq_hz,
                                         [](const double t, const double step) {
                                             BOOST_FAIL("we should never reach this");
-                                            return trajectory_sample_point{
+                                            return trajectory_sample_point_pv{
                                                 {t, 0, 0, 0, 0, 0}, {t * step, 0, 0, 0, 0, 0}, boost::numeric_cast<float>(step)};
                                         }),
                           std::invalid_argument);
@@ -113,10 +113,10 @@ BOOST_AUTO_TEST_CASE(test_write_waypoints_to_csv) {
 }
 
 BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
-    const std::vector<trajectory_sample_point> samples = {{{1.1, 2, 3, 4, 5, 6}, {1.2, 2, 3, 4, 5, 6}, 1.2F},
-                                                          {{3.1, 2, 3, 4, 5, 6}, {4.2, 2, 3, 4, 5, 6}, 0.8F},
-                                                          {{6.1, 2, 3, 4, 5, 6}, {7.1, 2, 3, 4, 5, 6}, 1},
-                                                          {{9.1, 2, 3, 4, 5, 6}, {10.1, 2, 3, 4, 5, 6}, 1}};
+    const trajectory_samples samples = std::vector<trajectory_sample_point_pv>{{{1.1, 2, 3, 4, 5, 6}, {1.2, 2, 3, 4, 5, 6}, 1.2F},
+                                                                               {{3.1, 2, 3, 4, 5, 6}, {4.2, 2, 3, 4, 5, 6}, 0.8F},
+                                                                               {{6.1, 2, 3, 4, 5, 6}, {7.1, 2, 3, 4, 5, 6}, 1},
+                                                                               {{9.1, 2, 3, 4, 5, 6}, {10.1, 2, 3, 4, 5, 6}, 1}};
 
     const auto* const expected =
         "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n"
@@ -1039,8 +1039,8 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     }
     const viam::trajex::totg::waypoint_accumulator waypoint_acc(waypoints_xarray);
 
-    const std::string json_content =
-        serialize_failed_trajectory_to_json(waypoint_acc, xt::adapt(k_max_velocity), xt::adapt(k_max_acceleration), k_tolerance, 0.05);
+    const std::string json_content = serialize_failed_trajectory_to_json(
+        waypoint_acc, xt::adapt(k_max_velocity), xt::adapt(k_max_acceleration), k_tolerance, 0.05, 0.005);
 
     // Write the failed trajectory JSON
     std::ofstream json_file(k_filename);
@@ -1067,6 +1067,7 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
     BOOST_REQUIRE(readback_parsed["timestamp"].isString());
     BOOST_REQUIRE(readback_parsed["path_tolerance_delta_rads"].isDouble());
     BOOST_REQUIRE(readback_parsed["path_colinearization_ratio"].isDouble());
+    BOOST_REQUIRE(readback_parsed["segmentation_threshold"].isDouble());
     BOOST_REQUIRE(readback_parsed["max_velocity_vec_rads_per_sec"].isArray());
     BOOST_REQUIRE(readback_parsed["max_acceleration_vec_rads_per_sec2"].isArray());
     BOOST_REQUIRE(readback_parsed["waypoints_rads"].isArray());

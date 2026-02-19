@@ -6,10 +6,47 @@ project(trajex VERSION 0.1.0
   LANGUAGES CXX
 )
 
+# Detect if we're building trajex as a standalone module
+# vs being included via FetchContent by universal-robots
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  set(TRAJEX_STANDALONE_BUILD ON)
+  message(STATUS "Trajex: Standalone build mode")
+else()
+  set(TRAJEX_STANDALONE_BUILD OFF)
+  message(STATUS "Trajex: FetchContent mode (included by parent project)")
+endif()
+
 # Set minimum macOS deployment target to 14.0 (Sonoma) for mature
 # C++20 support in Xcode 15's libc++.
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
   set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
+endif()
+
+# Configure RPATH for relocatable installs (standalone builds only)
+if(TRAJEX_STANDALONE_BUILD)
+  set(CMAKE_BUILD_WITH_INSTALL_RPATH false)
+  set(CMAKE_BUILD_RPATH_USE_ORIGIN true)
+  set(CMAKE_INSTALL_RPATH_USE_LINK_PATH true)
+  set(CMAKE_SKIP_BUILD_RPATH false)
+
+  list(FIND CMAKE_PLATFORM_IMPLICIT_LINK_DIRECTORIES
+       "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}" isSystemDir)
+  if("${isSystemDir}" STREQUAL "-1")
+    file(RELATIVE_PATH BINTOPREFIXRELPATH
+         ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}
+         ${CMAKE_INSTALL_PREFIX})
+    file(RELATIVE_PATH PREFIXTOLIBRELPATH
+         ${CMAKE_INSTALL_PREFIX}
+         ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+      list(PREPEND CMAKE_INSTALL_RPATH
+           "@loader_path/${BINTOPREFIXRELPATH}/${PREFIXTOLIBRELPATH}")
+    else()
+      list(PREPEND CMAKE_INSTALL_RPATH
+           "$ORIGIN/${BINTOPREFIXRELPATH}/${PREFIXTOLIBRELPATH}")
+    endif()
+  endif()
 endif()
 
 option(VIAM_TRAJEX_USE_WALL_WERROR "Build with -Wall and -Werror flags" ON)
@@ -61,9 +98,30 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # Dependencies
 #
 
+# In standalone mode, use FetchContent to obtain viam-cpp-sdk, which will
+# transitively provide xtl and xtensor. In FetchContent mode (included by UR),
+# the parent project provides the SDK.
+if(TRAJEX_STANDALONE_BUILD)
+  include(FetchContent)
+
+  FetchContent_Declare(
+    viam-cpp-sdk
+    GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
+    GIT_TAG        releases/v0.25.0
+    GIT_SHALLOW    TRUE
+    SYSTEM
+    # Delete conflicting protobuf headers
+    PATCH_COMMAND find ./src/viam/api -name "*.pb.h" -type f -exec rm {} +
+    FIND_PACKAGE_ARGS
+  )
+
+  FetchContent_MakeAvailable(viam-cpp-sdk)
+endif()
+
 find_package(Eigen3 CONFIG REQUIRED)
 find_package(xtl CONFIG REQUIRED)
 find_package(xtensor CONFIG REQUIRED)
+
 find_package(Boost CONFIG REQUIRED COMPONENTS headers)
 
 # jsoncppConfig.cmake doesn't guard against re-import, so a second
@@ -140,29 +198,82 @@ apply_wall_werror(viam-trajex-totg)
 add_library(viam::trajex::totg ALIAS viam-trajex-totg)
 
 
+# Service layer: Eigen-dependent helpers (always built) and the MLModelService
+# wrapper (conditionally built when VIAM_TRAJEX_BUILD_SERVICE is ON).
+add_library(viam-trajex-service)
+
+target_sources(viam-trajex-service
+  PRIVATE
+    src/viam/trajex/service/colinearization.cpp
+)
+
+target_include_directories(viam-trajex-service
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(viam-trajex-service
+  PUBLIC
+    Eigen3::Eigen
+    viam::trajex::totg
+    viam::trajex::totg-legacy
+)
+
+apply_wall_werror(viam-trajex-service)
+
+add_library(viam::trajex::service ALIAS viam-trajex-service)
+
+
 #
-# Optional service layer
+# Service executable and SDK-dependent sources
+# Always built (provides testing in both standalone and FetchContent modes)
+# Only installed/packaged in standalone mode
 #
 
-option(VIAM_TRAJEX_BUILD_SERVICE "Build Viam MLModelService wrapper" OFF)
-
-if(VIAM_TRAJEX_BUILD_SERVICE)
-  if(NOT TARGET viam-cpp-sdk::viamsdk)
-    find_package(viam-cpp-sdk CONFIG REQUIRED viamsdk)
-  endif()
-
-  add_executable(trajex-service
-    src/viam/trajex/service/main.cpp
-  )
-
-  target_link_libraries(trajex-service
-    PRIVATE
-      viam::trajex::totg
-      viam-cpp-sdk::viamsdk
-  )
-
-  apply_wall_werror(trajex-service)
+if(NOT TARGET viam-cpp-sdk::viamsdk)
+  find_package(viam-cpp-sdk CONFIG REQUIRED viamsdk)
 endif()
+
+target_sources(viam-trajex-service
+  PRIVATE
+    src/viam/trajex/service/trajex_mlmodel_service.cpp
+)
+
+target_link_libraries(viam-trajex-service
+  PUBLIC
+    viam-cpp-sdk::viamsdk
+)
+
+add_executable(trajex-service
+  src/viam/trajex/service/main.cpp
+)
+
+set_target_properties(trajex-service PROPERTIES OUTPUT_NAME viam-trajex-service)
+
+target_link_libraries(trajex-service
+  PRIVATE
+    viam::trajex::service
+)
+
+apply_wall_werror(trajex-service)
+
+add_executable(trajex-service-test
+  src/viam/trajex/service/test/trajex_mlmodel_service.cpp
+)
+
+target_link_libraries(trajex-service-test
+  PRIVATE
+    viam::trajex::service
+    Boost::boost
+)
+
+apply_wall_werror(trajex-service-test)
+
+add_test(
+  NAME trajex-service
+  COMMAND trajex-service-test
+)
 
 
 #
@@ -175,6 +286,7 @@ add_executable(trajex-test)
 
 target_sources(trajex-test
   PRIVATE
+    src/viam/trajex/service/test/trajectory_planner.cpp
     src/viam/trajex/totg/test/main.cpp
     src/viam/trajex/totg/test/test_utils.cpp
     src/viam/trajex/totg/test/waypoint_accumulator.cpp
@@ -191,9 +303,8 @@ target_sources(trajex-test
 
 target_link_libraries(trajex-test
   PRIVATE
-    viam::trajex::totg
+    viam::trajex::service
     Boost::boost
-    viam::trajex::totg-legacy
     jsoncpp_lib
 )
 
@@ -236,12 +347,42 @@ add_test(
 
 include(GNUInstallDirs)
 
-# Install runtime libraries for module packaging
+# Always install libraries (UR uses service library for colinearization)
 install(
   TARGETS
   viam-trajex-totg-legacy
   viam-trajex-totg
+  viam-trajex-service
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
+
+if(TRAJEX_STANDALONE_BUILD)
+  # Install service executable (standalone only)
+  install(
+    TARGETS
+    trajex-service
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  )
+
+  # Configure meta.json from template
+  configure_file(
+    meta.json.in
+    ${CMAKE_CURRENT_BINARY_DIR}/meta.json
+    @ONLY
+  )
+
+  # Install meta.json at module root
+  install(
+    FILES ${CMAKE_CURRENT_BINARY_DIR}/meta.json
+    DESTINATION .
+  )
+
+  # Set up CPack for trajex module packaging
+  set(CPACK_PACKAGE_NAME "viam-trajex-service")
+  set(CPACK_PACKAGE_FILE_NAME "module")
+  set(CPACK_GENERATOR "TGZ")
+  set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY 0)
+  include(CPack)
+endif()

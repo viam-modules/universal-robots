@@ -1,0 +1,14 @@
+{
+  "$schema": "https://dl.viam.dev/module.schema.json",
+  "module_id": "viam:trajex",
+  "visibility": "public",
+  "url": "https://github.com/viam-modules/universal-robots",
+  "description": "Time-optimal trajectory generation service for robotic arms",
+  "entrypoint": "bin/viam-trajex-service",
+  "models": [
+    {
+      "api": "rdk:service:mlmodel",
+      "model": "viam:trajex:mlmodel"
+    }
+  ]
+}

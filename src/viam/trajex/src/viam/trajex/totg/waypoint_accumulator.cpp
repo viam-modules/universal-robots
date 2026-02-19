@@ -25,6 +25,24 @@ waypoint_accumulator::waypoint_accumulator(const waypoint_view_t& first_waypoint
     waypoints_.push_back(first_waypoint);
 }
 
+waypoint_accumulator::waypoint_accumulator(const waypoint_accumulator&) = default;
+waypoint_accumulator::waypoint_accumulator(waypoint_accumulator&&) noexcept = default;
+
+// Copy assignment via copy-and-swap. Default copy assignment fails because
+// std::vector::operator= tries to assign through existing xview elements,
+// and xtensor interprets xview assignment as data copy -- which fails when
+// the views reference const data. Copy construction works correctly (creates
+// new views of the same data), so we lean on that.
+waypoint_accumulator& waypoint_accumulator::operator=(const waypoint_accumulator& other) {
+    if (this != &other) {
+        auto copy = other;
+        *this = std::move(copy);
+    }
+    return *this;
+}
+
+waypoint_accumulator& waypoint_accumulator::operator=(waypoint_accumulator&&) noexcept = default;
+
 waypoint_accumulator& waypoint_accumulator::add_waypoints(const xt::xarray<double>& waypoints) {
     if (waypoints.dimension() != 2) {
         throw std::invalid_argument{"Waypoints must be 2-dimensional"};

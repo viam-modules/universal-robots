@@ -6,15 +6,17 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <tuple>
 
 #include <Eigen/Dense>
 
 #include <ur_client_library/log.h>
 #include <ur_client_library/types.h>
 
-#include <tuple>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
+
+#include <viam/trajex/service/colinearization.hpp>
 #include <viam/trajex/types/angles.hpp>
 
 inline constexpr auto k_ur_arm_dof = std::tuple_size_v<urcl::vector6d_t>;
@@ -80,32 +82,10 @@ Eigen::Vector3d transform_vector(const Eigen::Vector3d& vector, const Eigen::Mat
 
 urcl::vector6d_t convert_tcp_force_to_tool_frame(const urcl::vector6d_t& tcp_pose, const urcl::vector6d_t& tcp_force_base_frame);
 
-///
-/// Check if point is within tolerance cylinder around line segment.
-///
-/// @param point Point to test
-/// @param line_start Start of line segment
-/// @param line_end End of line segment
-/// @param tolerance Diameter of tolerance cylinder
-/// @return true if point is within tolerance, false otherwise
-///
-bool within_colinearization_tolerance(const Eigen::VectorXd& point,
-                                      const Eigen::VectorXd& line_start,
-                                      const Eigen::VectorXd& line_end,
-                                      double tolerance);
-
-///
-/// Apply colinearization to waypoint list, removing redundant waypoints.
-///
-/// Implements waypoint coalescing by extending a tolerance cylinder from each
-/// anchor waypoint, removing intermediate waypoints that remain within
-/// tolerance of the straight-line segment. When extending the cylinder, all
-/// previously skipped waypoints are revalidated to prevent drift.
-///
-/// @param waypoints List of waypoints to coalesce (modified in-place)
-/// @param tolerance Diameter of tolerance cylinder (in radians)
-///
-void apply_colinearization(std::list<Eigen::VectorXd>& waypoints, double tolerance);
+// Colinearization functions live in trajex service layer. Import them here
+// for backward compatibility with existing call sites (test.cpp).
+using viam::trajex::apply_colinearization;
+using viam::trajex::within_colinearization_tolerance;
 
 ///
 /// Deduplicate waypoints in-place using L-infinity norm.

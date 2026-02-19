@@ -3,6 +3,7 @@
 #include <list>
 #include <optional>
 #include <shared_mutex>
+#include <variant>
 
 #include <Eigen/Core>
 
@@ -20,52 +21,37 @@
 #include <xtensor/xarray.hpp>
 #endif
 
+#include <viam/trajex/service/sampling_utils.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 
 using namespace viam::sdk;
 using namespace urcl;
 
-struct trajectory_sample_point {
+struct trajectory_sample_point_pv {
     vector6d_t p;
     vector6d_t v;
     float timestep;
 };
 
-// NOLINTNEXTLINE(misc-redundant-expression): We rely on the p and v arrays having the same size
-static_assert(std::tuple_size_v<decltype(trajectory_sample_point::p)> == std::tuple_size_v<decltype(trajectory_sample_point::v)>,
-              "trajectory_sample_point position and velocity must have the same size");
+struct trajectory_sample_point_pva {
+    vector6d_t p;
+    vector6d_t v;
+    vector6d_t a;
+    float timestep;
+};
+
+using trajectory_samples = std::variant<std::vector<trajectory_sample_point_pv>, std::vector<trajectory_sample_point_pva>>;
 
 struct pose_sample {
     vector6d_t p;
 };
 
 template <typename Func>
-void sampling_func(std::vector<trajectory_sample_point>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
-    if (duration_sec <= 0.0 || sampling_frequency_hz <= 0.0) {
-        throw std::invalid_argument("duration_sec and sampling_frequency_hz are not both positive");
-    }
-    static constexpr std::size_t k_max_samples = 1000000;
-    const auto putative_samples = duration_sec * sampling_frequency_hz;
-    if (!std::isfinite(putative_samples) || putative_samples > k_max_samples) {
-        throw std::invalid_argument("duration_sec and sampling_frequency_hz exceed the maximum allowable samples");
-    }
-
-    // Calculate the number of samples needed. this will always be at least 2.
-    const auto num_samples = static_cast<std::size_t>(std::ceil(putative_samples) + 1);
-
-    // Calculate the actual step size
-    const double step = duration_sec / static_cast<double>((num_samples - 1));
-
-    // Generate samples by evaluating f at each time point
-    for (std::size_t i = 1; i < num_samples - 1; ++i) {
-        samples.push_back(f(static_cast<double>(i) * step, step));
-    }
-
-    // Ensure the last sample uses exactly the duration_sec
-    samples.push_back(f(duration_sec, step));
+void sampling_func(std::vector<trajectory_sample_point_pv>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
+    viam::trajex::for_each_sample(duration_sec, sampling_frequency_hz, [&](double t, double step) { samples.push_back(f(t, step)); });
 }
 
-void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples);
+void write_trajectory_to_file(const std::string& filepath, const trajectory_samples& samples);
 void write_pose_to_file(const std::string& filepath, const pose_sample& sample);
 void write_waypoints_to_csv(const std::string& filepath, const viam::trajex::totg::waypoint_accumulator& waypoints);
 std::string waypoints_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
@@ -78,7 +64,8 @@ std::string serialize_failed_trajectory_to_json(const viam::trajex::totg::waypoi
                                                 const xt::xarray<double>& max_velocity_vec,
                                                 const xt::xarray<double>& max_acceleration_vec,
                                                 double path_tolerance_delta_rads,
-                                                const std::optional<double>& path_colinearization_ratio);
+                                                const std::optional<double>& path_colinearization_ratio,
+                                                double segmentation_threshold);
 
 class URArm final : public Arm, public Reconfigurable {
    public:
@@ -91,6 +78,11 @@ class URArm final : public Arm, public Reconfigurable {
     /// Default maximum trajectory duration in seconds.
     ///
     static constexpr double k_default_max_trajectory_duration_secs = 600.0;
+
+    ///
+    /// Default waypoint segmentation threshold.
+    ///
+    static constexpr double k_default_segmentation_threshold = 5e-3;
 
     ///
     /// Default trajectory sampling frequency in Hz.
@@ -193,7 +185,8 @@ class URArm final : public Arm, public Reconfigurable {
 
     void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                            const xt::xarray<double>& waypoints,
-                           const MoveOptions& options);
+                           const MoveOptions& options,
+                           const std::string& unix_time);
 
     void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time_ms);
 

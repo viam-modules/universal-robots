@@ -42,6 +42,7 @@
 #include <third_party/trajectories/Trajectory.h>
 
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
+#include <viam/trajex/service/trajectory_planner.hpp>
 #include <viam/trajex/totg/totg.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
@@ -235,6 +236,14 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
             boost::str(boost::format("attribute `path_colinearization_ratio` must be >= 0 and <= 2, it is: %1%") % *colinearization_ratio));
     }
 
+    auto segmentation_threshold = find_config_attribute<double>(cfg, "segmentation_threshold");
+    if (segmentation_threshold && (*segmentation_threshold <= 0 || *segmentation_threshold > 0.01)) {
+        throw std::invalid_argument(
+            boost::str(boost::format("attribute `segmentation_threshold` must be > 0 and <= 0.01, it is: %1%") % *segmentation_threshold));
+    }
+
+    find_config_attribute<bool>(cfg, "prefer_precomputed_accelerations");
+
     // Validate telemetry_output_path is a string if present
     const auto telemetry_output_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
 
@@ -286,22 +295,35 @@ auto make_scope_guard(Callable&& cleanup) {
 
 }  // namespace
 
-void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples) {
+void write_trajectory_to_file(const std::string& filepath, const trajectory_samples& samples) {
     std::ofstream of(filepath);
-    of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n";
-    float time_traj = 0;
-    for (size_t i = 0; i < samples.size(); i++) {
-        time_traj += samples[i].timestep;
-        of << time_traj;
-        for (size_t j = 0; j < samples[i].p.size(); j++) {
-            of << "," << samples[i].p[j];
-        }
-        for (size_t j = 0; j < samples[i].v.size(); j++) {
-            of << "," << samples[i].v[j];
-        }
-        of << "\n";
-    }
-
+    std::visit(
+        [&of](const auto& pts) {
+            using point_type = typename std::decay_t<decltype(pts)>::value_type;
+            if constexpr (std::is_same_v<point_type, trajectory_sample_point_pva>) {
+                of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5,a0,a1,a2,a3,a4,a5\n";
+            } else {
+                of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n";
+            }
+            float time_traj = 0;
+            for (const auto& pt : pts) {
+                time_traj += pt.timestep;
+                of << time_traj;
+                for (size_t j = 0; j < pt.p.size(); j++) {
+                    of << "," << pt.p[j];
+                }
+                for (size_t j = 0; j < pt.v.size(); j++) {
+                    of << "," << pt.v[j];
+                }
+                if constexpr (requires { pt.a; }) {
+                    for (size_t j = 0; j < pt.a.size(); j++) {
+                        of << "," << pt.a[j];
+                    }
+                }
+                of << "\n";
+            }
+        },
+        samples);
     of.close();
 }
 
@@ -379,12 +401,14 @@ std::string serialize_failed_trajectory_to_json(const viam::trajex::totg::waypoi
                                                 const xt::xarray<double>& max_velocity_vec,
                                                 const xt::xarray<double>& max_acceleration_vec,
                                                 double path_tolerance_delta_rads,
-                                                const std::optional<double>& path_colinearization_ratio) {
+                                                const std::optional<double>& path_colinearization_ratio,
+                                                double segmentation_threshold) {
     namespace json = Json;
 
     json::Value root;
     root["timestamp"] = unix_time_iso8601();
     root["path_tolerance_delta_rads"] = path_tolerance_delta_rads;
+    root["segmentation_threshold"] = segmentation_threshold;
 
     if (path_colinearization_ratio) {
         root["path_colinearization_ratio"] = *path_colinearization_ratio;
@@ -540,12 +564,13 @@ vector6d_t URArm::get_joint_positions_rad_(const std::shared_lock<std::shared_mu
 void URArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
+    const auto unix_time = unix_time_iso8601();
 
     const std::array<std::size_t, 2> shape = {1, positions.size()};
     const auto waypoint_deg = xt::adapt(positions.data(), positions.size(), xt::no_ownership(), shape);
     const xt::xarray<double> waypoint_rad = viam::trajex::degrees_to_radians(waypoint_deg);
 
-    move_joint_space_(std::move(rlock), waypoint_rad, MoveOptions{});
+    move_joint_space_(std::move(rlock), waypoint_rad, MoveOptions{}, unix_time);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -553,6 +578,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
                                          const viam::sdk::ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
+    const auto unix_time = unix_time_iso8601();
 
     if (positions.empty()) {
         return;
@@ -565,7 +591,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         xt::view(waypoints_rad, i, xt::all()) = viam::trajex::degrees_to_radians(row_deg);
     }
 
-    move_joint_space_(std::move(rlock), waypoints_rad, options);
+    move_joint_space_(std::move(rlock), waypoints_rad, options, unix_time);
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {
@@ -833,10 +859,9 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 
 void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                               const xt::xarray<double>& waypoints,
-                              const MoveOptions& options) {
+                              const MoveOptions& options,
+                              const std::string& unix_time) {
     auto our_config_rlock = std::move(config_rlock);
-
-    const auto unix_time = unix_time_iso8601();
 
     auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
         if (!observer) {
@@ -854,55 +879,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     VIAM_SDK_LOG(debug) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.shape()[0];
     const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move: end unix_time " << unix_time; });
 
-    // Tack our current position on as the first waypoint, log those waypoints, and then deduplicate. If, after deduplication, there
-    // is only one waypoint left, then we can conclude that we were asked to move to our own current position, so there is no work to
-    // do.
-
-    auto curr_joint_pos = get_joint_positions_rad_(our_config_rlock);
-    const std::array<std::size_t, 2> shape{1, curr_joint_pos.size()};
-    const xt::xarray<double> current_position_xarray{xt::adapt(curr_joint_pos, shape)};
-
-    viam::trajex::totg::waypoint_accumulator waypoint_sequence{current_position_xarray};
-    waypoint_sequence.add_waypoints(waypoints);
-
-    const auto filename = waypoints_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
-    write_waypoints_to_csv(filename, waypoint_sequence);
-
-    waypoint_sequence =
-        viam::trajex::totg::deduplicate_waypoints(waypoint_sequence, current_state_->get_waypoint_deduplication_tolerance_rad());
-
-    if (waypoint_sequence.size() == 1) {
-        VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
-        return;
-    }
-
-    // If we have been configured to do so, reject requests where the delta between the first waypoint (current position) and the next
-    // (first user-requested position) differ by more than the threshold.
-    if (const auto& threshold = current_state_->get_reject_move_request_threshold_rad()) {
-        auto current_joint_position = waypoint_sequence.begin();
-        auto first_waypoint = std::next(current_joint_position);
-        const auto delta = *first_waypoint - *current_joint_position;
-        const auto max_diff = xt::norm_linf(delta)();
-
-        if (max_diff > *threshold) {
-            std::stringstream err_string;
-            err_string << "rejecting move request : difference between starting trajectory position [(";
-            boost::copy(boost::adaptors::transform(*first_waypoint, radians_to_degrees<const double&>),
-                        boost::io::make_ostream_joiner(err_string, ", "));
-            err_string << ")] and joint position [(";
-            boost::copy(boost::adaptors::transform(*current_joint_position, radians_to_degrees<const double&>),
-                        boost::io::make_ostream_joiner(err_string, ", "));
-            err_string << ")] is above threshold " << viam::trajex::radians_to_degrees(max_diff) << " > "
-                       << viam::trajex::radians_to_degrees(*threshold);
-            VIAM_SDK_LOG(error) << err_string.str();
-            throw std::runtime_error(err_string.str());
-        }
-    }
-
-    VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
-
-    const auto segments = viam::trajex::totg::segment_at_reversals(std::move(waypoint_sequence));
-
+    // Prepare velocity/acceleration limits, applying per-move overrides if provided
     auto velocity_limits_data = current_state_->get_velocity_limits();
     // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
     if (options.max_vel_degs_per_sec && options.max_vel_degs_per_sec.get() > 0) {
@@ -917,220 +894,292 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         acceleration_limits_data = current_state_->clamp_acceleration_limits(acceleration_limits_data);
     }
 
-    const auto new_trajectory = [&]() -> std::optional<std::vector<trajectory_sample_point>> {
-        if (!current_state_->use_new_trajectory_planner()) {
-            return std::nullopt;
-        }
-
-        size_t total_waypoints = 0;
+    struct segment_accumulator {
+        std::optional<trajectory_samples> samples;
         double total_duration = 0.0;
-        viam::trajex::arc_length total_arc_length{0.0};
+        std::chrono::microseconds total_generation_time{};
+        size_t total_waypoints = 0;
+        double total_arc_length = 0.0;
+        size_t segment_count = 0;
+    };
 
-        try {
-            using namespace viam::trajex;
+    VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
 
-            totg::trajectory::options trajex_opts;
-            trajex_opts.max_velocity = xt::adapt(velocity_limits_data);
-            trajex_opts.max_acceleration = xt::adapt(acceleration_limits_data);
+    auto planner = viam::trajex::trajectory_planner<segment_accumulator>({
+        .velocity_limits = xt::adapt(velocity_limits_data),
+        .acceleration_limits = xt::adapt(acceleration_limits_data),
+        .path_blend_tolerance = current_state_->get_path_tolerance_delta_rads(),
+        .colinearization_ratio = current_state_->get_path_colinearization_ratio(),
+    });
 
-            std::vector<trajectory_sample_point> all_trajex_samples;
+    planner
+        .with_waypoint_provider([&](auto& p) {
+            auto curr_joint_pos = get_joint_positions_rad_(our_config_rlock);
+            const std::array<std::size_t, 2> shape{1, curr_joint_pos.size()};
+            auto current_pos = p.stash(xt::xarray<double>{xt::adapt(curr_joint_pos, shape)});
 
-            const auto generation_start = std::chrono::steady_clock::now();
+            viam::trajex::totg::waypoint_accumulator accumulator{*current_pos};
+            accumulator.add_waypoints(waypoints);
 
-            for (const auto& segment : segments) {
-                try {
-                    auto path_opts = totg::path::options{}.set_max_blend_deviation(current_state_->get_path_tolerance_delta_rads());
+            write_waypoints_to_csv(waypoints_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time),
+                                   accumulator);
+            return accumulator;
+        })
 
-                    if (auto ratio = current_state_->get_path_colinearization_ratio()) {
-                        path_opts.set_max_linear_deviation(current_state_->get_path_tolerance_delta_rads() * (*ratio));
-                    }
+        .with_waypoint_preprocessor([&](auto&, viam::trajex::totg::waypoint_accumulator& accumulator) {
+            accumulator =
+                viam::trajex::totg::deduplicate_waypoints(accumulator, current_state_->get_waypoint_deduplication_tolerance_rad());
+        })
 
-                    auto trajex_path = totg::path::create(segment, path_opts);
+        .with_move_validator([&](auto&, const viam::trajex::totg::waypoint_accumulator& accumulator) {
+            if (const auto& threshold = current_state_->get_reject_move_request_threshold_rad()) {
+                auto current_joint_position = accumulator.begin();
+                auto first_waypoint = std::next(current_joint_position);
+                const auto delta = *first_waypoint - *current_joint_position;
+                const auto max_diff = xt::norm_linf(delta)();
 
-                    // Create a copy of trajex_opts for each segment since it's consumed by create()
-                    totg::trajectory::options segment_opts = trajex_opts;
-                    auto trajex_trajectory = totg::trajectory::create(std::move(trajex_path), std::move(segment_opts));
-
-                    auto sampler = totg::uniform_sampler::quantized_for_trajectory(
-                        trajex_trajectory, types::hertz{current_state_->get_trajectory_sampling_freq_hz()});
-
-                    double previous_time = 0.0;
-                    for (const auto& sample : trajex_trajectory.samples(sampler) | std::views::drop(1)) {
-                        const double current_time = sample.time.count();
-                        const float timestep = boost::numeric_cast<float>(current_time - previous_time);
-
-                        trajectory_sample_point point;
-                        for (size_t i = 0; i < point.p.size(); ++i) {
-                            point.p[i] = sample.configuration(i);
-                            point.v[i] = sample.velocity(i);
-                        }
-                        point.timestep = timestep;
-
-                        all_trajex_samples.push_back(point);
-                        previous_time = current_time;
-                    }
-
-                    total_waypoints += segment.size();
-                    total_duration += trajex_trajectory.duration().count();
-                    total_arc_length += trajex_trajectory.path().length();
-
-                    if (total_duration > current_state_->get_max_trajectory_duration_secs()) {
-                        throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
-                    }
-
-                    VIAM_SDK_LOG(info) << "trajex/totg segment generated successfully, waypoints: " << segment.size()
-                                       << ", duration: " << trajex_trajectory.duration().count()
-                                       << "s, samples: " << all_trajex_samples.size()
-                                       << ", arc length: " << trajex_trajectory.path().length();
-                } catch (...) {
-                    const std::string json_content = serialize_failed_trajectory_to_json(segment,
-                                                                                         xt::adapt(velocity_limits_data),
-                                                                                         xt::adapt(acceleration_limits_data),
-                                                                                         current_state_->get_path_tolerance_delta_rads(),
-                                                                                         current_state_->get_path_colinearization_ratio());
-
-                    const std::string& path_dir = current_state_->telemetry_output_path();
-                    const std::string filename =
-                        failed_trajectory_filename(path_dir, current_state_->resource_name() + "_trajex", unix_time);
-                    std::ofstream json_file(filename);
-                    json_file << json_content;
-                    json_file.close();
-
-                    throw;
+                if (max_diff > *threshold) {
+                    std::stringstream err_string;
+                    err_string << "rejecting move request : difference between starting trajectory position [(";
+                    boost::copy(boost::adaptors::transform(*first_waypoint, radians_to_degrees<const double&>),
+                                boost::io::make_ostream_joiner(err_string, ", "));
+                    err_string << ")] and joint position [(";
+                    boost::copy(boost::adaptors::transform(*current_joint_position, radians_to_degrees<const double&>),
+                                boost::io::make_ostream_joiner(err_string, ", "));
+                    err_string << ")] is above threshold " << viam::trajex::radians_to_degrees(max_diff) << " > "
+                               << viam::trajex::radians_to_degrees(*threshold);
+                    VIAM_SDK_LOG(error) << err_string.str();
+                    throw std::runtime_error(err_string.str());
                 }
             }
+        })
 
-            if (total_duration < k_min_timestep_sec) {
-                VIAM_SDK_LOG(debug) << "duration of move is too small, assuming arm is at goal";
-                return std::vector<trajectory_sample_point>{};
+        .with_segmenter([&](auto&, viam::trajex::totg::waypoint_accumulator accumulator) {
+            return viam::trajex::totg::segment_at_reversals(std::move(accumulator), current_state_->get_segmentation_threshold());
+        });
+
+    if (current_state_->use_new_trajectory_planner()) {
+        planner.with_trajex(
+            [&](segment_accumulator& acc,
+                const viam::trajex::totg::waypoint_accumulator& segment,
+                const viam::trajex::totg::trajectory& traj,
+                auto elapsed) {
+                acc.total_generation_time += elapsed;
+                acc.total_duration += traj.duration().count();
+                acc.total_waypoints += segment.size();
+                acc.total_arc_length += static_cast<double>(traj.path().length());
+                acc.segment_count++;
+
+                auto sampler = viam::trajex::totg::uniform_sampler::quantized_for_trajectory(
+                    traj, viam::trajex::types::hertz{current_state_->get_trajectory_sampling_freq_hz()});
+
+                double previous_time = 0.0;
+                if (!acc.samples) {
+                    acc.samples = current_state_->prefer_precomputed_accelerations()
+                                      ? trajectory_samples{std::vector<trajectory_sample_point_pva>{}}
+                                      : trajectory_samples{std::vector<trajectory_sample_point_pv>{}};
+                }
+                std::visit(
+                    [&](auto& dest) {
+                        using PointType = typename std::decay_t<decltype(dest)>::value_type;
+                        for (const auto& sample : traj.samples(sampler) | std::views::drop(1)) {
+                            const double current_time = sample.time.count();
+                            const float timestep = boost::numeric_cast<float>(current_time - previous_time);
+                            PointType point;
+                            for (size_t i = 0; i < point.p.size(); ++i) {
+                                point.p[i] = sample.configuration(i);
+                                point.v[i] = sample.velocity(i);
+                                if constexpr (requires { point.a; }) {
+                                    point.a[i] = sample.acceleration(i);
+                                }
+                            }
+                            point.timestep = timestep;
+                            dest.push_back(point);
+                            previous_time = current_time;
+                        }
+                    },
+                    *acc.samples);
+
+                const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *acc.samples);
+                VIAM_SDK_LOG(info) << "trajex/totg segment generated successfully"
+                                   << ", waypoints: " << segment.size() << ", duration: " << traj.duration().count()
+                                   << "s, samples: " << sample_count << ", arc length: " << traj.path().length();
+            },
+            [&](const segment_accumulator& acc, const viam::trajex::totg::waypoint_accumulator& seg, const std::exception& e) {
+                VIAM_SDK_LOG(warn) << "trajectory generation with trajex failed with an exception"
+                                   << ", waypoints: " << acc.total_waypoints << ", exception: " << e.what();
+                const std::string json_content = serialize_failed_trajectory_to_json(seg,
+                                                                                     xt::adapt(velocity_limits_data),
+                                                                                     xt::adapt(acceleration_limits_data),
+                                                                                     current_state_->get_path_tolerance_delta_rads(),
+                                                                                     current_state_->get_path_colinearization_ratio(),
+                                                                                     current_state_->get_segmentation_threshold());
+                const auto filename = failed_trajectory_filename(
+                    current_state_->telemetry_output_path(), current_state_->resource_name() + "_trajex", unix_time);
+                std::ofstream json_file(filename);
+                json_file << json_content;
+            });
+    }
+
+    planner.with_legacy(
+        [&](segment_accumulator& acc,
+            const viam::trajex::totg::waypoint_accumulator& segment,
+            const Path& legacy_path,
+            const Trajectory& traj,
+            auto elapsed) {
+            acc.total_generation_time += elapsed;
+            acc.total_duration += traj.getDuration();
+            acc.total_waypoints += segment.size();
+            acc.total_arc_length += legacy_path.getLength();
+            acc.segment_count++;
+
+            if (!acc.samples) {
+                acc.samples = std::vector<trajectory_sample_point_pv>{};
             }
-
-            const auto generation_end = std::chrono::steady_clock::now();
-            const auto generation_time = std::chrono::duration<double>(generation_end - generation_start).count();
-
-            VIAM_SDK_LOG(info) << "trajex/totg trajectory generated successfully, total waypoints: " << total_waypoints
-                               << ", total duration: " << total_duration << "s, total samples: " << all_trajex_samples.size()
-                               << ", total arc length: " << total_arc_length << ", generation_time: " << generation_time << "s";
-
-            return all_trajex_samples;
-        } catch (const std::exception& e) {
-            VIAM_SDK_LOG(warn) << "trajex/totg trajectory generation failed, waypoints: " << total_waypoints << ", exception: " << e.what();
-            return std::nullopt;
-        }
-    }();
-
-    const auto legacy_generation_start = std::chrono::steady_clock::now();
-
-    VIAM_SDK_LOG(debug) << "generating trajectory with max speed: " << radians_to_degrees(velocity_limits_data[0]);
-
-    std::vector<trajectory_sample_point> samples;
-    double total_duration = 0.0;
-    double total_arc_length = 0.0;
-    size_t total_waypoints = 0;
-
-    for (const auto& segment : segments) {
-        // Convert segment (waypoint_accumulator) to list<Eigen::VectorXd> for legacy
-        constexpr auto transformer = [](const auto& view) {
-            const auto* const data = view.data() + view.data_offset();
-            const auto size = static_cast<Eigen::Index>(view.shape(0));
-            return Eigen::Map<const Eigen::VectorXd>(data, size);
-        };
-        auto transformed = segment | std::views::transform(transformer);
-        std::list<Eigen::VectorXd> eigen_segment(std::begin(transformed), std::end(transformed));
-
-        // Apply colinearization to reduce waypoints
-        if (auto ratio = current_state_->get_path_colinearization_ratio()) {
-            apply_colinearization(eigen_segment, current_state_->get_path_tolerance_delta_rads() * (*ratio));
-        }
-
-        total_waypoints += eigen_segment.size();
-        const Path path(eigen_segment, current_state_->get_path_tolerance_delta_rads());
-        total_arc_length += path.getLength();
-        const Trajectory trajectory(path,
-                                    Eigen::Map<const Eigen::VectorXd>(velocity_limits_data.data(), velocity_limits_data.size()),
-                                    Eigen::Map<const Eigen::VectorXd>(acceleration_limits_data.data(), acceleration_limits_data.size()));
-        if (!trajectory.isValid()) {
-            // When the trajectory cannot be generated save the all the waypoints, velocity, acceleration and path tolerance in a
-            // JSON. We should be able to feed it back to the trajectory generator and confirm it is failing
-            const std::string json_content = serialize_failed_trajectory_to_json(segment,
+            auto& pv_samples = std::get<std::vector<trajectory_sample_point_pv>>(*acc.samples);
+            sampling_func(
+                pv_samples, traj.getDuration(), current_state_->get_trajectory_sampling_freq_hz(), [&](const double t, const double step) {
+                    auto p_eigen = traj.getPosition(t);
+                    auto v_eigen = traj.getVelocity(t);
+                    return trajectory_sample_point_pv{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                                      {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+                                                      boost::numeric_cast<float>(step)};
+                });
+        },
+        [&](const segment_accumulator&, const viam::trajex::totg::waypoint_accumulator& seg, const std::exception& e) {
+            VIAM_SDK_LOG(error) << "trajectory generation with legacy failed with an exception: " << e.what();
+            const std::string json_content = serialize_failed_trajectory_to_json(seg,
                                                                                  xt::adapt(velocity_limits_data),
                                                                                  xt::adapt(acceleration_limits_data),
                                                                                  current_state_->get_path_tolerance_delta_rads(),
-                                                                                 current_state_->get_path_colinearization_ratio());
-
-            const std::string& path_dir = current_state_->telemetry_output_path();
-            const std::string filename = failed_trajectory_filename(path_dir, current_state_->resource_name(), unix_time);
+                                                                                 current_state_->get_path_colinearization_ratio(),
+                                                                                 current_state_->get_segmentation_threshold());
+            const auto filename =
+                failed_trajectory_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
             std::ofstream json_file(filename);
             json_file << json_content;
-            json_file.close();
-
-            throw std::runtime_error(boost::str(boost::format("trajectory generation failed - details saved to: %1%") % filename));
-        }
-
-        const double duration = trajectory.getDuration();
-
-        if (!std::isfinite(duration)) {
-            throw std::runtime_error("trajectory.getDuration() was not a finite number");
-        }
-
-        total_duration += duration;
-        if (total_duration > current_state_->get_max_trajectory_duration_secs()) {
-            throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
-        }
-
-        trajectory.outputPhasePlaneTrajectory();
-
-        sampling_func(samples, duration, current_state_->get_trajectory_sampling_freq_hz(), [&](const double t, const double step) {
-            auto p_eigen = trajectory.getPosition(t);
-            auto v_eigen = trajectory.getVelocity(t);
-            return trajectory_sample_point{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
-                                           {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
-                                           boost::numeric_cast<float>(step)};
         });
+
+    auto result = planner.execute([&](const auto& p, auto trajex, auto legacy) -> std::optional<segment_accumulator> {
+        // Log trajex summary if it ran
+        if (trajex.receiver) {
+            const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *trajex.receiver->samples);
+            VIAM_SDK_LOG(info) << "trajex/totg trajectory generated successfully"
+                               << ", total waypoints: " << trajex.receiver->total_waypoints
+                               << ", total duration: " << trajex.receiver->total_duration << "s, total samples: " << sample_count
+                               << ", total arc length: " << trajex.receiver->total_arc_length
+                               << ", generation_time: " << std::chrono::duration<double>(trajex.receiver->total_generation_time).count()
+                               << "s, number of segments: " << trajex.receiver->segment_count;
+        }
+
+        // Log legacy summary. When the new planner is active, log at info for comparison
+        // visibility; otherwise log at debug (routine operation).
+        if (legacy.receiver && current_state_->use_new_trajectory_planner()) {
+            const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *legacy.receiver->samples);
+            VIAM_SDK_LOG(info) << "legacy trajectory generated successfully"
+                               << ", waypoints: " << legacy.receiver->total_waypoints << ", duration: " << legacy.receiver->total_duration
+                               << "s, samples: " << sample_count
+                               << ", generation_time: " << std::chrono::duration<double>(legacy.receiver->total_generation_time).count()
+                               << "s, number of segments: " << legacy.receiver->segment_count;
+        } else if (legacy.receiver) {
+            const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *legacy.receiver->samples);
+            VIAM_SDK_LOG(debug) << "legacy trajectory generated successfully"
+                                << ", waypoints: " << legacy.receiver->total_waypoints << ", duration: " << legacy.receiver->total_duration
+                                << "s, samples: " << sample_count
+                                << ", generation_time: " << std::chrono::duration<double>(legacy.receiver->total_generation_time).count()
+                                << "s, number of segments: " << legacy.receiver->segment_count;
+        }
+
+        // Prefer trajex when enabled and successful
+        if (trajex.receiver) {
+            return std::move(trajex.receiver);
+        }
+
+        // Otherwise return the legacy results.
+        if (legacy.receiver) {
+            return std::move(legacy.receiver);
+        }
+
+        // Legacy is the authoritative algorithm, so its errors take priority.
+        if (legacy.error) {
+            std::rethrow_exception(legacy.error);
+        }
+
+        // Trajex errors are only fatal when legacy isn't registered (future:
+        // legacy retired). When both run and both fail, legacy's error above
+        // takes precedence.
+        if (trajex.error) {
+            std::rethrow_exception(trajex.error);
+        }
+
+        // No results and no errors: if the input had fewer than 2 waypoints after
+        // preprocessing, no algorithms ran, so there was nothing to do.
+        if (p.processed_waypoint_count() < 2) {
+            VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
+            return std::nullopt;
+        }
+
+        // Unreachable while at least one algorithm is registered and
+        // we didn't have degenerate waypoints: the planner guarantees
+        // each algorithm produces either a receiver or an error.
+        throw std::logic_error("trajectory generation returned neither results nor an error");
+    });
+
+    {
+        const auto& timing = planner.timing();
+        const auto to_ms = [](std::chrono::microseconds d) { return static_cast<double>(d.count()) / 1000.0; };
+        const auto format_optional = [&to_ms](const std::optional<std::chrono::microseconds>& d) {
+            return d ? std::to_string(to_ms(*d)) + "ms" : std::string("n/a");
+        };
+        VIAM_SDK_LOG(debug) << "move: phase timing (ms):"
+                            << " provisioning=" << to_ms(timing.waypoint_provisioning) << "ms"
+                            << " preprocessing=" << format_optional(timing.waypoint_preprocessing)
+                            << " validation=" << format_optional(timing.move_validation)
+                            << " segmentation=" << format_optional(timing.segmentation)
+                            << " colinearization=" << format_optional(timing.colinearization)
+                            << " trajex_total_gen=" << format_optional(timing.trajex_generation_total)
+                            << " legacy_total_gen=" << format_optional(timing.legacy_generation_total);
     }
 
-    if (total_duration < k_min_timestep_sec) {
-        VIAM_SDK_LOG(debug) << "duration of move is too small, assuming arm is at goal";
+    if (!result) {
+        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " (no result)";
         return;
-    }
-
-    const auto legacy_generation_end = std::chrono::steady_clock::now();
-    const auto legacy_generation_time = std::chrono::duration<double>(legacy_generation_end - legacy_generation_start).count();
-
-    if (current_state_->use_new_trajectory_planner()) {
-        VIAM_SDK_LOG(info) << "legacy trajectory generated successfully, waypoints: " << total_waypoints << ", duration: " << total_duration
-                           << "s, samples: " << samples.size() << ", arc length: " << total_arc_length
-                           << ", generation_time: " << legacy_generation_time << "s";
+    } else if (result->total_duration > current_state_->get_max_trajectory_duration_secs()) {
+        throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
+    } else if (result->total_duration < k_min_timestep_sec) {
+        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " (duration too small)";
+        return;
     } else {
-        VIAM_SDK_LOG(debug) << "legacy trajectory generated successfully, waypoints: " << total_waypoints
-                            << ", duration: " << total_duration << "s, samples: " << samples.size() << ", arc length: " << total_arc_length
-                            << ", generation_time: " << legacy_generation_time << "s";
+        const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *result->samples);
+        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " samples.size() " << sample_count;
     }
 
-    if (new_trajectory) {
-        samples = *new_trajectory;
-    }
+    const std::string& telemetry_path = current_state_->telemetry_output_path();
+    write_trajectory_to_file(trajectory_filename(telemetry_path, current_state_->resource_name(), unix_time), *result->samples);
 
-    VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " samples.size() " << samples.size() << " segments "
-                        << segments.size() - 1;
-
-    const std::string& path = current_state_->telemetry_output_path();
-    write_trajectory_to_file(trajectory_filename(path, current_state_->resource_name(), unix_time), samples);
-
-    // For joint-space moves, we log the actual joint positions/velocities during execution
-    std::ofstream ajp_of(arm_joint_positions_filename(path, current_state_->resource_name(), unix_time));
+    std::ofstream ajp_of(arm_joint_positions_filename(telemetry_path, current_state_->resource_name(), unix_time));
     ajp_of << "time_ms,read_attempt,"
               "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
               "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
-        return current_state_->enqueue_move_request(
-            current_move_epoch, std::optional<std::ofstream>{std::move(ajp_of)}, std::move(async_cancellation_monitor), samples);
+        return current_state_->enqueue_move_request(current_move_epoch,
+                                                    std::optional<std::ofstream>{std::move(ajp_of)},
+                                                    std::move(async_cancellation_monitor),
+                                                    std::move(*result->samples));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
     // with the current state other than to wait on the result of this future.
-    trajectory_completion_future.get();
+
+    try {
+        VIAM_SDK_LOG(debug) << "move: trajectory enqueued to arm: started " << unix_time << " issued " << unix_time_iso8601();
+        trajectory_completion_future.get();
+        VIAM_SDK_LOG(debug) << "move: trajectory completed on arm: started " << unix_time << " completed (success) " << unix_time_iso8601();
+    } catch (...) {
+        VIAM_SDK_LOG(debug) << "move: trajectory failed on arm: started " << unix_time << " completed (failure)" << unix_time_iso8601();
+        throw;
+    }
 }
 
 // Define the destructor
