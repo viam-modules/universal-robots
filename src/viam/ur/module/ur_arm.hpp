@@ -179,7 +179,8 @@ class URArm final : public Arm, public Reconfigurable {
 
     void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                            const xt::xarray<double>& waypoints,
-                           const MoveOptions& options);
+                           const MoveOptions& options,
+                           const std::string& unix_time);
 
     void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time_ms);
 

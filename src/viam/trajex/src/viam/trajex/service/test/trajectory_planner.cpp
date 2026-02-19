@@ -16,7 +16,7 @@ using namespace viam::trajex::totg;
 struct test_receiver {
     int segment_count = 0;
     double total_duration = 0.0;
-    double total_gen_time = 0.0;
+    std::chrono::microseconds total_gen_time{};
 };
 
 trajectory_planner<test_receiver>::config simple_config() {
@@ -75,7 +75,7 @@ BOOST_AUTO_TEST_CASE(trajex_only_success) {
                           success_called = true;
                           acc.segment_count++;
                           acc.total_duration += traj.duration().count();
-                          acc.total_gen_time += elapsed.count();
+                          acc.total_gen_time += elapsed;
                       })
                       .execute([](const auto&, const auto& trajex, const auto& legacy) -> std::optional<test_receiver> {
                           BOOST_CHECK(trajex.receiver.has_value());
@@ -99,7 +99,7 @@ BOOST_AUTO_TEST_CASE(legacy_only_success) {
                           success_called = true;
                           acc.segment_count++;
                           acc.total_duration += traj.getDuration();
-                          acc.total_gen_time += elapsed.count();
+                          acc.total_gen_time += elapsed;
                       })
                       .execute([](const auto&, const auto& trajex, const auto& legacy) -> std::optional<test_receiver> {
                           BOOST_CHECK(!trajex.receiver);
