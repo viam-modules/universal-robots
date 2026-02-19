@@ -423,4 +423,46 @@ BOOST_AUTO_TEST_CASE(circular_blend_tangent_continuity) {
     BOOST_CHECK_CLOSE(dot_product, 1.0, 1.0);  // Within 1% (small angle tolerance)
 }
 
+// Regression: blend trim must cap against the original (waypoint-to-waypoint) segment length,
+// not the remaining length after a previous blend consumed its share. Kunz & Stilman Section IV:
+// "We also need to ensure that the circular segment does not replace more than half of each of
+// the neighboring linear segments." Neighboring means the original path segments.
+//
+// Z-staircase: (0,0) -> (0,1) -> (1,1) -> (1,2). Three unit segments, two 90-degree corners.
+// With geometry-limited deviation (100.0 >> needed), each blend trims min(L1/2, L2/2) = 0.5 from
+// the shared middle segment. Together they consume it entirely, so no linear segment should
+// appear between the two circular blends.
+//
+// TODO(RSDK-12711): Path construction either needs to deal with zero length segments or allow
+// circular to circular blends.
+BOOST_AUTO_TEST_CASE(circular_blend_trim_respects_original_segment_length, *boost::unit_test::expected_failures(1)) {
+    using namespace viam::trajex::totg;
+    using viam::trajex::arc_length;
+
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}, {1.0, 2.0}};
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(100.0));
+
+    // Correct: 5 segments -- linear, blend, zero-length linear, blend, linear.
+    // The two blends together consume the full middle segment, leaving a zero-length linear
+    // between them (the algorithm emits whatever remains, which is zero).
+    // Bug: second blend caps at remaining/2 = 0.25 instead of original/2 = 0.5, so the
+    // middle linear has length 0.25 and the path structure is otherwise the same (5 segments).
+    BOOST_REQUIRE_EQUAL(p.size(), 5U);
+
+    auto it = p.begin();
+    BOOST_CHECK((*it).is<path::segment::linear>());
+    ++it;
+    BOOST_CHECK((*it).is<path::segment::circular>());
+    ++it;
+    BOOST_CHECK((*it).is<path::segment::linear>());
+    BOOST_CHECK_EQUAL(static_cast<double>((*it).length()), 0.0);
+    ++it;
+    BOOST_CHECK((*it).is<path::segment::circular>());
+    ++it;
+    BOOST_CHECK((*it).is<path::segment::linear>());
+
+    BOOST_CHECK(configs_close(p.configuration(arc_length{0.0}), xt::xarray<double>{0.0, 0.0}));
+    BOOST_CHECK(configs_close(p.configuration(p.length()), xt::xarray<double>{1.0, 2.0}));
+}
+
 BOOST_AUTO_TEST_SUITE_END()
