@@ -1095,7 +1095,8 @@ BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_
         .expect_splice(trajectory::seconds{5.78126}, size_t{769})
         .expect_forward_start(arc_length{0.521369}, arc_velocity{0.0383818})
         .expect_hit_limit(arc_length{0.566993}, arc_velocity{0.0471279}, arc_velocity{0.0471279}, arc_velocity{0.176646})
-        .expect_backward_start(arc_length{0.579219}, arc_velocity{0.0429121}, trajectory::switching_point_kind::k_nondifferentiable_extremum)
+        .expect_backward_start(
+            arc_length{0.579219}, arc_velocity{0.0429121}, trajectory::switching_point_kind::k_nondifferentiable_extremum)
         .expect_splice(trajectory::seconds{7.18515}, size_t{77})
         .expect_forward_start(arc_length{0.579219}, arc_velocity{0.0429121})
         .expect_backward_start(arc_length{1.3072}, arc_velocity{0.0}, trajectory::switching_point_kind::k_path_end)

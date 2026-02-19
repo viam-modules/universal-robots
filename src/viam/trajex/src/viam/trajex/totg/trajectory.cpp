@@ -620,8 +620,10 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         // Evaluate condition 41 (before-side only) first to avoid computing after-side
         // derivatives and acceleration bounds when the before-side already disqualifies.
-        const auto curve_slope_before = compute_velocity_limit_derivative(q_prime_before, q_double_prime_before, opt.max_velocity, opt.epsilon);
-        const auto accel_before = compute_acceleration_bounds(q_prime_before, q_double_prime_before, s_dot_max_vel_before, opt.max_acceleration, opt.epsilon);
+        const auto curve_slope_before =
+            compute_velocity_limit_derivative(q_prime_before, q_double_prime_before, opt.max_velocity, opt.epsilon);
+        const auto accel_before =
+            compute_acceleration_bounds(q_prime_before, q_double_prime_before, s_dot_max_vel_before, opt.max_acceleration, opt.epsilon);
         const auto trajectory_slope_before = accel_before.s_ddot_min / s_dot_max_vel_before;
         const bool condition_41 = trajectory_slope_before >= curve_slope_before;
         if (!condition_41) {
@@ -629,8 +631,10 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         }
 
         // Condition 41 passed -- now evaluate condition 42 (after-side).
-        const auto curve_slope_after = compute_velocity_limit_derivative(q_prime_after, q_double_prime_after, opt.max_velocity, opt.epsilon);
-        const auto accel_after = compute_acceleration_bounds(q_prime_after, q_double_prime_after, s_dot_max_vel_after, opt.max_acceleration, opt.epsilon);
+        const auto curve_slope_after =
+            compute_velocity_limit_derivative(q_prime_after, q_double_prime_after, opt.max_velocity, opt.epsilon);
+        const auto accel_after =
+            compute_acceleration_bounds(q_prime_after, q_double_prime_after, s_dot_max_vel_after, opt.max_acceleration, opt.epsilon);
         const auto trajectory_slope_after = accel_after.s_ddot_min / s_dot_max_vel_after;
         const bool condition_42 = trajectory_slope_after <= curve_slope_after;
 
