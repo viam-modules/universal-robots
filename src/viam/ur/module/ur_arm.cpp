@@ -564,12 +564,13 @@ vector6d_t URArm::get_joint_positions_rad_(const std::shared_lock<std::shared_mu
 void URArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
+    const auto unix_time = unix_time_iso8601();
 
     const std::array<std::size_t, 2> shape = {1, positions.size()};
     const auto waypoint_deg = xt::adapt(positions.data(), positions.size(), xt::no_ownership(), shape);
     const xt::xarray<double> waypoint_rad = viam::trajex::degrees_to_radians(waypoint_deg);
 
-    move_joint_space_(std::move(rlock), waypoint_rad, MoveOptions{});
+    move_joint_space_(std::move(rlock), waypoint_rad, MoveOptions{}, unix_time);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -577,6 +578,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
                                          const viam::sdk::ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
+    const auto unix_time = unix_time_iso8601();
 
     if (positions.empty()) {
         return;
@@ -589,7 +591,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         xt::view(waypoints_rad, i, xt::all()) = viam::trajex::degrees_to_radians(row_deg);
     }
 
-    move_joint_space_(std::move(rlock), waypoints_rad, options);
+    move_joint_space_(std::move(rlock), waypoints_rad, options, unix_time);
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {
@@ -857,10 +859,9 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 
 void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                               const xt::xarray<double>& waypoints,
-                              const MoveOptions& options) {
+                              const MoveOptions& options,
+                              const std::string& unix_time) {
     auto our_config_rlock = std::move(config_rlock);
-
-    const auto unix_time = unix_time_iso8601();
 
     auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
         if (!observer) {
@@ -896,7 +897,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     struct segment_accumulator {
         std::optional<trajectory_samples> samples;
         double total_duration = 0.0;
-        double total_generation_time = 0.0;
+        std::chrono::microseconds total_generation_time{};
         size_t total_waypoints = 0;
         double total_arc_length = 0.0;
         size_t segment_count = 0;
@@ -963,7 +964,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 const viam::trajex::totg::waypoint_accumulator& segment,
                 const viam::trajex::totg::trajectory& traj,
                 auto elapsed) {
-                acc.total_generation_time += elapsed.count();
+                acc.total_generation_time += elapsed;
                 acc.total_duration += traj.duration().count();
                 acc.total_waypoints += segment.size();
                 acc.total_arc_length += static_cast<double>(traj.path().length());
@@ -1026,7 +1027,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             const Path& legacy_path,
             const Trajectory& traj,
             auto elapsed) {
-            acc.total_generation_time += elapsed.count();
+            acc.total_generation_time += elapsed;
             acc.total_duration += traj.getDuration();
             acc.total_waypoints += segment.size();
             acc.total_arc_length += legacy_path.getLength();
@@ -1067,7 +1068,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                << ", total waypoints: " << trajex.receiver->total_waypoints
                                << ", total duration: " << trajex.receiver->total_duration << "s, total samples: " << sample_count
                                << ", total arc length: " << trajex.receiver->total_arc_length
-                               << ", generation_time: " << trajex.receiver->total_generation_time
+                               << ", generation_time: " << std::chrono::duration<double>(trajex.receiver->total_generation_time).count()
                                << "s, number of segments: " << trajex.receiver->segment_count;
         }
 
@@ -1077,13 +1078,15 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *legacy.receiver->samples);
             VIAM_SDK_LOG(info) << "legacy trajectory generated successfully"
                                << ", waypoints: " << legacy.receiver->total_waypoints << ", duration: " << legacy.receiver->total_duration
-                               << "s, samples: " << sample_count << ", generation_time: " << legacy.receiver->total_generation_time
+                               << "s, samples: " << sample_count
+                               << ", generation_time: " << std::chrono::duration<double>(legacy.receiver->total_generation_time).count()
                                << "s, number of segments: " << legacy.receiver->segment_count;
         } else if (legacy.receiver) {
             const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *legacy.receiver->samples);
             VIAM_SDK_LOG(debug) << "legacy trajectory generated successfully"
                                 << ", waypoints: " << legacy.receiver->total_waypoints << ", duration: " << legacy.receiver->total_duration
-                                << "s, samples: " << sample_count << ", generation_time: " << legacy.receiver->total_generation_time
+                                << "s, samples: " << sample_count
+                                << ", generation_time: " << std::chrono::duration<double>(legacy.receiver->total_generation_time).count()
                                 << "s, number of segments: " << legacy.receiver->segment_count;
         }
 
@@ -1122,6 +1125,22 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         throw std::logic_error("trajectory generation returned neither results nor an error");
     });
 
+    {
+        const auto& timing = planner.timing();
+        const auto to_ms = [](std::chrono::microseconds d) { return static_cast<double>(d.count()) / 1000.0; };
+        const auto format_optional = [&to_ms](const std::optional<std::chrono::microseconds>& d) {
+            return d ? std::to_string(to_ms(*d)) + "ms" : std::string("n/a");
+        };
+        VIAM_SDK_LOG(debug) << "move: phase timing (ms):"
+                            << " provisioning=" << to_ms(timing.waypoint_provisioning) << "ms"
+                            << " preprocessing=" << format_optional(timing.waypoint_preprocessing)
+                            << " validation=" << format_optional(timing.move_validation)
+                            << " segmentation=" << format_optional(timing.segmentation)
+                            << " colinearization=" << format_optional(timing.colinearization)
+                            << " trajex_total_gen=" << format_optional(timing.trajex_generation_total)
+                            << " legacy_total_gen=" << format_optional(timing.legacy_generation_total);
+    }
+
     if (!result) {
         VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " (no result)";
         return;
@@ -1152,7 +1171,15 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
     // with the current state other than to wait on the result of this future.
-    trajectory_completion_future.get();
+
+    try {
+        VIAM_SDK_LOG(debug) << "move: trajectory enqueued to arm: started " << unix_time << " issued " << unix_time_iso8601();
+        trajectory_completion_future.get();
+        VIAM_SDK_LOG(debug) << "move: trajectory completed on arm: started " << unix_time << " completed (success) " << unix_time_iso8601();
+    } catch (...) {
+        VIAM_SDK_LOG(debug) << "move: trajectory failed on arm: started " << unix_time << " completed (failure)" << unix_time_iso8601();
+        throw;
+    }
 }
 
 // Define the destructor
