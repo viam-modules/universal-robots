@@ -1097,14 +1097,14 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         const auto format_optional = [&to_ms](const std::optional<std::chrono::microseconds>& d) {
             return d ? std::to_string(to_ms(*d)) + "ms" : std::string("n/a");
         };
-        VIAM_SDK_LOG(warn) << "move: phase timing (ms):"
-                           << " provisioning=" << to_ms(timing.waypoint_provisioning) << "ms"
-                           << " preprocessing=" << format_optional(timing.waypoint_preprocessing)
-                           << " validation=" << format_optional(timing.move_validation)
-                           << " segmentation=" << format_optional(timing.segmentation)
-                           << " colinearization=" << format_optional(timing.colinearization)
-                           << " trajex_total_gen=" << format_optional(timing.trajex_generation_total)
-                           << " legacy_total_gen=" << format_optional(timing.legacy_generation_total);
+        VIAM_SDK_LOG(debug) << "move: phase timing (ms):"
+                            << " provisioning=" << to_ms(timing.waypoint_provisioning) << "ms"
+                            << " preprocessing=" << format_optional(timing.waypoint_preprocessing)
+                            << " validation=" << format_optional(timing.move_validation)
+                            << " segmentation=" << format_optional(timing.segmentation)
+                            << " colinearization=" << format_optional(timing.colinearization)
+                            << " trajex_total_gen=" << format_optional(timing.trajex_generation_total)
+                            << " legacy_total_gen=" << format_optional(timing.legacy_generation_total);
     }
 
     if (!result) {
