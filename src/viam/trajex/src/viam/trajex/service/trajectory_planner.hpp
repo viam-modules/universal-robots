@@ -37,6 +37,15 @@ struct trajectory_planner_base {
         bool segment_trajex = true;
     };
 
+    ///
+    /// Per-phase wall-clock timing from the most recent execute() call.
+    ///
+    /// Optional fields are nullopt when the corresponding phase did not run:
+    /// preprocessing and validation only run when their handlers are registered,
+    /// segmentation only runs when a segmenter is registered, colinearization
+    /// only runs when colinearization_ratio is set, and the generation totals
+    /// are nullopt when the corresponding algorithm is not enabled.
+    ///
     struct timing_stats {
         std::chrono::microseconds waypoint_provisioning{};
         std::optional<std::chrono::microseconds> waypoint_preprocessing;
