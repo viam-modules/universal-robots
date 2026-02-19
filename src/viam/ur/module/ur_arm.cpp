@@ -242,6 +242,8 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
             boost::str(boost::format("attribute `segmentation_threshold` must be > 0 and <= 0.01, it is: %1%") % *segmentation_threshold));
     }
 
+    find_config_attribute<bool>(cfg, "prefer_precomputed_accelerations");
+
     // Validate telemetry_output_path is a string if present
     const auto telemetry_output_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
 
@@ -293,22 +295,35 @@ auto make_scope_guard(Callable&& cleanup) {
 
 }  // namespace
 
-void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples) {
+void write_trajectory_to_file(const std::string& filepath, const trajectory_samples& samples) {
     std::ofstream of(filepath);
-    of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n";
-    float time_traj = 0;
-    for (size_t i = 0; i < samples.size(); i++) {
-        time_traj += samples[i].timestep;
-        of << time_traj;
-        for (size_t j = 0; j < samples[i].p.size(); j++) {
-            of << "," << samples[i].p[j];
-        }
-        for (size_t j = 0; j < samples[i].v.size(); j++) {
-            of << "," << samples[i].v[j];
-        }
-        of << "\n";
-    }
-
+    std::visit(
+        [&of](const auto& pts) {
+            using point_type = typename std::decay_t<decltype(pts)>::value_type;
+            if constexpr (std::is_same_v<point_type, trajectory_sample_point_pva>) {
+                of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5,a0,a1,a2,a3,a4,a5\n";
+            } else {
+                of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n";
+            }
+            float time_traj = 0;
+            for (const auto& pt : pts) {
+                time_traj += pt.timestep;
+                of << time_traj;
+                for (size_t j = 0; j < pt.p.size(); j++) {
+                    of << "," << pt.p[j];
+                }
+                for (size_t j = 0; j < pt.v.size(); j++) {
+                    of << "," << pt.v[j];
+                }
+                if constexpr (requires { pt.a; }) {
+                    for (size_t j = 0; j < pt.a.size(); j++) {
+                        of << "," << pt.a[j];
+                    }
+                }
+                of << "\n";
+            }
+        },
+        samples);
     of.close();
 }
 
@@ -879,7 +894,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
 
     struct segment_accumulator {
-        std::vector<trajectory_sample_point> samples;
+        std::optional<trajectory_samples> samples;
         double total_duration = 0.0;
         double total_generation_time = 0.0;
         size_t total_waypoints = 0;
@@ -958,23 +973,36 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                     traj, viam::trajex::types::hertz{current_state_->get_trajectory_sampling_freq_hz()});
 
                 double previous_time = 0.0;
-                for (const auto& sample : traj.samples(sampler) | std::views::drop(1)) {
-                    const double current_time = sample.time.count();
-                    const float timestep = boost::numeric_cast<float>(current_time - previous_time);
-
-                    trajectory_sample_point point;
-                    for (size_t i = 0; i < point.p.size(); ++i) {
-                        point.p[i] = sample.configuration(i);
-                        point.v[i] = sample.velocity(i);
-                    }
-                    point.timestep = timestep;
-                    acc.samples.push_back(point);
-                    previous_time = current_time;
+                if (!acc.samples) {
+                    acc.samples = current_state_->prefer_precomputed_accelerations()
+                                      ? trajectory_samples{std::vector<trajectory_sample_point_pva>{}}
+                                      : trajectory_samples{std::vector<trajectory_sample_point_pv>{}};
                 }
+                std::visit(
+                    [&](auto& dest) {
+                        using PointType = typename std::decay_t<decltype(dest)>::value_type;
+                        for (const auto& sample : traj.samples(sampler) | std::views::drop(1)) {
+                            const double current_time = sample.time.count();
+                            const float timestep = boost::numeric_cast<float>(current_time - previous_time);
+                            PointType point;
+                            for (size_t i = 0; i < point.p.size(); ++i) {
+                                point.p[i] = sample.configuration(i);
+                                point.v[i] = sample.velocity(i);
+                                if constexpr (requires { point.a; }) {
+                                    point.a[i] = sample.acceleration(i);
+                                }
+                            }
+                            point.timestep = timestep;
+                            dest.push_back(point);
+                            previous_time = current_time;
+                        }
+                    },
+                    *acc.samples);
 
+                const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *acc.samples);
                 VIAM_SDK_LOG(info) << "trajex/totg segment generated successfully"
                                    << ", waypoints: " << segment.size() << ", duration: " << traj.duration().count()
-                                   << "s, samples: " << acc.samples.size() << ", arc length: " << traj.path().length();
+                                   << "s, samples: " << sample_count << ", arc length: " << traj.path().length();
             },
             [&](const segment_accumulator& acc, const viam::trajex::totg::waypoint_accumulator& seg, const std::exception& e) {
                 VIAM_SDK_LOG(warn) << "trajectory generation with trajex failed with an exception"
@@ -1004,13 +1032,17 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             acc.total_arc_length += legacy_path.getLength();
             acc.segment_count++;
 
+            if (!acc.samples) {
+                acc.samples = std::vector<trajectory_sample_point_pv>{};
+            }
+            auto& pv_samples = std::get<std::vector<trajectory_sample_point_pv>>(*acc.samples);
             sampling_func(
-                acc.samples, traj.getDuration(), current_state_->get_trajectory_sampling_freq_hz(), [&](const double t, const double step) {
+                pv_samples, traj.getDuration(), current_state_->get_trajectory_sampling_freq_hz(), [&](const double t, const double step) {
                     auto p_eigen = traj.getPosition(t);
                     auto v_eigen = traj.getVelocity(t);
-                    return trajectory_sample_point{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
-                                                   {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
-                                                   boost::numeric_cast<float>(step)};
+                    return trajectory_sample_point_pv{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                                      {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+                                                      boost::numeric_cast<float>(step)};
                 });
         },
         [&](const segment_accumulator&, const viam::trajex::totg::waypoint_accumulator& seg, const std::exception& e) {
@@ -1030,10 +1062,10 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     auto result = planner.execute([&](const auto& p, auto trajex, auto legacy) -> std::optional<segment_accumulator> {
         // Log trajex summary if it ran
         if (trajex.receiver) {
+            const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *trajex.receiver->samples);
             VIAM_SDK_LOG(info) << "trajex/totg trajectory generated successfully"
                                << ", total waypoints: " << trajex.receiver->total_waypoints
-                               << ", total duration: " << trajex.receiver->total_duration
-                               << "s, total samples: " << trajex.receiver->samples.size()
+                               << ", total duration: " << trajex.receiver->total_duration << "s, total samples: " << sample_count
                                << ", total arc length: " << trajex.receiver->total_arc_length
                                << ", generation_time: " << trajex.receiver->total_generation_time
                                << "s, number of segments: " << trajex.receiver->segment_count;
@@ -1042,16 +1074,16 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         // Log legacy summary. When the new planner is active, log at info for comparison
         // visibility; otherwise log at debug (routine operation).
         if (legacy.receiver && current_state_->use_new_trajectory_planner()) {
+            const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *legacy.receiver->samples);
             VIAM_SDK_LOG(info) << "legacy trajectory generated successfully"
                                << ", waypoints: " << legacy.receiver->total_waypoints << ", duration: " << legacy.receiver->total_duration
-                               << "s, samples: " << legacy.receiver->samples.size()
-                               << ", generation_time: " << legacy.receiver->total_generation_time
+                               << "s, samples: " << sample_count << ", generation_time: " << legacy.receiver->total_generation_time
                                << "s, number of segments: " << legacy.receiver->segment_count;
         } else if (legacy.receiver) {
+            const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *legacy.receiver->samples);
             VIAM_SDK_LOG(debug) << "legacy trajectory generated successfully"
                                 << ", waypoints: " << legacy.receiver->total_waypoints << ", duration: " << legacy.receiver->total_duration
-                                << "s, samples: " << legacy.receiver->samples.size()
-                                << ", generation_time: " << legacy.receiver->total_generation_time
+                                << "s, samples: " << sample_count << ", generation_time: " << legacy.receiver->total_generation_time
                                 << "s, number of segments: " << legacy.receiver->segment_count;
         }
 
@@ -1099,11 +1131,12 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " (duration too small)";
         return;
     } else {
-        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " samples.size() " << result->samples.size();
+        const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *result->samples);
+        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " samples.size() " << sample_count;
     }
 
     const std::string& telemetry_path = current_state_->telemetry_output_path();
-    write_trajectory_to_file(trajectory_filename(telemetry_path, current_state_->resource_name(), unix_time), result->samples);
+    write_trajectory_to_file(trajectory_filename(telemetry_path, current_state_->resource_name(), unix_time), *result->samples);
 
     std::ofstream ajp_of(arm_joint_positions_filename(telemetry_path, current_state_->resource_name(), unix_time));
     ajp_of << "time_ms,read_attempt,"
@@ -1114,7 +1147,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         return current_state_->enqueue_move_request(current_move_epoch,
                                                     std::optional<std::ofstream>{std::move(ajp_of)},
                                                     std::move(async_cancellation_monitor),
-                                                    std::move(result->samples));
+                                                    std::move(*result->samples));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact

@@ -59,6 +59,7 @@ URArm::state_::state_(private_,
                       std::optional<double> path_colinearization_ratio,
                       double segmentation_threshold,
                       bool use_new_trajectory_planner,
+                      bool prefer_precomputed_accelerations,
                       double max_trajectory_duration_secs,
                       std::optional<vector6d_t> max_velocity_limits,
                       std::optional<vector6d_t> max_acceleration_limits,
@@ -79,6 +80,7 @@ URArm::state_::state_(private_,
       path_colinearization_ratio_(path_colinearization_ratio),
       segmentation_threshold_(segmentation_threshold),
       use_new_trajectory_planner_(use_new_trajectory_planner),
+      prefer_precomputed_accelerations_(prefer_precomputed_accelerations),
       max_trajectory_duration_secs_(max_trajectory_duration_secs),
       max_velocity_limits_(std::move(max_velocity_limits)),
       max_acceleration_limits_(std::move(max_acceleration_limits)),
@@ -142,6 +144,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
 
     auto frequency = find_config_attribute<double>(config, "robot_control_freq_hz");
     auto use_new_planner = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(true);
+    auto prefer_precomputed_accels = find_config_attribute<bool>(config, "prefer_precomputed_accelerations").value_or(false);
 
     auto path_tolerance_deg = find_config_attribute<double>(config, "path_tolerance_delta_deg");
     auto path_tolerance_rad = path_tolerance_deg ? degrees_to_radians(*path_tolerance_deg) : URArm::k_default_path_tolerance_delta_rads;
@@ -199,6 +202,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           colinearization_ratio,
                                           segmentation_threshold,
                                           use_new_planner,
+                                          prefer_precomputed_accels,
                                           max_trajectory_duration_secs,
                                           std::move(max_velocity_limits),
                                           std::move(max_acceleration_limits),
@@ -441,6 +445,10 @@ bool URArm::state_::use_new_trajectory_planner() const {
     return use_new_trajectory_planner_;
 }
 
+bool URArm::state_::prefer_precomputed_accelerations() const {
+    return prefer_precomputed_accelerations_;
+}
+
 double URArm::state_::get_max_trajectory_duration_secs() const {
     return max_trajectory_duration_secs_;
 }
@@ -461,10 +469,10 @@ bool URArm::state_::is_moving() const {
     return std::visit(
         [](const auto& cmd) -> bool {
             using T = std::decay_t<decltype(cmd)>;
-            if constexpr (std::is_same_v<T, std::vector<trajectory_sample_point>>) {
-                // If we have an empty vector of trajectory_sample_point it means we have sent them to the arm
+            if constexpr (std::is_same_v<T, trajectory_samples>) {
+                // If we have an empty trajectory_samples it means we have sent them to the arm
                 // so, as far as we are concerned, the arm is moving, though it may fail later.
-                return cmd.empty();
+                return std::visit([](const auto& v) { return v.empty(); }, cmd);
             } else if constexpr (std::is_same_v<T, std::optional<pose_sample>>) {
                 // If we have nullopt it means we have sent it to the arm
                 // so, as far as we are concerned, the arm is moving, though it may fail later.
@@ -518,8 +526,8 @@ URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint
     std::visit(
         [](const auto& cmd) {
             using T = std::decay_t<decltype(cmd)>;
-            if constexpr (std::is_same_v<T, std::vector<trajectory_sample_point>>) {
-                if (cmd.empty()) {
+            if constexpr (std::is_same_v<T, trajectory_samples>) {
+                if (std::visit([](const auto& v) { return v.empty(); }, cmd)) {
                     throw std::invalid_argument("no trajectory samples provided to move request");
                 }
             } else if constexpr (std::is_same_v<T, std::optional<pose_sample>>) {
@@ -533,8 +541,8 @@ URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint
 
 URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream,
                                           async_cancellation_monitor monitor,
-                                          std::vector<trajectory_sample_point>&& tsps)
-    : move_request(std::move(arm_joint_positions_stream), std::move(monitor), move_command_data{std::move(tsps)}) {}
+                                          trajectory_samples&& ts)
+    : move_request(std::move(arm_joint_positions_stream), std::move(monitor), move_command_data{std::move(ts)}) {}
 
 URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream,
                                           async_cancellation_monitor monitor,

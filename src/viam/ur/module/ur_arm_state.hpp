@@ -30,6 +30,7 @@ class URArm::state_ {
                     std::optional<double> path_colinearization_ratio,
                     double segmentation_threshold,
                     bool use_new_trajectory_planner,
+                    bool prefer_precomputed_accelerations,
                     double max_trajectory_duration_secs,
                     std::optional<vector6d_t> max_velocity_limits,
                     std::optional<vector6d_t> max_acceleration_limits,
@@ -80,6 +81,7 @@ class URArm::state_ {
     double get_segmentation_threshold() const;
 
     bool use_new_trajectory_planner() const;
+    bool prefer_precomputed_accelerations() const;
 
     double get_max_trajectory_duration_secs() const;
     double get_trajectory_sampling_freq_hz() const;
@@ -316,7 +318,7 @@ class URArm::state_ {
     // URArm misusing it.
     struct move_request {
        public:
-        using move_command_data = std::variant<std::vector<trajectory_sample_point>, std::optional<pose_sample>>;
+        using move_command_data = std::variant<trajectory_samples, std::optional<pose_sample>>;
 
         using async_cancellation_monitor = std::function<bool()>;
 
@@ -326,7 +328,7 @@ class URArm::state_ {
 
         explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream,
                               async_cancellation_monitor monitor,
-                              std::vector<trajectory_sample_point>&& tsps);
+                              trajectory_samples&& ts);
 
         explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream, async_cancellation_monitor monitor, pose_sample ps);
 
@@ -409,6 +411,7 @@ class URArm::state_ {
     const double segmentation_threshold_;
 
     const bool use_new_trajectory_planner_;
+    const bool prefer_precomputed_accelerations_;
     const double max_trajectory_duration_secs_;
     const std::optional<vector6d_t> max_velocity_limits_;
     const std::optional<vector6d_t> max_acceleration_limits_;

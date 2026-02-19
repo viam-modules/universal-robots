@@ -3,6 +3,7 @@
 #include <list>
 #include <optional>
 #include <shared_mutex>
+#include <variant>
 
 #include <Eigen/Core>
 
@@ -26,26 +27,31 @@
 using namespace viam::sdk;
 using namespace urcl;
 
-struct trajectory_sample_point {
+struct trajectory_sample_point_pv {
     vector6d_t p;
     vector6d_t v;
     float timestep;
 };
 
-// NOLINTNEXTLINE(misc-redundant-expression): We rely on the p and v arrays having the same size
-static_assert(std::tuple_size_v<decltype(trajectory_sample_point::p)> == std::tuple_size_v<decltype(trajectory_sample_point::v)>,
-              "trajectory_sample_point position and velocity must have the same size");
+struct trajectory_sample_point_pva {
+    vector6d_t p;
+    vector6d_t v;
+    vector6d_t a;
+    float timestep;
+};
+
+using trajectory_samples = std::variant<std::vector<trajectory_sample_point_pv>, std::vector<trajectory_sample_point_pva>>;
 
 struct pose_sample {
     vector6d_t p;
 };
 
 template <typename Func>
-void sampling_func(std::vector<trajectory_sample_point>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
+void sampling_func(std::vector<trajectory_sample_point_pv>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
     viam::trajex::for_each_sample(duration_sec, sampling_frequency_hz, [&](double t, double step) { samples.push_back(f(t, step)); });
 }
 
-void write_trajectory_to_file(const std::string& filepath, const std::vector<trajectory_sample_point>& samples);
+void write_trajectory_to_file(const std::string& filepath, const trajectory_samples& samples);
 void write_pose_to_file(const std::string& filepath, const pose_sample& sample);
 void write_waypoints_to_csv(const std::string& filepath, const viam::trajex::totg::waypoint_accumulator& waypoints);
 std::string waypoints_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
