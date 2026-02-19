@@ -1134,11 +1134,17 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                                     std::move(result->samples));
     }();
 
-    VIAM_SDK_LOG(debug) << "move: trajectory enqueued to arm: started " << unix_time << " issued " << unix_time_iso8601();
-
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
     // with the current state other than to wait on the result of this future.
-    trajectory_completion_future.get();
+
+    try {
+        VIAM_SDK_LOG(debug) << "move: trajectory enqueued to arm: started " << unix_time << " issued " << unix_time_iso8601();
+        trajectory_completion_future.get();
+        VIAM_SDK_LOG(debug) << "move: trajectory completed on arm: started " << unix_time << " completed (success) " << unix_time_iso8601();
+    } catch (...) {
+        VIAM_SDK_LOG(debug) << "move: trajectory failed on arm: started " << unix_time << " completed (failure)" << unix_time_iso8601();
+        throw;
+    }
 }
 
 // Define the destructor
