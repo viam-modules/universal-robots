@@ -763,7 +763,7 @@ trajectory create_velocity_switching_test_trajectory(const xt::xarray<double>& w
                                                      trajectory::seconds delta,
                                                      trajectory_integration_event_collector& collector) {
     path::options popt;
-    popt.set_max_deviation(max_deviation);
+    popt.set_max_blend_deviation(max_deviation);
     path p = path::create(waypoints_rad, popt);
 
     trajectory::options topt;
@@ -1526,7 +1526,7 @@ BOOST_AUTO_TEST_CASE(sharp_velocity_curve_drop_produces_velocity_escape) {
 
     fixture.validation_tolerance_percent = 0.5;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.03);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_blend_deviation(0.03);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1560,7 +1560,7 @@ BOOST_AUTO_TEST_CASE(rising_velocity_curve_no_velocity_switching_point) {
 
     fixture.validation_tolerance_percent = 0.5;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.03);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_blend_deviation(0.03);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1592,7 +1592,7 @@ BOOST_AUTO_TEST_CASE(gradual_velocity_curve_drop_bisection_accuracy) {
     // drops more gradually across the blend region.
     fixture.validation_tolerance_percent = 0.5;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.05);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_blend_deviation(0.05);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1655,7 +1655,7 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_drops_finds_first_switching_point) {
 
     fixture.validation_tolerance_percent = 0.5;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.03);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_blend_deviation(0.03);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1693,7 +1693,7 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_escapes_wider_blends) {
 
     fixture.validation_tolerance_percent = 0.5;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.05);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_blend_deviation(0.05);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1729,7 +1729,7 @@ BOOST_AUTO_TEST_CASE(constant_velocity_curve_no_switching_point) {
     // Straight line -- no blends, constant q', constant velocity limit.
     trajectory_test_fixture fixture(2, 1.0);
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.5}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.1);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.5}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_blend_deviation(0.1);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
@@ -1762,7 +1762,7 @@ BOOST_AUTO_TEST_CASE(velocity_switching_point_near_path_start) {
 
     fixture.validation_tolerance_percent = 0.5;
 
-    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_deviation(0.03);
+    fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08}).set_max_acceleration(xt::xarray<double>{10.0, 10.0}).set_max_blend_deviation(0.03);
 
     fixture.traj_opts.delta = trajectory::seconds{0.001};
 
