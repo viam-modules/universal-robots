@@ -385,6 +385,76 @@ void validate_trajectory_invariants(const trajectory& traj, double tolerance_per
     }
 }
 
+// Validates joint-space kinematic bounds across a dense sampling of the trajectory.
+//
+// Checks:
+//   - Boundary conditions: zero velocity at start/end, zero acceleration at end
+//   - Velocity and acceleration bounds at every sample
+//   - Velocity continuity via finite differences (catches instantaneous joint-velocity jumps
+//     that the arc-length phase-plane check in validate_trajectory_invariants cannot detect)
+//   - Position-velocity consistency: finite difference of position should match trapezoidal
+//     velocity estimate; large discrepancy indicates the two fields are mutually inconsistent
+void validate_joint_kinematics(const trajectory& traj,
+                               const xt::xarray<double>& max_velocity,
+                               const xt::xarray<double>& max_acceleration,
+                               double tolerance_percent = 0.1) {
+    const size_t dof = max_velocity.size();
+    const double tol_factor = 1.0 + (tolerance_percent / 100.0);
+
+    BOOST_TEST_CONTEXT("Joint-space kinematic validation") {
+        // Boundary conditions: s_dot=0 at both endpoints forces all joint velocities to zero;
+        // s_ddot=0 at the endpoint forces all joint accelerations to zero there as well.
+        BOOST_TEST_CONTEXT("Boundary conditions") {
+            const struct trajectory::sample first = traj.sample(trajectory::seconds{0.0});
+            const struct trajectory::sample last = traj.sample(traj.duration());
+            for (size_t i = 0; i < dof; ++i) {
+                BOOST_TEST_CONTEXT("joint=" << i) {
+                    BOOST_CHECK_EQUAL(first.velocity(i), 0.0);
+                    BOOST_CHECK_EQUAL(last.velocity(i), 0.0);
+                    BOOST_CHECK_EQUAL(last.acceleration(i), 0.0);
+                }
+            }
+        }
+
+        // Sample at 2.5x the integration frequency (above Nyquist with a safety margin) so
+        // that any velocity discontinuity manifests as a finite-difference acceleration far
+        // exceeding the joint limit.
+        const double sample_hz = 2.5 / traj.get_options().delta.count();
+        auto sampler = uniform_sampler::quantized_for_trajectory(traj, viam::trajex::types::hertz{sample_hz});
+
+        std::optional<struct trajectory::sample> prev;
+        for (const auto& s : traj.samples(sampler)) {
+            BOOST_TEST_CONTEXT("t=" << s.time.count()) {
+                for (size_t i = 0; i < dof; ++i) {
+                    BOOST_TEST_CONTEXT("joint=" << i) {
+                        BOOST_CHECK_LE(std::abs(s.velocity(i)), max_velocity(i) * tol_factor);
+                        BOOST_CHECK_LE(std::abs(s.acceleration(i)), max_acceleration(i) * tol_factor);
+
+                        if (prev.has_value()) {
+                            const double dt = (s.time - prev->time).count();
+
+                            const double delta_v = std::abs(s.velocity(i) - prev->velocity(i));
+                            const double finite_diff_acc = delta_v / dt;
+                            BOOST_TEST_CONTEXT("vel_fd: delta_v=" << delta_v << " dt=" << dt << " => " << finite_diff_acc
+                                                                  << " limit=" << max_acceleration(i)) {
+                                BOOST_CHECK_LE(finite_diff_acc, max_acceleration(i) * tol_factor);
+                            }
+
+                            // Trapezoidal velocity estimate from position; error is O(accel*dt).
+                            const double pos_fd = (s.configuration(i) - prev->configuration(i)) / dt;
+                            const double vel_avg = 0.5 * (s.velocity(i) + prev->velocity(i));
+                            BOOST_TEST_CONTEXT("pos_fd=" << pos_fd << " vel_avg=" << vel_avg << " diff=" << std::abs(pos_fd - vel_avg)) {
+                                BOOST_CHECK_LE(std::abs(pos_fd - vel_avg), max_acceleration(i) * dt * 10.0);
+                            }
+                        }
+                    }
+                }
+            }
+            prev = s;
+        }
+    }
+}
+
 // Test fixture for trajectory integration tests
 
 struct trajectory_test_fixture {
@@ -421,6 +491,9 @@ struct trajectory_test_fixture {
     // Event validation control
     bool allow_any_events_ = false;
 
+    // Joint-space kinematic validation (opt-in)
+    bool validate_joint_kinematics_ = false;
+
     // JSON output for visualization
     std::optional<std::string> json_output_filename_;
     std::shared_ptr<trajectory_integration_event_collector> collector_;
@@ -448,8 +521,8 @@ struct trajectory_test_fixture {
         return *this;
     }
 
-    trajectory_test_fixture& set_max_deviation(double max_dev) {
-        path_opts.set_max_deviation(max_dev);
+    trajectory_test_fixture& set_max_blend_deviation(double max_dev) {
+        path_opts.set_max_blend_deviation(max_dev);
         return *this;
     }
 
@@ -475,6 +548,11 @@ struct trajectory_test_fixture {
 
     trajectory_test_fixture& allow_any_events() {
         allow_any_events_ = true;
+        return *this;
+    }
+
+    trajectory_test_fixture& enable_joint_kinematics_validation() {
+        validate_joint_kinematics_ = true;
         return *this;
     }
 
@@ -670,6 +748,10 @@ struct trajectory_test_fixture {
         // Validate trajectory invariants
         validate_trajectory_invariants(traj, validation_tolerance_percent);
 
+        if (validate_joint_kinematics_) {
+            validate_joint_kinematics(traj, traj_opts.max_velocity, traj_opts.max_acceleration, validation_tolerance_percent);
+        }
+
         return traj;
     }
 };
@@ -722,6 +804,30 @@ std::vector<constraint_profile> get_ur_arm_constraint_profiles() {
          degrees_to_radians(xt::ones<double>({6}) * 5.0),     // 150 deg/s
          degrees_to_radians(xt::ones<double>({6}) * 150.0)},  // 5 deg/s^2
     };
+}
+
+// Same velocity/acceleration values as the UR arm profiles, sized to the given DOF.
+// "all_" prefix indicates limits are uniform across all joints.
+std::vector<constraint_profile> get_extremal_constraint_profiles(size_t dof) {
+    return {
+        {"all_accel_constrained",
+         degrees_to_radians(xt::ones<double>({dof}) * 150.0),  // 150 deg/s (non-binding)
+         degrees_to_radians(xt::ones<double>({dof}) * 5.0)},   // 5 deg/s^2 (binding)
+        {"all_vel_constrained",
+         degrees_to_radians(xt::ones<double>({dof}) * 5.0),     // 5 deg/s (binding)
+         degrees_to_radians(xt::ones<double>({dof}) * 150.0)},  // 150 deg/s^2 (non-binding)
+    };
+}
+
+// Returns 'L' for each linear segment and 'C' for each circular, left to right.
+// Example: a 3-waypoint path with blending yields "LCL".
+std::string path_type_sequence(const path& p) {
+    std::string result;
+    result.reserve(p.size());
+    for (const auto& view : p) {
+        result += view.is<path::segment::linear>() ? 'L' : 'C';
+    }
+    return result;
 }
 
 }  // namespace
@@ -886,7 +992,7 @@ BOOST_DATA_TEST_CASE(ur_arm_incremental_waypoints_with_reversals,
             .set_legacy_duration_tolerance(10.0);  // Allow 10% duration difference
     }
 
-    fixture.set_max_velocity(profile.max_velocity).set_max_acceleration(profile.max_acceleration).set_max_deviation(0.1);
+    fixture.set_max_velocity(profile.max_velocity).set_max_acceleration(profile.max_acceleration).set_max_blend_deviation(0.1);
 
     // Extract subset of waypoints for this iteration
     const xt::xarray<double>& full_waypoints_deg = get_ur_arm_waypoints_with_reversals_deg();
@@ -942,7 +1048,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
     fixture.enable_legacy_comparison()
         .set_max_velocity(degrees_to_radians(xt::ones<double>({6}) * 50.0))
         .set_max_acceleration(degrees_to_radians(xt::ones<double>({6}) * 1.0))
-        .set_max_deviation(0.1);
+        .set_max_blend_deviation(0.1);
 
     fixture.traj_opts.delta = trajectory::seconds{0.0001};
 
@@ -977,7 +1083,7 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_vel_constrained) {
     fixture.enable_legacy_comparison()
         .set_max_velocity(degrees_to_radians(xt::ones<double>({6}) * 1.0))
         .set_max_acceleration(degrees_to_radians(xt::ones<double>({6}) * 50.0))
-        .set_max_deviation(0.1);
+        .set_max_blend_deviation(0.1);
 
     fixture.traj_opts.delta = trajectory::seconds{0.0001};
 
@@ -1015,7 +1121,7 @@ BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_
     fixture.enable_legacy_comparison()
         .set_max_velocity(xt::xarray<double>{0.165, 0.167})
         .set_max_acceleration(xt::xarray<double>{0.05, 0.04})
-        .set_max_deviation(0.05);  // Enable curves
+        .set_max_blend_deviation(0.05);  // Enable curves
 
     fixture.traj_opts.delta = trajectory::seconds{0.002};
 
@@ -1086,5 +1192,232 @@ BOOST_AUTO_TEST_CASE(trajectory_json_serialization) {
     BOOST_CHECK_GT(root["events"]["forward_starts"].size(), 0);
     BOOST_CHECK_GT(root["events"]["backward_starts"].size(), 0);
 }
+
+// Extremal path tests: exercise TOTG directly (no segmentation layer) on degenerate geometries.
+//
+// Segmentation is a workaround for the legacy generator; the TOTG algorithm should handle these
+// cases natively. At a cusp (direct reversal), s_dot must reach zero but s_ddot need not — the
+// arm should decelerate through the reversal and accelerate out, with continuous acceleration.
+//
+// These tests are purely exploratory: no event expectations, arc-length kinematic validation
+// runs (and passes). Joint-space kinematic validation is opt-in per test.
+
+BOOST_AUTO_TEST_SUITE(extremal_path_tests)
+
+#define EXTREMAL_DATA(dof)                                     \
+    boost::unit_test::data::make([]() {                        \
+        static auto d = get_extremal_constraint_profiles(dof); \
+        return boost::unit_test::data::make(d);                \
+    }())
+
+// 1 DoF: direct reversal. Path goes A -> B -> A, with a sharp cusp at B.
+// s_dot must reach zero at the cusp; s_ddot should remain non-zero (decelerating in, accelerating out).
+BOOST_DATA_TEST_CASE(one_dof_direct_reversal, EXTREMAL_DATA(1), profile) {
+    // xt::xarray needs explicit shape for 1-DoF to disambiguate 1D vs 2D constructors.
+    auto wp = xt::xarray<double>::from_shape({3, 1});
+    wp(0, 0) = 0.0;
+    wp(1, 0) = 1.0;
+    wp(2, 0) = 0.0;
+
+    trajectory_test_fixture fixture(1);
+    fixture
+        .allow_any_events()
+        // .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(0.0)
+        .set_waypoints_rad(wp);
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LL");
+}
+
+// 1 DoF: exact colinear. Middle point lies exactly on the line between start and end.
+BOOST_DATA_TEST_CASE(one_dof_colinear, EXTREMAL_DATA(1), profile) {
+    auto wp = xt::xarray<double>::from_shape({3, 1});
+    wp(0, 0) = 0.0;
+    wp(1, 0) = 0.5;
+    wp(2, 0) = 1.0;
+
+    trajectory_test_fixture fixture(1);
+    fixture
+        .allow_any_events()
+        // .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(0.1)
+        .set_waypoints_rad(wp);
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LL");
+}
+
+// 2 DoF: direct reversal, only one joint moves. (0,0) -> (1,0) -> (0,0).
+// Joint 1 is stationary throughout; tangent has a zero component on joint 1.
+BOOST_DATA_TEST_CASE(two_dof_reversal_single_joint, EXTREMAL_DATA(2), profile) {
+    trajectory_test_fixture fixture(2);
+    fixture
+        .allow_any_events()
+        // .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(0.1)
+        .set_waypoints_rad({{0.0, 0.0}, {1.0, 0.0}, {0.0, 0.0}});
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LL");
+}
+
+// 2 DoF: direct reversal, both joints move equally. (0,0) -> (1,1) -> (0,0).
+BOOST_DATA_TEST_CASE(two_dof_reversal_both_joints, EXTREMAL_DATA(2), profile) {
+    trajectory_test_fixture fixture(2);
+    fixture
+        .allow_any_events()
+        // .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(0.1)
+        .set_waypoints_rad({{0.0, 0.0}, {1.0, 1.0}, {0.0, 0.0}});
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LL");
+}
+
+// 2 DoF: exact colinear, one joint stationary. (0,0) -> (0.5,0) -> (1,0).
+BOOST_DATA_TEST_CASE(two_dof_colinear_single_joint, EXTREMAL_DATA(2), profile) {
+    trajectory_test_fixture fixture(2);
+    fixture
+        .allow_any_events()
+        // .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(0.1)
+        .set_waypoints_rad({{0.0, 0.0}, {0.5, 0.0}, {1.0, 0.0}});
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LL");
+}
+
+// 2 DoF: exact colinear, both joints move equally. (0,0) -> (1,1) -> (2,2).
+BOOST_DATA_TEST_CASE(two_dof_colinear_both_joints, EXTREMAL_DATA(2), profile) {
+    trajectory_test_fixture fixture(2);
+    fixture
+        .allow_any_events()
+        // .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(0.1)
+        .set_waypoints_rad({{0.0, 0.0}, {1.0, 1.0}, {2.0, 2.0}});
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LL");
+}
+
+// 2 DoF: axis-aligned right angle, zero deviation. (0,0) -> (0,1) -> (1,1).
+// Segment 1 direction (0,1), segment 2 direction (1,0): exactly 90 degrees, no blending.
+BOOST_DATA_TEST_CASE(two_dof_right_angle_axis_aligned, EXTREMAL_DATA(2), profile) {
+    trajectory_test_fixture fixture(2);
+    fixture
+        .allow_any_events()
+        // .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(0.0)
+        .set_waypoints_rad({{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}});
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LL");
+}
+
+// 2 DoF: rotated right angle, zero deviation. (-1,0) -> (0,1) -> (1,0).
+// Segment 1 direction (1,1)/sqrt(2), segment 2 direction (1,-1)/sqrt(2): dot product = 0.
+// All coordinates are integers (exactly representable).
+BOOST_DATA_TEST_CASE(two_dof_right_angle_rotated, EXTREMAL_DATA(2), profile) {
+    trajectory_test_fixture fixture(2);
+    fixture
+        .allow_any_events()
+        // .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(0.0)
+        .set_waypoints_rad({{-1.0, 0.0}, {0.0, 1.0}, {1.0, 0.0}});
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LL");
+}
+
+// 2 DoF: Z-staircase with zero-length middle segment.
+//
+// Path: (0,0) -> (0,45) -> (45,45) -> (45,90) deg. Three equal 45-deg segments with two 90-deg
+// corners. With max_deviation >> needed, each blend reaches maximum radius (half-segment = 22.5
+// deg), exactly consuming the middle segment and leaving a zero-length linear segment in the
+// path between the two circular blends.
+//
+// TODO(RSDK-12711): Path construction either needs to deal with zero length segments or allow
+// circular to circular blends.
+BOOST_AUTO_TEST_CASE_EXPECTED_FAILURES(two_dof_zero_length_segment, 3)
+BOOST_DATA_TEST_CASE(two_dof_zero_length_segment, EXTREMAL_DATA(2), profile) {
+    trajectory_test_fixture fixture(2);
+    fixture
+        .allow_any_events()
+        // .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(100.0)  // Much larger than needed; blend radius capped by geometry
+        .set_waypoints_deg({{0.0, 0.0}, {0.0, 45.0}, {45.0, 45.0}, {45.0, 90.0}});
+    const trajectory traj = fixture.create_and_validate();
+
+    // Path structure: linear, blend, linear (middle), blend, linear.
+    // The two blends together consume the full middle segment; the middle linear should have
+    // length 0 but currently has length ~0.196 due to a blend-trim bug (RSDK-12711).
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LCLCL");
+    const auto middle = std::next(traj.path().begin(), 2);
+    BOOST_CHECK_EQUAL(static_cast<double>((*middle).length()), 0.0);
+}
+
+// 1 DoF: two successive reversals. Path goes A -> B -> A -> B, with cusps at B and then A.
+// Tests that the algorithm handles multiple chained cusps and still ends with s_dot=0.
+BOOST_DATA_TEST_CASE(one_dof_double_reversal, EXTREMAL_DATA(1), profile) {
+    auto wp = xt::xarray<double>::from_shape({4, 1});
+    wp(0, 0) = 0.0;
+    wp(1, 0) = 1.0;
+    wp(2, 0) = 0.0;
+    wp(3, 0) = 1.0;
+
+    trajectory_test_fixture fixture(1);
+    fixture
+        .allow_any_events()
+        // .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(0.1)
+        .set_waypoints_rad(wp);
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LLL");
+}
+
+// 2 DoF: two successive reversals, only one joint moves. (0,0) -> (1,0) -> (0,0) -> (1,0).
+BOOST_DATA_TEST_CASE(two_dof_double_reversal, EXTREMAL_DATA(2), profile) {
+    trajectory_test_fixture fixture(2);
+    fixture
+        .allow_any_events()
+        // .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(0.1)
+        .set_waypoints_rad({{0.0, 0.0}, {1.0, 0.0}, {0.0, 0.0}, {1.0, 0.0}});
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LLL");
+}
+
+// 2 DoF: two successive reversals, both joints move. (0,0) -> (1,1) -> (0,0) -> (1,1).
+BOOST_DATA_TEST_CASE(two_dof_double_reversal_two_joints_in_the_morning, EXTREMAL_DATA(2), profile) {
+    trajectory_test_fixture fixture(2);
+    fixture
+        .allow_any_events()
+        // .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(0.1)
+        .set_waypoints_rad({{0.0, 0.0}, {1.0, 1.0}, {0.0, 0.0}, {1.0, 1.0}});
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LLL");
+}
+
+#undef EXTREMAL_DATA
+
+BOOST_AUTO_TEST_SUITE_END()  // extremal_path_tests
 
 BOOST_AUTO_TEST_SUITE_END()
