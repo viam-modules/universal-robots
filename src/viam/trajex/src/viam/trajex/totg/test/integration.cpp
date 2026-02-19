@@ -706,6 +706,11 @@ std::vector<trajectory::integration_observer::started_backward_event> get_backwa
     return events;
 }
 
+// Independent test oracle for Eq. 40 sign checks.
+// We intentionally estimate d/ds(s_dot_max_vel) by finite differences via public APIs
+// instead of calling internal production helpers directly. This keeps the test validating
+// behavior (sign transitions around switching points) rather than reusing the same
+// implementation path under test.
 double estimate_eq40_delta(const trajectory& traj, arc_length s) {
     auto cursor = traj.path().create_cursor();
 
