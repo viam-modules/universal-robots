@@ -1276,13 +1276,12 @@ BOOST_AUTO_TEST_CASE(gradual_velocity_curve_drop_bisection_accuracy) {
     fixture.create_and_validate();
 
     trajectory_integration_event_collector collector;
-    const trajectory observed_traj =
-        create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}},
-                                                  xt::xarray<double>{0.5, 0.08},
-                                                  xt::xarray<double>{10.0, 10.0},
-                                                  0.05,
-                                                  trajectory::seconds{0.001},
-                                                  collector);
+    const trajectory observed_traj = create_velocity_switching_test_trajectory(xt::xarray<double>{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}},
+                                                                               xt::xarray<double>{0.5, 0.08},
+                                                                               xt::xarray<double>{10.0, 10.0},
+                                                                               0.05,
+                                                                               trajectory::seconds{0.001},
+                                                                               collector);
 
     const auto velocity_escapes = get_backward_events_by_kind(collector, trajectory::switching_point_kind::k_velocity_escape);
     BOOST_REQUIRE_EQUAL(velocity_escapes.size(), 1U);
