@@ -190,10 +190,10 @@ struct switching_point {
     // TODO(RSDK-12759): This check can trigger even when limiting_joint was validly selected, because a joint
     // with |q'| slightly above epsilon (e.g., 1.1*epsilon) produces a denominator of |q'|^2 which
     // can be below epsilon (e.g., 1.21*epsilon^2 << epsilon for small epsilon). This represents a
-    // numerically singular case where the joint is barely moving along the path (q' ≈ 0) but happens
+    // numerically singular case where the joint is barely moving along the path (q' ~= 0) but happens
     // to be the limiting constraint. The derivative d/ds(1/|q'|) becomes huge and ill-defined.
     //
-    // Physical interpretation: When |q'| ≈ 0, the velocity limit s_dot_max = q_dot_max / |q'| is
+    // Physical interpretation: When |q'| ~= 0, the velocity limit s_dot_max = q_dot_max / |q'| is
     // enormous, meaning this joint isn't really constraining velocity in any meaningful sense. The
     // fact that it's the "limiting joint" may be an artifact rather than a real constraint.
     //
@@ -211,6 +211,38 @@ struct switching_point {
     }
 
     return phase_plane_slope{numerator / denominator};
+}
+
+struct eq40_result {
+    phase_plane_slope delta;
+    arc_velocity s_dot_max_vel;
+};
+
+// Try to evaluate Eq. 40 delta:
+//   Delta(s) = s_ddot_min(s, s_dot_max_vel(s)) / s_dot_max_vel(s) - d/ds s_dot_max_vel(s)
+// Returns std::nullopt when Eq. 40 is not evaluable at this geometry (degenerate
+// velocity limit, acceleration limit below velocity limit, singular derivative,
+// or infeasible acceleration bounds).
+[[nodiscard]] std::optional<eq40_result> try_compute_eq40_delta(const path::cursor& cursor, const trajectory::options& opt) {
+    const auto q_prime = cursor.tangent();
+    const auto q_double_prime = cursor.curvature();
+
+    const auto [s_dot_max_acc, s_dot_max_vel] =
+        compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+
+    if (s_dot_max_vel == arc_velocity{0.0}) {
+        return std::nullopt;
+    }
+
+    if (s_dot_max_acc < s_dot_max_vel) {
+        return std::nullopt;
+    }
+
+    const auto curve_slope = compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
+    const auto accel_bounds = compute_acceleration_bounds(q_prime, q_double_prime, s_dot_max_vel, opt.max_acceleration, opt.epsilon);
+
+    const auto trajectory_slope = accel_bounds.s_ddot_min / s_dot_max_vel;
+    return eq40_result{.delta = trajectory_slope - curve_slope, .s_dot_max_vel = s_dot_max_vel};
 }
 
 // Performs a single Euler integration step in phase plane (s, s_dot).
@@ -423,8 +455,8 @@ struct switching_point {
 
         // Apply Kunz & Stilman equation 38
         // A discontinuity of s_dot_max_acc(s) is a switching point if and only if:
-        // Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) ∧ (s_ddot_max(s-, s_dot_max_acc(s-))/s_dot_max_acc(s-)) >= d/ds
-        // s_dot_max_acc(s-)] Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) ∧ (s_ddot_max(s+, s_dot_max_acc(s+))/s_dot_max_acc(s+)) <=
+        // Case A: [s_dot_max_acc(s-) < s_dot_max_acc(s+) and (s_ddot_max(s-, s_dot_max_acc(s-))/s_dot_max_acc(s-)) >= d/ds
+        // s_dot_max_acc(s-)] Case B: [s_dot_max_acc(s-) > s_dot_max_acc(s+) and (s_ddot_max(s+, s_dot_max_acc(s+))/s_dot_max_acc(s+)) <=
         // d/ds s_dot_max_acc(s+)]
 
         bool is_switching_point = false;
@@ -525,42 +557,31 @@ struct switching_point {
     return (sp1.point.s < sp2.point.s) ? sp1 : sp2;
 }
 
-// Searches for a velocity switching point where escape from velocity curve becomes possible.
-// Implements both continuous (Kunz & Stilman equation 40, with `Correction 5`) and discontinuous
-// (Kunz & Stilman equations 41-42, with `Correction 6`) cases from Section VII-B.
-//
-// Returns the switching point on velocity curve. If no escape point found, returns end of path.
-// Takes path::cursor by value (cheap copy) to seed forward search from current position.
-[[gnu::pure]] switching_point find_velocity_switching_point(path::cursor cursor, const trajectory::options& opt) {
-    const auto path_length = cursor.path().length();
-
-    std::optional<switching_point> discontinuous_switching_point;
-    std::optional<switching_point> continuous_switching_point;
-
-    // Phase 1: Check for discontinuous switching points at segment boundaries (Kunz & Stilman equations 41-42).
-    // Section VII-B case 2: f''_i(s) being discontinuous is a necessary condition for
-    // s_ddot_min(s, s_dot_max_vel(s)) being discontinuous.
-    // We need to check ALL boundaries to find the earliest one, not return immediately.
+// Phase 1: Search segment boundaries for a discontinuous velocity-limit switching point
+// (Kunz & Stilman equations 41-42).
+std::optional<switching_point> find_discontinuous_velocity_switching_point(path::cursor cursor,
+                                                                           const trajectory::options& opt,
+                                                                           arc_length path_length) {
     auto boundary_cursor = cursor;
+    auto last_evaluated_boundary = arc_length{-std::numeric_limits<double>::infinity()};
     while (boundary_cursor.position() < path_length) {
         auto current_segment = *boundary_cursor;
         const auto boundary = current_segment.end();
 
-        // Make sure we are not at the end of the path
-        if (boundary >= path_length) {
+        // Guard: if the boundary hasn't advanced past the last one we evaluated,
+        // we're stuck on a zero-length segment. Break to avoid an infinite loop.
+        if (opt.epsilon.wrap(boundary) <= opt.epsilon.wrap(last_evaluated_boundary) ||
+            opt.epsilon.wrap(boundary) >= opt.epsilon.wrap(path_length)) {
             break;
         }
 
         // Only check boundaries ahead of our starting position
-        if (boundary <= cursor.position()) {
-            // This boundary is behind our search position, skip to next segment
-            if (boundary < cursor.path().length()) {
-                boundary_cursor.seek(boundary);  // Move to next segment
-                // The *boundary_cursor dereference will now give the next segment
-                continue;
-            }
-            break;  // We've reached the end
+        if (opt.epsilon.wrap(boundary) <= opt.epsilon.wrap(cursor.position())) {
+            boundary_cursor.seek(boundary);
+            continue;
         }
+
+        last_evaluated_boundary = boundary;
 
         // Sample geometry from segment ending at boundary
         const auto q_prime_before = current_segment.tangent(boundary);
@@ -581,222 +602,229 @@ struct switching_point {
         const auto [s_dot_max_accel_after, s_dot_max_vel_after] =
             compute_velocity_limits(q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-        // If velocity limit is degenerate (near zero) on either side, this is a switching point where we must come to rest
-        if (abs(s_dot_max_vel_before) < opt.epsilon || abs(s_dot_max_vel_after) < opt.epsilon) {
-            // Must stop at this boundary (or nearly so)
+        // If velocity limit is degenerate (near zero) on either side, this is a switching point where we must come to rest.
+        if (opt.epsilon.wrap(s_dot_max_vel_before) == opt.epsilon.wrap(arc_velocity{0.0}) ||
+            opt.epsilon.wrap(s_dot_max_vel_after) == opt.epsilon.wrap(arc_velocity{0.0})) {
             const auto switching_velocity = std::min(std::min(s_dot_max_vel_before, s_dot_max_vel_after), arc_velocity{0.0});
-            discontinuous_switching_point = switching_point{.point = {.s = boundary, .s_dot = switching_velocity},
-                                                            .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
-            break;  // This is the first (most constraining) discontinuous point
+            return switching_point{.point = {.s = boundary, .s_dot = switching_velocity},
+                                   .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
         }
 
-        // We can't call `compute_acceleration_bounds` unless this holds; this is a `Divergence 2`
-        // type check.
-        if (opt.epsilon.wrap(s_dot_max_accel_before) <= opt.epsilon.wrap(s_dot_max_vel_before)) {
+        // Divergence 2: We can't call compute_acceleration_bounds at s_dot_max_vel if it exceeds
+        // s_dot_max_accel, because the centripetal term would already exceed the acceleration budget
+        // at that velocity.
+        if (opt.epsilon.wrap(s_dot_max_accel_before) <= opt.epsilon.wrap(s_dot_max_vel_before) ||
+            opt.epsilon.wrap(s_dot_max_accel_after) <= opt.epsilon.wrap(s_dot_max_vel_after)) {
             continue;
         }
 
-        // We can't call `compute_acceleration_bounds` unless this holds; this is a `Divergence 2`
-        // type check.
-        if (opt.epsilon.wrap(s_dot_max_accel_after) <= opt.epsilon.wrap(s_dot_max_vel_after)) {
-            continue;
-        }
-
-        // TODO(RSDK-12847): Investigate the correctness of Kunz & Stilman equations 41 and 42; document any findings.
+        // Evaluate condition 41 (before-side only) first to avoid computing after-side
+        // derivatives and acceleration bounds when the before-side already disqualifies.
         const auto curve_slope_before =
             compute_velocity_limit_derivative(q_prime_before, q_double_prime_before, opt.max_velocity, opt.epsilon);
+        const auto accel_before =
+            compute_acceleration_bounds(q_prime_before, q_double_prime_before, s_dot_max_vel_before, opt.max_acceleration, opt.epsilon);
+        const auto trajectory_slope_before = accel_before.s_ddot_min / s_dot_max_vel_before;
+        const bool condition_41 = trajectory_slope_before >= curve_slope_before;
+        if (!condition_41) {
+            continue;
+        }
 
+        // Condition 41 passed -- now evaluate condition 42 (after-side).
         const auto curve_slope_after =
             compute_velocity_limit_derivative(q_prime_after, q_double_prime_after, opt.max_velocity, opt.epsilon);
-
-        // Compute minimum accelerations at velocity limits on both sides
-        const auto [s_ddot_min_before, s_ddot_max_before] =
-            compute_acceleration_bounds(q_prime_before, q_double_prime_before, s_dot_max_vel_before, opt.max_acceleration, opt.epsilon);
-
-        const auto [s_ddot_min_after, s_ddot_max_after] =
+        const auto accel_after =
             compute_acceleration_bounds(q_prime_after, q_double_prime_after, s_dot_max_vel_after, opt.max_acceleration, opt.epsilon);
-
-        // Check Kunz & Stilman equations 41 and 42:
-        // (s_ddot_min(s-, s_dot_max_vel(s-)) / s_dot >= d/ds s_dot_max_vel(s-))
-        // AND
-        // (s_ddot_min(s+, s_dot_max_vel(s+)) / s_dot <= d/ds s_dot_max_vel(s+))
-        //
-        // Per the above noted `Correction 6` the LHS of the equations needed a s_dot denominator
-        // since without it the units are m/s^2, while the RHS units are 1/s.
-        //
-        // The following two variables are the LHS values for equations 41 and 42.
-        const auto trajectory_slope_before = s_ddot_min_before / s_dot_max_vel_before;
-        const auto trajectory_slope_after = s_ddot_min_after / s_dot_max_vel_after;
-
-        const bool condition_41 = trajectory_slope_before >= curve_slope_before;
+        const auto trajectory_slope_after = accel_after.s_ddot_min / s_dot_max_vel_after;
         const bool condition_42 = trajectory_slope_after <= curve_slope_after;
 
-        if (condition_41 && condition_42) {
-            // Valid discontinuous switching point found
-            // Switching velocity is the minimum of velocity limits on both sides
-            // TODO(RSDK-12848): Investigate the correctness of taking the minimum of these two switching points.
-            const auto s_dot_max_vel_switching_min = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
-            const auto s_dot_max_accel_switching_min = std::min(s_dot_max_accel_before, s_dot_max_accel_after);
+        if (!condition_42) {
+            continue;
+        }
 
-            // Only accept the velocity switching point if it is feasible with respect to the acceleration
-            // limit curve.
-            if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
-                // Record first discontinuous switching point, but don't return yet - need to check continuous cases too
-                discontinuous_switching_point = switching_point{.point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
-                                                                .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
-                break;  // First discontinuous point found, can stop searching for more discontinuous points
-            }
+        // Valid discontinuous switching point found.
+        // Switching velocity is the minimum of velocity limits on both sides.
+        const auto s_dot_max_vel_switching_min = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
+        const auto s_dot_max_accel_switching_min = std::min(s_dot_max_accel_before, s_dot_max_accel_after);
+
+        // Only accept the velocity switching point if it is feasible with respect to the acceleration
+        // limit curve.
+        if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
+            return switching_point{.point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
+                                   .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
         }
     }
 
-    // TODO(RSDK-12980): The following multi-phase search isn't quite correct, because if we find a velocity
-    // switching point but reject it as infeasible (e.g. the acceleration limit curve dominates there), we
-    // don't keep looking.
+    return std::nullopt;
+}
 
-    // Phase 2: Coarse forward search for continuous escape condition (Kunz & Stilman equation 40).
-    // Walk along the velocity limit curve until we find a point where s_ddot_min/s_dot <= curve_slope,
-    // indicating the trajectory can drop below the curve and resume normal acceleration.
-    // If we already found a discontinuous switching point, we can bound the search to stop there.
-    std::optional<arc_length> escape_region_start;
-    auto previous_position = cursor.position();
-    const auto search_limit = discontinuous_switching_point.has_value() ? discontinuous_switching_point->point.s : path_length;
+struct eq40_escape_bracket {
+    arc_length before;
+    arc_length after;
+    phase_plane_slope after_delta;
+    arc_velocity after_s_dot_max_vel;
+};
 
-    auto search_cursor = cursor;  // this creates a copy of cursor but preserves the pattern above of having a `boundary_cursor`
+// Phase 2: Coarse forward scan for an Eq. 40 sign bracket:
+// previous/current Delta values on opposite sides of zero.
+std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor search_cursor,
+                                                            arc_length search_position,
+                                                            arc_length search_limit,
+                                                            const trajectory::options& opt) {
+    constexpr phase_plane_slope k_zero_delta{0.0};
+    auto previous_position = search_position;
+    bool has_previous_delta = false;
+    phase_plane_slope previous_delta{0.0};
+    search_cursor.seek(search_position);
+    auto previous_segment_end = (*search_cursor).end();
+
     while (search_cursor.position() < search_limit) {
+        const auto current_position = search_cursor.position();
+        const auto result = try_compute_eq40_delta(search_cursor, opt);
+
+        // If we crossed a segment boundary, reset the baseline. A delta sign change
+        // across a boundary is a geometric discontinuity, not a continuous Eq. 40 escape.
+        const auto current_segment_end = (*search_cursor).end();
+        if (current_segment_end != previous_segment_end) {
+            has_previous_delta = false;
+            previous_segment_end = current_segment_end;
+        }
+
+        if (result.has_value()) {
+            if (has_previous_delta) {
+                const bool previous_positive = previous_delta > k_zero_delta;
+                const bool current_nonpositive = result->delta <= k_zero_delta;
+                if (previous_positive && current_nonpositive) {
+                    return eq40_escape_bracket{.before = previous_position,
+                                               .after = current_position,
+                                               .after_delta = result->delta,
+                                               .after_s_dot_max_vel = result->s_dot_max_vel};
+                }
+            }
+
+            // When has_previous_delta is false (first evaluable point or after a non-evaluable gap),
+            // we only record the value as a baseline. A non-positive Delta here means escape is already
+            // possible, but the algorithm requires a sign *transition* (Delta > 0 -> Delta <= 0) to identify
+            // the switching point where the trajectory first becomes able to leave the velocity curve.
+            previous_delta = result->delta;
+            has_previous_delta = true;
+        } else {
+            has_previous_delta = false;
+        }
+
+        previous_position = current_position;
+
         // Advance cursor by step size.
         //
-        // NOTE: The use of `opt.delta` here is definitely cheating:
-        // it is a duration, not a distance, hence the need to convert
-        // to arc_length. However, we haven't found a better way to
-        // identify what the right space delta is. Since `opt.delta`
-        // is at least configurable, this doesn't seem to unreasonable
-        // as a starting point.
-        const auto next_position = search_cursor.position() + arc_length{opt.delta.count()};
-        if (next_position > search_limit) {
-            break;  // Exceeded search limit without finding escape
+        // NOTE: The use of `opt.delta` here is definitely cheating: it is a duration,
+        // not a distance. However, `opt.delta` is configurable and works as a practical
+        // starting point for now.
+        const auto next_position = std::min(current_position + arc_length{opt.delta.count()}, search_limit);
+        if (next_position == current_position) {
+            break;
         }
         search_cursor.seek(next_position);
+    }
 
-        // Query geometry at current position
-        const auto q_prime = search_cursor.tangent();
-        const auto q_double_prime = search_cursor.curvature();
+    return std::nullopt;
+}
 
-        // Compute velocity limit and its derivative at this position
-        const auto [s_dot_max_acc, s_dot_max_vel] =
-            compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+// Phase 3: Refine the coarse Eq. 40 bracket via bisection and accept only if
+// delta converges to zero (within epsilon).
+std::optional<switching_point> refine_continuous_velocity_switching_point(path::cursor search_cursor,
+                                                                          const eq40_escape_bracket& bracket,
+                                                                          const trajectory::options& opt) {
+    constexpr phase_plane_slope k_zero_delta{0.0};
 
-        // Velocity limit must be positive to evaluate escape condition
-        if (s_dot_max_vel < opt.epsilon) {
-            previous_position = search_cursor.position();
-            continue;  // Skip positions with degenerate velocity limits
+    // If the coarse step already landed on the root, no bisection needed.
+    if (opt.epsilon.wrap(bracket.after_delta) == opt.epsilon.wrap(k_zero_delta)) {
+        return switching_point{.point = {.s = bracket.after, .s_dot = bracket.after_s_dot_max_vel},
+                               .kind = trajectory::switching_point_kind::k_velocity_escape};
+    }
+
+    // TODO(RSDK-12767): Eliminate this hardcoded constant.
+    constexpr int max_bisection_iterations = 100;
+    auto positive_side = bracket.before;
+    auto nonpositive_side = bracket.after;
+    auto best_s_dot_max_vel = bracket.after_s_dot_max_vel;
+
+    for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
+        // Positions converged -- the sign change is localized within epsilon.
+        if (opt.epsilon.wrap(positive_side) == opt.epsilon.wrap(nonpositive_side)) {
+            return switching_point{.point = {.s = nonpositive_side, .s_dot = best_s_dot_max_vel},
+                                   .kind = trajectory::switching_point_kind::k_velocity_escape};
         }
 
-        // We can't call `compute_acceleration_bounds` unless this holds. Effectively, this is an
-        // instance of `Divergence 2` type behavior.
-        if (opt.epsilon.wrap(s_dot_max_acc) < opt.epsilon.wrap(s_dot_max_vel)) {
-            previous_position = search_cursor.position();
+        const auto mid = midpoint(positive_side, nonpositive_side);
+        search_cursor.seek(mid);
+        const auto mid_result = try_compute_eq40_delta(search_cursor, opt);
+        if (!mid_result.has_value()) {
+            // Midpoint is non-evaluable (degenerate/singular). Contract from the
+            // positive side to preserve the known Delta <= 0 endpoint and approach the root from
+            // the trapped (Delta > 0) direction.
+            positive_side = mid;
             continue;
         }
 
-        const auto curve_slope = compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
+        // Found the root -- return immediately.
+        if (mid_result->delta == k_zero_delta) {
+            return switching_point{.point = {.s = mid, .s_dot = mid_result->s_dot_max_vel},
+                                   .kind = trajectory::switching_point_kind::k_velocity_escape};
+        }
 
-        // Compute minimum acceleration at velocity limit (equation 40 condition)
-        const auto [s_ddot_min, s_ddot_max] =
-            compute_acceleration_bounds(q_prime, q_double_prime, s_dot_max_vel, opt.max_acceleration, opt.epsilon);
+        if (mid_result->delta < k_zero_delta) {
+            nonpositive_side = mid;
+            best_s_dot_max_vel = mid_result->s_dot_max_vel;
+        } else {
+            positive_side = mid;
+        }
+    }
 
-        // Escape condition: trajectory slope (s_ddot_min / s_dot) equal to curve slope.
-        // This means applying minimum acceleration would cause trajectory to drop below velocity limit.
-        const auto trajectory_slope = s_ddot_min / s_dot_max_vel;
+    // 100 iterations on a verified sign-change bracket yields 2^-100 precision
+    // this path is effectively unreachable but kept as a defensive safety net.
+    return std::nullopt;
+}
 
-        if (opt.epsilon.wrap(trajectory_slope) == opt.epsilon.wrap(curve_slope)) {
-            // Found escape region - record where we first detected it
-            escape_region_start = search_cursor.position();
+// Phase 2+3: Coarse Eq. 40 bracket search + bisection refinement.
+// Searches for the first valid continuous velocity-escape switching point in [cursor.position(), search_limit).
+std::optional<switching_point> find_continuous_velocity_switching_point(path::cursor cursor,
+                                                                        arc_length search_limit,
+                                                                        const trajectory::options& opt) {
+    auto search_position = cursor.position();
+    while (search_position < search_limit) {
+        const auto coarse_bracket = find_eq40_escape_bracket(cursor, search_position, search_limit, opt);
+        if (!coarse_bracket.has_value()) {
             break;
         }
 
-        // Update previous position for next iteration
-        previous_position = search_cursor.position();
-    }
-
-    // Phase 3: Bisection refinement to find exact continuous switching point (if escape region found).
-    if (escape_region_start) {
-        // We know escape is possible somewhere in the last step [previous_position, escape_region_start].
-        // Bisect over this interval to find the exact location where the escape condition becomes true.
-        auto before = previous_position;
-        auto after = *escape_region_start;
-
-        // TODO(RSDK-12767): Eleminiate this hardcoded constant.
-        constexpr int max_bisection_iterations = 100;
-        for (int iteration = 0; iteration < max_bisection_iterations; ++iteration) {
-            // Check convergence
-            if (opt.epsilon.wrap(before) == opt.epsilon.wrap(after)) {
-                break;
-            }
-
-            // Evaluate midpoint
-            const auto mid = before + ((after - before) / 2.0);
-            search_cursor.seek(mid);
-
-            const auto q_prime = search_cursor.tangent();
-            const auto q_double_prime = search_cursor.curvature();
-
-            const auto [s_dot_max_acc, s_dot_max_vel] =
-                compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
-
-            if (s_dot_max_vel < opt.epsilon) {
-                // Degenerate case - skip to after
-                before = mid;
-                continue;
-            }
-
-            // This is an instance of `Divergence 2` type behavior, where we are eliminating
-            // switching points that impossible w.r.t. the other curve.
-            //
-            // TODO(RSDK-12980): This also seems not quite right. How do we know which side of the bisection
-            // to pursue when the limit curves can swap around like this.
-            if (opt.epsilon.wrap(s_dot_max_acc) < opt.epsilon.wrap(s_dot_max_vel)) {
-                before = mid;
-                continue;
-            }
-
-            const auto curve_slope = compute_velocity_limit_derivative(q_prime, q_double_prime, opt.max_velocity, opt.epsilon);
-
-            const auto [s_ddot_min, s_ddot_max] =
-                compute_acceleration_bounds(q_prime, q_double_prime, s_dot_max_vel, opt.max_acceleration, opt.epsilon);
-
-            const auto trajectory_slope = s_ddot_min / s_dot_max_vel;
-
-            if (opt.epsilon.wrap(trajectory_slope) == opt.epsilon.wrap(curve_slope)) {
-                // Midpoint satisfies escape condition - narrow to [before, mid]
-                after = mid;
-            } else {
-                // Midpoint doesn't satisfy escape - narrow to [mid, after]
-                before = mid;
-            }
+        const auto refined = refine_continuous_velocity_switching_point(cursor, *coarse_bracket, opt);
+        if (refined.has_value()) {
+            return refined;
         }
 
-        // Store the refined continuous switching point
-        search_cursor.seek(after);
-        const auto q_prime = search_cursor.tangent();
-        const auto q_double_prime = search_cursor.curvature();
-        const auto [s_dot_max_acc, s_dot_max_vel] =
-            compute_velocity_limits(q_prime, q_double_prime, opt.max_velocity, opt.max_acceleration, opt.epsilon);
-
-        // `Reject switching points where s_dot_max_vel > s_dot_max_acc.
-        //
-        // If the velocity switching point has s_dot > s_dot_max_acc, backward integration will immediately
-        // hit the acceleration limit curve, causing the algorithm to fail. We should continue searching
-        // forward until finding a switching point where s_dot_max_vel <= s_dot_max_acc + epsilon.
-        if (opt.epsilon.wrap(s_dot_max_vel) <= opt.epsilon.wrap(s_dot_max_acc)) {
-            continuous_switching_point =
-                switching_point{.point = {.s = after, .s_dot = s_dot_max_vel}, .kind = trajectory::switching_point_kind::k_velocity_escape};
-        }
+        search_position = coarse_bracket->after;
     }
 
-    // Phase 4: Return whichever switching point comes first.
-    // If both exist, return the one with smaller s (earlier along the path).
-    // If only one exists, return that one.
-    // If neither exists, return end of path.
+    return std::nullopt;
+}
+
+// Searches for a velocity switching point where escape from velocity curve becomes possible.
+// Implements both continuous (Kunz & Stilman equation 40, with `Correction 5`) and discontinuous
+// (Kunz & Stilman equations 41-42, with `Correction 6`) cases from Section VII-B.
+//
+// Returns the switching point on velocity curve. If no escape point found, returns end of path.
+// Takes path::cursor by value (cheap copy) to seed forward search from current position.
+[[gnu::pure]] switching_point find_velocity_switching_point(path::cursor cursor, const trajectory::options& opt) {
+    const auto path_length = cursor.path().length();
+
+    // Phase 1: boundary discontinuity search.
+    const auto discontinuous_switching_point = find_discontinuous_velocity_switching_point(cursor, opt, path_length);
+
+    // Phase 2+3: continuous escape search, bounded by the discontinuous result if one was found.
+    const auto search_limit = discontinuous_switching_point.has_value() ? discontinuous_switching_point->point.s : path_length;
+    const auto continuous_switching_point = find_continuous_velocity_switching_point(cursor, search_limit, opt);
+
+    // Phase 4: return whichever switching point comes first.
     if (discontinuous_switching_point && continuous_switching_point) {
         return select_switching_point(*discontinuous_switching_point, *continuous_switching_point, opt.epsilon);
     }
@@ -921,7 +949,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
     if (points.empty()) {
         // Production path: run the TOTG algorithm to compute time-optimal parameterization.
-        // Algorithm from Kunz & Stilman Section VI: phase plane (s, ṡ) integration.
+        // Algorithm from Kunz & Stilman Section VI: phase plane (s, s_dot) integration.
 
         // Construct trajectory object early so we can pass it to observers during integration
         // Constructor initializes trajectory with initial point at rest (0, 0)
