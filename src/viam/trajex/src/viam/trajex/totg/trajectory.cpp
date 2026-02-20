@@ -611,8 +611,9 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
                                    .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
         }
 
-        // We can't call compute_acceleration_bounds at s_dot_max_vel if it exceeds s_dot_max_accel,
-        // because the centripetal term would already exceed the acceleration budget at that velocity.
+        // Divergence 2: We can't call compute_acceleration_bounds at s_dot_max_vel if it exceeds
+        // s_dot_max_accel, because the centripetal term would already exceed the acceleration budget
+        // at that velocity.
         if (opt.epsilon.wrap(s_dot_max_accel_before) <= opt.epsilon.wrap(s_dot_max_vel_before) ||
             opt.epsilon.wrap(s_dot_max_accel_after) <= opt.epsilon.wrap(s_dot_max_vel_after)) {
             continue;
@@ -638,19 +639,20 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         const auto trajectory_slope_after = accel_after.s_ddot_min / s_dot_max_vel_after;
         const bool condition_42 = trajectory_slope_after <= curve_slope_after;
 
-        if (condition_42) {
-            // Valid discontinuous switching point found.
-            // Switching velocity is the minimum of velocity limits on both sides.
-            // TODO(RSDK-12848): Investigate the correctness of taking the minimum of these two switching points.
-            const auto s_dot_max_vel_switching_min = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
-            const auto s_dot_max_accel_switching_min = std::min(s_dot_max_accel_before, s_dot_max_accel_after);
+        if (!condition_42) {
+            continue;
+        }
 
-            // Only accept the velocity switching point if it is feasible with respect to the acceleration
-            // limit curve.
-            if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
-                return switching_point{.point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
-                                       .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
-            }
+        // Valid discontinuous switching point found.
+        // Switching velocity is the minimum of velocity limits on both sides.
+        const auto s_dot_max_vel_switching_min = std::min(s_dot_max_vel_before, s_dot_max_vel_after);
+        const auto s_dot_max_accel_switching_min = std::min(s_dot_max_accel_before, s_dot_max_accel_after);
+
+        // Only accept the velocity switching point if it is feasible with respect to the acceleration
+        // limit curve.
+        if (opt.epsilon.wrap(s_dot_max_accel_switching_min) >= opt.epsilon.wrap(s_dot_max_vel_switching_min)) {
+            return switching_point{.point = {.s = boundary, .s_dot = s_dot_max_vel_switching_min},
+                                   .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
         }
     }
 
@@ -666,14 +668,13 @@ struct eq40_escape_bracket {
 
 // Phase 2: Coarse forward scan for an Eq. 40 sign bracket:
 // previous/current Delta values on opposite sides of zero.
-std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search_cursor,
+std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor search_cursor,
                                                             arc_length search_position,
                                                             arc_length search_limit,
                                                             const trajectory::options& opt) {
     constexpr phase_plane_slope k_zero_delta{0.0};
     auto previous_position = search_position;
-    bool has_previous_delta = false;
-    phase_plane_slope previous_delta{0.0};
+    std::optional<phase_plane_slope> previous_delta;
     search_cursor.seek(search_position);
     auto previous_segment_end = (*search_cursor).end();
 
@@ -685,14 +686,14 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
         // across a boundary is a geometric discontinuity, not a continuous Eq. 40 escape.
         const auto current_segment_end = (*search_cursor).end();
         if (current_segment_end != previous_segment_end) {
-            has_previous_delta = false;
+            previous_delta.reset();
             previous_segment_end = current_segment_end;
         }
 
         if (result.has_value()) {
-            if (has_previous_delta) {
-                const bool previous_positive = opt.epsilon.wrap(previous_delta) > opt.epsilon.wrap(k_zero_delta);
-                const bool current_nonpositive = opt.epsilon.wrap(result->delta) <= opt.epsilon.wrap(k_zero_delta);
+            if (previous_delta.has_value()) {
+                const bool previous_positive = *previous_delta > k_zero_delta;
+                const bool current_nonpositive = result->delta <= k_zero_delta;
                 if (previous_positive && current_nonpositive) {
                     return eq40_escape_bracket{.before = previous_position,
                                                .after = current_position,
@@ -700,14 +701,14 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
                                                .after_s_dot_max_vel = result->s_dot_max_vel};
                 }
             }
+
             // When has_previous_delta is false (first evaluable point or after a non-evaluable gap),
             // we only record the value as a baseline. A non-positive Delta here means escape is already
             // possible, but the algorithm requires a sign *transition* (Delta > 0 -> Delta <= 0) to identify
             // the switching point where the trajectory first becomes able to leave the velocity curve.
             previous_delta = result->delta;
-            has_previous_delta = true;
         } else {
-            has_previous_delta = false;
+            previous_delta.reset();
         }
 
         previous_position = current_position;
@@ -718,7 +719,7 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
         // not a distance. However, `opt.delta` is configurable and works as a practical
         // starting point for now.
         const auto next_position = std::min(current_position + arc_length{opt.delta.count()}, search_limit);
-        if (opt.epsilon.wrap(next_position) == opt.epsilon.wrap(current_position)) {
+        if (next_position == current_position) {
             break;
         }
         search_cursor.seek(next_position);
@@ -729,7 +730,7 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor& search
 
 // Phase 3: Refine the coarse Eq. 40 bracket via bisection and accept only if
 // delta converges to zero (within epsilon).
-std::optional<switching_point> refine_continuous_velocity_switching_point(path::cursor& search_cursor,
+std::optional<switching_point> refine_continuous_velocity_switching_point(path::cursor search_cursor,
                                                                           const eq40_escape_bracket& bracket,
                                                                           const trajectory::options& opt) {
     constexpr phase_plane_slope k_zero_delta{0.0};
@@ -753,7 +754,7 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
                                    .kind = trajectory::switching_point_kind::k_velocity_escape};
         }
 
-        const auto mid = positive_side + ((nonpositive_side - positive_side) / 2.0);
+        const auto mid = midpoint(positive_side, nonpositive_side);
         const auto mid_result = try_compute_eq40_delta(search_cursor, mid, opt);
         if (!mid_result.has_value()) {
             // Midpoint is non-evaluable (degenerate/singular). Contract from the
@@ -764,12 +765,12 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         }
 
         // Found the root -- return immediately.
-        if (opt.epsilon.wrap(mid_result->delta) == opt.epsilon.wrap(k_zero_delta)) {
+        if (mid_result->delta == k_zero_delta) {
             return switching_point{.point = {.s = mid, .s_dot = mid_result->s_dot_max_vel},
                                    .kind = trajectory::switching_point_kind::k_velocity_escape};
         }
 
-        if (opt.epsilon.wrap(mid_result->delta) < opt.epsilon.wrap(k_zero_delta)) {
+        if (mid_result->delta < k_zero_delta) {
             nonpositive_side = mid;
             best_s_dot_max_vel = mid_result->s_dot_max_vel;
         } else {
@@ -788,7 +789,7 @@ std::optional<switching_point> find_continuous_velocity_switching_point(path::cu
                                                                         arc_length search_limit,
                                                                         const trajectory::options& opt) {
     auto search_position = cursor.position();
-    while (opt.epsilon.wrap(search_position) < opt.epsilon.wrap(search_limit)) {
+    while (search_position < search_limit) {
         const auto coarse_bracket = find_eq40_escape_bracket(cursor, search_position, search_limit, opt);
         if (!coarse_bracket.has_value()) {
             break;
