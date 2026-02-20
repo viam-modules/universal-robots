@@ -223,8 +223,7 @@ struct eq40_result {
 // Returns std::nullopt when Eq. 40 is not evaluable at this geometry (degenerate
 // velocity limit, acceleration limit below velocity limit, singular derivative,
 // or infeasible acceleration bounds).
-[[nodiscard]] std::optional<eq40_result> try_compute_eq40_delta(path::cursor& cursor, arc_length s, const trajectory::options& opt) {
-    cursor.seek(s);
+[[nodiscard]] std::optional<eq40_result> try_compute_eq40_delta(const path::cursor& cursor, const trajectory::options& opt) {
     const auto q_prime = cursor.tangent();
     const auto q_double_prime = cursor.curvature();
 
@@ -674,25 +673,26 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor search_
                                                             const trajectory::options& opt) {
     constexpr phase_plane_slope k_zero_delta{0.0};
     auto previous_position = search_position;
-    std::optional<phase_plane_slope> previous_delta;
+    bool has_previous_delta = false;
+    phase_plane_slope previous_delta{0.0};
     search_cursor.seek(search_position);
     auto previous_segment_end = (*search_cursor).end();
 
     while (search_cursor.position() < search_limit) {
         const auto current_position = search_cursor.position();
-        const auto result = try_compute_eq40_delta(search_cursor, current_position, opt);
+        const auto result = try_compute_eq40_delta(search_cursor, opt);
 
         // If we crossed a segment boundary, reset the baseline. A delta sign change
         // across a boundary is a geometric discontinuity, not a continuous Eq. 40 escape.
         const auto current_segment_end = (*search_cursor).end();
         if (current_segment_end != previous_segment_end) {
-            previous_delta.reset();
+            has_previous_delta = false;
             previous_segment_end = current_segment_end;
         }
 
         if (result.has_value()) {
-            if (previous_delta.has_value()) {
-                const bool previous_positive = *previous_delta > k_zero_delta;
+            if (has_previous_delta) {
+                const bool previous_positive = previous_delta > k_zero_delta;
                 const bool current_nonpositive = result->delta <= k_zero_delta;
                 if (previous_positive && current_nonpositive) {
                     return eq40_escape_bracket{.before = previous_position,
@@ -707,8 +707,9 @@ std::optional<eq40_escape_bracket> find_eq40_escape_bracket(path::cursor search_
             // possible, but the algorithm requires a sign *transition* (Delta > 0 -> Delta <= 0) to identify
             // the switching point where the trajectory first becomes able to leave the velocity curve.
             previous_delta = result->delta;
+            has_previous_delta = true;
         } else {
-            previous_delta.reset();
+            has_previous_delta = false;
         }
 
         previous_position = current_position;
@@ -755,7 +756,8 @@ std::optional<switching_point> refine_continuous_velocity_switching_point(path::
         }
 
         const auto mid = midpoint(positive_side, nonpositive_side);
-        const auto mid_result = try_compute_eq40_delta(search_cursor, mid, opt);
+        search_cursor.seek(mid);
+        const auto mid_result = try_compute_eq40_delta(search_cursor, opt);
         if (!mid_result.has_value()) {
             // Midpoint is non-evaluable (degenerate/singular). Contract from the
             // positive side to preserve the known Delta <= 0 endpoint and approach the root from
