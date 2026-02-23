@@ -1562,9 +1562,7 @@ BOOST_AUTO_TEST_SUITE_END()  // extremal_path_tests
 // known to fail with the new TOTG on the original hardware profile (100 deg/s / 100 deg/s^2)
 // while the legacy generator succeeds. Additional profiles are included to explore which
 // constraint regimes trigger the failure.
-BOOST_DATA_TEST_CASE(spiral_rectangle_6dof,
-                     boost::unit_test::data::make(get_spiral_rectangle_constraint_profiles()),
-                     profile) {
+BOOST_DATA_TEST_CASE(spiral_rectangle_6dof, boost::unit_test::data::make(get_spiral_rectangle_constraint_profiles()), profile) {
     using namespace viam::trajex::totg;
     trajectory_test_fixture f(6);
 
