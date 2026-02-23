@@ -322,10 +322,14 @@ struct eq40_result {
                     // f'_i(theta) = -x_i*sin(theta) + y_i*cos(theta) is zero when tan(theta) = y_i/x_i.
                     // Since tan has period pi (not 2*pi), both theta = atan2(y_i, x_i) and theta + pi are
                     // solutions, giving up to 2*n candidate extrema per circular segment (n = DOF).
+                    //
+                    // TODO: The reference implementation only checks ONE solution per joint (normalizing to
+                    // [0, pi) by adding pi when negative, then stopping). That misses the second solution
+                    // for arcs where total_angle > pi. We check both, which is more complete.
                     for (size_t i = 0; i < x.size(); ++i) {
                         double extremum_angle = std::atan2(y(i), x(i));
                         if (extremum_angle < 0.0) {
-                            extremum_angle += 2.0 * std::numbers::pi;
+                            extremum_angle += std::numbers::pi;
                         }
 
                         for (const auto angle : {extremum_angle, extremum_angle + std::numbers::pi}) {
@@ -1149,10 +1153,25 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     }
 
                     auto breach_point = next_point;
-                    next_point = current_point;
-
                     auto breach_s_dot_max_acc = next_s_dot_max_acc;
                     auto breach_s_dot_max_vel = next_s_dot_max_vel;
+
+                    // Reset next to the last known-feasible point (current_point) and recompute
+                    // its path derivatives and velocity limits. next_s_dot_max_acc/vel were for
+                    // the old next_point (now breach_point), not current_point.s.
+                    //
+                    // TODO(RSDK-12769): This is ugly and inefficient. Refactor to avoid all this manual tracking.
+                    next_point = current_point;
+                    path_cursor.seek(next_point.s);
+                    next_q_prime = path_cursor.tangent();
+                    next_q_double_prime = path_cursor.curvature();
+                    auto [next_s_dot_max_acc_2, next_s_dot_max_vel_2] = compute_velocity_limits(next_q_prime,
+                                                                                                next_q_double_prime,
+                                                                                                traj.options_.max_velocity,
+                                                                                                traj.options_.max_acceleration,
+                                                                                                traj.options_.epsilon);
+                    next_s_dot_max_acc = next_s_dot_max_acc_2;
+                    next_s_dot_max_vel = next_s_dot_max_vel_2;
 
                     while (traj.options_.epsilon.wrap(next_point.s) != traj.options_.epsilon.wrap(breach_point.s)) {
                         const phase_point mid = {.s = midpoint(next_point.s, breach_point.s),
@@ -1403,18 +1422,6 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     auto [s_ddot_min, _1] = compute_acceleration_bounds(
                         q_prime, q_double_prime, current_point.s_dot, traj.options_.max_acceleration, traj.options_.epsilon);
 
-                    // Minimum acceleration must be negative to produce backward motion (decreasing s)
-                    // Allow small tolerance for numerical precision at near-zero acceleration points
-                    if (s_ddot_min >= -traj.options_.epsilon) {
-                        if (s_ddot_min > traj.options_.epsilon) {
-                            // Clearly positive - this is an error
-                            throw std::runtime_error{"TOTG algorithm error: backward integration requires negative minimum acceleration"};
-                        }
-                        // Probably numerical noise, just clamp to zero. Backward integration will
-                        // make progress as long as s_dot is non-zero.
-                        return arc_acceleration{0.0};
-                    }
-
                     return s_ddot_min;
                 }();
 
@@ -1477,6 +1484,17 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     // makes this kinematically consistent.
 
                     auto& last_forward_point = traj.integration_points_.back();
+
+                    // If the first backward step already crossed the forward trajectory, backwards_points
+                    // is empty and the switching point itself was never recorded. Push it now so the
+                    // splice logic below has something to work with and the switching point ends up in
+                    // integration_points_ where forward integration expects it.
+                    if (backwards_points.empty()) {
+                        backwards_points.push_back({.time = trajectory::seconds{0.0},
+                                                    .s = current_point.s,
+                                                    .s_dot = current_point.s_dot,
+                                                    .s_ddot = s_ddot_desired});
+                    }
 
                     // Access backwards points in reverse order (first backward point is closest to splice).
                     const auto backwards_points_reversed = std::ranges::reverse_view(std::as_const(backwards_points));

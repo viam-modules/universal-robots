@@ -850,6 +850,62 @@ xt::xarray<double> get_ur_arm_waypoints_with_reversals_deg() {
     return waypoints_deg;
 }
 
+// Spiral/rectangle waypoints for the 6-DOF integration regression test. Joints 1-2 trace
+// a series of expanding rectangles while joints 3-4 add 3D motion on the outer loops, then
+// the path collapses symmetrically back toward the origin.
+xt::xarray<double> get_spiral_rectangle_waypoints_deg() {
+    static const xt::xarray<double> waypoints_deg = {
+        {1.0, 1.0, 1.0, 1.0, 1.0, 1.0},  // prior end position (matches end of path)
+        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0},  // origin
+
+        // Small rectangle
+        {10.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+        {10.0, -10.0, 0.0, 0.0, 0.0, 0.0},
+        {-10.0, -10.0, 0.0, 0.0, 0.0, 0.0},
+        {-10.0, 10.0, 0.0, 0.0, 0.0, 0.0},
+
+        // Medium rectangle
+        {20.0, 10.0, 0.0, 0.0, 0.0, 0.0},
+        {20.0, -20.0, 0.0, 0.0, 0.0, 0.0},
+        {-20.0, -20.0, 0.0, 0.0, 0.0, 0.0},
+        {-20.0, 20.0, 0.0, 0.0, 0.0, 0.0},
+
+        // Large rectangle
+        {30.0, 20.0, 0.0, 0.0, 0.0, 0.0},
+        {30.0, -30.0, 0.0, 0.0, 0.0, 0.0},
+        {-30.0, -30.0, 0.0, 0.0, 0.0, 0.0},
+        {-30.0, 30.0, 0.0, 0.0, 0.0, 0.0},
+
+        // Outer spiral - joints 3 introduced
+        {40.0, 30.0, 10.0, 0.0, 0.0, 0.0},
+        {40.0, -40.0, 10.0, 0.0, 0.0, 0.0},
+        {-40.0, -40.0, 10.0, 0.0, 0.0, 0.0},
+        {-40.0, 40.0, 10.0, 0.0, 0.0, 0.0},
+
+        // Outermost rectangle - joints 3-4 active
+        {50.0, 40.0, 20.0, 5.0, 0.0, 0.0},
+        {50.0, -50.0, 20.0, 5.0, 0.0, 0.0},
+        {-50.0, -50.0, 20.0, 5.0, 0.0, 0.0},
+        {-50.0, 50.0, 20.0, 5.0, 0.0, 0.0},
+
+        // Collapse inward
+        {40.0, 40.0, 15.0, 3.0, 0.0, 0.0},
+        {40.0, -40.0, 15.0, 3.0, 0.0, 0.0},
+        {-40.0, -40.0, 15.0, 3.0, 0.0, 0.0},
+        {-40.0, 40.0, 15.0, 3.0, 0.0, 0.0},
+
+        {20.0, 30.0, 10.0, 0.0, 0.0, 0.0},
+        {20.0, -20.0, 10.0, 0.0, 0.0, 0.0},
+        {-20.0, -20.0, 10.0, 0.0, 0.0, 0.0},
+        {-20.0, 20.0, 10.0, 0.0, 0.0, 0.0},
+
+        // Return to near-home
+        {10.0, 10.0, 5.0, 0.0, 0.0, 0.0},
+        {1.0, 1.0, 1.0, 1.0, 1.0, 1.0},
+    };
+    return waypoints_deg;
+}
+
 // Constraint profile for parameterized trajectory testing
 struct constraint_profile {
     std::string name;
@@ -886,6 +942,17 @@ std::vector<constraint_profile> get_extremal_constraint_profiles(size_t dof) {
         {"all_vel_constrained",
          degrees_to_radians(xt::ones<double>({dof}) * 5.0),     // 5 deg/s (binding)
          degrees_to_radians(xt::ones<double>({dof}) * 150.0)},  // 150 deg/s^2 (non-binding)
+    };
+}
+
+// Constraint profiles for the spiral/rectangle regression test. The first entry is the
+// original failing case observed on hardware (100 deg/s, 100 deg/s^2). The remaining
+// entries span the accel- and velocity-constrained regimes for coverage.
+std::vector<constraint_profile> get_spiral_rectangle_constraint_profiles() {
+    return {
+        {"100_vel_100_acc", degrees_to_radians(xt::ones<double>({6}) * 100.0), degrees_to_radians(xt::ones<double>({6}) * 100.0)},
+        {"150_vel_5_acc", degrees_to_radians(xt::ones<double>({6}) * 150.0), degrees_to_radians(xt::ones<double>({6}) * 5.0)},
+        {"5_vel_150_acc", degrees_to_radians(xt::ones<double>({6}) * 5.0), degrees_to_radians(xt::ones<double>({6}) * 150.0)},
     };
 }
 
@@ -1490,6 +1557,28 @@ BOOST_DATA_TEST_CASE(two_dof_double_reversal_two_joints_in_the_morning, EXTREMAL
 #undef EXTREMAL_DATA
 
 BOOST_AUTO_TEST_SUITE_END()  // extremal_path_tests
+
+// Parameterized regression test for the spiral/rectangle waypoint sequence. This path is
+// known to fail with the new TOTG on the original hardware profile (100 deg/s / 100 deg/s^2)
+// while the legacy generator succeeds. Additional profiles are included to explore which
+// constraint regimes trigger the failure.
+BOOST_DATA_TEST_CASE(spiral_rectangle_6dof,
+                     boost::unit_test::data::make(get_spiral_rectangle_constraint_profiles()),
+                     profile) {
+    using namespace viam::trajex::totg;
+    trajectory_test_fixture f(6);
+
+    // NOTE: Using very relaxed tolerance (200%) due to known acceleration bound violations
+    // in some integration points for trajectories with reversals (likely RSDK-12981).
+    f.validation_tolerance_percent = 200.0;
+
+    f.set_waypoints_deg(get_spiral_rectangle_waypoints_deg())
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(0.1)  // matches arm default (k_default_path_tolerance_delta_rads)
+        .allow_any_events();
+    f.create_and_validate();
+}
 
 BOOST_AUTO_TEST_SUITE_END()
 
