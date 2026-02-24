@@ -301,6 +301,10 @@ struct eq40_result {
         // Examine the current segment for switching points where the path velocity limit curve, s_dot_max_acc(s),
         // is continuous, but not differentiable, per VII-A Case 2 in the paper (Kunz & Stilman equation 39). These
         // switching points occur on the interior of circular segments for joint extrema where f'_i(s) = 0.
+        //
+        // TODO(RSDK-13450): There is a flaw in this search: it only evaluates the first extremum we find. But if that
+        // fails the check, we don't check the others. Instead, we should gather all the extremal points, sort them,
+        // and then check them in order.
         if (current_segment.is<path::segment::circular>()) {
             std::optional<arc_length> first_extremum;
             arc_velocity first_extremum_velocity{0.0};
