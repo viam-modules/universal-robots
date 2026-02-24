@@ -8,6 +8,8 @@
 
 #include <json/json.h>
 
+#include <viam/trajex/types/arc_length.hpp>
+
 namespace viam::trajex::totg {
 
 namespace {
@@ -243,6 +245,107 @@ std::string serialize_trajectory_to_json(const trajectory& traj, const trajector
 
 void write_trajectory_json(std::ostream& out, const trajectory& traj, const trajectory_integration_event_collector& collector) {
     out << serialize_trajectory_to_json(traj, collector);
+}
+
+void write_failed_trajectory_json(std::ostream& out, const trajectory_integration_event_collector& collector) {
+    Json::Value root;
+
+    Json::Value metadata;
+    metadata["failure"] = true;
+    metadata["error"] = collector.failure_error();
+
+    const trajectory* traj = collector.failed_trajectory();
+    if (traj) {
+        metadata["dof"] = static_cast<Json::Int64>(traj->path().dof());
+        metadata["path_length"] = static_cast<double>(traj->path().length());
+        metadata["duration"] = traj->duration().count();
+        metadata["num_integration_points"] = static_cast<Json::Int64>(traj->get_integration_points().size());
+        metadata["max_velocity"] = xarray_to_json_array(traj->get_options().max_velocity);
+        metadata["max_acceleration"] = xarray_to_json_array(traj->get_options().max_acceleration);
+    }
+
+    root["metadata"] = std::move(metadata);
+
+    if (traj)
+        root["integration_points"] = serialize_integration_points(*traj);
+
+    root["events"] = serialize_events(collector.events());
+
+    // Fill limit curve samples densely across the gap from the last accepted integration
+    // point to the farthest event position (limit hits, backward starts, forward starts).
+    // Uses the average inter-point delta from the integration points so density matches
+    // the confirmed region, capped to avoid excessive output.
+    if (traj && !traj->get_integration_points().empty()) {
+        const auto& points = traj->get_integration_points();
+        const arc_length last_s = points.back().s;
+
+        // Find the farthest s across all event types - backward starts can be well
+        // ahead of limit hits.
+        arc_length farthest_s = last_s;
+        for (const auto& ev : collector) {
+            std::visit(
+                [&](auto&& e) {
+                    using T = std::decay_t<decltype(e)>;
+                    if constexpr (std::is_same_v<T, trajectory::integration_observer::limit_hit_event>) {
+                        if (e.breach.s > farthest_s)
+                            farthest_s = e.breach.s;
+                    } else if constexpr (std::is_same_v<T, trajectory::integration_observer::started_backward_event>) {
+                        if (e.start.s > farthest_s)
+                            farthest_s = e.start.s;
+                    } else if constexpr (std::is_same_v<T, trajectory::integration_observer::started_forward_event>) {
+                        if (e.start.s > farthest_s)
+                            farthest_s = e.start.s;
+                    }
+                },
+                ev);
+        }
+
+        const arc_length path_end = traj->path().length();
+        if (farthest_s > path_end)
+            farthest_s = path_end;
+
+        if (farthest_s > last_s) {
+            double delta;
+            if (points.size() >= 2) {
+                delta =
+                    (static_cast<double>(points.back().s) - static_cast<double>(points.front().s)) / static_cast<double>(points.size() - 1);
+            }
+            if (points.size() < 2 || delta <= 0.0) {
+                delta = (static_cast<double>(farthest_s) - static_cast<double>(last_s)) / 20.0;
+            }
+
+            Json::Value limit_curve_samples(Json::objectValue);
+            Json::Value lcs_s(Json::arrayValue);
+            Json::Value lcs_s_dot_max_acc(Json::arrayValue);
+            Json::Value lcs_s_dot_max_vel(Json::arrayValue);
+
+            auto cursor = traj->path().create_cursor();
+            auto emit = [&](arc_length s) {
+                cursor.seek(s);
+                const auto limits = traj->get_velocity_limits(cursor);
+                lcs_s.append(static_cast<double>(s));
+                lcs_s_dot_max_acc.append(std::isinf(static_cast<double>(limits.s_dot_max_acc))
+                                             ? Json::Value::null
+                                             : Json::Value{static_cast<double>(limits.s_dot_max_acc)});
+                lcs_s_dot_max_vel.append(std::isinf(static_cast<double>(limits.s_dot_max_vel))
+                                             ? Json::Value::null
+                                             : Json::Value{static_cast<double>(limits.s_dot_max_vel)});
+            };
+
+            for (arc_length s = last_s; s < farthest_s; s += arc_length{delta})
+                emit(s);
+            emit(farthest_s);
+
+            limit_curve_samples["s"] = std::move(lcs_s);
+            limit_curve_samples["s_dot_max_acc"] = std::move(lcs_s_dot_max_acc);
+            limit_curve_samples["s_dot_max_vel"] = std::move(lcs_s_dot_max_vel);
+            root["limit_curve_samples"] = std::move(limit_curve_samples);
+        }
+    }
+
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "  ";
+    out << Json::writeString(writer, root);
 }
 
 }  // namespace viam::trajex::totg

@@ -1,6 +1,9 @@
 #pragma once
 
+#include <exception>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include <viam/trajex/totg/trajectory.hpp>
@@ -80,6 +83,15 @@ class composite_integration_observer final : public trajectory::integration_obse
     ///
     void on_trajectory_extended(const trajectory& traj, splice_event event) override;
 
+    ///
+    /// Dispatches failure notification to all observers.
+    ///
+    /// @param error Exception that caused the failure
+    /// @param partial_traj Partial trajectory at time of failure, or null if unavailable
+    ///
+    void on_failed(std::exception_ptr error,
+                   std::shared_ptr<const trajectory> partial_traj) noexcept override;
+
    private:
     void add_observer_(std::shared_ptr<integration_observer> observer);
 
@@ -120,7 +132,7 @@ class trajectory_integration_event_collector final : public trajectory::integrat
     /// @param traj Trajectory being integrated
     /// @param ev Event to store
     ///
-    void on_event(const trajectory& traj, event ev);
+    void on_event(const trajectory& traj, event ev) override;
 
     ///
     /// Gets all collected events.
@@ -159,8 +171,32 @@ class trajectory_integration_event_collector final : public trajectory::integrat
     ///
     const_iterator end() const noexcept;
 
+    ///
+    /// Called when trajectory generation fails. Stores partial trajectory and error
+    /// message for later diagnostic use (e.g., writing failure JSON with limit curves).
+    ///
+    void on_failed(std::exception_ptr error,
+                   std::shared_ptr<const trajectory> partial_traj) noexcept override;
+
+    ///
+    /// Returns true if trajectory generation failed and partial data is available.
+    ///
+    bool has_failure() const noexcept;
+
+    ///
+    /// Gets the partial trajectory from a failed generation, or null if unavailable.
+    ///
+    const trajectory* failed_trajectory() const noexcept;
+
+    ///
+    /// Gets the error message from a failed generation.
+    ///
+    const std::string& failure_error() const noexcept;
+
    private:
     std::vector<event> events_;
+    std::shared_ptr<const trajectory> failed_trajectory_;
+    std::string failure_error_;
 };
 
 template <std::derived_from<trajectory::integration_observer> T>

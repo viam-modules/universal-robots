@@ -1,6 +1,8 @@
 #pragma once
 
 #include <chrono>
+#include <exception>
+#include <memory>
 
 #if __has_include(<xtensor/containers/xarray.hpp>)
 #include <xtensor/containers/xarray.hpp>
@@ -454,6 +456,21 @@ class trajectory::integration_observer {
     /// @param event Event data containing pruned integration points
     ///
     virtual void on_trajectory_extended(const trajectory& traj, splice_event event) = 0;
+
+    ///
+    /// Called when trajectory generation fails with an exception.
+    ///
+    /// Fired from a try/catch in trajectory::create during stack unwinding.
+    /// Provides the partial trajectory (path, options, and integration points
+    /// accumulated before failure) for diagnostic use (e.g., phase plane visualization).
+    /// The partial trajectory's options contain max_velocity and max_acceleration,
+    /// enabling limit curve computation for a complete diagnostic plot.
+    ///
+    /// @param error Exception that caused the failure
+    /// @param partial_traj Partial trajectory at time of failure, or null if unavailable
+    ///
+    virtual void on_failed(std::exception_ptr error,
+                           std::shared_ptr<const trajectory> partial_traj) noexcept = 0;
 };
 
 ///

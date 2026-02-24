@@ -70,11 +70,53 @@ void composite_integration_observer::on_trajectory_extended(const trajectory& tr
     }
 }
 
+void composite_integration_observer::on_failed(std::exception_ptr error,
+                                               std::shared_ptr<const trajectory> partial_traj) noexcept {
+    // No reentrancy_guard: it throws, which is forbidden in a noexcept context.
+    // on_failed is a terminal event fired once during stack unwinding; re-entrant calls won't occur.
+    for (auto& obs : observers_) {
+        obs->on_failed(error, partial_traj);
+    }
+}
+
 trajectory_integration_event_collector::trajectory_integration_event_collector() = default;
 trajectory_integration_event_collector::~trajectory_integration_event_collector() = default;
 
 void trajectory_integration_event_collector::on_event(const class trajectory&, event ev) {
     events_.push_back(std::move(ev));
+}
+
+void trajectory_integration_event_collector::on_failed(std::exception_ptr error,
+                                                        std::shared_ptr<const trajectory> partial_traj) noexcept {
+    try {
+        if (error) {
+            try {
+                std::rethrow_exception(error);
+            } catch (const std::exception& e) {
+                failure_error_ = e.what();
+            } catch (...) {
+                failure_error_ = "unknown exception";
+            }
+        }
+        failed_trajectory_ = std::move(partial_traj);
+    } catch (...) {
+        // Swallow anything that escapes the inner block (e.g. std::bad_alloc storing
+        // the shared_ptr). Record what we have and move on - better than terminate.
+        if (failure_error_.empty())
+            failure_error_ = "unknown exception (on_failed capture failed)";
+    }
+}
+
+bool trajectory_integration_event_collector::has_failure() const noexcept {
+    return !failure_error_.empty();
+}
+
+const trajectory* trajectory_integration_event_collector::failed_trajectory() const noexcept {
+    return failed_trajectory_.get();
+}
+
+const std::string& trajectory_integration_event_collector::failure_error() const noexcept {
+    return failure_error_;
 }
 
 const std::vector<trajectory_integration_event_collector::event>& trajectory_integration_event_collector::events() const {

@@ -11,6 +11,11 @@ import sys
 import matplotlib.pyplot as plt
 import numpy as np
 
+def _f(v):
+    """Convert a JSON value (possibly null/None) to float, mapping None to NaN."""
+    return float('nan') if v is None else float(v)
+
+
 # Visualization parameters
 LIMIT_CURVE_MARGIN = 1.15
 MAX_Y_SCALE_FACTOR = 2.5
@@ -50,7 +55,8 @@ def plot_phase_plane(data, ax):
 
     ax.plot(s, s_dot, 'g-', linewidth=2, label='Trajectory', zorder=3)
 
-    # Limit curves with discontinuity handling
+    # Limit curves at each integration point.
+    s_for_limits = data['integration_points']['s']
     s_dot_max_acc = data['integration_points']['s_dot_max_acc']
     s_dot_max_vel = data['integration_points']['s_dot_max_vel']
 
@@ -61,7 +67,8 @@ def plot_phase_plane(data, ax):
     # - Use MAX_Y_SCALE_FACTOR as a heuristic balance
     max_traj_velocity = max(s_dot)
 
-    # Collect all limit curve values
+    # Collect all limit curve values (from integration points and, for failed trajectories,
+    # from limit_curve_samples at the hit positions)
     limit_values = []
     for val in s_dot_max_acc:
         if val is not None:
@@ -70,9 +77,22 @@ def plot_phase_plane(data, ax):
         if val is not None:
             limit_values.append(float(val))
 
+    lcs = data.get('limit_curve_samples')
+    if lcs:
+        for val in lcs['s_dot_max_acc']:
+            if val is not None:
+                limit_values.append(float(val))
+        for val in lcs['s_dot_max_vel']:
+            if val is not None:
+                limit_values.append(float(val))
+
     if limit_values:
         max_limit = max(limit_values)
+        min_limit = min(limit_values)
         y_max = min(max_limit * LIMIT_CURVE_MARGIN, max_traj_velocity * MAX_Y_SCALE_FACTOR)
+        # Always show the most restrictive finite limit curve even if the trajectory
+        # hasn't reached it yet (common in partial/failed integrations)
+        y_max = max(y_max, min_limit * LIMIT_CURVE_MARGIN)
     else:
         y_max = max_traj_velocity * 1.3
 
@@ -85,7 +105,7 @@ def plot_phase_plane(data, ax):
     prev_s = None
     prev_val = None
     for i, val in enumerate(s_dot_max_acc):
-        curr_s = float(s[i])
+        curr_s = float(s_for_limits[i])
         if val is not None:
             curr_val = float(val)
             # Show vertical drop when transitioning from infinite to finite
@@ -108,7 +128,7 @@ def plot_phase_plane(data, ax):
     current_segment_v = []
     for i, val in enumerate(s_dot_max_acc):
         if val is not None:
-            current_segment_s.append(float(s[i]))
+            current_segment_s.append(float(s_for_limits[i]))
             current_segment_v.append(float(val))
         else:
             if current_segment_s:
@@ -127,7 +147,7 @@ def plot_phase_plane(data, ax):
     prev_s = None
     prev_val = None
     for i, val in enumerate(s_dot_max_vel):
-        curr_s = float(s[i])
+        curr_s = float(s_for_limits[i])
         if val is not None:
             curr_val = float(val)
             # Show vertical drop when transitioning from infinite to finite
@@ -149,7 +169,7 @@ def plot_phase_plane(data, ax):
     current_segment_v = []
     for i, val in enumerate(s_dot_max_vel):
         if val is not None:
-            current_segment_s.append(float(s[i]))
+            current_segment_s.append(float(s_for_limits[i]))
             current_segment_v.append(float(val))
         else:
             if current_segment_s:
@@ -162,6 +182,30 @@ def plot_phase_plane(data, ax):
     for i, (seg_s, seg_v) in enumerate(segments_vel):
         label = 'Velocity Limit' if i == 0 else None
         ax.plot(seg_s, seg_v, 'orange', linewidth=1.5, label=label, zorder=2)
+
+    # For failed trajectories: extend limit curve lines through the gap between the last
+    # integration point and the farthest limit hit position. Dashed to distinguish from
+    # the confirmed limit curve region sampled at integration points.
+    if lcs:
+        lcs_s_vals = [float(x) for x in lcs['s']]
+
+        def build_gap_segments(v_vals):
+            segs, curr_s, curr_v = [], [], []
+            for s_val, v in zip(lcs_s_vals, v_vals):
+                if v is not None:
+                    curr_s.append(s_val)
+                    curr_v.append(float(v))
+                elif curr_s:
+                    segs.append((curr_s, curr_v))
+                    curr_s, curr_v = [], []
+            if curr_s:
+                segs.append((curr_s, curr_v))
+            return segs
+
+        for seg_s, seg_v in build_gap_segments(lcs['s_dot_max_acc']):
+            ax.plot(seg_s, seg_v, 'r--', linewidth=1.5, alpha=0.6, zorder=2)
+        for seg_s, seg_v in build_gap_segments(lcs['s_dot_max_vel']):
+            ax.plot(seg_s, seg_v, color='orange', linestyle='--', linewidth=1.5, alpha=0.6, zorder=2)
 
     # Interior switching points (not start/end)
     # Map kind to marker style
@@ -224,7 +268,7 @@ def plot_joint_trajectories(data, ax):
     dof = len(configs[0])
 
     for joint_idx in range(dof):
-        positions = np.array([float(configs[i][joint_idx]) for i in range(len(configs))])
+        positions = np.array([_f(configs[i][joint_idx]) for i in range(len(configs))])
         ax.plot(time, positions, label=f'Joint {joint_idx}', linewidth=1)
 
     ax.set_xlabel('Time (s)')
@@ -244,13 +288,13 @@ def plot_joint_velocities(data, ax):
     # Store lines and their data for marker placement
     lines_data = []
     for joint_idx in range(dof):
-        vels = np.array([float(velocities[i][joint_idx]) for i in range(len(velocities))])
+        vels = np.array([_f(velocities[i][joint_idx]) for i in range(len(velocities))])
         line, = ax.plot(time, vels, label=f'Joint {joint_idx}', linewidth=1.5)
         lines_data.append((line, vels, float(max_velocity[joint_idx])))
 
     # Add limit markers only if trajectory approaches the limit (within 85%)
     for line, vels, limit in lines_data:
-        max_vel_reached = np.max(np.abs(vels))
+        max_vel_reached = np.nanmax(np.abs(vels))
         if max_vel_reached >= 0.85 * limit:
             color = line.get_color()
             ax.plot(0, limit, marker='>', color=color, markersize=LIMIT_MARKER_SIZE,
@@ -273,13 +317,13 @@ def plot_joint_accelerations(data, ax):
     # Store lines and their data for marker placement
     lines_data = []
     for joint_idx in range(dof):
-        accels = np.array([float(accelerations[i][joint_idx]) for i in range(len(accelerations))])
+        accels = np.array([_f(accelerations[i][joint_idx]) for i in range(len(accelerations))])
         line, = ax.plot(time, accels, label=f'Joint {joint_idx}', linewidth=1.5)
         lines_data.append((line, accels, float(max_acceleration[joint_idx])))
 
     # Add limit markers only if trajectory approaches the limit (within 85%)
     for line, accels, limit in lines_data:
-        max_accel_reached = np.max(np.abs(accels))
+        max_accel_reached = np.nanmax(np.abs(accels))
         if max_accel_reached >= 0.85 * limit:
             color = line.get_color()
             ax.plot(0, limit, marker='>', color=color, markersize=LIMIT_MARKER_SIZE,

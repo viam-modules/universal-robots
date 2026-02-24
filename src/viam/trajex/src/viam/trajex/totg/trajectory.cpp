@@ -34,6 +34,31 @@ struct switching_point {
     std::optional<arc_acceleration> backward_accel = std::nullopt;
 };
 
+// Minimal RAII scope guard. Calls its function on destruction unless dismissed.
+template <typename F>
+class scope_guard {
+   public:
+    explicit scope_guard(F f) noexcept : f_(std::move(f)) {}
+    ~scope_guard() noexcept {
+        if (active_)
+            f_();
+    }
+    void dismiss() noexcept {
+        active_ = false;
+    }
+    scope_guard(const scope_guard&) = delete;
+    scope_guard& operator=(const scope_guard&) = delete;
+
+   private:
+    F f_;
+    bool active_ = true;
+};
+
+template <typename F>
+scope_guard<F> make_scope_guard(F f) noexcept {
+    return scope_guard<F>(std::move(f));
+}
+
 // Computes maximum path velocity (s_dot) from joint velocity and acceleration limits.
 // Two constraints apply: centripetal acceleration from path curvature (eq 31) and
 // direct velocity limits (eq 36). Returns both so caller can take the minimum.
@@ -959,6 +984,12 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
         // Constructor initializes trajectory with initial point at rest (0, 0)
         trajectory traj{std::move(p), std::move(opt)};
 
+        // On exception, notify the observer with partial data before traj is destroyed.
+        // We use an explicit try/catch rather than a scope guard + std::current_exception()
+        // because std::current_exception() returns null inside noexcept functions on some
+        // platforms (notably macOS libc++), making a noexcept scope guard unreliable.
+        auto* observer = traj.options_.observer;
+
         // Helper to detect intersection between backward trajectory and forward trajectory in phase plane.
         // Returns index in forward trajectory where intersection occurs, or nullopt if no intersection.
         // Intersection means backward point's s_dot exceeds forward trajectory's interpolated s_dot at same s.
@@ -1618,9 +1649,23 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
             }
         };
 
-        switching_point sp = {.point = {arc_length{0}, arc_velocity{0}}, .kind = switching_point_kind::k_path_begin};
-        while (sp.kind != switching_point_kind::k_path_end) {
-            sp = integrate_backwards_from(integrate_forward_from(sp));
+        try {
+            switching_point sp = {.point = {arc_length{0}, arc_velocity{0}}, .kind = switching_point_kind::k_path_begin};
+            while (sp.kind != switching_point_kind::k_path_end) {
+                sp = integrate_backwards_from(integrate_forward_from(sp));
+            }
+        } catch (...) {
+            if (observer) {
+                auto exc = std::current_exception();
+                std::shared_ptr<trajectory> partial;
+                try {
+                    partial = std::make_shared<trajectory>(std::move(traj));
+                } catch (...) {
+                    // std::bad_alloc: proceed with null partial, original error preserved
+                }
+                observer->on_failed(exc, std::move(partial));
+            }
+            throw;
         }
 
         return traj;
