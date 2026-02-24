@@ -318,36 +318,32 @@ struct eq40_result {
                     // continues curving), the acceleration limit curve becomes continuous but non-differentiable,
                     // creating a potential switching point (equation 39, Section VII-A case 2).
                     //
-                    // For circular parameterization f(theta) = c + r*(x*cos(theta) + y*sin(theta)), the tangent
-                    // f'_i(theta) = -x_i*sin(theta) + y_i*cos(theta) is zero when tan(theta) = y_i/x_i.
-                    // Since tan has period pi (not 2*pi), both theta = atan2(y_i, x_i) and theta + pi are
-                    // solutions, giving up to 2*n candidate extrema per circular segment (n = DOF).
-                    //
-                    // TODO: The reference implementation only checks ONE solution per joint (normalizing to
-                    // [0, pi) by adding pi when negative, then stopping). That misses the second solution
-                    // for arcs where total_angle > pi. We check both, which is more complete.
+                    // For circular parameterization q(theta) = c + x*cos(theta) + y*sin(theta), the tangent
+                    // q'_i(theta) = -x_i*sin(theta) + y_i*cos(theta) is zero when tan(theta) = y_i/x_i.
+                    // tan has period pi, so the two roots are {atan2(y_i, x_i), atan2(y_i, x_i) + pi}.
+                    // atan2 returns values in (-pi, pi]; adding pi when negative normalizes to [0, pi) so
+                    // both candidates land in [0, 2*pi). Blend arcs have total_angle < pi (enforced by
+                    // path::create), so at most one root per joint falls in range.
                     for (size_t i = 0; i < x.size(); ++i) {
-                        double extremum_angle = std::atan2(y(i), x(i));
+                        auto extremum_angle = std::atan2(y(i), x(i));
                         if (extremum_angle < 0.0) {
                             extremum_angle += std::numbers::pi;
                         }
 
-                        for (const auto angle : {extremum_angle, extremum_angle + std::numbers::pi}) {
-                            if (angle < 0.0 || angle >= total_angle) {
-                                continue;
-                            }
+                        if (extremum_angle >= total_angle) {
+                            continue;
+                        }
 
-                            const arc_length s_local{radius * angle};
-                            const auto s_global = current_segment.start() + s_local;
+                        const arc_length s_local{radius * extremum_angle};
+                        const auto s_global = current_segment.start() + s_local;
 
-                            // Strict < avoids re-checking if cursor is exactly at this extremum
-                            if (s_global < cursor.position() || s_global >= current_segment.end()) {
-                                continue;
-                            }
+                        // Strict < avoids re-checking if cursor is exactly at this extremum
+                        if (s_global < cursor.position()) {
+                            continue;
+                        }
 
-                            if (!first_extremum.has_value() || s_global < *first_extremum) {
-                                first_extremum = s_global;
-                            }
+                        if (!first_extremum || s_global < *first_extremum) {
+                            first_extremum = s_global;
                         }
                     }
 

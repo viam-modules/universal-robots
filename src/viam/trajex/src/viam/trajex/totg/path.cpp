@@ -287,6 +287,9 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             return std::nullopt;
         }
 
+        // At this point angle is strictly in (0, pi). trajectory.cpp relies on this guarantee
+        // when searching for Case 2 switching points within circular segments.
+
         // Calculate trim distance and radius following Kunz & Stilman equations 3-4.
         // The trim distance is constrained by three limits: can't trim more than half
         // of either segment, and can't exceed what's allowed by the deviation tolerance.
