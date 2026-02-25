@@ -2,8 +2,6 @@
 
 #include <exception>
 #include <memory>
-#include <optional>
-#include <string>
 #include <vector>
 
 #include <viam/trajex/totg/trajectory.hpp>
@@ -87,10 +85,9 @@ class composite_integration_observer final : public trajectory::integration_obse
     /// Dispatches failure notification to all observers.
     ///
     /// @param error Exception that caused the failure
-    /// @param partial_traj Partial trajectory at time of failure, or null if unavailable
+    /// @param invalid Invalid trajectory at time of failure, or null if unavailable
     ///
-    void on_failed(std::exception_ptr error,
-                   std::shared_ptr<const trajectory> partial_traj) noexcept override;
+    void on_failed(std::exception_ptr error, std::shared_ptr<const trajectory> invalid) noexcept override;
 
    private:
     void add_observer_(std::shared_ptr<integration_observer> observer);
@@ -172,31 +169,25 @@ class trajectory_integration_event_collector final : public trajectory::integrat
     const_iterator end() const noexcept;
 
     ///
-    /// Called when trajectory generation fails. Stores partial trajectory and error
-    /// message for later diagnostic use (e.g., writing failure JSON with limit curves).
+    /// Called when trajectory generation fails. Stores the invalid trajectory and
+    /// exception for later diagnostic use (e.g., writing failure JSON with limit curves).
     ///
-    void on_failed(std::exception_ptr error,
-                   std::shared_ptr<const trajectory> partial_traj) noexcept override;
+    void on_failed(std::exception_ptr error, std::shared_ptr<const trajectory> invalid) noexcept override;
 
     ///
-    /// Returns true if trajectory generation failed and partial data is available.
+    /// Gets the invalid trajectory from a failed generation, or null if none.
     ///
-    bool has_failure() const noexcept;
+    std::shared_ptr<const trajectory> invalid_trajectory() const noexcept;
 
     ///
-    /// Gets the partial trajectory from a failed generation, or null if unavailable.
+    /// Gets the exception from a failed generation, or null if none.
     ///
-    const trajectory* failed_trajectory() const noexcept;
-
-    ///
-    /// Gets the error message from a failed generation.
-    ///
-    const std::string& failure_error() const noexcept;
+    std::exception_ptr invalid_exception() const noexcept;
 
    private:
     std::vector<event> events_;
-    std::shared_ptr<const trajectory> failed_trajectory_;
-    std::string failure_error_;
+    std::shared_ptr<const trajectory> invalid_trajectory_;
+    std::exception_ptr invalid_exception_;
 };
 
 template <std::derived_from<trajectory::integration_observer> T>

@@ -719,7 +719,7 @@ struct trajectory_test_fixture {
             } catch (const std::exception& e) {
                 if (json_output_filename_.has_value() && collector_) {
                     std::ofstream out(*json_output_filename_);
-                    write_failed_trajectory_json(out, *collector_);
+                    write_trajectory_json(out, *collector_);
                     BOOST_TEST_MESSAGE("Wrote failure JSON to " << *json_output_filename_);
                 }
                 BOOST_FAIL(e.what());
@@ -730,7 +730,7 @@ struct trajectory_test_fixture {
         // Write JSON if enabled
         if (json_output_filename_.has_value() && collector_) {
             std::ofstream out(*json_output_filename_);
-            write_trajectory_json(out, traj, *collector_);
+            write_trajectory_json(out, *collector_, &traj);
             out.close();
             BOOST_TEST_MESSAGE("Wrote trajectory JSON to " << *json_output_filename_);
         }
@@ -1317,7 +1317,7 @@ BOOST_AUTO_TEST_CASE(trajectory_json_serialization) {
     const trajectory traj = trajectory::create(std::move(p), opts);
 
     // Serialize to JSON
-    const std::string json = serialize_trajectory_to_json(traj, collector);
+    const std::string json = serialize_trajectory_to_json(collector, &traj);
 
     // Validate JSON structure
     const Json::CharReaderBuilder reader;
@@ -1583,6 +1583,8 @@ BOOST_DATA_TEST_CASE(spiral_rectangle_6dof, boost::unit_test::data::make(get_spi
     // NOTE: Using very relaxed tolerance (200%) due to known acceleration bound violations
     // in some integration points for trajectories with reversals (likely RSDK-12981).
     f.validation_tolerance_percent = 200.0;
+
+    f.enable_json_output(std::string{"spiral_rectangle_6dof_"} + profile.name + ".json");
 
     f.set_waypoints_deg(get_spiral_rectangle_waypoints_deg())
         .set_max_velocity(profile.max_velocity)

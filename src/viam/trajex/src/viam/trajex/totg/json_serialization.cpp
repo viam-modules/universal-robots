@@ -215,68 +215,47 @@ Json::Value serialize_events(const std::vector<trajectory::integration_event_obs
 
 }  // namespace
 
-std::string serialize_trajectory_to_json(const trajectory& traj, const trajectory_integration_event_collector& collector) {
-    Json::Value root;
+std::string serialize_trajectory_to_json(const trajectory_integration_event_collector& collector, const trajectory* traj) {
+    // On failure the caller passes nullptr; fall back to whatever the collector captured.
+    const trajectory* effective = traj ? traj : collector.invalid_trajectory().get();
 
-    // Metadata
-    Json::Value metadata;
-    const auto& points = traj.get_integration_points();
-    const auto& opts = traj.get_options();
-    metadata["path_length"] = static_cast<double>(traj.path().length());
-    metadata["duration"] = traj.duration().count();
-    metadata["num_integration_points"] = static_cast<Json::Int64>(points.size());
-    metadata["dof"] = static_cast<Json::Int64>(traj.path().dof());
-    metadata["max_velocity"] = xarray_to_json_array(opts.max_velocity);
-    metadata["max_acceleration"] = xarray_to_json_array(opts.max_acceleration);
-    root["metadata"] = std::move(metadata);
-
-    // Integration points (includes joint-space data and limit curves)
-    root["integration_points"] = serialize_integration_points(traj);
-
-    // Events
-    root["events"] = serialize_events(collector.events());
-
-    // Format with indentation
-    Json::StreamWriterBuilder writer;
-    writer["indentation"] = "  ";
-
-    return Json::writeString(writer, root);
-}
-
-void write_trajectory_json(std::ostream& out, const trajectory& traj, const trajectory_integration_event_collector& collector) {
-    out << serialize_trajectory_to_json(traj, collector);
-}
-
-void write_failed_trajectory_json(std::ostream& out, const trajectory_integration_event_collector& collector) {
     Json::Value root;
 
     Json::Value metadata;
-    metadata["failure"] = true;
-    metadata["error"] = collector.failure_error();
+    if (effective) {
+        metadata["dof"] = static_cast<Json::Int64>(effective->path().dof());
+        metadata["path_length"] = static_cast<double>(effective->path().length());
+        metadata["duration"] = effective->duration().count();
+        metadata["num_integration_points"] = static_cast<Json::Int64>(effective->get_integration_points().size());
+        metadata["max_velocity"] = xarray_to_json_array(effective->get_options().max_velocity);
+        metadata["max_acceleration"] = xarray_to_json_array(effective->get_options().max_acceleration);
+    }
 
-    const trajectory* traj = collector.failed_trajectory();
-    if (traj) {
-        metadata["dof"] = static_cast<Json::Int64>(traj->path().dof());
-        metadata["path_length"] = static_cast<double>(traj->path().length());
-        metadata["duration"] = traj->duration().count();
-        metadata["num_integration_points"] = static_cast<Json::Int64>(traj->get_integration_points().size());
-        metadata["max_velocity"] = xarray_to_json_array(traj->get_options().max_velocity);
-        metadata["max_acceleration"] = xarray_to_json_array(traj->get_options().max_acceleration);
+    // If there was a failure, annotate metadata with the error message.
+    if (const auto exc = collector.invalid_exception()) {
+        metadata["failure"] = true;
+        try {
+            std::rethrow_exception(exc);
+        } catch (const std::exception& e) {
+            metadata["error"] = e.what();
+        } catch (...) {
+            metadata["error"] = "unknown exception";
+        }
     }
 
     root["metadata"] = std::move(metadata);
 
-    if (traj)
-        root["integration_points"] = serialize_integration_points(*traj);
+    if (effective)
+        root["integration_points"] = serialize_integration_points(*effective);
 
     root["events"] = serialize_events(collector.events());
 
-    // Fill limit curve samples densely across the gap from the last accepted integration
-    // point to the farthest event position (limit hits, backward starts, forward starts).
-    // Uses the average inter-point delta from the integration points so density matches
-    // the confirmed region, capped to avoid excessive output.
-    if (traj && !traj->get_integration_points().empty()) {
-        const auto& points = traj->get_integration_points();
+    // When events exist beyond the last integration point (which happens on failure),
+    // sample the limit curves densely through the gap so the visualizer can show
+    // where the trajectory ran into trouble. On success all events fall within the
+    // confirmed integration range and this block is a no-op.
+    if (effective && !effective->get_integration_points().empty()) {
+        const auto& points = effective->get_integration_points();
         const arc_length last_s = points.back().s;
 
         // Find the farthest s across all event types - backward starts can be well
@@ -300,7 +279,7 @@ void write_failed_trajectory_json(std::ostream& out, const trajectory_integratio
                 ev);
         }
 
-        const arc_length path_end = traj->path().length();
+        const arc_length path_end = effective->path().length();
         if (farthest_s > path_end)
             farthest_s = path_end;
 
@@ -319,10 +298,10 @@ void write_failed_trajectory_json(std::ostream& out, const trajectory_integratio
             Json::Value lcs_s_dot_max_acc(Json::arrayValue);
             Json::Value lcs_s_dot_max_vel(Json::arrayValue);
 
-            auto cursor = traj->path().create_cursor();
+            auto cursor = effective->path().create_cursor();
             auto emit = [&](arc_length s) {
                 cursor.seek(s);
-                const auto limits = traj->get_velocity_limits(cursor);
+                const auto limits = effective->get_velocity_limits(cursor);
                 lcs_s.append(static_cast<double>(s));
                 lcs_s_dot_max_acc.append(std::isinf(static_cast<double>(limits.s_dot_max_acc))
                                              ? Json::Value::null
@@ -345,7 +324,11 @@ void write_failed_trajectory_json(std::ostream& out, const trajectory_integratio
 
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "  ";
-    out << Json::writeString(writer, root);
+    return Json::writeString(writer, root);
+}
+
+void write_trajectory_json(std::ostream& out, const trajectory_integration_event_collector& collector, const trajectory* traj) {
+    out << serialize_trajectory_to_json(collector, traj);
 }
 
 }  // namespace viam::trajex::totg
