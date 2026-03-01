@@ -1372,9 +1372,8 @@ BOOST_DATA_TEST_CASE(one_dof_direct_reversal, EXTREMAL_DATA(1), profile) {
     wp(2, 0) = 0.0;
 
     trajectory_test_fixture fixture(1);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.0)
@@ -1391,9 +1390,8 @@ BOOST_DATA_TEST_CASE(one_dof_colinear, EXTREMAL_DATA(1), profile) {
     wp(2, 0) = 1.0;
 
     trajectory_test_fixture fixture(1);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1406,9 +1404,8 @@ BOOST_DATA_TEST_CASE(one_dof_colinear, EXTREMAL_DATA(1), profile) {
 // Joint 1 is stationary throughout; tangent has a zero component on joint 1.
 BOOST_DATA_TEST_CASE(two_dof_reversal_single_joint, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1420,9 +1417,8 @@ BOOST_DATA_TEST_CASE(two_dof_reversal_single_joint, EXTREMAL_DATA(2), profile) {
 // 2 DoF: direct reversal, both joints move equally. (0,0) -> (1,1) -> (0,0).
 BOOST_DATA_TEST_CASE(two_dof_reversal_both_joints, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1434,9 +1430,8 @@ BOOST_DATA_TEST_CASE(two_dof_reversal_both_joints, EXTREMAL_DATA(2), profile) {
 // 2 DoF: exact colinear, one joint stationary. (0,0) -> (0.5,0) -> (1,0).
 BOOST_DATA_TEST_CASE(two_dof_colinear_single_joint, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1448,9 +1443,8 @@ BOOST_DATA_TEST_CASE(two_dof_colinear_single_joint, EXTREMAL_DATA(2), profile) {
 // 2 DoF: exact colinear, both joints move equally. (0,0) -> (1,1) -> (2,2).
 BOOST_DATA_TEST_CASE(two_dof_colinear_both_joints, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1463,9 +1457,8 @@ BOOST_DATA_TEST_CASE(two_dof_colinear_both_joints, EXTREMAL_DATA(2), profile) {
 // Segment 1 direction (0,1), segment 2 direction (1,0): exactly 90 degrees, no blending.
 BOOST_DATA_TEST_CASE(two_dof_right_angle_axis_aligned, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.0)
@@ -1479,9 +1472,8 @@ BOOST_DATA_TEST_CASE(two_dof_right_angle_axis_aligned, EXTREMAL_DATA(2), profile
 // All coordinates are integers (exactly representable).
 BOOST_DATA_TEST_CASE(two_dof_right_angle_rotated, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.0)
@@ -1499,12 +1491,10 @@ BOOST_DATA_TEST_CASE(two_dof_right_angle_rotated, EXTREMAL_DATA(2), profile) {
 //
 // TODO(RSDK-12711): Path construction either needs to deal with zero length segments or allow
 // circular to circular blends.
-BOOST_AUTO_TEST_CASE_EXPECTED_FAILURES(two_dof_zero_length_segment, 3)
 BOOST_DATA_TEST_CASE(two_dof_zero_length_segment, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(100.0)  // Much larger than needed; blend radius capped by geometry
@@ -1529,9 +1519,8 @@ BOOST_DATA_TEST_CASE(one_dof_double_reversal, EXTREMAL_DATA(1), profile) {
     wp(3, 0) = 1.0;
 
     trajectory_test_fixture fixture(1);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1543,9 +1532,8 @@ BOOST_DATA_TEST_CASE(one_dof_double_reversal, EXTREMAL_DATA(1), profile) {
 // 2 DoF: two successive reversals, only one joint moves. (0,0) -> (1,0) -> (0,0) -> (1,0).
 BOOST_DATA_TEST_CASE(two_dof_double_reversal, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1557,9 +1545,8 @@ BOOST_DATA_TEST_CASE(two_dof_double_reversal, EXTREMAL_DATA(2), profile) {
 // 2 DoF: two successive reversals, both joints move. (0,0) -> (1,1) -> (0,0) -> (1,1).
 BOOST_DATA_TEST_CASE(two_dof_double_reversal_two_joints_in_the_morning, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)

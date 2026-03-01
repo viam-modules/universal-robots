@@ -230,6 +230,16 @@ class path {
         static constexpr double k_default_max_deviation = 0.0;
 
         ///
+        /// Default minimum blend curvature (1/radius in configuration space).
+        ///
+        static constexpr double k_default_min_blend_curvature = 1e-5;
+
+        ///
+        /// Default maximum blend curvature (1/radius in configuration space).
+        ///
+        static constexpr double k_default_max_blend_curvature = 1e5;
+
+        ///
         /// Constructs options with default values.
         ///
         options();
@@ -263,6 +273,30 @@ class path {
         options& set_max_linear_deviation(double deviation);
 
         ///
+        /// Sets minimum blend curvature.
+        ///
+        /// Blend arcs whose natural radius would exceed 1/curvature are capped at that
+        /// radius. This prevents numerically fragile enormous-radius arcs at near-collinear
+        /// waypoints while retaining exact C1 continuity at every segment boundary.
+        ///
+        /// @param curvature Minimum acceptable blend curvature (1/radius)
+        /// @return Reference to this for method chaining
+        ///
+        options& set_min_blend_curvature(double curvature);
+
+        ///
+        /// Sets maximum blend curvature.
+        ///
+        /// Waypoints whose blend arc would exceed this curvature (1/radius) are treated
+        /// as unblended corners. This prevents near-degenerate tiny arcs at near-reversal
+        /// waypoints.
+        ///
+        /// @param curvature Maximum acceptable blend curvature (1/radius)
+        /// @return Reference to this for method chaining
+        ///
+        options& set_max_blend_curvature(double curvature);
+
+        ///
         /// Gets maximum blend deviation.
         ///
         /// @return Maximum distance blend arc can deviate from corner
@@ -276,9 +310,25 @@ class path {
         ///
         double max_linear_deviation() const noexcept;
 
+        ///
+        /// Gets minimum blend curvature.
+        ///
+        /// @return Minimum acceptable blend curvature (1/radius)
+        ///
+        double min_blend_curvature() const noexcept;
+
+        ///
+        /// Gets maximum blend curvature.
+        ///
+        /// @return Maximum acceptable blend curvature (1/radius)
+        ///
+        double max_blend_curvature() const noexcept;
+
        private:
         double max_blend_deviation_;
         double max_linear_deviation_;
+        double min_blend_curvature_;
+        double max_blend_curvature_;
     };
 
     ///

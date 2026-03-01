@@ -3,17 +3,19 @@
 
 #include "test_utils.hpp"
 
+#include <cmath>
+#include <numbers>
+
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 #include <viam/trajex/types/angles.hpp>
 #include <viam/trajex/types/arc_length.hpp>
 
-#include <numbers>
-
 #include <boost/test/unit_test.hpp>
 
 using viam::trajex::degrees_to_radians;
 using viam::trajex::totg::test::configs_close;
+using viam::trajex::totg::test::path_type_sequence;
 using viam::trajex::totg::test::verify_path_visits_waypoints;
 
 BOOST_AUTO_TEST_SUITE(path_tests)
@@ -430,32 +432,22 @@ BOOST_AUTO_TEST_CASE(circular_blend_tangent_continuity) {
 //
 // Z-staircase: (0,0) -> (0,1) -> (1,1) -> (1,2). Three unit segments, two 90-degree corners.
 // With geometry-limited deviation (100.0 >> needed), each blend trims min(L1/2, L2/2) = 0.5 from
-// the shared middle segment. Together they consume it entirely, so no linear segment should
-// appear between the two circular blends.
-//
-// TODO(RSDK-12711): Path construction either needs to deal with zero length segments or allow
-// circular to circular blends.
-BOOST_AUTO_TEST_CASE(circular_blend_trim_respects_original_segment_length, *boost::unit_test::expected_failures(1)) {
+// the shared middle segment. Together they consume it entirely, so no linear segment appears
+// between the two circular blends -- the path is LCCL.
+BOOST_AUTO_TEST_CASE(circular_blend_trim_respects_original_segment_length) {
     using namespace viam::trajex::totg;
     using viam::trajex::arc_length;
 
     const xt::xarray<double> waypoints = {{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}, {1.0, 2.0}};
     const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(100.0));
 
-    // Correct: 5 segments -- linear, blend, zero-length linear, blend, linear.
-    // The two blends together consume the full middle segment, leaving a zero-length linear
-    // between them (the algorithm emits whatever remains, which is zero).
-    // Bug: second blend caps at remaining/2 = 0.25 instead of original/2 = 0.5, so the
-    // middle linear has length 0.25 and the path structure is otherwise the same (5 segments).
-    BOOST_REQUIRE_EQUAL(p.size(), 5U);
+    // The two blends together consume the full middle segment: LCCL, no linear between them.
+    BOOST_REQUIRE_EQUAL(p.size(), 4U);
 
     auto it = p.begin();
     BOOST_CHECK((*it).is<path::segment::linear>());
     ++it;
     BOOST_CHECK((*it).is<path::segment::circular>());
-    ++it;
-    BOOST_CHECK((*it).is<path::segment::linear>());
-    BOOST_CHECK_EQUAL(static_cast<double>((*it).length()), 0.0);
     ++it;
     BOOST_CHECK((*it).is<path::segment::circular>());
     ++it;
@@ -466,3 +458,107 @@ BOOST_AUTO_TEST_CASE(circular_blend_trim_respects_original_segment_length, *boos
 }
 
 BOOST_AUTO_TEST_SUITE_END()
+
+// Tests for path construction at degenerate and near-degenerate waypoint geometries.
+// These verify the path-layer decisions (segment types, dropping waypoints) that are
+// prerequisites for correct TOTG behavior at cusps and near-cusps. All tests express
+// desired end-state behavior; most will fail until the implementation is complete.
+
+BOOST_AUTO_TEST_SUITE(extremal_path_construction_tests)
+
+// Exact collinear: middle point lies exactly on the chord. The blend radius is a
+// singularity (infinite), so no blend is emitted. Two linear segments remain.
+BOOST_AUTO_TEST_CASE(exact_collinear_no_blend) {
+    using namespace viam::trajex::totg;
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {2.0, 0.0}};
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    BOOST_CHECK_EQUAL(path_type_sequence(p), "LL");
+}
+
+// Near-collinear: the middle waypoint deviates from the chord by 0.001, well within
+// max_blend_deviation=0.1. The natural blend radius is enormous; min_curvature caps it
+// at 1/min_curvature, producing a small-radius arc that retains C1 continuity.
+// Structure is LCL both before and after the fix; the fix changes the arc radius, not
+// the structure. Currently produces a huge-radius arc; expected a capped arc after fix.
+BOOST_AUTO_TEST_CASE(near_collinear_emits_capped_arc) {
+    using namespace viam::trajex::totg;
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.001}, {2.0, 0.0}};
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    BOOST_CHECK_EQUAL(path_type_sequence(p), "LCL");
+}
+
+// Same near-collinear geometry, but with a tight min_blend_curvature=1.0 (max radius=1.0).
+// The natural blend radius is ~50000; after the fix the arc radius must be <= 1.0.
+// Fails until the min_blend_curvature cap is implemented.
+BOOST_AUTO_TEST_CASE(near_collinear_arc_radius_respects_min_curvature) {
+    using namespace viam::trajex::totg;
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.001}, {2.0, 0.0}};
+    constexpr double min_curvature = 1.0;
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1).set_min_blend_curvature(min_curvature));
+    for (const auto& seg : p) {
+        seg.visit([](const auto& s) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(s)>, path::segment::circular>) {
+                BOOST_CHECK_LE(s.radius, 1.0 / min_curvature);
+            }
+        });
+    }
+}
+
+// Near-collinear outside tolerance: cross-track deviation (0.5) exceeds max_blend_deviation
+// (0.1), so the waypoint represents a genuine direction change and a blend is emitted.
+BOOST_AUTO_TEST_CASE(near_collinear_outside_deviation_produces_blend) {
+    using namespace viam::trajex::totg;
+    // Cross-track deviation of (1, 0.5) from chord (0,0)-(2,0) is 0.5 > max_blend_deviation=0.1.
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.5}, {2.0, 0.0}};
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    BOOST_CHECK_EQUAL(path_type_sequence(p), "LCL");
+}
+
+// Exact reversal: path goes A -> B -> A. No blend arc is geometrically valid at a true
+// reversal; the path must be L-L.
+BOOST_AUTO_TEST_CASE(exact_reversal_emits_ll) {
+    using namespace viam::trajex::totg;
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {0.0, 0.0}};
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+    BOOST_CHECK_EQUAL(path_type_sequence(p), "LL");
+}
+
+// Near-reversal within the curvature band: a 170-degree turn with max_blend_curvature=100
+// produces a blend with curvature ~105 (radius ~0.0096), which exceeds the limit.
+// The near-reversal is too tight to blend usefully; emit L-L.
+BOOST_AUTO_TEST_CASE(near_reversal_within_curvature_band_emits_ll) {
+    using namespace viam::trajex::totg;
+    // Outgoing direction at 170 degrees from incoming (1,0): corner at (1,0), third waypoint
+    // at (1+cos(170deg), sin(170deg)).
+    const double angle_rad = degrees_to_radians(170.0);
+    const xt::xarray<double> waypoints = {
+        {0.0, 0.0},
+        {1.0, 0.0},
+        {1.0 + std::cos(angle_rad), std::sin(angle_rad)},
+    };
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1).set_max_blend_curvature(100.0));
+    BOOST_CHECK_EQUAL(path_type_sequence(p), "LL");
+}
+
+// Non-reversal corner with max_blend_curvature set: a 90-degree turn has curvature ~4,
+// well below max_blend_curvature=100, so a blend is emitted normally.
+BOOST_AUTO_TEST_CASE(non_reversal_corner_outside_curvature_band_emits_lcl) {
+    using namespace viam::trajex::totg;
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}};
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1).set_max_blend_curvature(100.0));
+    BOOST_CHECK_EQUAL(path_type_sequence(p), "LCL");
+}
+
+// Z-staircase: three equal-length segments with two 90-degree corners. With a large
+// deviation budget, each blend consumes its full half-segment. Together the two blends
+// consume the middle segment entirely. After removing the zero-length linear guard and
+// supporting C-C adjacency, the path should be L-C-C-L (4 segments).
+// Currently produces "LCLCL" (5 segments with a buggy middle linear). Expected "LCCL" after fix.
+BOOST_AUTO_TEST_CASE(z_staircase_adjacent_blends_emit_lccl) {
+    using namespace viam::trajex::totg;
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}, {1.0, 2.0}};
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(100.0));
+    BOOST_CHECK_EQUAL(path_type_sequence(p), "LCCL");
+}
+
+BOOST_AUTO_TEST_SUITE_END()  // extremal_path_construction_tests

@@ -126,6 +126,7 @@ class trajectory {
         k_nondifferentiable_extremum,    ///< Acceleration case 2 (Eq 39): f'_i(s) = 0
         k_velocity_escape,               ///< Velocity case 1 (Eq 40): can escape below velocity curve
         k_discontinuous_velocity_limit,  ///< Equations 41-42: velocity limit discontinuous
+        k_discontinuous_tangent,         ///< Path tangent discontinuous at segment boundary (hard kink)
         k_path_end,                      ///< Natural termination at path end
     };
 

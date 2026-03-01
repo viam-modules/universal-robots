@@ -20,7 +20,11 @@ namespace viam::trajex::totg {
 
 using viam::trajex::degrees_to_radians;
 
-path::options::options() : max_blend_deviation_(k_default_max_deviation), max_linear_deviation_(k_default_max_deviation) {}
+path::options::options()
+    : max_blend_deviation_(k_default_max_deviation),
+      max_linear_deviation_(k_default_max_deviation),
+      min_blend_curvature_(k_default_min_blend_curvature),
+      max_blend_curvature_(k_default_max_blend_curvature) {}
 
 path::options& path::options::set_max_deviation(double deviation) {
     return set_max_blend_deviation(deviation).set_max_linear_deviation(deviation);
@@ -36,12 +40,30 @@ path::options& path::options::set_max_linear_deviation(double deviation) {
     return *this;
 }
 
+path::options& path::options::set_max_blend_curvature(double curvature) {
+    max_blend_curvature_ = curvature;
+    return *this;
+}
+
+path::options& path::options::set_min_blend_curvature(double curvature) {
+    min_blend_curvature_ = curvature;
+    return *this;
+}
+
 double path::options::max_blend_deviation() const noexcept {
     return max_blend_deviation_;
 }
 
 double path::options::max_linear_deviation() const noexcept {
     return max_linear_deviation_;
+}
+
+double path::options::max_blend_curvature() const noexcept {
+    return max_blend_curvature_;
+}
+
+double path::options::min_blend_curvature() const noexcept {
+    return min_blend_curvature_;
 }
 
 path::segment::linear::linear(xt::xarray<double> start, const xt::xarray<double>& end) : start{std::move(start)}, length{0.0} {
