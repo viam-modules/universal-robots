@@ -70,8 +70,11 @@ path::segment::linear::linear(xt::xarray<double> start, const xt::xarray<double>
     const auto diff = end - this->start;
     const double norm = xt::norm_l2(diff)();
 
-    // TODO(RSDK-12761): Use scale-relative tolerance instead of hardcoded absolute value
-    if (norm < 1e-10) {
+    // The only truly degenerate case is coincident endpoints (norm == 0), which would
+    // make the unit direction undefined. For tiny-but-positive norms, the direction is
+    // well-defined: callers constructing via start + len * unit_dir produce diff = len * dir,
+    // and diff / len = dir exactly. TOTG handles short linear segments without issue.
+    if (norm == 0.0) {
         throw std::invalid_argument{"Linear segment: start and end must be different"};
     }
 
@@ -197,11 +200,25 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
     if (waypoints.size() < 2) {
         throw std::invalid_argument{"Path requires at least 2 waypoints"};
     }
+
     if (opts.max_blend_deviation() < 0.0) {
         throw std::invalid_argument{"Max blend deviation must be non-negative"};
     }
+
     if (opts.max_linear_deviation() < 0.0) {
         throw std::invalid_argument{"Max linear deviation must be non-negative"};
+    }
+
+    if (opts.min_blend_curvature() <= 0.0) {
+        throw std::invalid_argument{"Min blend curvature must be positive"};
+    }
+
+    if (opts.max_blend_curvature() < 0.0) {
+        throw std::invalid_argument{"Max blend curvature must be non-negative"};
+    }
+
+    if (opts.max_blend_curvature() < opts.min_blend_curvature()) {
+        throw std::invalid_argument{"Max blend curvature must be >= min blend curvature"};
     }
 
     // TODO(RSDK-12771): Revisit this algorithm, and write a more graceful one.
@@ -279,8 +296,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const auto incoming = corner - current_pos;
         const auto outgoing = next_waypoint - corner;
 
-        const double incoming_norm = xt::norm_l2(incoming)();
-        const double outgoing_norm = xt::norm_l2(outgoing)();
+        const auto incoming_norm = xt::norm_l2(incoming)();
+        const auto outgoing_norm = xt::norm_l2(outgoing)();
 
         // Need non-zero segments to compute angle
         if (incoming_norm <= 0.0 || outgoing_norm <= 0.0) {
@@ -291,42 +308,69 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const auto outgoing_unit = outgoing / outgoing_norm;
 
         // Compute angle between incoming and outgoing directions; Kunz & Stilman equation 2.
-        const double dot = xt::sum(incoming_unit * outgoing_unit)();
-        const double dot_clamped = std::clamp(dot, -1.0, 1.0);
-        const double angle = std::acos(dot_clamped);
-        const double half_angle = angle / 2.0;
+        const auto dot = xt::sum(incoming_unit * outgoing_unit)();
 
-        // Reject degenerate cases: very small angles would create enormous blend radii
-        // for minimal benefit, and angles near pi/2 cause tan(half_angle) to blow up.
-        // These checks prevent numerical issues and avoid creating blends that would
-        // violate the deviation constraint.
-        //
-        // TODO(RSDK-12761): Explicit epsilon, scaling, etc. Also, it
-        // isn't clear that it is OK to omit the blend, because we end
-        // up with a discontinuity.
-        constexpr double epsilon = 1e-6;
-        if (half_angle < epsilon || half_angle > (degrees_to_radians(90.0) - epsilon)) {
+        // Clamp to [-1, 1] to guard against floating-point rounding past the domain of acos:
+        // unit vector dot products are theoretically bounded, but the normalization arithmetic
+        // can produce values slightly outside that range.
+        const auto dot_clamped = std::clamp(dot, -1.0, 1.0);
+
+        // Exact collinear (angle=0): the bisector and radius formula both have singularities here.
+        // No blend is needed since the tangent is unchanged, and TOTG won't mandate s_dot=0.
+        // All near-collinear cases are handled by the min_blend_curvature cap below.
+        if (dot_clamped == 1.0) {
             return std::nullopt;
         }
+
+        // Exact reversal (angle=pi): the blend formula is algebraically undefined here.
+        //
+        // Near-reversal is handled by the max_blend_curvature check below. We guard this case
+        // explicitly rather than relying on tan(pi/2) being large enough to trip that check.
+        if (dot_clamped == -1.0) {
+            return std::nullopt;
+        }
+
+        const auto angle = std::acos(dot_clamped);
+        const auto half_angle = angle / 2.0;
 
         // At this point angle is strictly in (0, pi). trajectory.cpp relies on this guarantee
         // when searching for Case 2 switching points within circular segments.
 
-        // Calculate trim distance and radius following Kunz & Stilman equations 3-4.
-        // The trim distance is constrained by three limits: can't trim more than half
-        // of either segment, and can't exceed what's allowed by the deviation tolerance.
-        const double max_trim_from_deviation = opts.max_blend_deviation() * std::sin(half_angle) / (1.0 - std::cos(half_angle));
-        const double trim_distance = std::min({incoming_norm / 2.0, outgoing_norm / 2.0, max_trim_from_deviation});
-        const double radius = trim_distance / std::tan(half_angle);
+        // Compute trim following Kunz & Stilman equations 3-4. Three constraints apply: can't
+        // trim more than half of either segment, and the deviation at the blend must stay within
+        // the budget. The deviation formula inverted is: trim = deviation / tan(alpha/4). This
+        // form (via the half-angle identity sin(x)/(1-cos(x)) = cot(x/2)) is well-conditioned
+        // at small angles, unlike the equivalent sin(alpha/2)/(1-cos(alpha/2)) expression.
+        const auto tan_half = std::tan(half_angle);
+        const auto tan_quarter = std::tan(half_angle / 2.0);
+        const auto max_trim_from_segments = std::min(incoming_norm / 2.0, outgoing_norm / 2.0);
+        const auto natural_trim = (max_trim_from_segments * tan_quarter <= opts.max_blend_deviation())
+                                      ? max_trim_from_segments
+                                      : opts.max_blend_deviation() / tan_quarter;
+
+        // All curvature checks stay in trim space to avoid chains of divisions. The natural
+        // radius is trim/tan(alpha/2), so:
+        //   1/radius > kmax  <=>  tan(alpha/2) > kmax * trim  (near-reversal)
+        //   1/radius < kmin  <=>  trim > tan(alpha/2) / kmin  (near-collinear)
+        //
+        // Near-reversal: emit L-L; the TOTG tangent continuity check enforces s_dot=0.
+        if (tan_half > opts.max_blend_curvature() * natural_trim) {
+            return std::nullopt;
+        }
+
+        // Near-collinear: cap trim at tan(alpha/2)/kmin. The capped radius is exactly
+        // 1/kmin with no rounding; the arc retains exact C1 continuity at both boundaries.
+        const auto trim_distance = std::min(natural_trim, tan_half / opts.min_blend_curvature());
+        const auto radius = trim_distance / tan_half;
 
         // Construct the circular arc geometry following Kunz & Stilman equation 5-6.
         // The center lies along the angle bisector, and the x/y basis vectors define
         // the plane of the circular arc with x pointing toward the blend start point.
         const auto bisector = outgoing_unit - incoming_unit;
-        const double bisector_norm = xt::norm_l2(bisector)();
+        const auto bisector_norm = xt::norm_l2(bisector)();
         const auto bisector_unit = bisector / bisector_norm;
 
-        const double center_offset = radius / std::cos(half_angle);
+        const auto center_offset = radius / std::cos(half_angle);
         const auto center = corner + (center_offset * bisector_unit);
 
         // x_hat points from center to blend start (where circle touches incoming segment)
@@ -366,22 +410,22 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // AND all previously skipped waypoints must remain within tolerance when the
         // tube is extended to the new endpoint (revalidation prevents drift).
         if (!at_last && can_coalesce(*segment_start, *locus, *next)) {
-            // Revalidate all previously skipped waypoints against the extended segment
-            const double radius = opts.max_linear_deviation() / 2.0;
+            // Re-validate all previously skipped waypoints against the extended segment
+            const auto radius = opts.max_linear_deviation() / 2.0;
             bool all_previous_valid = true;
             for (auto prev_skipped : skipped_since_anchor) {
                 const auto start_to_next = *next - *segment_start;
                 const auto start_to_prev = *prev_skipped - *segment_start;
 
-                const double start_to_next_sq = xt::sum(start_to_next * start_to_next)();
-                const double start_to_prev_dot = xt::sum(start_to_prev * start_to_next)();
+                const auto start_to_next_sq = xt::sum(start_to_next * start_to_next);
+                const auto start_to_prev_dot = xt::sum(start_to_prev * start_to_next);
 
-                const double t = start_to_prev_dot / start_to_next_sq;
+                const auto t = start_to_prev_dot / start_to_next_sq;
                 const auto projected = *segment_start + (t * start_to_next);
                 const auto deviation_vec = *prev_skipped - projected;
-                const double deviation = xt::norm_l2(deviation_vec)();
+                const auto deviation = xt::norm_l2(deviation_vec);
 
-                if (deviation > radius) {
+                if (deviation() > radius) {
                     all_previous_valid = false;
                     break;
                 }
@@ -397,20 +441,31 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         // from current_position to this locus, and if it's a corner, decide whether to
         // create a circular blend or stop at the hard waypoint.
 
-        const auto blend_opt = !at_last ? try_create_blend(current_position, *locus, *next) : std::nullopt;
+        // Pass *segment_start (the original segment's start waypoint) rather than
+        // current_position (which may be a blend exit point part-way along the segment).
+        // This ensures the trim distance cap uses the full original segment length, not
+        // just the remaining portion after a prior blend.
+        const auto blend_opt = !at_last ? try_create_blend(*segment_start, *locus, *next) : std::nullopt;
 
         if (blend_opt) {
             const auto& blend = *blend_opt;
             const auto incoming = *locus - current_position;
-            const auto incoming_unit = incoming / xt::norm_l2(incoming)();
+            const auto dist_to_locus = xt::norm_l2(incoming);
+            const auto incoming_unit = incoming / dist_to_locus;
             const auto outgoing = *next - *locus;
             const auto outgoing_unit = outgoing / xt::norm_l2(outgoing)();
 
-            const auto trimmed_end = *locus - (blend.trim_distance * incoming_unit);
-            segment::linear incoming_segment{current_position, trimmed_end};
-            const auto linear_length = incoming_segment.length;
-            segments.push_back({.seg = segment{std::move(incoming_segment)}, .start = cumulative_length});
-            cumulative_length += linear_length;
+            // Compute the incoming linear segment length as a scalar to avoid catastrophic
+            // cancellation. When two adjacent blends exactly consume the connecting segment,
+            // this gives 0.0 (or slightly negative due to FP) rather than a tiny residual.
+            // Construct trimmed_end from current_position so the constructor's direction
+            // computation is diff/norm = (len*unit)/len = unit, exact regardless of len.
+            if (const auto linear_len = (dist_to_locus - blend.trim_distance)(); linear_len > 0.0) {
+                const auto trimmed_end = current_position + (linear_len * incoming_unit);
+                segment::linear incoming_segment{current_position, trimmed_end};
+                segments.push_back({.seg = segment{std::move(incoming_segment)}, .start = cumulative_length});
+                cumulative_length += arc_length{linear_len};
+            }
 
             segments.push_back({.seg = segment{blend.circular_seg}, .start = cumulative_length});
             cumulative_length += arc_length{blend.circular_seg.radius * blend.circular_seg.angle_rads};
@@ -426,16 +481,11 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             segment_start = locus;
             skipped_since_anchor.clear();
         } else {
-            // No blend created - emit linear segment from current_position to locus
-            const auto start_to_locus = *locus - current_position;
-            const double dist_sq = xt::sum(start_to_locus * start_to_locus)();
-
-            if (dist_sq > 0.0) {
-                segment::linear linear_data{current_position, *locus};
-                const auto linear_data_length = linear_data.length;
-                segments.push_back({.seg = segment{std::move(linear_data)}, .start = cumulative_length});
-                cumulative_length += linear_data_length;
-            }
+            // No blend: emit linear from current_position to locus.
+            segment::linear linear_data{current_position, *locus};
+            const auto linear_data_length = linear_data.length;
+            segments.push_back({.seg = segment{std::move(linear_data)}, .start = cumulative_length});
+            cumulative_length += linear_data_length;
 
             current_position = *locus;
             segment_start = locus;
