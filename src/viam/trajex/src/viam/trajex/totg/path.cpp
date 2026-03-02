@@ -18,8 +18,6 @@
 
 namespace viam::trajex::totg {
 
-using viam::trajex::degrees_to_radians;
-
 path::options::options()
     : max_blend_deviation_(k_default_max_deviation),
       max_linear_deviation_(k_default_max_deviation),
