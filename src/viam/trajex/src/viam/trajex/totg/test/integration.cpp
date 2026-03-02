@@ -1482,15 +1482,12 @@ BOOST_DATA_TEST_CASE(two_dof_right_angle_rotated, EXTREMAL_DATA(2), profile) {
     BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LL");
 }
 
-// 2 DoF: Z-staircase with zero-length middle segment.
+// 2 DoF: Z-staircase, adjacent blends consume the connecting segment entirely (RSDK-12711).
 //
 // Path: (0,0) -> (0,45) -> (45,45) -> (45,90) deg. Three equal 45-deg segments with two 90-deg
 // corners. With max_deviation >> needed, each blend reaches maximum radius (half-segment = 22.5
-// deg), exactly consuming the middle segment and leaving a zero-length linear segment in the
-// path between the two circular blends.
-//
-// TODO(RSDK-12711): Path construction either needs to deal with zero length segments or allow
-// circular to circular blends.
+// deg), exactly consuming the middle segment. The two blends are adjacent (C-C), producing LCCL.
+// The C-C boundary is tangent-continuous by blend construction, so TOTG does not stop there.
 BOOST_DATA_TEST_CASE(two_dof_zero_length_segment, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
     fixture.allow_any_events()
@@ -1501,12 +1498,7 @@ BOOST_DATA_TEST_CASE(two_dof_zero_length_segment, EXTREMAL_DATA(2), profile) {
         .set_waypoints_deg({{0.0, 0.0}, {0.0, 45.0}, {45.0, 45.0}, {45.0, 90.0}});
     const trajectory traj = fixture.create_and_validate();
 
-    // Path structure: linear, blend, linear (middle), blend, linear.
-    // The two blends together consume the full middle segment; the middle linear should have
-    // length 0 but currently has length ~0.196 due to a blend-trim bug (RSDK-12711).
-    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LCLCL");
-    const auto middle = std::next(traj.path().begin(), 2);
-    BOOST_CHECK_EQUAL(static_cast<double>((*middle).length()), 0.0);
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LCCL");
 }
 
 // 1 DoF: two successive reversals. Path goes A -> B -> A -> B, with cusps at B and then A.
