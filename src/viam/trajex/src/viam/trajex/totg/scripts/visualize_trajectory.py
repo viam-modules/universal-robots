@@ -7,6 +7,7 @@ Usage:
 """
 
 import json
+import os
 import sys
 import matplotlib.pyplot as plt
 import numpy as np
@@ -65,7 +66,9 @@ def plot_phase_plane(data, ax):
     # - If limits are very high (e.g., nearly infinite), cap y_max to avoid
     #   squashing the trajectory into an unreadable band at the bottom
     # - Use MAX_Y_SCALE_FACTOR as a heuristic balance
-    max_traj_velocity = max(s_dot)
+    # Filter inf/nan from s_dot - failed trajectories can have non-finite integration points
+    finite_s_dot = s_dot[np.isfinite(s_dot)]
+    max_traj_velocity = max(finite_s_dot) if len(finite_s_dot) > 0 else 0.0
 
     # Collect all limit curve values (from integration points and, for failed trajectories,
     # from limit_curve_samples at the hit positions)
@@ -357,7 +360,7 @@ def main():
     data = load_trajectory(filename)
 
     # Create figure with 3-row layout (taller to give phase plane more vertical space)
-    fig = plt.figure(figsize=(14, 18))
+    fig = plt.figure(figsize=(14, 18), num=os.path.basename(filename))
     gs = fig.add_gridspec(3, 2)
 
     # Row 1: Phase plane spans both columns

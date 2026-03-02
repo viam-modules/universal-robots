@@ -9,6 +9,7 @@
 
 #include <boost/test/data/monomorphic.hpp>
 #include <boost/test/data/test_case.hpp>
+#include <boost/test/results_collector.hpp>
 #include <boost/test/unit_test.hpp>
 
 #if defined(__has_include) && (__has_include(<xtensor/containers/xadapt.hpp>))
@@ -498,6 +499,7 @@ struct trajectory_test_fixture {
 
     // JSON output for visualization
     std::optional<std::string> json_output_filename_;
+    bool json_on_failure_only_ = false;
     std::shared_ptr<trajectory_integration_event_collector> collector_;
 
     explicit trajectory_test_fixture(size_t dof = 6, double expectation_tolerance_percent = 0.1)
@@ -570,6 +572,13 @@ struct trajectory_test_fixture {
 
     trajectory_test_fixture& enable_json_output(std::string filename) {
         json_output_filename_ = std::move(filename);
+        json_on_failure_only_ = false;
+        return *this;
+    }
+
+    trajectory_test_fixture& enable_json_output_on_failure(std::string filename) {
+        json_output_filename_ = std::move(filename);
+        json_on_failure_only_ = true;
         return *this;
     }
 
@@ -727,14 +736,6 @@ struct trajectory_test_fixture {
             }
         }();
 
-        // Write JSON if enabled
-        if (json_output_filename_.has_value() && collector_) {
-            std::ofstream out(*json_output_filename_);
-            write_trajectory_json(out, *collector_, &traj);
-            out.close();
-            BOOST_TEST_MESSAGE("Wrote trajectory JSON to " << *json_output_filename_);
-        }
-
         // Verify all expectations were met (only if expectations were specified)
         if (!allow_any_events_) {
             expectation_observer_->verify_all_expectations_met();
@@ -764,6 +765,17 @@ struct trajectory_test_fixture {
 
         if (validate_joint_kinematics_) {
             validate_joint_kinematics(traj, traj_opts.max_velocity, traj_opts.max_acceleration, validation_tolerance_percent);
+        }
+
+        // Write JSON if enabled, after all validation so failure-only mode can check results.
+        if (json_output_filename_.has_value() && collector_) {
+            const bool has_failures =
+                boost::unit_test::results_collector.results(boost::unit_test::framework::current_test_case().p_id).p_assertions_failed > 0;
+            if (!json_on_failure_only_ || has_failures) {
+                std::ofstream out(*json_output_filename_);
+                write_trajectory_json(out, *collector_, &traj);
+                BOOST_TEST_MESSAGE("Wrote trajectory JSON to " << *json_output_filename_);
+            }
         }
 
         return traj;
