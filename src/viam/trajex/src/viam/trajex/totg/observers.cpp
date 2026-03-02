@@ -70,11 +70,36 @@ void composite_integration_observer::on_trajectory_extended(const trajectory& tr
     }
 }
 
+void composite_integration_observer::on_failed(std::exception_ptr error, std::shared_ptr<const trajectory> invalid) noexcept {
+    // The `on_failed` handler is `noexcept` so it doesn't make sense to throw from here. Just
+    // short-circuit the recursion instead of throwing.
+    if (dispatching_) {
+        return;
+    }
+
+    for (auto& obs : observers_) {
+        obs->on_failed(error, invalid);
+    }
+}
+
 trajectory_integration_event_collector::trajectory_integration_event_collector() = default;
 trajectory_integration_event_collector::~trajectory_integration_event_collector() = default;
 
 void trajectory_integration_event_collector::on_event(const class trajectory&, event ev) {
     events_.push_back(std::move(ev));
+}
+
+void trajectory_integration_event_collector::on_failed(std::exception_ptr error, std::shared_ptr<const trajectory> invalid) noexcept {
+    invalid_exception_ = std::move(error);
+    invalid_trajectory_ = std::move(invalid);
+}
+
+std::shared_ptr<const trajectory> trajectory_integration_event_collector::invalid_trajectory() const noexcept {
+    return invalid_trajectory_;
+}
+
+std::exception_ptr trajectory_integration_event_collector::invalid_exception() const noexcept {
+    return invalid_exception_;
 }
 
 const std::vector<trajectory_integration_event_collector::event>& trajectory_integration_event_collector::events() const {

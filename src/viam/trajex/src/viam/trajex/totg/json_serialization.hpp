@@ -11,9 +11,10 @@ namespace viam::trajex::totg {
 ///
 /// Serializes trajectory with collected events to JSON.
 ///
-/// Includes integration points (phase plane + joint-space data + limit curves),
-/// events (forward starts, limit hits, backward starts, splices with pruned points),
-/// and metadata.
+/// Handles both successful and failed generations. On success, pass the completed
+/// trajectory as @p traj. On failure, pass nullptr; the function uses
+/// collector.invalid_trajectory() and collector.invalid_exception() to populate
+/// the output.
 ///
 /// JSON structure:
 /// @code{.json}
@@ -24,45 +25,39 @@ namespace viam::trajex::totg {
 ///     "duration": <number>,
 ///     "num_integration_points": <int>,
 ///     "max_velocity": [<number>, ...],
-///     "max_acceleration": [<number>, ...]
+///     "max_acceleration": [<number>, ...],
+///     // on failure only:
+///     "failure": true,
+///     "error": "<message>"
 ///   },
-///   "integration_points": {
-///     "time": [<number>, ...],
+///   "integration_points": { ... },  // omitted if no trajectory available
+///   "events": { "forward_starts": [...], "limit_hits": [...],
+///               "backward_starts": [...], "splices": [...] },
+///   // present when events exist beyond the last integration point (i.e. on failure):
+///   "limit_curve_samples": {
 ///     "s": [<number>, ...],
-///     "s_dot": [<number>, ...],
-///     "s_ddot": [<number>, ...],
 ///     "s_dot_max_acc": [<number|null>, ...],
-///     "s_dot_max_vel": [<number|null>, ...],
-///     "configuration": [[<number>, ...], ...],
-///     "velocity": [[<number>, ...], ...],
-///     "acceleration": [[<number>, ...], ...]
-///   },
-///   "events": {
-///     "forward_starts": [{"s": <number>, "s_dot": <number>}, ...],
-///     "limit_hits": [{"s": <number>, "s_dot": <number>,
-///                     "s_dot_max_acc": <number>, "s_dot_max_vel": <number>}, ...],
-///     "backward_starts": [{"s": <number>, "s_dot": <number>, "kind": <string>}, ...],
-///     "splices": [{"num_pruned": <int>,
-///                  "pruned_points": {"time": [...], "s": [...], "s_dot": [...], "s_ddot": [...]}}, ...]
+///     "s_dot_max_vel": [<number|null>, ...]
 ///   }
 /// }
 /// @endcode
 ///
-/// @param traj The trajectory to serialize
-/// @param collector Event collector containing integration events
+/// @param collector Event collector containing integration events and optional failure data
+/// @param traj Completed trajectory (success path), or nullptr (failure path)
 /// @return JSON string
 ///
-std::string serialize_trajectory_to_json(const trajectory& traj, const trajectory_integration_event_collector& collector);
+std::string serialize_trajectory_to_json(const trajectory_integration_event_collector& collector, const trajectory* traj = nullptr);
 
 ///
-/// Writes trajectory JSON directly to output stream.
+/// Writes trajectory JSON to output stream.
 ///
-/// Convenience wrapper around serialize_trajectory_to_json().
+/// Convenience wrapper around serialize_trajectory_to_json(). See that function
+/// for full schema documentation and success/failure semantics.
 ///
 /// @param out Output stream to write to
-/// @param traj The trajectory to serialize
-/// @param collector Event collector containing integration events
+/// @param collector Event collector containing integration events and optional failure data
+/// @param traj Completed trajectory (success path), or nullptr (failure path)
 ///
-void write_trajectory_json(std::ostream& out, const trajectory& traj, const trajectory_integration_event_collector& collector);
+void write_trajectory_json(std::ostream& out, const trajectory_integration_event_collector& collector, const trajectory* traj = nullptr);
 
 }  // namespace viam::trajex::totg

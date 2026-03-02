@@ -35,6 +35,8 @@ class counting_observer : public trajectory::integration_observer {
     void on_trajectory_extended(const trajectory&, splice_event) override {
         ++splices;
     }
+
+    void on_failed(std::exception_ptr, std::shared_ptr<const trajectory>) noexcept override {}
 };
 
 }  // namespace
@@ -125,6 +127,7 @@ BOOST_AUTO_TEST_CASE(composite_observer_prevents_reentrancy_via_add) {
         void on_hit_limit_curve(const trajectory&, limit_hit_event) override {}
         void on_started_backward_integration(const trajectory&, started_backward_event) override {}
         void on_trajectory_extended(const trajectory&, splice_event) override {}
+        void on_failed(std::exception_ptr, std::shared_ptr<const trajectory>) noexcept override {}
 
        private:
         composite_integration_observer& composite_;
@@ -161,6 +164,7 @@ BOOST_AUTO_TEST_CASE(composite_observer_prevents_reentrancy_via_dispatch) {
         void on_hit_limit_curve(const trajectory&, limit_hit_event) override {}
         void on_started_backward_integration(const trajectory&, started_backward_event) override {}
         void on_trajectory_extended(const trajectory&, splice_event) override {}
+        void on_failed(std::exception_ptr, std::shared_ptr<const trajectory>) noexcept override {}
 
        private:
         composite_integration_observer& composite_;

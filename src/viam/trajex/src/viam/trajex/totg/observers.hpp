@@ -1,5 +1,6 @@
 #pragma once
 
+#include <exception>
 #include <memory>
 #include <vector>
 
@@ -80,6 +81,14 @@ class composite_integration_observer final : public trajectory::integration_obse
     ///
     void on_trajectory_extended(const trajectory& traj, splice_event event) override;
 
+    ///
+    /// Dispatches failure notification to all observers.
+    ///
+    /// @param error Exception that caused the failure
+    /// @param invalid Invalid trajectory at time of failure, or null if unavailable
+    ///
+    void on_failed(std::exception_ptr error, std::shared_ptr<const trajectory> invalid) noexcept override;
+
    private:
     void add_observer_(std::shared_ptr<integration_observer> observer);
 
@@ -120,7 +129,7 @@ class trajectory_integration_event_collector final : public trajectory::integrat
     /// @param traj Trajectory being integrated
     /// @param ev Event to store
     ///
-    void on_event(const trajectory& traj, event ev);
+    void on_event(const trajectory& traj, event ev) override;
 
     ///
     /// Gets all collected events.
@@ -159,8 +168,26 @@ class trajectory_integration_event_collector final : public trajectory::integrat
     ///
     const_iterator end() const noexcept;
 
+    ///
+    /// Called when trajectory generation fails. Stores the invalid trajectory and
+    /// exception for later diagnostic use (e.g., writing failure JSON with limit curves).
+    ///
+    void on_failed(std::exception_ptr error, std::shared_ptr<const trajectory> invalid) noexcept override;
+
+    ///
+    /// Gets the invalid trajectory from a failed generation, or null if none.
+    ///
+    std::shared_ptr<const trajectory> invalid_trajectory() const noexcept;
+
+    ///
+    /// Gets the exception from a failed generation, or null if none.
+    ///
+    std::exception_ptr invalid_exception() const noexcept;
+
    private:
     std::vector<event> events_;
+    std::shared_ptr<const trajectory> invalid_trajectory_;
+    std::exception_ptr invalid_exception_;
 };
 
 template <std::derived_from<trajectory::integration_observer> T>

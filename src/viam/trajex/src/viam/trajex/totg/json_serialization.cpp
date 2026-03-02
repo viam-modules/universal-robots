@@ -8,6 +8,8 @@
 
 #include <json/json.h>
 
+#include <viam/trajex/types/arc_length.hpp>
+
 namespace viam::trajex::totg {
 
 namespace {
@@ -213,36 +215,123 @@ Json::Value serialize_events(const std::vector<trajectory::integration_event_obs
 
 }  // namespace
 
-std::string serialize_trajectory_to_json(const trajectory& traj, const trajectory_integration_event_collector& collector) {
+std::string serialize_trajectory_to_json(const trajectory_integration_event_collector& collector, const trajectory* traj) {
+    // On failure the caller passes nullptr; fall back to whatever the collector captured.
+    const trajectory* effective = traj ? traj : collector.invalid_trajectory().get();
+
     Json::Value root;
 
-    // Metadata
     Json::Value metadata;
-    const auto& points = traj.get_integration_points();
-    const auto& opts = traj.get_options();
-    metadata["path_length"] = static_cast<double>(traj.path().length());
-    metadata["duration"] = traj.duration().count();
-    metadata["num_integration_points"] = static_cast<Json::Int64>(points.size());
-    metadata["dof"] = static_cast<Json::Int64>(traj.path().dof());
-    metadata["max_velocity"] = xarray_to_json_array(opts.max_velocity);
-    metadata["max_acceleration"] = xarray_to_json_array(opts.max_acceleration);
+    if (effective) {
+        metadata["dof"] = static_cast<Json::Int64>(effective->path().dof());
+        metadata["path_length"] = static_cast<double>(effective->path().length());
+        metadata["duration"] = effective->duration().count();
+        metadata["num_integration_points"] = static_cast<Json::Int64>(effective->get_integration_points().size());
+        metadata["max_velocity"] = xarray_to_json_array(effective->get_options().max_velocity);
+        metadata["max_acceleration"] = xarray_to_json_array(effective->get_options().max_acceleration);
+    }
+
+    // If there was a failure, annotate metadata with the error message.
+    if (const auto exc = collector.invalid_exception()) {
+        metadata["failure"] = true;
+        try {
+            std::rethrow_exception(exc);
+        } catch (const std::exception& e) {
+            metadata["error"] = e.what();
+        } catch (...) {
+            metadata["error"] = "unknown exception";
+        }
+    }
+
     root["metadata"] = std::move(metadata);
 
-    // Integration points (includes joint-space data and limit curves)
-    root["integration_points"] = serialize_integration_points(traj);
+    if (effective) {
+        root["integration_points"] = serialize_integration_points(*effective);
+    }
 
-    // Events
     root["events"] = serialize_events(collector.events());
 
-    // Format with indentation
+    // When events exist beyond the last integration point (which happens on failure),
+    // sample the limit curves densely through the gap so the visualizer can show
+    // where the trajectory ran into trouble. On success all events fall within the
+    // confirmed integration range and this block is a no-op.
+    if (effective && !effective->get_integration_points().empty()) {
+        const auto& points = effective->get_integration_points();
+        const arc_length last_s = points.back().s;
+
+        // Find the farthest s across all event types - backward starts can be well
+        // ahead of limit hits.
+        arc_length farthest_s = last_s;
+        for (const auto& ev : collector) {
+            std::visit(
+                [&](auto&& e) {
+                    using T = std::decay_t<decltype(e)>;
+                    if constexpr (std::is_same_v<T, trajectory::integration_observer::limit_hit_event>) {
+                        if (e.breach.s > farthest_s) {
+                            farthest_s = e.breach.s;
+                        }
+                    } else if constexpr (std::is_same_v<T, trajectory::integration_observer::started_backward_event> ||
+                                         std::is_same_v<T, trajectory::integration_observer::started_forward_event>) {
+                        if (e.start.s > farthest_s) {
+                            farthest_s = e.start.s;
+                        }
+                    }
+                },
+                ev);
+        }
+
+        const arc_length path_end = effective->path().length();
+        if (farthest_s > path_end) {
+            farthest_s = path_end;
+        }
+
+        if (farthest_s > last_s) {
+            double delta;
+            if (points.size() >= 2) {
+                delta =
+                    (static_cast<double>(points.back().s) - static_cast<double>(points.front().s)) / static_cast<double>(points.size() - 1);
+            }
+            if (points.size() < 2 || delta <= 0.0) {
+                delta = (static_cast<double>(farthest_s) - static_cast<double>(last_s)) / 20.0;
+            }
+
+            Json::Value limit_curve_samples(Json::objectValue);
+            Json::Value lcs_s(Json::arrayValue);
+            Json::Value lcs_s_dot_max_acc(Json::arrayValue);
+            Json::Value lcs_s_dot_max_vel(Json::arrayValue);
+
+            auto cursor = effective->path().create_cursor();
+            auto emit = [&](arc_length s) {
+                cursor.seek(s);
+                const auto limits = effective->get_velocity_limits(cursor);
+                lcs_s.append(static_cast<double>(s));
+                lcs_s_dot_max_acc.append(std::isinf(static_cast<double>(limits.s_dot_max_acc))
+                                             ? Json::Value::null
+                                             : Json::Value{static_cast<double>(limits.s_dot_max_acc)});
+                lcs_s_dot_max_vel.append(std::isinf(static_cast<double>(limits.s_dot_max_vel))
+                                             ? Json::Value::null
+                                             : Json::Value{static_cast<double>(limits.s_dot_max_vel)});
+            };
+
+            for (arc_length s = last_s; s < farthest_s; s += arc_length{delta}) {
+                emit(s);
+            }
+            emit(farthest_s);
+
+            limit_curve_samples["s"] = std::move(lcs_s);
+            limit_curve_samples["s_dot_max_acc"] = std::move(lcs_s_dot_max_acc);
+            limit_curve_samples["s_dot_max_vel"] = std::move(lcs_s_dot_max_vel);
+            root["limit_curve_samples"] = std::move(limit_curve_samples);
+        }
+    }
+
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "  ";
-
     return Json::writeString(writer, root);
 }
 
-void write_trajectory_json(std::ostream& out, const trajectory& traj, const trajectory_integration_event_collector& collector) {
-    out << serialize_trajectory_to_json(traj, collector);
+void write_trajectory_json(std::ostream& out, const trajectory_integration_event_collector& collector, const trajectory* traj) {
+    out << serialize_trajectory_to_json(collector, traj);
 }
 
 }  // namespace viam::trajex::totg

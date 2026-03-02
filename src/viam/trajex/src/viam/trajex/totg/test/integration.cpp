@@ -249,6 +249,8 @@ class expectation_observer final : public trajectory::integration_observer {
         }
     }
 
+    void on_failed(std::exception_ptr, std::shared_ptr<const trajectory>) noexcept override {}
+
    private:
     double default_tolerance_percent_;
     std::deque<integration_expectation> expectations_;
@@ -710,13 +712,25 @@ struct trajectory_test_fixture {
             collector_ = composite_observer_.add_observer(std::make_shared<trajectory_integration_event_collector>());
         }
 
-        // Generate trajectory
-        trajectory traj = trajectory::create(std::move(p), traj_opts);
+        // Generate trajectory - catch failures to write diagnostic JSON before propagating
+        trajectory traj = [&]() -> trajectory {
+            try {
+                return trajectory::create(std::move(p), traj_opts);
+            } catch (const std::exception& e) {
+                if (json_output_filename_.has_value() && collector_) {
+                    std::ofstream out(*json_output_filename_);
+                    write_trajectory_json(out, *collector_);
+                    BOOST_TEST_MESSAGE("Wrote failure JSON to " << *json_output_filename_);
+                }
+                BOOST_FAIL(e.what());
+                throw;  // ensure exit if BOOST_FAIL doesn't throw
+            }
+        }();
 
         // Write JSON if enabled
         if (json_output_filename_.has_value() && collector_) {
             std::ofstream out(*json_output_filename_);
-            write_trajectory_json(out, traj, *collector_);
+            write_trajectory_json(out, *collector_, &traj);
             out.close();
             BOOST_TEST_MESSAGE("Wrote trajectory JSON to " << *json_output_filename_);
         }
@@ -1303,7 +1317,7 @@ BOOST_AUTO_TEST_CASE(trajectory_json_serialization) {
     const trajectory traj = trajectory::create(std::move(p), opts);
 
     // Serialize to JSON
-    const std::string json = serialize_trajectory_to_json(traj, collector);
+    const std::string json = serialize_trajectory_to_json(collector, &traj);
 
     // Validate JSON structure
     const Json::CharReaderBuilder reader;
