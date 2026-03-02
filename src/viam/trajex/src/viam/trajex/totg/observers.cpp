@@ -71,8 +71,12 @@ void composite_integration_observer::on_trajectory_extended(const trajectory& tr
 }
 
 void composite_integration_observer::on_failed(std::exception_ptr error, std::shared_ptr<const trajectory> invalid) noexcept {
-    // No reentrancy_guard: it throws, which is forbidden in a noexcept context.
-    // on_failed is a terminal event fired once during stack unwinding; re-entrant calls won't occur.
+    // The `on_failed` handler is `noexcept` so it doesn't make sense to throw from here. Just
+    // short-circuit the recursion instead of throwing.
+    if (dispatching_) {
+        return;
+    }
+
     for (auto& obs : observers_) {
         obs->on_failed(error, invalid);
     }
@@ -86,7 +90,6 @@ void trajectory_integration_event_collector::on_event(const class trajectory&, e
 }
 
 void trajectory_integration_event_collector::on_failed(std::exception_ptr error, std::shared_ptr<const trajectory> invalid) noexcept {
-    // Both assignments are noexcept (shared_ptr move, exception_ptr copy), so no try/catch needed.
     invalid_exception_ = std::move(error);
     invalid_trajectory_ = std::move(invalid);
 }

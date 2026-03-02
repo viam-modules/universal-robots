@@ -1584,8 +1584,6 @@ BOOST_DATA_TEST_CASE(spiral_rectangle_6dof, boost::unit_test::data::make(get_spi
     // in some integration points for trajectories with reversals (likely RSDK-12981).
     f.validation_tolerance_percent = 200.0;
 
-    f.enable_json_output(std::string{"spiral_rectangle_6dof_"} + profile.name + ".json");
-
     f.set_waypoints_deg(get_spiral_rectangle_waypoints_deg())
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
