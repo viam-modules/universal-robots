@@ -40,8 +40,9 @@ class scope_guard {
    public:
     explicit scope_guard(F f) noexcept : f_(std::move(f)) {}
     ~scope_guard() noexcept {
-        if (active_)
+        if (active_) {
             f_();
+        }
     }
     void dismiss() noexcept {
         active_ = false;
@@ -991,8 +992,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 std::shared_ptr<trajectory> invalid;
                 try {
                     invalid = std::make_shared<trajectory>(std::move(traj));
-                } catch (...) {
-                    // std::bad_alloc: proceed with null invalid, original error preserved
+                } catch (...) {  // NOLINT(bugprone-empty-catch)
+                    // Presumably a `std::bad_alloc`, there isn't much more we can do. We will still call `on_failed` but
+                    // no `trajectory` object will be provided. We will at least get the exception information collected.
                 }
                 observer->on_failed(std::current_exception(), std::move(invalid));
             }

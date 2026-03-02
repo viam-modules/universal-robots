@@ -245,8 +245,9 @@ std::string serialize_trajectory_to_json(const trajectory_integration_event_coll
 
     root["metadata"] = std::move(metadata);
 
-    if (effective)
+    if (effective) {
         root["integration_points"] = serialize_integration_points(*effective);
+    }
 
     root["events"] = serialize_events(collector.events());
 
@@ -266,22 +267,23 @@ std::string serialize_trajectory_to_json(const trajectory_integration_event_coll
                 [&](auto&& e) {
                     using T = std::decay_t<decltype(e)>;
                     if constexpr (std::is_same_v<T, trajectory::integration_observer::limit_hit_event>) {
-                        if (e.breach.s > farthest_s)
+                        if (e.breach.s > farthest_s) {
                             farthest_s = e.breach.s;
-                    } else if constexpr (std::is_same_v<T, trajectory::integration_observer::started_backward_event>) {
-                        if (e.start.s > farthest_s)
+                        }
+                    } else if constexpr (std::is_same_v<T, trajectory::integration_observer::started_backward_event> ||
+                                         std::is_same_v<T, trajectory::integration_observer::started_forward_event>) {
+                        if (e.start.s > farthest_s) {
                             farthest_s = e.start.s;
-                    } else if constexpr (std::is_same_v<T, trajectory::integration_observer::started_forward_event>) {
-                        if (e.start.s > farthest_s)
-                            farthest_s = e.start.s;
+                        }
                     }
                 },
                 ev);
         }
 
         const arc_length path_end = effective->path().length();
-        if (farthest_s > path_end)
+        if (farthest_s > path_end) {
             farthest_s = path_end;
+        }
 
         if (farthest_s > last_s) {
             double delta;
@@ -311,8 +313,9 @@ std::string serialize_trajectory_to_json(const trajectory_integration_event_coll
                                              : Json::Value{static_cast<double>(limits.s_dot_max_vel)});
             };
 
-            for (arc_length s = last_s; s < farthest_s; s += arc_length{delta})
+            for (arc_length s = last_s; s < farthest_s; s += arc_length{delta}) {
                 emit(s);
+            }
             emit(farthest_s);
 
             limit_curve_samples["s"] = std::move(lcs_s);
