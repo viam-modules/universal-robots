@@ -305,6 +305,12 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         const auto incoming_unit = incoming / incoming_norm;
         const auto outgoing_unit = outgoing / outgoing_norm;
 
+        // If these are numerically identical, then these are FP exact colinear segments, and we do
+        // not need a blend.
+        if (incoming_unit == outgoing_unit) {
+            return std::nullopt;
+        }
+
         // Compute angle between incoming and outgoing directions; Kunz & Stilman equation 2.
         const auto dot = xt::sum(incoming_unit * outgoing_unit)();
 
