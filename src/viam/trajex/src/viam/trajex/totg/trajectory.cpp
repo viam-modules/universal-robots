@@ -330,6 +330,12 @@ struct eq40_result {
                     // both candidates land in [0, 2*pi). Blend arcs have total_angle < pi (enforced by
                     // path::create), so at most one root per joint falls in range.
                     for (size_t i = 0; i < x.size(); ++i) {
+
+                        // If this joint is orthogonal to the blend, it cannot be an extremum.
+                        if (x(i) == 0 && y(i) == 0) {
+                            continue;
+                        }
+
                         auto extremum_angle = std::atan2(y(i), x(i));
                         if (extremum_angle < 0.0) {
                             extremum_angle += std::numbers::pi;
