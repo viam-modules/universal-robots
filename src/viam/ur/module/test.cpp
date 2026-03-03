@@ -1195,4 +1195,103 @@ BOOST_AUTO_TEST_CASE(test_state_estimation_mismatch_nearly_identical_waypoints) 
     }
 }
 
+BOOST_AUTO_TEST_CASE(test_move_limit_both_vector) {
+    // Both velocity and acceleration are per-joint vectors
+    vector6d_t vel_limits{};
+    vector6d_t acc_limits{};
+
+    Arm::MoveLimit vel = std::vector<double>{10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
+    Arm::MoveLimit acc = std::vector<double>{100.0, 200.0, 300.0, 400.0, 500.0, 600.0};
+
+    BOOST_CHECK(apply_move_limit(vel_limits, vel));
+    BOOST_CHECK(apply_move_limit(acc_limits, acc));
+
+    for (size_t i = 0; i < 6; ++i) {
+        BOOST_CHECK_CLOSE(vel_limits[i], degrees_to_radians((i + 1) * 10.0), 1e-9);
+        BOOST_CHECK_CLOSE(acc_limits[i], degrees_to_radians((i + 1) * 100.0), 1e-9);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_move_limit_scalar_fills_all_joints) {
+    vector6d_t vel_limits{};
+    vector6d_t acc_limits{};
+
+    Arm::MoveLimit vel = std::vector<double>{15.0, 25.0, 35.0, 45.0, 55.0, 65.0};
+    Arm::MoveLimit acc = 180.0;
+
+    BOOST_CHECK(apply_move_limit(vel_limits, vel));
+    BOOST_CHECK(apply_move_limit(acc_limits, acc));
+
+    // Velocity: per-joint
+    for (size_t i = 0; i < 6; ++i) {
+        BOOST_CHECK_CLOSE(vel_limits[i], degrees_to_radians(15.0 + i * 10.0), 1e-9);
+    }
+
+    // Acceleration: uniform fill from scalar
+    const double expected_acc = degrees_to_radians(180.0);
+    for (size_t i = 0; i < 6; ++i) {
+        BOOST_CHECK_CLOSE(acc_limits[i], expected_acc, 1e-9);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_move_limit_scalar_zero_preserves_defaults) {
+    // RSDK-12375: scalar <= 0 should return false and leave limits unchanged
+    vector6d_t limits{};
+    limits.fill(42.0);
+
+    Arm::MoveLimit zero = 0.0;
+    Arm::MoveLimit negative = -5.0;
+
+    BOOST_CHECK(!apply_move_limit(limits, zero));
+    for (const auto& v : limits) {
+        BOOST_CHECK_EQUAL(v, 42.0);
+    }
+
+    BOOST_CHECK(!apply_move_limit(limits, negative));
+    for (const auto& v : limits) {
+        BOOST_CHECK_EQUAL(v, 42.0);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_move_limit_vector_too_few_elements) {
+    vector6d_t limits{};
+    limits.fill(42.0);
+
+    Arm::MoveLimit value = std::vector<double>{10.0, 20.0, 30.0};
+
+    BOOST_CHECK_THROW(apply_move_limit(limits, value), std::invalid_argument);
+
+    // Limits must be unchanged after the error
+    for (const auto& v : limits) {
+        BOOST_CHECK_EQUAL(v, 42.0);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_move_limit_vector_too_many_elements) {
+    vector6d_t limits{};
+    limits.fill(42.0);
+
+    Arm::MoveLimit value = std::vector<double>{1, 2, 3, 4, 5, 6, 7, 8};
+
+    BOOST_CHECK_THROW(apply_move_limit(limits, value), std::invalid_argument);
+
+    for (const auto& v : limits) {
+        BOOST_CHECK_EQUAL(v, 42.0);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_move_limit_vector_negative_element) {
+    vector6d_t limits{};
+    limits.fill(42.0);
+
+    Arm::MoveLimit value = std::vector<double>{10.0, 20.0, -5.0, 40.0, 50.0, 60.0};
+
+    BOOST_CHECK_THROW(apply_move_limit(limits, value), std::invalid_argument);
+
+    // Limits must be unchanged — validation happens before application
+    for (const auto& v : limits) {
+        BOOST_CHECK_EQUAL(v, 42.0);
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()
