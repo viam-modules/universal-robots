@@ -69,6 +69,19 @@ class path {
             ///
             linear(xt::xarray<double> start, const xt::xarray<double>& end);
 
+            ///
+            /// Constructs linear segment from precomputed components.
+            ///
+            /// Use when direction and length are already known to avoid recomputation.
+            /// Caller is responsible for ensuring unit_direction is normalized and non-zero.
+            ///
+            /// @param start Starting configuration
+            /// @param unit_direction Precomputed unit direction vector
+            /// @param length Arc length (must be positive)
+            /// @throws std::invalid_argument if length is not positive
+            ///
+            linear(xt::xarray<double> start, xt::xarray<double> unit_direction, arc_length length);
+
             xt::xarray<double> start;           ///< Starting configuration
             xt::xarray<double> unit_direction;  ///< Precomputed unit direction vector (normalized end-start)
             arc_length length;                  ///< Precomputed length (norm of end-start)

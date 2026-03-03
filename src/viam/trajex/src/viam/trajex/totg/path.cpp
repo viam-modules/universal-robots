@@ -80,6 +80,13 @@ path::segment::linear::linear(xt::xarray<double> start, const xt::xarray<double>
     this->length = arc_length{norm};
 }
 
+path::segment::linear::linear(xt::xarray<double> start, xt::xarray<double> unit_direction, arc_length length)
+    : start{std::move(start)}, unit_direction{std::move(unit_direction)}, length{length} {
+    if (static_cast<double>(length) <= 0.0) {
+        throw std::invalid_argument{"Linear segment: length must be positive"};
+    }
+}
+
 path::segment::circular::circular(xt::xarray<double> center, xt::xarray<double> x, xt::xarray<double> y, double radius, double angle_rads)
     : center{std::move(center)}, x{std::move(x)}, y{std::move(y)}, radius{radius}, angle_rads{angle_rads} {
     const double x_norm = xt::norm_l2(this->x)();
@@ -454,21 +461,20 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         if (blend_opt) {
             const auto& blend = *blend_opt;
             const auto incoming = *locus - current_position;
-            const auto dist_to_locus = xt::norm_l2(incoming);
+            const auto dist_to_locus = xt::norm_l2(incoming)();
             const auto incoming_unit = incoming / dist_to_locus;
-            const auto outgoing = *next - *locus;
-            const auto outgoing_unit = outgoing / xt::norm_l2(outgoing)();
 
-            // Compute the incoming linear segment length as a scalar to avoid catastrophic
-            // cancellation. When two adjacent blends exactly consume the connecting segment,
-            // this gives 0.0 (or slightly negative due to FP) rather than a tiny residual.
-            // Construct trimmed_end from current_position so the constructor's direction
-            // computation is diff/norm = (len*unit)/len = unit, exact regardless of len.
-            if (const auto linear_len = (dist_to_locus - blend.trim_distance)(); linear_len > 0.0) {
-                const auto trimmed_end = current_position + (linear_len * incoming_unit);
-                segment::linear incoming_segment{current_position, trimmed_end};
+            // Compute the incoming linear segment length as a scalar subtraction to avoid
+            // catastrophic cancellation from reconstructing two nearly-equal endpoint positions.
+            // When adjacent blends fully consume a connecting segment (C-C), this should be
+            // exactly zero. It can come out slightly positive due to FP rounding in the outgoing
+            // segment norm; the representability check catches that: if incoming_length is too
+            // small to change dist_to_locus in floating-point, the segment is a rounding artifact.
+            const auto incoming_length = dist_to_locus - blend.trim_distance;
+            if (dist_to_locus + incoming_length > dist_to_locus) {
+                segment::linear incoming_segment{current_position, incoming_unit, arc_length{incoming_length}};
                 segments.push_back({.seg = segment{std::move(incoming_segment)}, .start = cumulative_length});
-                cumulative_length += arc_length{linear_len};
+                cumulative_length += arc_length{incoming_length};
             }
 
             segments.push_back({.seg = segment{blend.circular_seg}, .start = cumulative_length});
@@ -477,6 +483,8 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             // After the blend, we're positioned at the blend exit point on the outgoing segment.
             // This position doesn't correspond to any waypoint in the accumulator, which is why
             // current_position must be a configuration copy rather than an iterator.
+            const auto outgoing = *next - *locus;
+            const auto outgoing_unit = outgoing / xt::norm_l2(outgoing)();
             current_position = *locus + (blend.trim_distance * outgoing_unit);
 
             // Move segment_start forward for coalescing calculations. Even though current_position
