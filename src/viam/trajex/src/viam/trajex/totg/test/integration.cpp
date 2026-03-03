@@ -1561,6 +1561,29 @@ BOOST_DATA_TEST_CASE(two_dof_double_reversal_two_joints_in_the_morning, EXTREMAL
 
 #undef EXTREMAL_DATA
 
+// A tricky test which engineers a situation where the first cusp at a blend is not a local minimum and we need to keep
+// looking. Before the fix for RSDK-13450, this test would fail. The particular waypoints and accelerations here were
+// found empirically by iterating until we engineered a graph shape that met the needs.
+BOOST_AUTO_TEST_CASE(RSDK_13450_nonfirst_extremum_is_switching_point) {
+    trajectory_test_fixture fixture(5);
+
+    // NOTE: Using very relaxed tolerance (200%) due to known acceleration bound violations
+    // in some integration points for trajectories with reversals (likely RSDK-12981).
+    fixture.validation_tolerance_percent = 200.0;
+
+    const xt::xarray<double> max_velocity = {100.0, 100.0, 100.0, 100.0, 100.0};
+    const xt::xarray<double> max_acceleration = {6, 0.75, 2, 0.5, 4};
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
+        .enable_json_output("RSDK_13450_nonfirst_extremum_is_switching_point.trajex.json")
+        .set_max_velocity(max_velocity)
+        .set_max_acceleration(max_acceleration)
+        .set_max_blend_deviation(0.1)
+        .set_waypoints_rad({{0.0, 0.0, 0.0, 0.0, 0.0}, {1.0, 1.0, 1.0, 1.0, 1.0}, {0.0, 0.5, 0.6, 0.7, 0.8}});
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LCL");
+}
+
 BOOST_AUTO_TEST_SUITE_END()  // extremal_path_tests
 
 // Parameterized regression test for the spiral/rectangle waypoint sequence. This path is

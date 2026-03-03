@@ -302,16 +302,10 @@ struct eq40_result {
         // Examine the current segment for switching points where the path velocity limit curve, s_dot_max_acc(s),
         // is continuous, but not differentiable, per VII-A Case 2 in the paper (Kunz & Stilman equation 39). These
         // switching points occur on the interior of circular segments for joint extrema where f'_i(s) = 0.
-        //
-        // TODO(RSDK-13450): There is a flaw in this search: it only evaluates the first extremum we find. But if that
-        // fails the check, we don't check the others. Instead, we should gather all the extremal points, sort them,
-        // and then check them in order.
         if (current_segment.is<path::segment::circular>()) {
-            std::optional<arc_length> first_extremum;
-            arc_velocity first_extremum_velocity{0.0};
 
             // Visit segment to access circular blend parameters
-            current_segment.visit([&](const auto& seg_data) {
+            auto extremal_switching_point = current_segment.visit([&](const auto& seg_data) {
                 using segment_type = std::decay_t<decltype(seg_data)>;
                 if constexpr (std::is_same_v<segment_type, path::segment::circular>) {
                     const auto& x = seg_data.x;
@@ -329,8 +323,13 @@ struct eq40_result {
                     // atan2 returns values in (-pi, pi]; adding pi when negative normalizes to [0, pi) so
                     // both candidates land in [0, 2*pi). Blend arcs have total_angle < pi (enforced by
                     // path::create), so at most one root per joint falls in range.
-                    for (size_t i = 0; i < x.size(); ++i) {
+                    //
+                    // Note that there may be more than one extremal point. We need to gather them, sort them and then
+                    // filter them. The first to pass the filter, if any, is the selected switching point.
+                    std::vector<arc_length> candidate_extrema;
+                    candidate_extrema.reserve(cursor.path().dof());
 
+                    for (size_t i = 0; i < x.size(); ++i) {
                         // If this joint is orthogonal to the blend, it cannot be an extremum.
                         if (x(i) == 0 && y(i) == 0) {
                             continue;
@@ -353,16 +352,18 @@ struct eq40_result {
                             continue;
                         }
 
-                        if (!first_extremum || s_global < *first_extremum) {
-                            first_extremum = s_global;
-                        }
+                        candidate_extrema.push_back(s_global);
                     }
 
+                    // The above loop extracts candidate extrema in joint order, but we need to process them in `s`
+                    // order so we can find the first local minimum.
+                    std::ranges::sort(candidate_extrema);
+
                     // If we found an extremum, validate it as a switching point
-                    if (first_extremum) {
+                    for (const auto& candidate_extremum : candidate_extrema) {
                         // Query geometry at the extremum
-                        const auto q_prime = current_segment.tangent(*first_extremum);
-                        const auto q_double_prime = current_segment.curvature(*first_extremum);
+                        const auto q_prime = current_segment.tangent(candidate_extremum);
+                        const auto q_double_prime = current_segment.curvature(candidate_extremum);
 
                         // Compute acceleration limit curve at extremum
                         const auto [s_dot_max_acc, s_dot_max_vel] =
@@ -371,8 +372,7 @@ struct eq40_result {
                         // If this switching point is infeasible with respect to the velocity limit curve,
                         // reject it.
                         if (opt.epsilon.wrap(s_dot_max_vel) < opt.epsilon.wrap(s_dot_max_acc)) {
-                            first_extremum.reset();
-                            return;
+                            continue;
                         }
 
                         // Validate: acceleration limit curve must have local minimum (derivative changes negative to positive)
@@ -383,17 +383,16 @@ struct eq40_result {
                         // equations 29-31 in the paper. The current epsilon-offset approach works but is less
                         // accurate and has epsilon dependency. An analytical solution would be more robust and
                         // faster (no need for 4 extra geometry queries + limit calculations per extremum).
-                        const auto before_extremum = std::max(*first_extremum - arc_length{opt.epsilon}, current_segment.start());
-                        const auto after_extremum = std::min(*first_extremum + arc_length{opt.epsilon}, current_segment.end());
+                        const auto before_extremum = std::max(candidate_extremum - arc_length{opt.epsilon}, current_segment.start());
+                        const auto after_extremum = std::min(candidate_extremum + arc_length{opt.epsilon}, current_segment.end());
 
                         // Skip validation if extremum is too close to segment boundaries (can't get clean epsilon separation)
                         const auto half_epsilon = opt.epsilon * 0.5;
-                        const auto too_close_to_start = (half_epsilon.wrap(*first_extremum) == half_epsilon.wrap(before_extremum));
-                        const auto too_close_to_end = (half_epsilon.wrap(after_extremum) == half_epsilon.wrap(*first_extremum));
+                        const auto too_close_to_start = (half_epsilon.wrap(candidate_extremum) == half_epsilon.wrap(before_extremum));
+                        const auto too_close_to_end = (half_epsilon.wrap(after_extremum) == half_epsilon.wrap(candidate_extremum));
 
                         if (too_close_to_start || too_close_to_end) {
-                            first_extremum.reset();
-                            return;
+                            continue;
                         }
 
                         const auto q_prime_before = current_segment.tangent(before_extremum);
@@ -414,20 +413,22 @@ struct eq40_result {
                             // Backward integration starts from this point with zero acceleration, since applying
                             // any non-zero acceleration would move off the non-differentiable cusp. The switching
                             // velocity is the value of the limit curve at this point.
-                            first_extremum_velocity = s_dot_max_acc;
-                        } else {
-                            first_extremum.reset();
+                            return std::make_optional<switching_point>(
+                                {.point = {.s = candidate_extremum, .s_dot = s_dot_max_acc},
+                                 .kind = trajectory::switching_point_kind::k_nondifferentiable_extremum,
+                                 .forward_accel = arc_acceleration{0.0},
+                                 .backward_accel = arc_acceleration{0.0}});
                         }
                     }
                 }
+
+                // Not a circular segment, or no switching point found in this segment.
+                return std::optional<switching_point>{};
             });
 
             // If we found a valid extremum switching point, return it
-            if (first_extremum) {
-                return switching_point{.point = {.s = *first_extremum, .s_dot = first_extremum_velocity},
-                                       .kind = trajectory::switching_point_kind::k_nondifferentiable_extremum,
-                                       .forward_accel = arc_acceleration{0.0},
-                                       .backward_accel = arc_acceleration{0.0}};
+            if (extremal_switching_point) {
+                return *extremal_switching_point;
             }
         }
 
