@@ -193,8 +193,9 @@ bool apply_move_limit(vector6d_t& limits, const boost::variant<double, std::vect
         vector6d_t& limits;
 
         bool operator()(double s) const {
-            if (s <= 0)
+            if (s <= 0) {
                 return false;
+            }
             limits.fill(degrees_to_radians(s));
             return true;
         }

@@ -1200,15 +1200,17 @@ BOOST_AUTO_TEST_CASE(test_move_limit_both_vector) {
     vector6d_t vel_limits{};
     vector6d_t acc_limits{};
 
-    Arm::MoveLimit vel = std::vector<double>{10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
-    Arm::MoveLimit acc = std::vector<double>{100.0, 200.0, 300.0, 400.0, 500.0, 600.0};
+    const Arm::MoveLimit vel = std::vector<double>{10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
+    const Arm::MoveLimit acc = std::vector<double>{100.0, 200.0, 300.0, 400.0, 500.0, 600.0};
 
     BOOST_CHECK(apply_move_limit(vel_limits, vel));
     BOOST_CHECK(apply_move_limit(acc_limits, acc));
 
+    const std::array<double, 6> expected_vel{10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
+    const std::array<double, 6> expected_acc{100.0, 200.0, 300.0, 400.0, 500.0, 600.0};
     for (size_t i = 0; i < 6; ++i) {
-        BOOST_CHECK_CLOSE(vel_limits[i], degrees_to_radians((i + 1) * 10.0), 1e-9);
-        BOOST_CHECK_CLOSE(acc_limits[i], degrees_to_radians((i + 1) * 100.0), 1e-9);
+        BOOST_CHECK_CLOSE(vel_limits[i], degrees_to_radians(expected_vel[i]), 1e-9);
+        BOOST_CHECK_CLOSE(acc_limits[i], degrees_to_radians(expected_acc[i]), 1e-9);
     }
 }
 
@@ -1216,15 +1218,16 @@ BOOST_AUTO_TEST_CASE(test_move_limit_scalar_fills_all_joints) {
     vector6d_t vel_limits{};
     vector6d_t acc_limits{};
 
-    Arm::MoveLimit vel = std::vector<double>{15.0, 25.0, 35.0, 45.0, 55.0, 65.0};
-    Arm::MoveLimit acc = 180.0;
+    const Arm::MoveLimit vel = std::vector<double>{15.0, 25.0, 35.0, 45.0, 55.0, 65.0};
+    const Arm::MoveLimit acc = 180.0;
 
     BOOST_CHECK(apply_move_limit(vel_limits, vel));
     BOOST_CHECK(apply_move_limit(acc_limits, acc));
 
     // Velocity: per-joint
+    const std::array<double, 6> expected_vel{15.0, 25.0, 35.0, 45.0, 55.0, 65.0};
     for (size_t i = 0; i < 6; ++i) {
-        BOOST_CHECK_CLOSE(vel_limits[i], degrees_to_radians(15.0 + i * 10.0), 1e-9);
+        BOOST_CHECK_CLOSE(vel_limits[i], degrees_to_radians(expected_vel[i]), 1e-9);
     }
 
     // Acceleration: uniform fill from scalar
@@ -1239,8 +1242,8 @@ BOOST_AUTO_TEST_CASE(test_move_limit_scalar_zero_preserves_defaults) {
     vector6d_t limits{};
     limits.fill(42.0);
 
-    Arm::MoveLimit zero = 0.0;
-    Arm::MoveLimit negative = -5.0;
+    const Arm::MoveLimit zero = 0.0;
+    const Arm::MoveLimit negative = -5.0;
 
     BOOST_CHECK(!apply_move_limit(limits, zero));
     for (const auto& v : limits) {
@@ -1257,7 +1260,7 @@ BOOST_AUTO_TEST_CASE(test_move_limit_vector_too_few_elements) {
     vector6d_t limits{};
     limits.fill(42.0);
 
-    Arm::MoveLimit value = std::vector<double>{10.0, 20.0, 30.0};
+    const Arm::MoveLimit value = std::vector<double>{10.0, 20.0, 30.0};
 
     BOOST_CHECK_THROW(apply_move_limit(limits, value), std::invalid_argument);
 
@@ -1271,7 +1274,7 @@ BOOST_AUTO_TEST_CASE(test_move_limit_vector_too_many_elements) {
     vector6d_t limits{};
     limits.fill(42.0);
 
-    Arm::MoveLimit value = std::vector<double>{1, 2, 3, 4, 5, 6, 7, 8};
+    const Arm::MoveLimit value = std::vector<double>{1, 2, 3, 4, 5, 6, 7, 8};
 
     BOOST_CHECK_THROW(apply_move_limit(limits, value), std::invalid_argument);
 
@@ -1284,7 +1287,7 @@ BOOST_AUTO_TEST_CASE(test_move_limit_vector_negative_element) {
     vector6d_t limits{};
     limits.fill(42.0);
 
-    Arm::MoveLimit value = std::vector<double>{10.0, 20.0, -5.0, 40.0, 50.0, 60.0};
+    const Arm::MoveLimit value = std::vector<double>{10.0, 20.0, -5.0, 40.0, 50.0, 60.0};
 
     BOOST_CHECK_THROW(apply_move_limit(limits, value), std::invalid_argument);
 
