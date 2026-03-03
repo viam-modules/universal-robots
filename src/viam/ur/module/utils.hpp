@@ -112,8 +112,7 @@ void deduplicate_waypoints(std::list<Eigen::VectorXd>& waypoints, double toleran
 /// @return true if limits were applied, false if scalar <= 0 (limits unchanged)
 /// @throws std::invalid_argument on wrong vector size or negative vector elements
 ///
-bool apply_move_limit(urcl::vector6d_t& limits,
-                      const boost::variant<double, std::vector<double>>& value);
+bool apply_move_limit(urcl::vector6d_t& limits, const boost::variant<double, std::vector<double>>& value);
 
 ///
 /// Parse and validate velocity or acceleration limits.
