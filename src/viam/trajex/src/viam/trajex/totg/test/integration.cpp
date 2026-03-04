@@ -1148,8 +1148,9 @@ BOOST_DATA_TEST_CASE(ur_arm_incremental_waypoints_with_reversals,
 
     fixture.allow_any_events();
 
-    // Only enable legacy comparison for up to 5 waypoints (legacy generator crashes on 6+)
-    if (num_waypoints <= 5) {
+    // Only enable legacy comparison for up to 3 waypoints; reversals start at 4 and the legacy
+    // generator does not correctly handle them (it crosses reversal boundaries at nonzero velocity).
+    if (num_waypoints <= 3) {
         fixture.enable_legacy_comparison()
             .set_legacy_path_tolerance(10.0)       // Allow 10% path difference (known discrepancy)
             .set_legacy_duration_tolerance(10.0);  // Allow 10% duration difference
