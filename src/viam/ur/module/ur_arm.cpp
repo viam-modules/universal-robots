@@ -881,19 +881,15 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     // Prepare velocity/acceleration limits, applying per-move overrides if provided
     auto velocity_limits_data = current_state_->get_velocity_limits();
-    // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
     if (options.max_vel_degs_per_sec) {
-        if (apply_move_limit(velocity_limits_data, *options.max_vel_degs_per_sec)) {
-            velocity_limits_data = current_state_->clamp_velocity_limits(velocity_limits_data);
-        }
+        apply_move_limit(velocity_limits_data, *options.max_vel_degs_per_sec);
+        velocity_limits_data = current_state_->clamp_velocity_limits(velocity_limits_data);
     }
 
     auto acceleration_limits_data = current_state_->get_acceleration_limits();
-    // TODO(RSDK-12375) Remove 0 acc check when RDK stops sending 0 velocities
     if (options.max_acc_degs_per_sec2) {
-        if (apply_move_limit(acceleration_limits_data, *options.max_acc_degs_per_sec2)) {
-            acceleration_limits_data = current_state_->clamp_acceleration_limits(acceleration_limits_data);
-        }
+        apply_move_limit(acceleration_limits_data, *options.max_acc_degs_per_sec2);
+        acceleration_limits_data = current_state_->clamp_acceleration_limits(acceleration_limits_data);
     }
 
     struct segment_accumulator {

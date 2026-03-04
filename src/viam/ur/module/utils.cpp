@@ -188,19 +188,18 @@ std::filesystem::path expand_telemetry_path(const std::filesystem::path& base_pa
     return base_path / expanded;
 }
 
-bool apply_move_limit(vector6d_t& limits, const boost::variant<double, std::vector<double>>& value) {
+void apply_move_limit(vector6d_t& limits, const boost::variant<double, std::vector<double>>& value) {
     struct visitor {
         vector6d_t& limits;
 
-        bool operator()(double s) const {
+        void operator()(double s) const {
             if (s <= 0) {
-                return false;
+                throw std::invalid_argument("move limit scalar must be positive, got: " + std::to_string(s));
             }
             limits.fill(degrees_to_radians(s));
-            return true;
         }
 
-        bool operator()(const std::vector<double>& v) const {
+        void operator()(const std::vector<double>& v) const {
             if (v.size() != k_ur_arm_dof) {
                 throw std::invalid_argument("move limit vector must have exactly " + std::to_string(k_ur_arm_dof) +
                                             " elements (one per joint), got " + std::to_string(v.size()));
@@ -214,8 +213,7 @@ bool apply_move_limit(vector6d_t& limits, const boost::variant<double, std::vect
             for (size_t i = 0; i < v.size(); ++i) {
                 limits[i] = degrees_to_radians(v[i]);
             }
-            return true;
         }
     };
-    return boost::apply_visitor(visitor{limits}, value);
+    boost::apply_visitor(visitor{limits}, value);
 }

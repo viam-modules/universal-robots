@@ -104,15 +104,14 @@ void deduplicate_waypoints(std::list<Eigen::VectorXd>& waypoints, double toleran
 ///
 /// Apply a move-limit override to a 6-DOF limits array.
 ///
-/// Scalar: fills all joints uniformly. Returns false if value <= 0 (RSDK-12375 workaround).
-/// Vector: sets per-joint limits. Requires exactly k_ur_arm_dof elements, all non-negative.
+/// Scalar: fills all joints uniformly with the given value (degrees, converted to radians).
+/// Vector: sets per-joint limits. Requires exactly k_ur_arm_dof elements.
 ///
 /// @param limits Array to modify in-place (in radians)
 /// @param value Scalar (degrees) or per-joint vector (degrees)
-/// @return true if limits were applied, false if scalar <= 0 (limits unchanged)
-/// @throws std::invalid_argument on wrong vector size or negative vector elements
+/// @throws std::invalid_argument on non-positive scalar, wrong vector size, or negative vector elements
 ///
-bool apply_move_limit(urcl::vector6d_t& limits, const boost::variant<double, std::vector<double>>& value);
+void apply_move_limit(urcl::vector6d_t& limits, const boost::variant<double, std::vector<double>>& value);
 
 ///
 /// Parse and validate velocity or acceleration limits.
