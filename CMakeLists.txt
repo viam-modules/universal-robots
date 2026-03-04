@@ -134,7 +134,7 @@ FetchContent_MakeAvailable(Universal_Robots_Client_Library)
 FetchContent_Declare(
   viam-cpp-sdk
   GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-  GIT_TAG releases/v0.25.0 # Keep in sync with Dockerfile
+  GIT_TAG releases/v0.31.0 # Keep in sync with Dockerfile
   GIT_SHALLOW TRUE
   SYSTEM
   # Without this patch command, using this as a SYSTEM package results
@@ -152,7 +152,7 @@ find_package(xtensor CONFIG REQUIRED)
 find_package(jsoncpp CONFIG REQUIRED)
 
 find_package(Eigen3 CONFIG REQUIRED)
-find_package(viam-cpp-sdk 0.23 CONFIG REQUIRED viamsdk)
+find_package(viam-cpp-sdk 0.31 CONFIG REQUIRED viamsdk)
 
 # Everything needs threads, and prefer -pthread if available
 set(THREADS_PREFER_PTHREAD_FLAG ON)

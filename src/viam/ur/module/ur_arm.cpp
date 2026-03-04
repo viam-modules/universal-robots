@@ -613,7 +613,7 @@ void URArm::move_to_position(const pose& p, const ProtoStruct&) {
     move_tool_space_(std::move(rlock), p, unix_time);
 }
 
-URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
+viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
@@ -647,7 +647,7 @@ URArm::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     }
 
     // Convert to unsigned char vector
-    return KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
+    return viam::sdk::KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
 }
 
 // Unknown arm models should return an empty map. Arm models that do not have all expected parts in the map should return as much as they
@@ -881,16 +881,14 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     // Prepare velocity/acceleration limits, applying per-move overrides if provided
     auto velocity_limits_data = current_state_->get_velocity_limits();
-    // TODO(RSDK-12375) Remove 0 velocity check when RDK stops sending 0 velocities
-    if (options.max_vel_degs_per_sec && options.max_vel_degs_per_sec.get() > 0) {
-        velocity_limits_data.fill(degrees_to_radians(options.max_vel_degs_per_sec.get()));
+    if (options.max_vel_degs_per_sec) {
+        apply_move_limit(velocity_limits_data, *options.max_vel_degs_per_sec);
         velocity_limits_data = current_state_->clamp_velocity_limits(velocity_limits_data);
     }
 
     auto acceleration_limits_data = current_state_->get_acceleration_limits();
-    // TODO(RSDK-12375) Remove 0 acc check when RDK stops sending 0 velocities
-    if (options.max_acc_degs_per_sec2 && options.max_acc_degs_per_sec2.get() > 0) {
-        acceleration_limits_data.fill(degrees_to_radians(options.max_acc_degs_per_sec2.get()));
+    if (options.max_acc_degs_per_sec2) {
+        apply_move_limit(acceleration_limits_data, *options.max_acc_degs_per_sec2);
         acceleration_limits_data = current_state_->clamp_acceleration_limits(acceleration_limits_data);
     }
 
