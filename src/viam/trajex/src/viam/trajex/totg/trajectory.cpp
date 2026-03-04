@@ -17,6 +17,7 @@
 #include <viam/trajex/totg/private/phase_plane_slope.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/types/arc_operations.hpp>
+#include <viam/trajex/types/arc_velocity.hpp>
 
 namespace viam::trajex::totg {
 
@@ -303,7 +304,6 @@ struct eq40_result {
         // is continuous, but not differentiable, per VII-A Case 2 in the paper (Kunz & Stilman equation 39). These
         // switching points occur on the interior of circular segments for joint extrema where f'_i(s) = 0.
         if (current_segment.is<path::segment::circular>()) {
-
             // Visit segment to access circular blend parameters
             auto extremal_switching_point = current_segment.visit([&](const auto& seg_data) {
                 using segment_type = std::decay_t<decltype(seg_data)>;
@@ -597,7 +597,6 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         // Sample geometry from segment ending at boundary
         const auto q_prime_before = current_segment.tangent(boundary);
-        const auto q_double_prime_before = current_segment.curvature(boundary);
 
         // Advance cursor to boundary (moves to next segment)
         boundary_cursor.seek(boundary);
@@ -605,6 +604,18 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
 
         // Sample geometry from segment starting at boundary
         const auto q_prime_after = segment_after.tangent(boundary);
+
+        // If there is a tangent discontinuity, we must emit a switching point at s_dot = 0 because
+        // we must transition through zero velocity.
+        const auto dot = xt::sum(q_prime_before * q_prime_after);
+        if (opt.epsilon.wrap(dot()) != opt.epsilon.wrap(1.0)) {
+            return switching_point{
+                .point = {.s = boundary, .s_dot = arc_velocity{0.0}},
+                .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit,
+            };
+        }
+
+        const auto q_double_prime_before = current_segment.curvature(boundary);
         const auto q_double_prime_after = segment_after.curvature(boundary);
 
         // Compute velocity limits on both sides
@@ -1137,6 +1148,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 // moves us to the next segment if we are on a boundary. We want to evaluate limits against the constraints
                 // as we will see them moving forward.
                 path_cursor.seek(next_point.s);
+                const auto next_segment = *path_cursor;
 
                 auto next_q_prime = path_cursor.tangent();
                 auto next_q_double_prime = path_cursor.curvature();
@@ -1156,6 +1168,20 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 // If we hit the a limit curve, bisect until we have `next_point` in bounds,
                 // `breach_point` out of bounds, and a separation less than our configured epsilon.
                 const auto limit_hit_event = [&]() mutable -> std::optional<integration_observer::limit_hit_event> {
+                    // If we've crossed a segment boundary, we need to look for a tangent discontinuity, because
+                    // we could be looking at an unblended junction. In such cases, the only safe thing to do is
+                    // to go to zero velocity, since otherwise the path is kinematically infeasible.
+                    if (next_segment.start() != current_segment.start()) {
+                        const auto current_end_tangent = current_segment.tangent(current_segment.end());
+                        const auto next_start_tangent = next_segment.tangent(next_segment.start());
+                        const auto dot = xt::sum(current_end_tangent * next_start_tangent);
+                        if (traj.options_.epsilon.wrap(dot()) != traj.options_.epsilon.wrap(1.0)) {
+                            return integration_observer::limit_hit_event{.breach = {.s = next_point.s, .s_dot = next_point.s_dot},
+                                                                         .s_dot_max_acc = next_s_dot_max_acc,
+                                                                         .s_dot_max_vel = arc_velocity(0.0)};
+                        }
+                    }
+
                     if (next_point.s_dot <= next_s_dot_max_acc && next_point.s_dot <= next_s_dot_max_vel) [[likely]] {
                         return std::nullopt;
                     }
@@ -1356,6 +1382,12 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
 
                     if (traj.options_.observer) {
                         traj.options_.observer->on_hit_limit_curve(traj, *limit_hit_event);
+                    }
+
+                    // Special case: we observed a tangent discontinuity. We must switch at the boundary with s_dot = 0.
+                    if ((*limit_hit_event).s_dot_max_vel == arc_velocity{0.0}) {
+                        return switching_point{.point = {.s = (*limit_hit_event).breach.s, .s_dot = arc_velocity{0.0}},
+                                               .kind = switching_point_kind::k_discontinuous_velocity_limit};
                     }
 
                     path_cursor.seek(next_point.s);

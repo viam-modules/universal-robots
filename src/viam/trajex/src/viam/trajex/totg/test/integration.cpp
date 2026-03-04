@@ -1513,6 +1513,80 @@ BOOST_DATA_TEST_CASE(two_dof_zero_length_segment, EXTREMAL_DATA(2), profile) {
     BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LCCL");
 }
 
+// 2 DoF: asymmetric Z-staircase, first blend loose and second tight (RSDK-12711).
+//
+// Three unit segments. Corner B: 90-degree turn, radius = 0.5. Corner C: 120-degree turn,
+// radius = 0.5/sqrt(3) ≈ 0.289. Both trims = 0.5 (geometry-limited), consuming the middle
+// segment entirely: LCCL with R1 > R2. The C-C curvature tightens going forward, so the Eq. 38
+// boundary check fires and finds the switching point at the C-C boundary.
+BOOST_DATA_TEST_CASE(two_dof_asymmetric_blend_loose_tight, EXTREMAL_DATA(2), profile) {
+    // Waypoints (radians): (0,0) -> (0,1) -> (1,1) -> (0.5, 1+sqrt(3)/2)
+    // Turn at (0,1): 90 deg. Turn at (1,1): 120 deg (incoming (1,0), outgoing (-0.5, sqrt(3)/2)).
+    trajectory_test_fixture fixture(2);
+
+    // Backward integration on circular segments overshoots s_ddot_min slightly (RSDK-12981).
+    fixture.validation_tolerance_percent = 1.0;
+
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(100.0)
+        .set_waypoints_rad({{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}, {0.5, 1.0 + std::numbers::sqrt3 / 2.0}});
+    const trajectory traj = fixture.create_and_validate();
+
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LCCL");
+
+    std::vector<double> radii;
+    for (const auto& seg : traj.path()) {
+        seg.visit([&radii](const auto& s) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(s)>, path::segment::circular>) {
+                radii.push_back(s.radius);
+            }
+        });
+    }
+    BOOST_REQUIRE_EQUAL(radii.size(), 2U);
+    BOOST_CHECK_GT(radii[0], radii[1]);
+    BOOST_CHECK_CLOSE(radii[0], 0.5, 1e-9);
+    BOOST_CHECK_CLOSE(radii[1], 0.5 / std::numbers::sqrt3, 1e-9);
+}
+
+// 2 DoF: asymmetric Z-staircase, first blend tight and second loose (RSDK-12711).
+//
+// Three unit segments. Corner B: 120-degree turn, radius = 0.5/sqrt(3) ≈ 0.289. Corner C:
+// 90-degree turn, radius = 0.5. LCCL with R1 < R2. The C-C curvature relaxes going forward, so
+// Eq. 38 does not fire. A joint reaches its zero-tangent extremum at the start of the second arc
+// (C-C boundary, extremum_angle=0); Case 2 must find and validate it.
+BOOST_DATA_TEST_CASE(two_dof_asymmetric_blend_tight_loose, EXTREMAL_DATA(2), profile) {
+    // Waypoints (radians): (0,0) -> (1,0) -> (0.5, sqrt(3)/2) -> (0.5+sqrt(3)/2, 0.5+sqrt(3)/2)
+    // Turn at (1,0): 120 deg (incoming (1,0), outgoing (-0.5, sqrt(3)/2)).
+    // Turn at (0.5, sqrt(3)/2): 90 deg (incoming (-0.5, sqrt(3)/2), outgoing (sqrt(3)/2, 0.5)).
+    trajectory_test_fixture fixture(2);
+    fixture.allow_any_events()
+        .enable_joint_kinematics_validation()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(100.0)
+        .set_waypoints_rad(
+            {{0.0, 0.0}, {1.0, 0.0}, {0.5, std::numbers::sqrt3 / 2.0}, {0.5 + std::numbers::sqrt3 / 2.0, 0.5 + std::numbers::sqrt3 / 2.0}});
+    const trajectory traj = fixture.create_and_validate();
+
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LCCL");
+
+    std::vector<double> radii;
+    for (const auto& seg : traj.path()) {
+        seg.visit([&radii](const auto& s) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(s)>, path::segment::circular>) {
+                radii.push_back(s.radius);
+            }
+        });
+    }
+    BOOST_REQUIRE_EQUAL(radii.size(), 2U);
+    BOOST_CHECK_LT(radii[0], radii[1]);
+    BOOST_CHECK_CLOSE(radii[0], 0.5 / std::numbers::sqrt3, 1e-9);
+    BOOST_CHECK_CLOSE(radii[1], 0.5, 1e-9);
+}
+
 // 1 DoF: two successive reversals. Path goes A -> B -> A -> B, with cusps at B and then A.
 // Tests that the algorithm handles multiple chained cusps and still ends with s_dot=0.
 BOOST_DATA_TEST_CASE(one_dof_double_reversal, EXTREMAL_DATA(1), profile) {
@@ -1575,7 +1649,6 @@ BOOST_AUTO_TEST_CASE(RSDK_13450_nonfirst_extremum_is_switching_point) {
     const xt::xarray<double> max_acceleration = {6, 0.75, 2, 0.5, 4};
     fixture.allow_any_events()
         .enable_joint_kinematics_validation()
-        .enable_json_output("RSDK_13450_nonfirst_extremum_is_switching_point.trajex.json")
         .set_max_velocity(max_velocity)
         .set_max_acceleration(max_acceleration)
         .set_max_blend_deviation(0.1)
