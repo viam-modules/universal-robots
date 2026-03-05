@@ -60,6 +60,7 @@ URArm::state_::state_(private_,
                       double segmentation_threshold,
                       bool use_new_trajectory_planner,
                       bool prefer_precomputed_accelerations,
+                      bool segment_for_trajex,
                       double max_trajectory_duration_secs,
                       std::optional<vector6d_t> max_velocity_limits,
                       std::optional<vector6d_t> max_acceleration_limits,
@@ -81,6 +82,7 @@ URArm::state_::state_(private_,
       segmentation_threshold_(segmentation_threshold),
       use_new_trajectory_planner_(use_new_trajectory_planner),
       prefer_precomputed_accelerations_(prefer_precomputed_accelerations),
+      segment_for_trajex_(segment_for_trajex),
       max_trajectory_duration_secs_(max_trajectory_duration_secs),
       max_velocity_limits_(std::move(max_velocity_limits)),
       max_acceleration_limits_(std::move(max_acceleration_limits)),
@@ -144,7 +146,8 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
 
     auto frequency = find_config_attribute<double>(config, "robot_control_freq_hz");
     auto use_new_planner = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(true);
-    auto prefer_precomputed_accels = find_config_attribute<bool>(config, "prefer_precomputed_accelerations").value_or(false);
+    auto prefer_precomputed_accels = find_config_attribute<bool>(config, "prefer_precomputed_accelerations").value_or(true);
+    const auto segment_for_trajex = find_config_attribute<bool>(config, "segment_for_trajex").value_or(false);
 
     auto path_tolerance_deg = find_config_attribute<double>(config, "path_tolerance_delta_deg");
     auto path_tolerance_rad = path_tolerance_deg ? degrees_to_radians(*path_tolerance_deg) : URArm::k_default_path_tolerance_delta_rads;
@@ -203,6 +206,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
                                           segmentation_threshold,
                                           use_new_planner,
                                           prefer_precomputed_accels,
+                                          segment_for_trajex,
                                           max_trajectory_duration_secs,
                                           std::move(max_velocity_limits),
                                           std::move(max_acceleration_limits),
@@ -447,6 +451,10 @@ bool URArm::state_::use_new_trajectory_planner() const {
 
 bool URArm::state_::prefer_precomputed_accelerations() const {
     return prefer_precomputed_accelerations_;
+}
+
+bool URArm::state_::segment_for_trajex() const {
+    return segment_for_trajex_;
 }
 
 double URArm::state_::get_max_trajectory_duration_secs() const {

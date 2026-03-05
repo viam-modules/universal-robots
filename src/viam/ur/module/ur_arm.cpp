@@ -242,7 +242,9 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
             boost::str(boost::format("attribute `segmentation_threshold` must be > 0 and <= 0.01, it is: %1%") % *segmentation_threshold));
     }
 
+    find_config_attribute<bool>(cfg, "enable_new_trajectory_planner");
     find_config_attribute<bool>(cfg, "prefer_precomputed_accelerations");
+    find_config_attribute<bool>(cfg, "segment_for_trajex");
 
     // Validate telemetry_output_path is a string if present
     const auto telemetry_output_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
@@ -908,6 +910,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         .acceleration_limits = xt::adapt(acceleration_limits_data),
         .path_blend_tolerance = current_state_->get_path_tolerance_delta_rads(),
         .colinearization_ratio = current_state_->get_path_colinearization_ratio(),
+        .segment_trajex = current_state_->segment_for_trajex(),
     });
 
     planner
