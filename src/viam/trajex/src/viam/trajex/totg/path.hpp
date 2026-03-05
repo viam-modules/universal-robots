@@ -694,6 +694,20 @@ class path::cursor {
     std::default_sentinel_t end() const noexcept;
 
     ///
+    /// Returns an iterator to the segment containing the current cursor position.
+    ///
+    /// By analogy with std::reverse_iterator::base(), unwraps the cursor to its
+    /// underlying iterator primitive. The caller may decrement or increment the
+    /// returned iterator to inspect adjacent segments without moving the cursor.
+    ///
+    /// If the cursor is singular (past end or before start), returns path().end() —
+    /// the only singular iterator on path.
+    ///
+    /// @return Iterator to the segment containing the current position, or path().end() if singular
+    ///
+    path::const_iterator base() const noexcept;
+
+    ///
     /// Compares cursor with end sentinel.
     ///
     /// @param c Cursor to compare

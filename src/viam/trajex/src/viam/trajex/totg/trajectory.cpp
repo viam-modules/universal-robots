@@ -16,8 +16,10 @@
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/totg/private/phase_plane_slope.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
+#include <viam/trajex/types/arc_length.hpp>
 #include <viam/trajex/types/arc_operations.hpp>
 #include <viam/trajex/types/arc_velocity.hpp>
+#include <viam/trajex/types/epsilon.hpp>
 
 namespace viam::trajex::totg {
 
@@ -295,7 +297,7 @@ struct eq40_result {
     // Walk forward through segments, checking interior extrema first, then boundaries
 
     // Note: We search for VII-A Case 2 before Case 1 because Case 1 occurs when we switch between a circular segment
-    // and a straight line segment while Case 2 manifests on the interior of a circular segment. Therefore if there exists a
+    // and a straight line segment while Case 2 manifests on the interior/boundaries of a circular segment. Therefore if there exists a
     // Case 2 switching point it will be fulfilled before Case 1 and the earlier switching point is the one we wish to use.
     while (true) {
         auto current_segment = *cursor;
@@ -340,9 +342,12 @@ struct eq40_result {
                             extremum_angle += std::numbers::pi;
                         }
 
-                        if (extremum_angle >= total_angle) {
+                        // Need to account for FP here: sometimes `extremum_angle` will be above `total_angle` by a few ULPs,
+                        // but really, it is just telling us it is at the boundary. After which, we must clamp to the angle.
+                        if (extremum_angle > total_angle + (4 * std::numeric_limits<double>::epsilon())) {
                             continue;
                         }
+                        extremum_angle = std::min(extremum_angle, total_angle);
 
                         const arc_length s_local{radius * extremum_angle};
                         const auto s_global = current_segment.start() + s_local;
@@ -376,32 +381,111 @@ struct eq40_result {
                         }
 
                         // Validate: acceleration limit curve must have local minimum (derivative changes negative to positive)
-                        // Sample slightly before and after the extremum, clamped to segment bounds
-                        //
+                        // Sample slightly before and after the extremum.
+
                         // TODO(RSDK-12850): Replace numerical derivative check with analytical derivative computation.
                         // For circular segments, we can derive the exact formula for d/ds s_dot_max_acc(s) from
                         // equations 29-31 in the paper. The current epsilon-offset approach works but is less
                         // accurate and has epsilon dependency. An analytical solution would be more robust and
                         // faster (no need for 4 extra geometry queries + limit calculations per extremum).
-                        const auto before_extremum = std::max(candidate_extremum - arc_length{opt.epsilon}, current_segment.start());
-                        const auto after_extremum = std::min(candidate_extremum + arc_length{opt.epsilon}, current_segment.end());
 
-                        // Skip validation if extremum is too close to segment boundaries (can't get clean epsilon separation)
+                        auto before_candidate = std::max(arc_length{0.0}, candidate_extremum - arc_length{opt.epsilon});
+                        auto before_candidate_segment = current_segment;
+                        if (before_candidate < current_segment.start()) {
+                            if (auto base = path::cursor{cursor}.seek(candidate_extremum).base(); base != cursor.path().begin()) {
+                                // Get the segment prior
+                                auto prior_segment = *--base;
+
+                                // Can't cross more than one segment, so clamp to the beginning of the prior segment.
+                                before_candidate = std::max(before_candidate, prior_segment.start());
+
+                                // Evaluate the limit curve at the end of the prior segment
+                                const auto q_prime_end_prior = prior_segment.tangent(prior_segment.end());
+                                const auto q_double_prime_end_prior = prior_segment.curvature(prior_segment.end());
+
+                                // Compute acceleration limit curve at end of the prior segment
+                                const auto [s_dot_max_acc_end_prior, _1] = compute_velocity_limits(
+                                    q_prime_end_prior, q_double_prime_end_prior, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+
+                                // Evaluate the limit curve at the beginning of the current segment
+                                const auto q_prime_begin_current = current_segment.tangent(current_segment.start());
+                                const auto q_double_prime_begin_current = current_segment.curvature(current_segment.start());
+
+                                // Compute acceleration limit curve at beginning of current segment
+                                const auto [s_dot_max_acc_begin_current, _2] = compute_velocity_limits(q_prime_begin_current,
+                                                                                                       q_double_prime_begin_current,
+                                                                                                       opt.max_velocity,
+                                                                                                       opt.max_acceleration,
+                                                                                                       opt.epsilon);
+
+                                // Check if we have continuity into the prior segment. If so, we can cross the boundary. Otherwise, we're
+                                // stuck in this segment.
+                                if (opt.epsilon.wrap(s_dot_max_acc_end_prior) == opt.epsilon.wrap(s_dot_max_acc_begin_current)) {
+                                    before_candidate_segment = prior_segment;
+                                }
+                            }
+                        }
+                        // Whatever segment we ended up in, we can't go earlier than it's start.
+                        before_candidate = std::max(before_candidate, before_candidate_segment.start());
+
+                        auto after_candidate = std::min(cursor.path().length(), candidate_extremum + arc_length{opt.epsilon});
+                        auto after_candidate_segment = current_segment;
+                        if (after_candidate > current_segment.end()) {
+                            // Need to be a little more careful in this case. The one liner we used above for the moving backward
+                            // case doesn't work when moving forward, because if the candidate is at the boundary, we will move to the next
+                            // segment.
+                            auto base = path::cursor{cursor}.seek(candidate_extremum).base();
+                            if (base == cursor.base()) {
+                                ++base;
+                            }
+                            if (base != cursor.path().end()) {
+                                auto next_segment = *base;
+
+                                // Can't cross more than one segment, so clamp to the end of the next segment.
+                                after_candidate = std::min(after_candidate, next_segment.end());
+
+                                // Evaluate the limit curve at the end of the current segment
+                                const auto q_prime_end_current = current_segment.tangent(current_segment.end());
+                                const auto q_double_prime_end_current = current_segment.curvature(current_segment.end());
+
+                                // Compute acceleration limit curve at end of current segment
+                                const auto [s_dot_max_acc_end_current, _1] = compute_velocity_limits(
+                                    q_prime_end_current, q_double_prime_end_current, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+
+                                // Evaluate the limit curve at the beginning of the next segment
+                                const auto q_prime_start_next = next_segment.tangent(next_segment.start());
+                                const auto q_double_prime_start_next = next_segment.curvature(next_segment.start());
+
+                                // Compute acceleration limit curve at beginning of next segment
+                                const auto [s_dot_max_acc_start_next, _2] = compute_velocity_limits(
+                                    q_prime_start_next, q_double_prime_start_next, opt.max_velocity, opt.max_acceleration, opt.epsilon);
+
+                                // Check if we have continuity into the next segment. If so, we can cross the boundary. Otherwise, we're
+                                // stuck in this segment.
+                                if (opt.epsilon.wrap(s_dot_max_acc_end_current) == opt.epsilon.wrap(s_dot_max_acc_start_next)) {
+                                    after_candidate_segment = next_segment;
+                                }
+                            }
+                        }
+
+                        // Whatever segment we ended up in, we can't go later than its end.
+                        after_candidate = std::min(after_candidate, after_candidate_segment.end());
+
+                        // Bail if we couldn't get clean epsilon separation on either side -- no meaningful
+                        // slope estimate is possible.
                         const auto half_epsilon = opt.epsilon * 0.5;
-                        const auto too_close_to_start = (half_epsilon.wrap(candidate_extremum) == half_epsilon.wrap(before_extremum));
-                        const auto too_close_to_end = (half_epsilon.wrap(after_extremum) == half_epsilon.wrap(candidate_extremum));
-
-                        if (too_close_to_start || too_close_to_end) {
+                        if (half_epsilon.wrap(before_candidate) == half_epsilon.wrap(candidate_extremum) ||
+                            half_epsilon.wrap(candidate_extremum) == half_epsilon.wrap(after_candidate)) {
                             continue;
                         }
 
-                        const auto q_prime_before = current_segment.tangent(before_extremum);
-                        const auto q_double_prime_before = current_segment.curvature(before_extremum);
+                        const auto q_prime_before = before_candidate_segment.tangent(before_candidate);
+                        const auto q_double_prime_before = before_candidate_segment.curvature(before_candidate);
                         const auto [s_dot_before, _1] = compute_velocity_limits(
                             q_prime_before, q_double_prime_before, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 
-                        const auto q_prime_after = current_segment.tangent(after_extremum);
-                        const auto q_double_prime_after = current_segment.curvature(after_extremum);
+                        const auto q_prime_after = after_candidate_segment.tangent(after_candidate);
+                        const auto q_double_prime_after = after_candidate_segment.curvature(after_candidate);
                         const auto [s_dot_after, _2] = compute_velocity_limits(
                             q_prime_after, q_double_prime_after, opt.max_velocity, opt.max_acceleration, opt.epsilon);
 

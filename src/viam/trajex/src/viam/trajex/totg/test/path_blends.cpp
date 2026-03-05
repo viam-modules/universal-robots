@@ -478,8 +478,7 @@ BOOST_AUTO_TEST_CASE(exact_collinear_no_blend) {
 // Near-collinear: the middle waypoint deviates from the chord by 0.001, well within
 // max_blend_deviation=0.1. The natural blend radius is enormous; min_curvature caps it
 // at 1/min_curvature, producing a small-radius arc that retains C1 continuity.
-// Structure is LCL both before and after the fix; the fix changes the arc radius, not
-// the structure. Currently produces a huge-radius arc; expected a capped arc after fix.
+// Structure is LCL; the arc radius is capped, not the path topology.
 BOOST_AUTO_TEST_CASE(near_collinear_emits_capped_arc) {
     using namespace viam::trajex::totg;
     const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.001}, {2.0, 0.0}};
@@ -488,8 +487,7 @@ BOOST_AUTO_TEST_CASE(near_collinear_emits_capped_arc) {
 }
 
 // Same near-collinear geometry, but with a tight min_blend_curvature=1.0 (max radius=1.0).
-// The natural blend radius is ~50000; after the fix the arc radius must be <= 1.0.
-// Fails until the min_blend_curvature cap is implemented.
+// The natural blend radius is ~50000; the cap clamps it to <= 1.0.
 BOOST_AUTO_TEST_CASE(near_collinear_arc_radius_respects_min_curvature) {
     using namespace viam::trajex::totg;
     const xt::xarray<double> waypoints = {{0.0, 0.0}, {1.0, 0.001}, {2.0, 0.0}};

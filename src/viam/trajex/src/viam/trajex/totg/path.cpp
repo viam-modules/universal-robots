@@ -673,6 +673,13 @@ std::default_sentinel_t path::cursor::end() const noexcept {
     return std::default_sentinel;
 }
 
+path::const_iterator path::cursor::base() const noexcept {
+    if (*this == end()) {
+        return path_->end();
+    }
+    return hint_;
+}
+
 bool operator==(const path::cursor& c, std::default_sentinel_t) noexcept {
     return !std::isfinite(static_cast<double>(c.position_));
 }
