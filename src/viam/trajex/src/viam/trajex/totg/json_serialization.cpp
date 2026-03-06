@@ -166,8 +166,12 @@ Json::Value serialize_events(const std::vector<trajectory::integration_event_obs
                     Json::Value obj;
                     obj["s"] = static_cast<double>(ev.breach.s);
                     obj["s_dot"] = static_cast<double>(ev.breach.s_dot);
-                    obj["s_dot_max_acc"] = static_cast<double>(ev.s_dot_max_acc);
-                    obj["s_dot_max_vel"] = static_cast<double>(ev.s_dot_max_vel);
+                    obj["s_dot_max_acc"] = std::isinf(static_cast<double>(ev.s_dot_max_acc))
+                                               ? Json::Value::null
+                                               : Json::Value{static_cast<double>(ev.s_dot_max_acc)};
+                    obj["s_dot_max_vel"] = std::isinf(static_cast<double>(ev.s_dot_max_vel))
+                                               ? Json::Value::null
+                                               : Json::Value{static_cast<double>(ev.s_dot_max_vel)};
                     limit_hits.append(std::move(obj));
                 } else if constexpr (std::is_same_v<T, trajectory::integration_observer::started_backward_event>) {
                     Json::Value obj;

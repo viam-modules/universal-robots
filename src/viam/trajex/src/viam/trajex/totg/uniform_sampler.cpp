@@ -16,9 +16,8 @@ std::size_t uniform_sampler::calculate_quantized_samples(double duration_sec, do
 
     const double putative_samples = duration_sec * frequency_hz;
 
-    static constexpr std::size_t k_max_samples = 1000000;
-    if (!std::isfinite(putative_samples) || putative_samples > k_max_samples) {
-        throw std::invalid_argument{"duration and frequency exceed maximum allowable samples"};
+    if (!std::isfinite(putative_samples)) {
+        throw std::invalid_argument{"duration and frequency produce non-finite sample count"};
     }
 
     // Round up to ensure we slightly oversample, then add 1 to get at

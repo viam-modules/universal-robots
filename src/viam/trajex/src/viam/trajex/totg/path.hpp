@@ -69,6 +69,19 @@ class path {
             ///
             linear(xt::xarray<double> start, const xt::xarray<double>& end);
 
+            ///
+            /// Constructs linear segment from precomputed components.
+            ///
+            /// Use when direction and length are already known to avoid recomputation.
+            /// Caller is responsible for ensuring unit_direction is normalized and non-zero.
+            ///
+            /// @param start Starting configuration
+            /// @param unit_direction Precomputed unit direction vector
+            /// @param length Arc length (must be positive)
+            /// @throws std::invalid_argument if length is not positive
+            ///
+            linear(xt::xarray<double> start, xt::xarray<double> unit_direction, arc_length length);
+
             xt::xarray<double> start;           ///< Starting configuration
             xt::xarray<double> unit_direction;  ///< Precomputed unit direction vector (normalized end-start)
             arc_length length;                  ///< Precomputed length (norm of end-start)
@@ -230,6 +243,16 @@ class path {
         static constexpr double k_default_max_deviation = 0.0;
 
         ///
+        /// Default minimum blend curvature (1/radius in configuration space).
+        ///
+        static constexpr double k_default_min_blend_curvature = 1e-5;
+
+        ///
+        /// Default maximum blend curvature (1/radius in configuration space).
+        ///
+        static constexpr double k_default_max_blend_curvature = 1e5;
+
+        ///
         /// Constructs options with default values.
         ///
         options();
@@ -254,13 +277,41 @@ class path {
         ///
         /// Sets maximum linear deviation for coalescing.
         ///
-        /// This is `Divergent Behavior 3`: the Kunz & Stilman paper does not include this pass.
+        /// This is `Divergent Behavior 1`: the Kunz & Stilman paper does not include this pass.
         ///
         /// @param deviation Maximum deviation for waypoint coalescing
         /// @return Reference to this for method chaining
         /// @note Intended primarily for testing
         ///
         options& set_max_linear_deviation(double deviation);
+
+        ///
+        /// Sets minimum blend curvature.
+        ///
+        /// Blend arcs whose natural radius would exceed 1/curvature are capped at that
+        /// radius. This prevents numerically fragile enormous-radius arcs at near-collinear
+        /// waypoints while retaining exact C1 continuity at every segment boundary.
+        ///
+        /// This is `Divergent Behavior 3`: the Kunz & Stilman paper uses no bounds on blend curvature.
+        ///
+        /// @param curvature Minimum acceptable blend curvature (1/radius)
+        /// @return Reference to this for method chaining
+        ///
+        options& set_min_blend_curvature(double curvature);
+
+        ///
+        /// Sets maximum blend curvature.
+        ///
+        /// Waypoints whose blend arc would exceed this curvature (1/radius) are treated
+        /// as unblended corners. This prevents near-degenerate tiny arcs at near-reversal
+        /// waypoints.
+        ///
+        /// This is `Divergent Behavior 3`: the Kunz & Stilman paper uses no bounds on blend curvature.
+        ///
+        /// @param curvature Maximum acceptable blend curvature (1/radius)
+        /// @return Reference to this for method chaining
+        ///
+        options& set_max_blend_curvature(double curvature);
 
         ///
         /// Gets maximum blend deviation.
@@ -276,9 +327,25 @@ class path {
         ///
         double max_linear_deviation() const noexcept;
 
+        ///
+        /// Gets minimum blend curvature.
+        ///
+        /// @return Minimum acceptable blend curvature (1/radius)
+        ///
+        double min_blend_curvature() const noexcept;
+
+        ///
+        /// Gets maximum blend curvature.
+        ///
+        /// @return Maximum acceptable blend curvature (1/radius)
+        ///
+        double max_blend_curvature() const noexcept;
+
        private:
         double max_blend_deviation_;
         double max_linear_deviation_;
+        double min_blend_curvature_;
+        double max_blend_curvature_;
     };
 
     ///
@@ -629,6 +696,20 @@ class path::cursor {
     /// @return Sentinel value for comparison
     ///
     std::default_sentinel_t end() const noexcept;
+
+    ///
+    /// Returns an iterator to the segment containing the current cursor position.
+    ///
+    /// By analogy with std::reverse_iterator::base(), unwraps the cursor to its
+    /// underlying iterator primitive. The caller may decrement or increment the
+    /// returned iterator to inspect adjacent segments without moving the cursor.
+    ///
+    /// If the cursor is singular (past end or before start), returns path().end() —
+    /// the only singular iterator on path.
+    ///
+    /// @return Iterator to the segment containing the current position, or path().end() if singular
+    ///
+    path::const_iterator base() const noexcept;
 
     ///
     /// Compares cursor with end sentinel.

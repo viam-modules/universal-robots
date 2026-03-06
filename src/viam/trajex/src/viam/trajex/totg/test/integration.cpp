@@ -9,6 +9,7 @@
 
 #include <boost/test/data/monomorphic.hpp>
 #include <boost/test/data/test_case.hpp>
+#include <boost/test/results_collector.hpp>
 #include <boost/test/unit_test.hpp>
 
 #if defined(__has_include) && (__has_include(<xtensor/containers/xadapt.hpp>))
@@ -278,6 +279,19 @@ void validate_trajectory_invariants(const trajectory& traj, double tolerance_per
             BOOST_CHECK_EQUAL(static_cast<double>(last.s_ddot), 0.0);
         }
 
+        // Boundedness
+        BOOST_TEST_CONTEXT("Boundedness") {
+            for (size_t i = 0; i < points.size(); ++i) {
+                BOOST_CHECK(std::isfinite(static_cast<double>(points[i].s)));
+                BOOST_CHECK(std::isfinite(static_cast<double>(points[i].s_dot)));
+                BOOST_CHECK(std::isfinite(static_cast<double>(points[i].s_ddot)));
+                BOOST_CHECK(std::isfinite(points[i].time.count()));
+                BOOST_CHECK_GE(static_cast<double>(points[i].s), 0.0);
+                BOOST_CHECK_LE(static_cast<double>(points[i].s), static_cast<double>(p.length()));
+                BOOST_CHECK_GE(static_cast<double>(points[i].s_dot), 0.0);
+            }
+        }
+
         // Monotonicity
         BOOST_TEST_CONTEXT("Monotonicity") {
             for (size_t i = 1; i < points.size(); ++i) {
@@ -493,11 +507,12 @@ struct trajectory_test_fixture {
     // Event validation control
     bool allow_any_events_ = false;
 
-    // Joint-space kinematic validation (opt-in)
-    bool validate_joint_kinematics_ = false;
+    // Joint-space kinematic validation
+    bool validate_joint_kinematics_ = true;
 
     // JSON output for visualization
     std::optional<std::string> json_output_filename_;
+    bool json_on_failure_only_ = false;
     std::shared_ptr<trajectory_integration_event_collector> collector_;
 
     explicit trajectory_test_fixture(size_t dof = 6, double expectation_tolerance_percent = 0.1)
@@ -553,8 +568,8 @@ struct trajectory_test_fixture {
         return *this;
     }
 
-    trajectory_test_fixture& enable_joint_kinematics_validation() {
-        validate_joint_kinematics_ = true;
+    trajectory_test_fixture& disable_joint_kinematics_validation() {
+        validate_joint_kinematics_ = false;
         return *this;
     }
 
@@ -570,6 +585,13 @@ struct trajectory_test_fixture {
 
     trajectory_test_fixture& enable_json_output(std::string filename) {
         json_output_filename_ = std::move(filename);
+        json_on_failure_only_ = false;
+        return *this;
+    }
+
+    trajectory_test_fixture& enable_json_output_on_failure(std::string filename) {
+        json_output_filename_ = std::move(filename);
+        json_on_failure_only_ = true;
         return *this;
     }
 
@@ -727,14 +749,6 @@ struct trajectory_test_fixture {
             }
         }();
 
-        // Write JSON if enabled
-        if (json_output_filename_.has_value() && collector_) {
-            std::ofstream out(*json_output_filename_);
-            write_trajectory_json(out, *collector_, &traj);
-            out.close();
-            BOOST_TEST_MESSAGE("Wrote trajectory JSON to " << *json_output_filename_);
-        }
-
         // Verify all expectations were met (only if expectations were specified)
         if (!allow_any_events_) {
             expectation_observer_->verify_all_expectations_met();
@@ -764,6 +778,17 @@ struct trajectory_test_fixture {
 
         if (validate_joint_kinematics_) {
             validate_joint_kinematics(traj, traj_opts.max_velocity, traj_opts.max_acceleration, validation_tolerance_percent);
+        }
+
+        // Write JSON if enabled, after all validation so failure-only mode can check results.
+        if (json_output_filename_.has_value() && collector_) {
+            const bool has_failures =
+                boost::unit_test::results_collector.results(boost::unit_test::framework::current_test_case().p_id).p_assertions_failed > 0;
+            if (!json_on_failure_only_ || has_failures) {
+                std::ofstream out(*json_output_filename_);
+                write_trajectory_json(out, *collector_, &traj);
+                BOOST_TEST_MESSAGE("Wrote trajectory JSON to " << *json_output_filename_);
+            }
         }
 
         return traj;
@@ -1131,13 +1156,17 @@ BOOST_DATA_TEST_CASE(ur_arm_incremental_waypoints_with_reversals,
     // Some violations are ~10x beyond normal bounds at specific integration points.
     //
     // The goal of the test is to drive this tolerance down across many profiles.
-    trajectory_test_fixture fixture(6, 0.1);
-    fixture.validation_tolerance_percent = 200.0;
+    trajectory_test_fixture fixture(6);
+
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
+    fixture.validation_tolerance_percent = 1.75;
 
     fixture.allow_any_events();
 
-    // Only enable legacy comparison for up to 5 waypoints (legacy generator crashes on 6+)
-    if (num_waypoints <= 5) {
+    // Only enable legacy comparison for up to 3 waypoints; reversals start at 4 and the legacy
+    // generator does not correctly handle them (it crosses reversal boundaries at nonzero velocity).
+    if (num_waypoints <= 3) {
         fixture.enable_legacy_comparison()
             .set_legacy_path_tolerance(10.0)       // Allow 10% path difference (known discrepancy)
             .set_legacy_duration_tolerance(10.0);  // Allow 10% duration difference
@@ -1193,18 +1222,19 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
 
-    // Create fixture
-    trajectory_test_fixture fixture(6, 0.1);
+    trajectory_test_fixture fixture(6);
+
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
+    fixture.validation_tolerance_percent = 1.0;
 
     fixture.enable_legacy_comparison()
         .set_max_velocity(degrees_to_radians(xt::ones<double>({6}) * 50.0))
         .set_max_acceleration(degrees_to_radians(xt::ones<double>({6}) * 1.0))
         .set_max_blend_deviation(0.1);
 
-    fixture.traj_opts.delta = trajectory::seconds{0.0001};
-
     // Trajectory-wide expectations
-    fixture.expect_duration(trajectory::seconds{20.162}).expect_integration_point_count(201621).expect_path_length(arc_length{1.8553});
+    fixture.expect_duration(trajectory::seconds{20.162}).expect_integration_point_count(20161).expect_path_length(arc_length{1.8553});
 
     // Set waypoints
     fixture.set_waypoints_deg({{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0}});
@@ -1216,10 +1246,10 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_accel_constrained) {
                           arc_velocity{1.23413}   // vel_limit
                           )
         .expect_backward_start(arc_length{1.46262}, arc_velocity{0.12863}, trajectory::switching_point_kind::k_discontinuous_curvature)
-        .expect_splice(trajectory::seconds{13.4162}, size_t{9195})
+        .expect_splice(trajectory::seconds{13.4162}, size_t{921})
         .expect_forward_start(arc_length{1.46262}, arc_velocity{0.12863})
         .expect_backward_start(arc_length{1.85532488}, arc_velocity{0}, trajectory::switching_point_kind::k_path_end)
-        .expect_splice(trajectory::seconds{20.16199}, size_t{93043});
+        .expect_splice(trajectory::seconds{20.16199}, size_t{9304});
 
     const trajectory traj = fixture.create_and_validate();
 }
@@ -1229,24 +1259,22 @@ BOOST_AUTO_TEST_CASE(three_waypoint_baseline_behavior_vel_constrained) {
     using namespace viam::trajex::types;
 
     // Create fixture
-    trajectory_test_fixture fixture(6, 0.1);
+    trajectory_test_fixture fixture(6);
 
     fixture.enable_legacy_comparison()
         .set_max_velocity(degrees_to_radians(xt::ones<double>({6}) * 1.0))
         .set_max_acceleration(degrees_to_radians(xt::ones<double>({6}) * 50.0))
         .set_max_blend_deviation(0.1);
 
-    fixture.traj_opts.delta = trajectory::seconds{0.0001};
-
     // Trajectory-wide expectations
-    fixture.expect_duration(trajectory::seconds{90.02}).expect_integration_point_count(900201).expect_path_length(arc_length{1.8553});
+    fixture.expect_duration(trajectory::seconds{90.02}).expect_integration_point_count(90022).expect_path_length(arc_length{1.8553});
 
     // Set waypoints
     fixture.set_waypoints_deg({{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -45.0, 0.0, 0.0, 0.0, 0.0}, {-45.0, -90.0, 0.0, 0.0, 0.0, 0.0}});
 
     fixture.expectation_observer_->expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
         .expect_backward_start(arc_length{1.85532488}, arc_velocity{0}, trajectory::switching_point_kind::k_path_end)
-        .expect_splice(trajectory::seconds{90.02000000}, size_t{101});
+        .expect_splice(trajectory::seconds{90.02000000}, size_t{11});
 
     const trajectory traj = fixture.create_and_validate();
 }
@@ -1265,7 +1293,11 @@ BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
 
-    trajectory_test_fixture fixture(2, 0.12);
+    trajectory_test_fixture fixture(2);
+
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
+    fixture.validation_tolerance_percent = 0.5;
 
     // Very high velocity limits (essentially unconstrained)
     // Very low acceleration limits (the actual constraint)
@@ -1273,8 +1305,6 @@ BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_
         .set_max_velocity(xt::xarray<double>{0.165, 0.167})
         .set_max_acceleration(xt::xarray<double>{0.05, 0.04})
         .set_max_blend_deviation(0.05);  // Enable curves
-
-    fixture.traj_opts.delta = trajectory::seconds{0.002};
 
     // Waypoints that create a path with curves where joints have different tangent behavior
     fixture.set_waypoints_rad({{0.0, 0.0}, {0.6, 0.0}, {0.1, 0.6}});
@@ -1284,15 +1314,15 @@ BOOST_AUTO_TEST_CASE(RSDK_12979_nondifferentiable_switching_point_requires_zero_
     fixture.expectation_observer_->expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
         .expect_hit_limit(arc_length{0.521369}, arc_velocity{0.165}, arc_velocity{0.0383818}, arc_velocity{0.165})
         .expect_backward_start(arc_length{0.521369}, arc_velocity{0.0383818}, trajectory::switching_point_kind::k_discontinuous_curvature)
-        .expect_splice(trajectory::seconds{5.78126}, size_t{769})
+        .expect_splice(trajectory::seconds{5.78126}, size_t{1536})
         .expect_forward_start(arc_length{0.521369}, arc_velocity{0.0383818})
         .expect_hit_limit(arc_length{0.566993}, arc_velocity{0.0471279}, arc_velocity{0.0471279}, arc_velocity{0.176646})
         .expect_backward_start(
             arc_length{0.579219}, arc_velocity{0.0429121}, trajectory::switching_point_kind::k_nondifferentiable_extremum)
-        .expect_splice(trajectory::seconds{7.18515}, size_t{77})
+        .expect_splice(trajectory::seconds{7.18515}, size_t{151})
         .expect_forward_start(arc_length{0.579219}, arc_velocity{0.0429121})
         .expect_backward_start(arc_length{1.3072}, arc_velocity{0.0}, trajectory::switching_point_kind::k_path_end)
-        .expect_splice(trajectory::seconds{14.3426}, size_t{845});
+        .expect_splice(trajectory::seconds{14.3426}, size_t{1687});
 
     const trajectory traj = fixture.create_and_validate();
 }
@@ -1315,6 +1345,7 @@ BOOST_AUTO_TEST_CASE(trajectory_json_serialization) {
 
     // Generate trajectory
     const trajectory traj = trajectory::create(std::move(p), opts);
+    validate_trajectory_invariants(traj);
 
     // Serialize to JSON
     const std::string json = serialize_trajectory_to_json(collector, &traj);
@@ -1372,9 +1403,7 @@ BOOST_DATA_TEST_CASE(one_dof_direct_reversal, EXTREMAL_DATA(1), profile) {
     wp(2, 0) = 0.0;
 
     trajectory_test_fixture fixture(1);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.0)
@@ -1391,9 +1420,7 @@ BOOST_DATA_TEST_CASE(one_dof_colinear, EXTREMAL_DATA(1), profile) {
     wp(2, 0) = 1.0;
 
     trajectory_test_fixture fixture(1);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1406,9 +1433,7 @@ BOOST_DATA_TEST_CASE(one_dof_colinear, EXTREMAL_DATA(1), profile) {
 // Joint 1 is stationary throughout; tangent has a zero component on joint 1.
 BOOST_DATA_TEST_CASE(two_dof_reversal_single_joint, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1420,9 +1445,7 @@ BOOST_DATA_TEST_CASE(two_dof_reversal_single_joint, EXTREMAL_DATA(2), profile) {
 // 2 DoF: direct reversal, both joints move equally. (0,0) -> (1,1) -> (0,0).
 BOOST_DATA_TEST_CASE(two_dof_reversal_both_joints, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1434,9 +1457,7 @@ BOOST_DATA_TEST_CASE(two_dof_reversal_both_joints, EXTREMAL_DATA(2), profile) {
 // 2 DoF: exact colinear, one joint stationary. (0,0) -> (0.5,0) -> (1,0).
 BOOST_DATA_TEST_CASE(two_dof_colinear_single_joint, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1448,9 +1469,7 @@ BOOST_DATA_TEST_CASE(two_dof_colinear_single_joint, EXTREMAL_DATA(2), profile) {
 // 2 DoF: exact colinear, both joints move equally. (0,0) -> (1,1) -> (2,2).
 BOOST_DATA_TEST_CASE(two_dof_colinear_both_joints, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1463,9 +1482,7 @@ BOOST_DATA_TEST_CASE(two_dof_colinear_both_joints, EXTREMAL_DATA(2), profile) {
 // Segment 1 direction (0,1), segment 2 direction (1,0): exactly 90 degrees, no blending.
 BOOST_DATA_TEST_CASE(two_dof_right_angle_axis_aligned, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.0)
@@ -1479,9 +1496,7 @@ BOOST_DATA_TEST_CASE(two_dof_right_angle_axis_aligned, EXTREMAL_DATA(2), profile
 // All coordinates are integers (exactly representable).
 BOOST_DATA_TEST_CASE(two_dof_right_angle_rotated, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.0)
@@ -1490,33 +1505,102 @@ BOOST_DATA_TEST_CASE(two_dof_right_angle_rotated, EXTREMAL_DATA(2), profile) {
     BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LL");
 }
 
-// 2 DoF: Z-staircase with zero-length middle segment.
+// 2 DoF: Z-staircase, adjacent blends consume the connecting segment entirely (RSDK-12711).
 //
 // Path: (0,0) -> (0,45) -> (45,45) -> (45,90) deg. Three equal 45-deg segments with two 90-deg
 // corners. With max_deviation >> needed, each blend reaches maximum radius (half-segment = 22.5
-// deg), exactly consuming the middle segment and leaving a zero-length linear segment in the
-// path between the two circular blends.
-//
-// TODO(RSDK-12711): Path construction either needs to deal with zero length segments or allow
-// circular to circular blends.
-BOOST_AUTO_TEST_CASE_EXPECTED_FAILURES(two_dof_zero_length_segment, 3)
+// deg), exactly consuming the middle segment. The two blends are adjacent (C-C), producing LCCL.
+// The C-C boundary is tangent-continuous by blend construction, so TOTG does not stop there.
 BOOST_DATA_TEST_CASE(two_dof_zero_length_segment, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+
+    // TODO(RSDK-12981): Backward integration overshoots the C-L boundary at the exit of the second
+    // blend into the final linear segment. 105% is the minimum tolerance that passes (the violation
+    // is ~100.37x the bound).
+    fixture.validation_tolerance_percent = 105.0;
+
+    fixture.allow_any_events()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(100.0)  // Much larger than needed; blend radius capped by geometry
         .set_waypoints_deg({{0.0, 0.0}, {0.0, 45.0}, {45.0, 45.0}, {45.0, 90.0}});
     const trajectory traj = fixture.create_and_validate();
 
-    // Path structure: linear, blend, linear (middle), blend, linear.
-    // The two blends together consume the full middle segment; the middle linear should have
-    // length 0 but currently has length ~0.196 due to a blend-trim bug (RSDK-12711).
-    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LCLCL");
-    const auto middle = std::next(traj.path().begin(), 2);
-    BOOST_CHECK_EQUAL(static_cast<double>((*middle).length()), 0.0);
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LCCL");
+}
+
+// 2 DoF: asymmetric Z-staircase, first blend loose and second tight (RSDK-12711).
+//
+// Three unit segments. Corner B: 90-degree turn, radius = 0.5. Corner C: 120-degree turn,
+// radius = 0.5/sqrt(3) ≈ 0.289. Both trims = 0.5 (geometry-limited), consuming the middle
+// segment entirely: LCCL with R1 > R2. The C-C curvature tightens going forward, so the Eq. 38
+// boundary check fires and finds the switching point at the C-C boundary.
+BOOST_DATA_TEST_CASE(two_dof_asymmetric_blend_loose_tight, EXTREMAL_DATA(2), profile) {
+    // Waypoints (radians): (0,0) -> (0,1) -> (1,1) -> (0.5, 1+sqrt(3)/2)
+    // Turn at (0,1): 90 deg. Turn at (1,1): 120 deg (incoming (1,0), outgoing (-0.5, sqrt(3)/2)).
+    trajectory_test_fixture fixture(2);
+
+    // Backward integration on circular segments overshoots s_ddot_min slightly (RSDK-12981).
+    fixture.validation_tolerance_percent = 1.0;
+
+    fixture.allow_any_events()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(100.0)
+        .set_waypoints_rad({{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}, {0.5, 1.0 + (std::numbers::sqrt3 / 2.0)}});
+    const trajectory traj = fixture.create_and_validate();
+
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LCCL");
+
+    std::vector<double> radii;
+    for (const auto& seg : traj.path()) {
+        seg.visit([&radii](const auto& s) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(s)>, path::segment::circular>) {
+                radii.push_back(s.radius);
+            }
+        });
+    }
+    BOOST_REQUIRE_EQUAL(radii.size(), 2U);
+    BOOST_CHECK_GT(radii[0], radii[1]);
+    BOOST_CHECK_CLOSE(radii[0], 0.5, 1e-9);
+    BOOST_CHECK_CLOSE(radii[1], 0.5 / std::numbers::sqrt3, 1e-9);
+}
+
+// 2 DoF: asymmetric Z-staircase, first blend tight and second loose (RSDK-12711).
+//
+// Three unit segments. Corner B: 120-degree turn, radius = 0.5/sqrt(3) ≈ 0.289. Corner C:
+// 90-degree turn, radius = 0.5. LCCL with R1 < R2. The C-C curvature relaxes going forward, so
+// Eq. 38 does not fire. A joint reaches its zero-tangent extremum at the start of the second arc
+// (C-C boundary, extremum_angle=0); Case 2 must find and validate it.
+BOOST_DATA_TEST_CASE(two_dof_asymmetric_blend_tight_loose, EXTREMAL_DATA(2), profile) {
+    // Waypoints (radians): (0,0) -> (1,0) -> (0.5, sqrt(3)/2) -> (0.5+sqrt(3)/2, 0.5+sqrt(3)/2)
+    // Turn at (1,0): 120 deg (incoming (1,0), outgoing (-0.5, sqrt(3)/2)).
+    // Turn at (0.5, sqrt(3)/2): 90 deg (incoming (-0.5, sqrt(3)/2), outgoing (sqrt(3)/2, 0.5)).
+    trajectory_test_fixture fixture(2);
+    fixture.allow_any_events()
+        .set_max_velocity(profile.max_velocity)
+        .set_max_acceleration(profile.max_acceleration)
+        .set_max_blend_deviation(100.0)
+        .set_waypoints_rad({{0.0, 0.0},
+                            {1.0, 0.0},
+                            {0.5, std::numbers::sqrt3 / 2.0},
+                            {0.5 + (std::numbers::sqrt3 / 2.0), 0.5 + (std::numbers::sqrt3 / 2.0)}});
+    const trajectory traj = fixture.create_and_validate();
+
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LCCL");
+
+    std::vector<double> radii;
+    for (const auto& seg : traj.path()) {
+        seg.visit([&radii](const auto& s) {
+            if constexpr (std::is_same_v<std::decay_t<decltype(s)>, path::segment::circular>) {
+                radii.push_back(s.radius);
+            }
+        });
+    }
+    BOOST_REQUIRE_EQUAL(radii.size(), 2U);
+    BOOST_CHECK_LT(radii[0], radii[1]);
+    BOOST_CHECK_CLOSE(radii[0], 0.5 / std::numbers::sqrt3, 1e-9);
+    BOOST_CHECK_CLOSE(radii[1], 0.5, 1e-9);
 }
 
 // 1 DoF: two successive reversals. Path goes A -> B -> A -> B, with cusps at B and then A.
@@ -1529,9 +1613,7 @@ BOOST_DATA_TEST_CASE(one_dof_double_reversal, EXTREMAL_DATA(1), profile) {
     wp(3, 0) = 1.0;
 
     trajectory_test_fixture fixture(1);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1543,9 +1625,7 @@ BOOST_DATA_TEST_CASE(one_dof_double_reversal, EXTREMAL_DATA(1), profile) {
 // 2 DoF: two successive reversals, only one joint moves. (0,0) -> (1,0) -> (0,0) -> (1,0).
 BOOST_DATA_TEST_CASE(two_dof_double_reversal, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1557,9 +1637,7 @@ BOOST_DATA_TEST_CASE(two_dof_double_reversal, EXTREMAL_DATA(2), profile) {
 // 2 DoF: two successive reversals, both joints move. (0,0) -> (1,1) -> (0,0) -> (1,1).
 BOOST_DATA_TEST_CASE(two_dof_double_reversal_two_joints_in_the_morning, EXTREMAL_DATA(2), profile) {
     trajectory_test_fixture fixture(2);
-    fixture
-        .allow_any_events()
-        // .enable_joint_kinematics_validation()
+    fixture.allow_any_events()
         .set_max_velocity(profile.max_velocity)
         .set_max_acceleration(profile.max_acceleration)
         .set_max_blend_deviation(0.1)
@@ -1569,6 +1647,42 @@ BOOST_DATA_TEST_CASE(two_dof_double_reversal_two_joints_in_the_morning, EXTREMAL
 }
 
 #undef EXTREMAL_DATA
+
+// A tricky test which engineers a situation where the first cusp at a blend is not a local minimum and we need to keep
+// looking. Before the fix for RSDK-13450, this test would fail. The particular waypoints and accelerations here were
+// found empirically by iterating until we engineered a graph shape that met the needs.
+BOOST_AUTO_TEST_CASE(RSDK_13450_nonfirst_extremum_is_switching_point) {
+    trajectory_test_fixture fixture(5);
+
+    // TODO(RSDK-12981): Use a very relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
+    fixture.validation_tolerance_percent = 50;
+
+    const xt::xarray<double> max_velocity = {100.0, 100.0, 100.0, 100.0, 100.0};
+    const xt::xarray<double> max_acceleration = {6, 0.75, 2, 0.5, 4};
+    fixture.set_max_velocity(max_velocity)
+        .set_max_acceleration(max_acceleration)
+        .set_max_blend_deviation(0.1)
+        .set_waypoints_rad({{0.0, 0.0, 0.0, 0.0, 0.0}, {1.0, 1.0, 1.0, 1.0, 1.0}, {0.0, 0.5, 0.6, 0.7, 0.8}});
+
+    // The key assertion for RSDK-13450: after hitting the limit at the L-C junction, the first
+    // nondiff extremum candidate is not a local minimum, so the algorithm keeps looking and finds
+    // the second candidate (k_nondifferentiable_extremum) as the actual switching point.
+    fixture.expectation_observer_->expect_forward_start(arc_length{0.0}, arc_velocity{0.0})
+        .expect_hit_limit(arc_length{2.10559}, arc_velocity{2.16985}, arc_velocity{0.36975}, arc_velocity{223.607})
+        .expect_backward_start(arc_length{2.10559}, arc_velocity{0.36975}, trajectory::switching_point_kind::k_discontinuous_curvature)
+        .expect_splice(std::nullopt, size_t{550})
+        .expect_forward_start(arc_length{2.10559}, arc_velocity{0.36975})
+        .expect_hit_limit(arc_length{2.12877}, arc_velocity{0.37161}, arc_velocity{0.37161}, arc_velocity{159.008})
+        .expect_backward_start(arc_length{2.18090}, arc_velocity{0.18160}, trajectory::switching_point_kind::k_nondifferentiable_extremum)
+        .expect_splice(std::nullopt, size_t{1131})
+        .expect_forward_start(arc_length{2.18090}, arc_velocity{0.18160})
+        .expect_backward_start(arc_length{3.30795}, arc_velocity{0.0}, trajectory::switching_point_kind::k_path_end)
+        .expect_splice(std::nullopt, size_t{323});
+
+    const trajectory traj = fixture.create_and_validate();
+    BOOST_CHECK_EQUAL(path_type_sequence(traj.path()), "LCL");
+}
 
 BOOST_AUTO_TEST_SUITE_END()  // extremal_path_tests
 
@@ -1623,15 +1737,15 @@ BOOST_AUTO_TEST_CASE(sharp_velocity_curve_drop_produces_velocity_escape) {
     // Velocity curve drops from ~v_max_1 to ~v_max_2 across the blend.
     // Tight blend so the trajectory hits the velocity curve before the blend,
     // then the curve drops sharply.
-    trajectory_test_fixture fixture(2, 1.0);
+    trajectory_test_fixture fixture(2);
 
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
     fixture.validation_tolerance_percent = 0.5;
 
     fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
         .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
         .set_max_blend_deviation(0.03);
-
-    fixture.traj_opts.delta = trajectory::seconds{0.001};
 
     fixture.set_waypoints_rad({{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}});
 
@@ -1659,15 +1773,15 @@ BOOST_AUTO_TEST_CASE(rising_velocity_curve_no_velocity_switching_point) {
 
     // Opposite of Case 1: path goes along joint 2 (slow) then turns to joint 1 (fast).
     // Same limits as Case 1 but opposite path direction -- velocity curve rises instead of drops.
-    trajectory_test_fixture fixture(2, 1.0);
+    trajectory_test_fixture fixture(2);
 
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
     fixture.validation_tolerance_percent = 0.5;
 
     fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
         .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
         .set_max_blend_deviation(0.03);
-
-    fixture.traj_opts.delta = trajectory::seconds{0.001};
 
     fixture.set_waypoints_rad({{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}});
 
@@ -1690,18 +1804,18 @@ BOOST_AUTO_TEST_CASE(gradual_velocity_curve_drop_bisection_accuracy) {
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
 
-    trajectory_test_fixture fixture(2, 1.0);
-
     // Moderate blend deviation -> wider blend -> more gradual velocity curve transition.
     // Same velocity limits as Case 1 but with a wider blend, so the velocity curve
     // drops more gradually across the blend region.
+    trajectory_test_fixture fixture(2);
+
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
     fixture.validation_tolerance_percent = 0.5;
 
     fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
         .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
         .set_max_blend_deviation(0.05);
-
-    fixture.traj_opts.delta = trajectory::seconds{0.001};
 
     fixture.set_waypoints_rad({{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}});
 
@@ -1758,15 +1872,15 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_drops_finds_first_switching_point) {
     // Zigzag path: joint 1 direction -> joint 2 direction -> joint 1 direction -> joint 2 direction.
     // Each turn from joint 1 to joint 2 creates a velocity drop.
     // Same limits as Case 1 which produces velocity_escape.
-    trajectory_test_fixture fixture(2, 1.0);
+    trajectory_test_fixture fixture(2);
 
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
     fixture.validation_tolerance_percent = 0.5;
 
     fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
         .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
         .set_max_blend_deviation(0.03);
-
-    fixture.traj_opts.delta = trajectory::seconds{0.001};
 
     fixture.set_waypoints_rad({{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}, {2.0, 1.0}, {2.0, 2.0}});
 
@@ -1798,15 +1912,15 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_escapes_wider_blends) {
     using namespace viam::trajex::totg;
     using namespace viam::trajex::types;
 
-    trajectory_test_fixture fixture(2, 1.0);
+    trajectory_test_fixture fixture(2);
 
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
     fixture.validation_tolerance_percent = 0.5;
 
     fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
         .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
         .set_max_blend_deviation(0.05);
-
-    fixture.traj_opts.delta = trajectory::seconds{0.001};
 
     // Three turns with moderate blend radius.
     fixture.set_waypoints_rad({{0.0, 0.0}, {0.5, 0.0}, {0.5, 0.5}, {1.0, 0.5}, {1.0, 1.0}});
@@ -1838,13 +1952,11 @@ BOOST_AUTO_TEST_CASE(constant_velocity_curve_no_switching_point) {
     using namespace viam::trajex::types;
 
     // Straight line -- no blends, constant q', constant velocity limit.
-    trajectory_test_fixture fixture(2, 1.0);
+    trajectory_test_fixture fixture(2);
 
     fixture.set_max_velocity(xt::xarray<double>{0.5, 0.5})
         .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
         .set_max_blend_deviation(0.1);
-
-    fixture.traj_opts.delta = trajectory::seconds{0.001};
 
     // Diagonal straight line: both joints move equally, q' = (1/sqrt(2), 1/sqrt(2)).
     fixture.set_waypoints_rad({{0.0, 0.0}, {1.0, 1.0}});
@@ -1871,15 +1983,15 @@ BOOST_AUTO_TEST_CASE(velocity_switching_point_near_path_start) {
     // Short first segment so the trajectory hits the velocity curve quickly,
     // then an immediate turn to a slower-constrained direction. High acceleration
     // ensures the trajectory reaches the velocity curve on the short first segment.
-    trajectory_test_fixture fixture(2, 1.0);
+    trajectory_test_fixture fixture(2);
 
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
     fixture.validation_tolerance_percent = 0.5;
 
     fixture.set_max_velocity(xt::xarray<double>{0.5, 0.08})
         .set_max_acceleration(xt::xarray<double>{10.0, 10.0})
         .set_max_blend_deviation(0.03);
-
-    fixture.traj_opts.delta = trajectory::seconds{0.001};
 
     // Moderate first segment (0.5 rad), then 90 deg turn.
     fixture.set_waypoints_rad({{0.0, 0.0}, {0.5, 0.0}, {0.5, 1.0}});
@@ -1913,6 +2025,8 @@ BOOST_AUTO_TEST_CASE(eq40_sign_change_brackets_velocity_escape_switching_point) 
                                                                       trajectory::seconds{0.001},
                                                                       collector);
 
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
     validate_trajectory_invariants(traj, 0.5);
 
     const auto velocity_escapes = get_backward_events_by_kind(collector, trajectory::switching_point_kind::k_velocity_escape);
@@ -1948,6 +2062,8 @@ BOOST_AUTO_TEST_CASE(rising_velocity_curve_has_no_eq40_escape_transition) {
                                                                       trajectory::seconds{0.001},
                                                                       collector);
 
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
     validate_trajectory_invariants(traj, 0.5);
 
     const auto velocity_escapes = get_backward_events_by_kind(collector, trajectory::switching_point_kind::k_velocity_escape);
@@ -1999,6 +2115,8 @@ BOOST_AUTO_TEST_CASE(multiple_velocity_escapes_are_ordered_and_feasible) {
                                                   trajectory::seconds{0.001},
                                                   collector);
 
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
     validate_trajectory_invariants(traj, 0.5);
 
     const auto velocity_escapes = get_backward_events_by_kind(collector, trajectory::switching_point_kind::k_velocity_escape);
@@ -2033,6 +2151,8 @@ BOOST_AUTO_TEST_CASE(near_start_velocity_escape_has_eq40_sign_bracket) {
                                                                       trajectory::seconds{0.001},
                                                                       collector);
 
+    // TODO(RSDK-12981): Use a slightly relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
     validate_trajectory_invariants(traj, 0.5);
 
     const auto velocity_escapes = get_backward_events_by_kind(collector, trajectory::switching_point_kind::k_velocity_escape);
@@ -2076,7 +2196,7 @@ BOOST_AUTO_TEST_CASE(boundary_produces_discontinuous_velocity_limit) {
                                                   trajectory::seconds{0.001},    // normal step
                                                   collector);
 
-    // Relaxed tolerance: the geometry that triggers eqs 41-42 requires tight curvature
+    // TODO(RSDK-12981): Relaxed tolerance: the geometry that triggers eqs 41-42 requires tight curvature
     // which pushes TOTG near its numerical limits.
     // TODO: tighten once TOTG handles high-curvature blends better.
     validate_trajectory_invariants(traj, 50.0);
@@ -2111,7 +2231,7 @@ BOOST_AUTO_TEST_CASE(both_discontinuous_velocity_limit_and_velocity_escape) {
                                                   trajectory::seconds{0.001},
                                                   collector);
 
-    // TODO: tighten once TOTG handles high-curvature blends better.
+    // TODO(RSDK-12981): tighten once TOTG handles high-curvature blends better.
     validate_trajectory_invariants(traj, 50.0);
 
     const auto disc = get_backward_events_by_kind(collector, trajectory::switching_point_kind::k_discontinuous_velocity_limit);
@@ -2146,6 +2266,8 @@ BOOST_AUTO_TEST_CASE(multi_turn_low_accel_switching_point_search) {
                                                   trajectory::seconds{0.001},
                                                   collector);
 
+    // TODO(RSDK-12981): Use a relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
     validate_trajectory_invariants(traj, 5.0);
 
     // The search must find velocity escapes at the turns.
@@ -2191,6 +2313,8 @@ BOOST_AUTO_TEST_CASE(condition_41_false_gates_boundary) {
                                                                       trajectory::seconds{0.001},
                                                                       collector);
 
+    // TODO(RSDK-12981): Use a relaxed tolerance in this test since empirically we require it;
+    // the expectation is that fixing RSDK-12981 will remove the need for this.
     validate_trajectory_invariants(traj, 50.0);
 
     // With condition 41 false, no discontinuous velocity switching point should be produced.

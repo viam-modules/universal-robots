@@ -86,3 +86,29 @@ Behavior`s, and will be similarly identified in the source code.
 - **Divergent Behavior 2**: The backward integration pass
   conservatively rejects trajectories that exceed limit curves, which
   is not described in the paper.
+
+- **Divergent Behavior 3**: Blend curvature is bounded between
+  `min_blend_curvature` and `max_blend_curvature` (see
+  `path::options`). Near-collinear waypoints produce enormous blend
+  radii causing catastrophic cancellation in arc arithmetic; we cap
+  the radius at `1/min_blend_curvature` while retaining exact C1
+  continuity. Near-reversal waypoints produce degenerate tiny arcs;
+  above `max_blend_curvature` we emit an unblended L-L corner instead,
+  handled by Divergent Behavior 4.
+
+- **Divergent Behavior 4**: The paper assumes all segment boundaries
+  are C1 tangent-continuous by construction. We check the tangent dot
+  product at every segment boundary during forward integration and
+  switching-point search. Any boundary with a tangent discontinuity —
+  including the L-L corners produced by Divergent Behavior 3 —
+  mandates `s_dot = 0`. The reference implementation does not perform
+  this check.
+
+- **Divergent Behavior 5**: The paper assumes L-C-L topology where
+  circular blends are always separated by linear segments. When two
+  adjacent blends fully consume the connecting segment, we allow
+  directly adjacent circular arcs (C-C). C-C boundaries are
+  tangent-continuous by blend construction, so Divergent Behavior 4
+  passes through without stopping. The Case 2 switching-point search
+  is extended to handle extrema at C-C boundaries via limit-curve
+  continuity checking across the boundary.
