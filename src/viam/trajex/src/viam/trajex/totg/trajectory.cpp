@@ -427,7 +427,8 @@ struct eq40_result {
                                 }
                             }
                         }
-                        // Whatever segment we ended up in, we can't go earlier than it's start.
+
+                        // Whatever segment we ended up in, we can't go earlier than its start.
                         before_candidate = std::max(before_candidate, before_candidate_segment.start());
 
                         auto after_candidate = std::min(cursor.path().length(), candidate_extremum + arc_length{opt.epsilon});
