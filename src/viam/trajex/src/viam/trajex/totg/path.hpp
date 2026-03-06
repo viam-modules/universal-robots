@@ -277,7 +277,7 @@ class path {
         ///
         /// Sets maximum linear deviation for coalescing.
         ///
-        /// This is `Divergent Behavior 3`: the Kunz & Stilman paper does not include this pass.
+        /// This is `Divergent Behavior 1`: the Kunz & Stilman paper does not include this pass.
         ///
         /// @param deviation Maximum deviation for waypoint coalescing
         /// @return Reference to this for method chaining
@@ -292,6 +292,8 @@ class path {
         /// radius. This prevents numerically fragile enormous-radius arcs at near-collinear
         /// waypoints while retaining exact C1 continuity at every segment boundary.
         ///
+        /// This is `Divergent Behavior 3`: the Kunz & Stilman paper uses no bounds on blend curvature.
+        ///
         /// @param curvature Minimum acceptable blend curvature (1/radius)
         /// @return Reference to this for method chaining
         ///
@@ -303,6 +305,8 @@ class path {
         /// Waypoints whose blend arc would exceed this curvature (1/radius) are treated
         /// as unblended corners. This prevents near-degenerate tiny arcs at near-reversal
         /// waypoints.
+        ///
+        /// This is `Divergent Behavior 3`: the Kunz & Stilman paper uses no bounds on blend curvature.
         ///
         /// @param curvature Maximum acceptable blend curvature (1/radius)
         /// @return Reference to this for method chaining

@@ -464,6 +464,9 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             const auto dist_to_locus = xt::norm_l2(incoming)();
             const auto incoming_unit = incoming / dist_to_locus;
 
+            // `Divergent Behavior 5`: When adjacent blends fully consume the connecting segment,
+            // the two circular arcs are emitted adjacent (C-C). The paper assumes L-C-L topology.
+            //
             // Compute the incoming linear segment length as a scalar subtraction to avoid
             // catastrophic cancellation from reconstructing two nearly-equal endpoint positions.
             // When adjacent blends fully consume a connecting segment (C-C), this should be

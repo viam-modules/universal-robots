@@ -1,8 +1,8 @@
-#include <exception>
 #include <viam/trajex/totg/trajectory.hpp>
 
 #include <cassert>
 #include <cstddef>
+#include <exception>
 #include <functional>
 #include <iterator>
 #include <numbers>
@@ -389,6 +389,8 @@ struct eq40_result {
                         // accurate and has epsilon dependency. An analytical solution would be more robust and
                         // faster (no need for 4 extra geometry queries + limit calculations per extremum).
 
+                        // `Divergent Behavior 5`: C-C adjacency requires cross-boundary sampling when the
+                        // limit curve is continuous across the boundary. Check continuity before sampling.
                         auto before_candidate = std::max(arc_length{0.0}, candidate_extremum - arc_length{opt.epsilon});
                         auto before_candidate_segment = current_segment;
                         if (before_candidate < current_segment.start()) {
@@ -689,8 +691,9 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
         // Sample geometry from segment starting at boundary
         const auto q_prime_after = segment_after.tangent(boundary);
 
-        // If there is a tangent discontinuity, we must emit a switching point at s_dot = 0 because
-        // we must transition through zero velocity.
+        // `Divergent Behavior 4`: If there is a tangent discontinuity, we must emit a switching point
+        // at s_dot = 0 because we must transition through zero velocity. The paper assumes all
+        // boundaries are C1-continuous; we enforce this explicitly.
         const auto dot = xt::sum(q_prime_before * q_prime_after);
         if (opt.epsilon.wrap(dot()) != opt.epsilon.wrap(1.0)) {
             return switching_point{
@@ -717,9 +720,11 @@ std::optional<switching_point> find_discontinuous_velocity_switching_point(path:
                                    .kind = trajectory::switching_point_kind::k_discontinuous_velocity_limit};
         }
 
-        // Divergence 2: We can't call compute_acceleration_bounds at s_dot_max_vel if it exceeds
-        // s_dot_max_accel, because the centripetal term would already exceed the acceleration budget
-        // at that velocity.
+        // Conditions 41 and 42 are evaluated at s_dot_max_vel, but if s_dot_max_accel <= s_dot_max_vel
+        // at this boundary, backward integration starting at s_dot_max_vel would immediately exceed
+        // the acceleration limit curve -- this is not a valid velocity-type switching point candidate.
+        // Calling compute_acceleration_bounds at s_dot_max_vel in that case also produces nonsense
+        // since the centripetal term already exceeds the acceleration budget at that velocity.
         if (opt.epsilon.wrap(s_dot_max_accel_before) <= opt.epsilon.wrap(s_dot_max_vel_before) ||
             opt.epsilon.wrap(s_dot_max_accel_after) <= opt.epsilon.wrap(s_dot_max_vel_after)) {
             continue;
@@ -1252,9 +1257,9 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                 // If we hit the a limit curve, bisect until we have `next_point` in bounds,
                 // `breach_point` out of bounds, and a separation less than our configured epsilon.
                 const auto limit_hit_event = [&]() mutable -> std::optional<integration_observer::limit_hit_event> {
-                    // If we've crossed a segment boundary, we need to look for a tangent discontinuity, because
-                    // we could be looking at an unblended junction. In such cases, the only safe thing to do is
-                    // to go to zero velocity, since otherwise the path is kinematically infeasible.
+                    // `Divergent Behavior 4`: If we've crossed a segment boundary, check for a tangent
+                    // discontinuity. An unblended junction (e.g. from Divergent Behavior 3) requires s_dot=0;
+                    // the only safe thing to do is transition through zero velocity.
                     if (next_segment.start() != current_segment.start()) {
                         const auto current_end_tangent = current_segment.tangent(current_segment.end());
                         const auto next_start_tangent = next_segment.tangent(next_segment.start());
@@ -1468,7 +1473,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                         traj.options_.observer->on_hit_limit_curve(traj, *limit_hit_event);
                     }
 
-                    // Special case: we observed a tangent discontinuity. We must switch at the boundary with s_dot = 0.
+                    // `Divergent Behavior 4`: We observed a tangent discontinuity; switch at the boundary with s_dot = 0.
                     if ((*limit_hit_event).s_dot_max_vel == arc_velocity{0.0}) {
                         return switching_point{.point = {.s = (*limit_hit_event).breach.s, .s_dot = arc_velocity{0.0}},
                                                .kind = switching_point_kind::k_discontinuous_velocity_limit};
@@ -1722,7 +1727,7 @@ trajectory trajectory::create(class path p, options opt, integration_points poin
                     throw std::runtime_error{"TOTG algorithm error: velocity limit curve is non-positive during backward integration"};
                 }
 
-                // `Divergent Behavior 3`: Candidate exceeding limit curve is an algorithm error - trajectory is
+                // `Divergent Behavior 2`: Candidate exceeding limit curve is an algorithm error - trajectory is
                 // infeasible. Being at the limit (within epsilon) is allowed - only exceeding it is rejected.
                 if (traj.options_.epsilon.wrap(next_point.s_dot) > traj.options_.epsilon.wrap(s_dot_limit)) {
                     throw std::runtime_error{"TOTG algorithm error: backward integration exceeded limit curve - trajectory is infeasible"};
