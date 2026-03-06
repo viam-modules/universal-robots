@@ -183,6 +183,12 @@ class URArm final : public Arm, public Reconfigurable {
 
     vector6d_t get_joint_positions_rad_(const std::shared_lock<std::shared_mutex>&);
 
+    /// @brief Execute a pre-computed kinodynamic trajectory produced by the traj-gen service.
+    /// Captures the move epoch before parsing so the epoch guards all work done before enqueue.
+    /// Releases config_rlock before blocking on trajectory completion (mirrors move_joint_space_).
+    void execute_precomputed_trajectory_(std::shared_lock<std::shared_mutex> config_rlock,
+                                         const ProtoStruct& plan_struct);
+
     void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                            const xt::xarray<double>& waypoints,
                            const MoveOptions& options,
