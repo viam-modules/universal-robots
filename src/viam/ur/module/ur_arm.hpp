@@ -148,7 +148,7 @@ class URArm final : public Arm, public Reconfigurable {
     /// @param extra Any additional arguments to the method.
     /// @return A variant of kinematics data, with bytes field containing the raw bytes of the file
     /// and the object's type indicating the file format.
-    KinematicsData get_kinematics(const ProtoStruct& extra) override;
+    viam::sdk::KinematicsData get_kinematics(const ProtoStruct& extra) override;
 
     /// @brief Get the 3D models associated with the arm.
     /// @param extra Any additional arguments to the method.

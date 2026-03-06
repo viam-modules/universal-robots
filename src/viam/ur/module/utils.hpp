@@ -7,6 +7,9 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <vector>
+
+#include <boost/variant.hpp>
 
 #include <Eigen/Dense>
 
@@ -97,6 +100,18 @@ using viam::trajex::within_colinearization_tolerance;
 /// @param tolerance Maximum L-infinity distance for waypoints to be considered duplicates (in radians)
 ///
 void deduplicate_waypoints(std::list<Eigen::VectorXd>& waypoints, double tolerance);
+
+///
+/// Apply a move-limit override to a 6-DOF limits array.
+///
+/// Scalar: fills all joints uniformly with the given value (degrees, converted to radians).
+/// Vector: sets per-joint limits. Requires exactly k_ur_arm_dof elements.
+///
+/// @param limits Array to modify in-place (in radians)
+/// @param value Scalar (degrees) or per-joint vector (degrees)
+/// @throws std::invalid_argument on non-positive scalar, wrong vector size, or negative vector elements
+///
+void apply_move_limit(urcl::vector6d_t& limits, const boost::variant<double, std::vector<double>>& value);
 
 ///
 /// Parse and validate velocity or acceleration limits.

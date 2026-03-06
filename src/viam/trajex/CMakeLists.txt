@@ -107,7 +107,7 @@ if(TRAJEX_STANDALONE_BUILD)
   FetchContent_Declare(
     viam-cpp-sdk
     GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-    GIT_TAG        releases/v0.25.0
+    GIT_TAG        releases/v0.31.0
     GIT_SHALLOW    TRUE
     SYSTEM
     # Delete conflicting protobuf headers
