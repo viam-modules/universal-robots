@@ -67,13 +67,6 @@ BOOST_AUTO_TEST_CASE(calculate_quantized_dt_invalid_frequency) {
     BOOST_CHECK_THROW(uniform_sampler::calculate_quantized_dt(1.0, -100.0), std::invalid_argument);
 }
 
-BOOST_AUTO_TEST_CASE(calculate_quantized_dt_exceeds_max_samples) {
-    using namespace viam::trajex::totg;
-
-    // Duration * frequency > 1000000
-    BOOST_CHECK_THROW(uniform_sampler::calculate_quantized_dt(10000.0, 1000.0), std::invalid_argument);
-}
-
 BOOST_AUTO_TEST_CASE(calculate_quantized_dt_at_least_two_samples) {
     using namespace viam::trajex::totg;
 

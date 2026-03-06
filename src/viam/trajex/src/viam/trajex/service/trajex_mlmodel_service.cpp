@@ -107,10 +107,10 @@ std::vector<std::string> trajex_mlmodel_service::validate(const vsdk::ResourceCo
         }
     }
 
-    auto seg_attr = cfg.attributes().find("segment_for_totg");
+    auto seg_attr = cfg.attributes().find("segment_for_trajex");
     if (seg_attr != cfg.attributes().end()) {
         if (!seg_attr->second.get<bool>()) {
-            errors.emplace_back("segment_for_totg must be a boolean");
+            errors.emplace_back("segment_for_trajex must be a boolean");
         }
     }
 
@@ -145,14 +145,14 @@ void trajex_mlmodel_service::reconfigure(const vsdk::Dependencies&, const vsdk::
         }
     }
 
-    // Parse segment_for_totg
-    auto seg_attr = cfg.attributes().find("segment_for_totg");
+    // Parse segment_for_trajex
+    auto seg_attr = cfg.attributes().find("segment_for_trajex");
     if (seg_attr != cfg.attributes().end()) {
         const auto* val = seg_attr->second.get<bool>();
         if (!val) {
-            throw std::invalid_argument("segment_for_totg must be a boolean");
+            throw std::invalid_argument("segment_for_trajex must be a boolean");
         }
-        new_config.segment_for_totg = *val;
+        new_config.segment_for_trajex = *val;
     }
 
     const std::unique_lock lock{config_mutex_};
@@ -210,7 +210,7 @@ std::shared_ptr<trajex_mlmodel_service::named_tensor_views> trajex_mlmodel_servi
         .acceleration_limits = std::move(acceleration_limits),
         .path_blend_tolerance = path_tolerance,
         .colinearization_ratio = colinearization_ratio,
-        .segment_trajex = local_config.segment_for_totg,
+        .segment_trajex = local_config.segment_for_trajex,
     });
 
     planner

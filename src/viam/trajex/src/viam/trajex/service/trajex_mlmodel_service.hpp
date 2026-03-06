@@ -27,7 +27,7 @@ class trajex_mlmodel_service final : public ::viam::sdk::MLModelService, public 
    private:
     struct config {
         std::vector<std::string> generator_sequence = {"totg", "legacy"};
-        bool segment_for_totg = true;
+        bool segment_for_trajex = false;
     };
 
     mutable std::shared_mutex config_mutex_;

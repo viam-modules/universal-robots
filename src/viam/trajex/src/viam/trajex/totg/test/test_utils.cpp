@@ -1,6 +1,8 @@
 // Test utility function implementations
 #include "test_utils.hpp"
 
+#include <string>
+
 #include <viam/trajex/totg/path.hpp>
 #include <viam/trajex/types/arc_length.hpp>
 
@@ -52,6 +54,15 @@ void verify_path_visits_waypoints(const path& p, const xt::xarray<double>& waypo
         // Allow small numerical tolerance for floating point and sampling error
         BOOST_CHECK_LE(min_distance, max_deviation + 1e-4);
     }
+}
+
+std::string path_type_sequence(const path& p) {
+    std::string result;
+    result.reserve(p.size());
+    for (const auto& seg : p) {
+        result += seg.is<path::segment::linear>() ? 'L' : 'C';
+    }
+    return result;
 }
 
 }  // namespace viam::trajex::totg::test
