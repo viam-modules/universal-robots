@@ -26,14 +26,10 @@ SWITCHING_POINT_LINE_WIDTH = 1
 LIMIT_MARKER_SIZE = 10
 
 
-def load_trajectory(filename):
-    """Load trajectory JSON file with validation."""
+def load_trajectory(f):
+    """Load trajectory JSON from a file-like object with validation."""
     try:
-        with open(filename) as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        print(f"Error: File not found: {filename}", file=sys.stderr)
-        sys.exit(1)
+        data = json.load(f)
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON: {e}", file=sys.stderr)
         sys.exit(1)
@@ -352,15 +348,21 @@ def plot_arc_length_vs_time(data, ax):
 
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python visualize_trajectory.py <trajectory.json>")
-        sys.exit(1)
-
-    filename = sys.argv[1]
-    data = load_trajectory(filename)
+    if len(sys.argv) >= 2:
+        filename = sys.argv[1]
+        title = os.path.basename(filename)
+        try:
+            with open(filename) as f:
+                data = load_trajectory(f)
+        except FileNotFoundError:
+            print(f"Error: File not found: {filename}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        title = "stdin"
+        data = load_trajectory(sys.stdin)
 
     # Create figure with 3-row layout (taller to give phase plane more vertical space)
-    fig = plt.figure(figsize=(14, 18), num=os.path.basename(filename))
+    fig = plt.figure(figsize=(14, 18), num=title)
     gs = fig.add_gridspec(3, 2)
 
     # Row 1: Phase plane spans both columns

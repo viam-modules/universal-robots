@@ -474,7 +474,7 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             // segment norm; the representability check catches that: if incoming_length is too
             // small to change dist_to_locus in floating-point, the segment is a rounding artifact.
             const auto incoming_length = dist_to_locus - blend.trim_distance;
-            if (dist_to_locus + incoming_length > dist_to_locus) {
+            if (cumulative_length + arc_length{incoming_length} > cumulative_length) {
                 segment::linear incoming_segment{current_position, incoming_unit, arc_length{incoming_length}};
                 segments.push_back({.seg = segment{std::move(incoming_segment)}, .start = cumulative_length});
                 cumulative_length += arc_length{incoming_length};
