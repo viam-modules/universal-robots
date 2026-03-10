@@ -700,7 +700,7 @@ void URArm::stop(const ProtoStruct&) {
 }
 
 ProtoStruct URArm::do_command(const ProtoStruct& command) {
-    const std::shared_lock rlock{config_mutex_};
+    std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
     ProtoStruct resp = ProtoStruct{};
@@ -719,6 +719,8 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     constexpr char k_clear_pstop[] = "clear_pstop";
     constexpr char k_is_controllable[] = "is_controllable_state";
     constexpr char k_get_state_description[] = "get_state_description";
+    constexpr char k_supports_traj_gen_plan[] = "supports_execute_traj_gen_plan";
+    constexpr char k_execute_traj_gen_plan[] = "execute_traj_gen_plan";
 
     // Cache TCP state to ensure atomic read of pose and forces from same timestamp
     std::optional<decltype(current_state_->read_tcp_state_snapshot())> cached_tcp_state;
@@ -789,12 +791,138 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
                 cached_controlled_info->controlled = current_state_->is_current_state_controlled(&cached_controlled_info->description);
             }
             resp.emplace(k_get_state_description, cached_controlled_info->description);
+        } else if (kv.first == k_supports_traj_gen_plan) {
+            resp.emplace(k_supports_traj_gen_plan, true);
+        } else if (kv.first == k_execute_traj_gen_plan) {
+            const auto* plan_struct = kv.second.get<ProtoStruct>();
+            if (!plan_struct) {
+                throw std::invalid_argument("execute_traj_gen_plan value must be a struct");
+            }
+            execute_precomputed_trajectory_(std::move(rlock), *plan_struct);
+            resp.emplace(k_execute_traj_gen_plan, true);
         } else {
             throw std::runtime_error("unsupported do_command key: " + kv.first);
         }
     }
 
     return resp;
+}
+
+void URArm::execute_precomputed_trajectory_(std::shared_lock<std::shared_mutex> config_rlock,
+                                             const ProtoStruct& plan_struct) {
+    // Capture the epoch before any parsing work so that if another caller changes it
+    // concurrently (move_epoch_ is atomic, not protected by config_mutex_), the
+    // enqueue_move_request CAS will catch it and throw rather than silently proceeding.
+    auto current_move_epoch = current_state_->get_move_epoch();
+
+    auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
+        return observer && observer->context().IsCancelled();
+    };
+
+    // Parse a required key as a flat array of doubles.
+    const auto parse_1d = [&](const std::string& key) {
+        auto it = plan_struct.find(key);
+        if (it == plan_struct.end()) {
+            throw std::invalid_argument("execute_traj_gen_plan: missing key '" + key + "'");
+        }
+        const auto* arr = it->second.get<std::vector<ProtoValue>>();
+        if (!arr) {
+            throw std::invalid_argument("execute_traj_gen_plan: '" + key + "' must be an array");
+        }
+        std::vector<double> out;
+        out.reserve(arr->size());
+        for (const auto& v : *arr) {
+            const auto* d = v.get<double>();
+            if (!d) {
+                throw std::invalid_argument("execute_traj_gen_plan: '" + key + "' elements must be doubles");
+            }
+            out.push_back(*d);
+        }
+        return out;
+    };
+
+    // Parse a required key as an array of 6-element joint arrays.
+    const auto parse_2d = [&](const std::string& key) {
+        auto it = plan_struct.find(key);
+        if (it == plan_struct.end()) {
+            throw std::invalid_argument("execute_traj_gen_plan: missing key '" + key + "'");
+        }
+        const auto* rows = it->second.get<std::vector<ProtoValue>>();
+        if (!rows) {
+            throw std::invalid_argument("execute_traj_gen_plan: '" + key + "' must be an array of arrays");
+        }
+        std::vector<vector6d_t> out;
+        out.reserve(rows->size());
+        for (const auto& row_val : *rows) {
+            const auto* row = row_val.get<std::vector<ProtoValue>>();
+            if (!row || row->size() != 6) {
+                throw std::invalid_argument("execute_traj_gen_plan: '" + key + "' rows must have exactly 6 elements");
+            }
+            vector6d_t joint;
+            for (size_t i = 0; i < 6; ++i) {
+                const auto* d = (*row)[i].get<double>();
+                if (!d) {
+                    throw std::invalid_argument("execute_traj_gen_plan: '" + key + "' elements must be doubles");
+                }
+                joint[i] = *d;
+            }
+            out.push_back(joint);
+        }
+        return out;
+    };
+
+    const auto configs = parse_2d("configurations_rads");
+    const auto vels = parse_2d("velocities_rads_per_sec");
+    const auto times = parse_1d("sample_times_sec");
+
+    if (configs.size() != vels.size() || configs.size() != times.size()) {
+        throw std::invalid_argument("execute_traj_gen_plan: configurations, velocities, and sample_times must have the same length");
+    }
+
+    // Accelerations are optional (present only when the service ran in PVA mode).
+    std::vector<vector6d_t> accels;
+    if (plan_struct.count("accelerations_rads_per_sec2")) {
+        accels = parse_2d("accelerations_rads_per_sec2");
+        if (accels.size() != configs.size()) {
+            throw std::invalid_argument("execute_traj_gen_plan: accelerations length must match configurations length");
+        }
+    }
+
+    // Convert absolute sample times to per-segment timesteps.
+    const auto timestep = [&](size_t i) -> float {
+        return static_cast<float>(i == 0 ? times[0] : times[i] - times[i - 1]);
+    };
+
+    // Build the trajectory_samples variant.
+    const auto n = configs.size();
+    trajectory_samples samples;
+    if (!accels.empty()) {
+        std::vector<trajectory_sample_point_pva> pts;
+        pts.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            pts.push_back({configs[i], vels[i], accels[i], timestep(i)});
+        }
+        samples = std::move(pts);
+    } else {
+        std::vector<trajectory_sample_point_pv> pts;
+        pts.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            pts.push_back({configs[i], vels[i], timestep(i)});
+        }
+        samples = std::move(pts);
+    }
+
+    // Enqueue while holding the config lock, then release before waiting —
+    // mirrors the move_joint_space_ pattern so the worker thread is never lock-starved.
+    auto future = [&, held_rlock = std::move(config_rlock)]() mutable {
+        return current_state_->enqueue_move_request(current_move_epoch,
+                                                    std::nullopt,
+                                                    std::move(async_cancellation_monitor),
+                                                    std::move(samples));
+    }();
+
+    // Config lock is now released. Wait for trajectory completion.
+    future.get();
 }
 
 void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time) {
