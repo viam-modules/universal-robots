@@ -1,3 +1,4 @@
+#include <ranges>
 #include <viam/trajex/totg/path.hpp>
 
 #include <algorithm>
@@ -395,10 +396,46 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         return blend_geometry{.circular_seg = segment::circular{center, x_unit, y_unit, radius, angle}, .trim_distance = trim_distance};
     };
 
+
+    // Run colinearization as a single pass before constructing circular blends.
+
+    auto waypoints_range = std::views::all(waypoints);
+    std::optional<waypoint_accumulator> colinearized;
+    if (opts.max_linear_deviation() != 0.0) {
+        std::vector<decltype(waypoints_range.begin())> skipped;
+        for (auto base = waypoints_range.begin(); base != waypoints_range.end();) {
+            if (!colinearized) {
+                colinearized.emplace(*base);
+            } else {
+                colinearized->add_waypoint(*base);
+            }
+
+            skipped.clear();
+            auto candidate = std::next(base);
+
+            while (candidate != waypoints_range.end()) {
+                auto target = std::next(candidate);
+                if (target == waypoints_range.end()) {
+                    break;
+                }
+                if (!can_coalesce(*base, *candidate, *target)) {
+                    break;
+                }
+                if (!std::ranges::all_of(skipped, [&](auto elt) { return can_coalesce(*base, *elt, *target); })) {
+                    break;
+                }
+                skipped.push_back(candidate);
+                candidate = target;
+            }
+
+            base = candidate;
+        }
+        waypoints_range = std::views::all(std::as_const(*colinearized));
+    }
+
     std::vector<positioned_segment> segments;
     arc_length cumulative_length{0.0};
-
-    auto segment_start = waypoints.begin();
+    auto segment_start = waypoints_range.begin();
 
     // Track the current position on the path we're building. This must be stored as an actual
     // configuration copy (not just an iterator) because after creating a circular blend, the
@@ -406,47 +443,11 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
     // waypoints rather than one of the original waypoints in the accumulator.
     xt::xarray<double> current_position = *segment_start;
 
-    // Track waypoints we've skipped since the last segment emission. When extending the tube
-    // to a new endpoint, we must revalidate that all previously skipped waypoints remain
-    // within tolerance of the extended segment to prevent "tube drift".
-    std::vector<decltype(waypoints.begin())> skipped_since_anchor;
-
-    for (auto locus = std::next(waypoints.begin()); locus != waypoints.end(); ++locus) {
+    for (auto locus = std::next(waypoints_range.begin()); locus != waypoints_range.end(); ++locus) {
         auto next = std::next(locus);
 
         // If we're at the last waypoint, we must emit the final segment
-        const bool at_last = (next == waypoints.end());
-
-        // Check if we can skip this waypoint: it must pass the standard coalesce check
-        // AND all previously skipped waypoints must remain within tolerance when the
-        // tube is extended to the new endpoint (revalidation prevents drift).
-        if (!at_last && can_coalesce(*segment_start, *locus, *next)) {
-            // Re-validate all previously skipped waypoints against the extended segment
-            const auto radius = opts.max_linear_deviation() / 2.0;
-            bool all_previous_valid = true;
-            for (auto prev_skipped : skipped_since_anchor) {
-                const auto start_to_next = *next - *segment_start;
-                const auto start_to_prev = *prev_skipped - *segment_start;
-
-                const auto start_to_next_sq = xt::sum(start_to_next * start_to_next);
-                const auto start_to_prev_dot = xt::sum(start_to_prev * start_to_next);
-
-                const auto t = start_to_prev_dot / start_to_next_sq;
-                const auto projected = *segment_start + (t * start_to_next);
-                const auto deviation_vec = *prev_skipped - projected;
-                const auto deviation = xt::norm_l2(deviation_vec);
-
-                if (deviation() > radius) {
-                    all_previous_valid = false;
-                    break;
-                }
-            }
-
-            if (all_previous_valid) {
-                skipped_since_anchor.push_back(locus);
-                continue;
-            }
-        }
+        const bool at_last = (next == waypoints_range.end());
 
         // Locus represents a corner (or the final waypoint). We need to emit the segment
         // from current_position to this locus, and if it's a corner, decide whether to
@@ -494,7 +495,6 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
             // is between locus and next, we use locus as the reference point for determining if
             // future waypoints can be coalesced.
             segment_start = locus;
-            skipped_since_anchor.clear();
         } else {
             // No blend: emit linear from current_position to locus.
             segment::linear linear_data{current_position, *locus};
@@ -504,7 +504,6 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
 
             current_position = *locus;
             segment_start = locus;
-            skipped_since_anchor.clear();
         }
     }
 

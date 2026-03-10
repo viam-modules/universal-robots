@@ -506,6 +506,53 @@ BOOST_AUTO_TEST_CASE(blend_trim_zero_width_segment) {
     }
 }
 
+// Regression: when a circular blend is followed by colinearization, the tube extends in
+// the direction of the far endpoint (segment_start → locus), which may differ from the
+// blend's outgoing tangent (toward the first skipped waypoint). The merged linear segment
+// then runs between two directions that don't match the blend boundaries on either side,
+// producing tangent discontinuities at both the C→L and L→C junctions.
+//
+// Geometry (2-DOF):
+//   W0=(0,3) → W1=(0,0): blend here (~128° corner)
+//   W2=(0.5,0.4): within the W1→W3 colinearization tube (deviation=0.4 < tube_half=0.5)
+//                 but NOT on the W1→W3 axis — blend at W1 exits along normalize(W2-W1)
+//   W3=(3,0): next corner (90° turn to W4)
+//   W4=(3,3): exit
+//
+// With max_linear_deviation=1.0, W2 is absorbed. The merged linear connects the W1 blend
+// exit (on the W1→W2 axis) to the W3 blend entry (on the W1→W3 axis). The C→L junction
+// after W1 has a ~42° tangent mismatch; the L→C junction before W3 has a ~4° mismatch.
+BOOST_AUTO_TEST_CASE(colinearization_after_blend_preserves_tangent_continuity) {
+    using namespace viam::trajex::totg;
+    using viam::trajex::arc_length;
+
+    const xt::xarray<double> waypoints = {
+        {0.0, 3.0},  // W0
+        {0.0, 0.0},  // W1: corner
+        {0.5, 0.4},  // W2: in tube of W1->W3, off the W1->W3 axis
+        {3.0, 0.0},  // W3: corner
+        {3.0, 3.0},  // W4
+    };
+
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.5).set_max_linear_deviation(1.0));
+
+    BOOST_REQUIRE_EQUAL(p.size(), 5U);
+    BOOST_CHECK_EQUAL(path_type_sequence(p), "LCLCL");
+
+    // At every segment junction the path must be C1: the tangent just before and just
+    // after the boundary must agree to within a tight tolerance.
+    auto prev = p.begin();
+    auto curr = std::next(prev);
+    while (curr != p.end()) {
+        const auto t_before = (*prev).tangent((*prev).end());
+        const auto t_after = (*curr).tangent((*curr).start());
+        const double dot = xt::sum(t_before * t_after)();
+        BOOST_CHECK_CLOSE(dot, 1.0, 0.01);
+        prev = curr;
+        ++curr;
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 // Tests for path construction at degenerate and near-degenerate waypoint geometries.
