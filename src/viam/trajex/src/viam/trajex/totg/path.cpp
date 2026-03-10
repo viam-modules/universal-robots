@@ -396,7 +396,6 @@ path path::create(const waypoint_accumulator& waypoints, const options& opts) {
         return blend_geometry{.circular_seg = segment::circular{center, x_unit, y_unit, radius, angle}, .trim_distance = trim_distance};
     };
 
-
     // Run colinearization as a single pass before constructing circular blends.
 
     auto waypoints_range = std::views::all(waypoints);
