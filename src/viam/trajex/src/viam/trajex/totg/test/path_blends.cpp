@@ -457,6 +457,102 @@ BOOST_AUTO_TEST_CASE(circular_blend_trim_respects_original_segment_length) {
     BOOST_CHECK(configs_close(p.configuration(p.length()), xt::xarray<double>{1.0, 2.0}));
 }
 
+// Regression (RSDK-12771): blend trim can leave an incoming linear whose arc-length
+// contribution is representable relative to dist_to_locus (passing the existing guard)
+// but not relative to cumulative_length, producing a zero-width segment view that traps
+// path::cursor in an infinite loop during forward integration.
+//
+// Waypoints extracted from a real 7000-waypoint dense trajectory capture that triggered
+// the hang. The blend at waypoint [20] trims the [19]->[20] incoming segment down to
+// ~6.9e-18 radians, which is below ULP of the cumulative arc length (~0.118 rad) at
+// that point.
+BOOST_AUTO_TEST_CASE(blend_trim_zero_width_segment) {
+    using namespace viam::trajex::totg;
+
+    const xt::xarray<double> waypoints = {
+        {0.82739107946303503, 0.88282048800603485, 0.3039375847975771, -3.136198473590786, 0.98778065081918609, 0.74039620121758376},
+        {0.82629088242947146, 0.88015395319311995, 0.29929061711574401, -3.1361612990406651, 0.98576635111271682, 0.74146624876782663},
+        {0.82518902514739223, 0.87750093630902959, 0.29467042227130935, -3.1361212806604346, 0.98376585935290217, 0.7425369173880072},
+        {0.82408439141808032, 0.87486007035523905, 0.29007430703974835, -3.136083340709396, 0.98177575096874348, 0.74361269537785513},
+        {0.82297766704596664, 0.87223282218850162, 0.28550514470579086, -3.1360432784270205, 0.97980134663434992, 0.7446863591792573},
+        {0.82175093188676929, 0.86934079066277903, 0.28047842559826797, -3.1359989040577294, 0.97762778247494508, 0.74587804588963502},
+        {0.82052122478846157, 0.86646396202641407, 0.27548181447209474, -3.1359544227250566, 0.97546946137410784, 0.74707256825793555},
+        {0.81928851589217333, 0.86360202999044611, 0.27051468583278532, -3.1359098886631349, 0.97332587508569313, 0.74827007078641894},
+        {0.8180527967645177, 0.86075441708409506, 0.26557607257769117, -3.135865526464737, 0.97119590782824416, 0.74947043923950929},
+        {0.81691547078297266, 0.85815210566197009, 0.26106578102812716, -3.1358240998866274, 0.96925181642027836, 0.75057491150423716},
+        {0.81577544695593207, 0.85556188147923184, 0.25657946439116519, -3.1357834811994563, 0.9673198495138623, 0.75168229175030732},
+        {0.81463322511546443, 0.85298334430198652, 0.25211648865248959, -3.135741171041222, 0.96539921603621814, 0.75279123497030176},
+        {0.8134882050117741, 0.8504162266389127, 0.24767611227211728, -3.1356999702528503, 0.96348915314636985, 0.75390332968205465},
+        {0.81239977300000277, 0.8479915334672864, 0.24348418047826675, -3.1356649955963296, 0.96168408895129498, 0.75496095169515587},
+        {0.81130993554969921, 0.84557935592151812, 0.23931712067998823, -3.135625154121938, 0.95989451529514969, 0.75601903359253686},
+        {0.81021853068193705, 0.84317907848638818, 0.23517379397324567, -3.135581307674193, 0.95811895749286435, 0.75707826471125217},
+        {0.80912400325497646, 0.8407869536014575, 0.23104650713052508, -3.1355416437658326, 0.95634888710197274, 0.75814095295035044},
+        {0.8079804871517845, 0.8383033321852208, 0.2267640376073147, -3.135500013460045, 0.95451298609643331, 0.75925112318759469},
+        {0.80683444819414352, 0.83583023284298352, 0.22250259711775061, -3.1354584901952416, 0.95268732223556085, 0.76036387690474327},
+        {0.80568580309839632, 0.83336896720205433, 0.2182642674204768, -3.1354171697807547, 0.95087545998514833, 0.76147925931929172},
+        {0.80453379071711051, 0.8309134890629436, 0.21403804528617396, -3.1353803509698968, 0.94906219693260463, 0.76259848675258046},
+        {0.80348035729964573, 0.82868511774530973, 0.21020648152308605, -3.1353351970286405, 0.94743226524784308, 0.76362086319744726},
+        {0.80242316594544671, 0.82645762028543435, 0.20637754406775707, -3.1352985688288966, 0.94579144498181067, 0.76464635430345096},
+        {0.80136455609434587, 0.82424371145004272, 0.20257472793898343, -3.1352581155276646, 0.94417228036033596, 0.76567419014892324},
+        {0.80030343340426746, 0.82203557017046813, 0.19878386991668273, -3.1352196593643331, 0.94255472609856017, 0.7667040771997794},
+        {0.79914710824348445, 0.8196442013430919, 0.19468049525035699, -3.1351802801979831, 0.94080381320088813, 0.76782674729827727},
+        {0.79798873121757508, 0.81726319384717827, 0.19059777012593726, -3.1351382211247683, 0.93906420782762101, 0.7689510613676801},
+    };
+
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.1));
+
+    for (const auto& seg : p) {
+        BOOST_CHECK(seg.end() > seg.start());
+    }
+}
+
+// Regression: when a circular blend is followed by colinearization, the tube extends in
+// the direction of the far endpoint (segment_start → locus), which may differ from the
+// blend's outgoing tangent (toward the first skipped waypoint). The merged linear segment
+// then runs between two directions that don't match the blend boundaries on either side,
+// producing tangent discontinuities at both the C→L and L→C junctions.
+//
+// Geometry (2-DOF):
+//   W0=(0,3) → W1=(0,0): blend here (~128° corner)
+//   W2=(0.5,0.4): within the W1→W3 colinearization tube (deviation=0.4 < tube_half=0.5)
+//                 but NOT on the W1→W3 axis — blend at W1 exits along normalize(W2-W1)
+//   W3=(3,0): next corner (90° turn to W4)
+//   W4=(3,3): exit
+//
+// With max_linear_deviation=1.0, W2 is absorbed. The merged linear connects the W1 blend
+// exit (on the W1→W2 axis) to the W3 blend entry (on the W1→W3 axis). The C→L junction
+// after W1 has a ~42° tangent mismatch; the L→C junction before W3 has a ~4° mismatch.
+BOOST_AUTO_TEST_CASE(colinearization_after_blend_preserves_tangent_continuity) {
+    using namespace viam::trajex::totg;
+    using viam::trajex::arc_length;
+
+    const xt::xarray<double> waypoints = {
+        {0.0, 3.0},  // W0
+        {0.0, 0.0},  // W1: corner
+        {0.5, 0.4},  // W2: in tube of W1->W3, off the W1->W3 axis
+        {3.0, 0.0},  // W3: corner
+        {3.0, 3.0},  // W4
+    };
+
+    const path p = path::create(waypoints, path::options{}.set_max_blend_deviation(0.5).set_max_linear_deviation(1.0));
+
+    BOOST_REQUIRE_EQUAL(p.size(), 5U);
+    BOOST_CHECK_EQUAL(path_type_sequence(p), "LCLCL");
+
+    // At every segment junction the path must be C1: the tangent just before and just
+    // after the boundary must agree to within a tight tolerance.
+    auto prev = p.begin();
+    auto curr = std::next(prev);
+    while (curr != p.end()) {
+        const auto t_before = (*prev).tangent((*prev).end());
+        const auto t_after = (*curr).tangent((*curr).start());
+        const double dot = xt::sum(t_before * t_after)();
+        BOOST_CHECK_CLOSE(dot, 1.0, 0.01);
+        prev = curr;
+        ++curr;
+    }
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 // Tests for path construction at degenerate and near-degenerate waypoint geometries.
@@ -549,9 +645,7 @@ BOOST_AUTO_TEST_CASE(non_reversal_corner_outside_curvature_band_emits_lcl) {
 
 // Z-staircase: three equal-length segments with two 90-degree corners. With a large
 // deviation budget, each blend consumes its full half-segment. Together the two blends
-// consume the middle segment entirely. After removing the zero-length linear guard and
-// supporting C-C adjacency, the path should be L-C-C-L (4 segments).
-// Currently produces "LCLCL" (5 segments with a buggy middle linear). Expected "LCCL" after fix.
+// consume the middle segment entirely, producing L-C-C-L (4 segments).
 BOOST_AUTO_TEST_CASE(z_staircase_adjacent_blends_emit_lccl) {
     using namespace viam::trajex::totg;
     const xt::xarray<double> waypoints = {{0.0, 0.0}, {0.0, 1.0}, {1.0, 1.0}, {1.0, 2.0}};
