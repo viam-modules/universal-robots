@@ -3,7 +3,7 @@
 #include "ur_arm.hpp"
 #include "utils.hpp"
 
-#include <viam/trajex/service/trajectory_planner.hpp>
+#include <viam/trajex/totg/tools/planner.hpp>
 
 #include <boost/numeric/conversion/cast.hpp>
 
@@ -1036,7 +1036,7 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_serialize_for_replay) {
 
     // Use a dummy receiver type — we only need serialize_for_replay from the base.
     struct dummy_receiver {};
-    auto planner = viam::trajex::trajectory_planner<dummy_receiver>({
+    auto planner = viam::trajex::totg::planner<dummy_receiver>({
         .velocity_limits = xt::adapt(k_max_velocity),
         .acceleration_limits = xt::adapt(k_max_acceleration),
         .path_blend_tolerance = k_tolerance,

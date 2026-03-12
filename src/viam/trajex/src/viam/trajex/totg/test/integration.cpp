@@ -2423,7 +2423,7 @@ BOOST_AUTO_TEST_SUITE_END()  // zero_limit_joint
 namespace {
 
 void generate_trajectory_from_replay_file(const std::string& filename) {
-    auto planner = viam::trajex::trajex_replay_planner::create(std::filesystem::path(VIAM_TRAJEX_TEST_DATA_DIR) / filename);
+    auto planner = viam::trajex::totg::replay_planner::create(std::filesystem::path(VIAM_TRAJEX_TEST_DATA_DIR) / filename);
 
     auto outcome = planner.execute([](const auto&, auto tx, const auto&) { return tx; });
 

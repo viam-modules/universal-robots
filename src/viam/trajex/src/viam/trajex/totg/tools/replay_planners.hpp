@@ -5,18 +5,18 @@
 #include <memory>
 #include <optional>
 
-#include <viam/trajex/service/trajectory_planner.hpp>
 #include <viam/trajex/totg/observers.hpp>
+#include <viam/trajex/totg/tools/planner.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 
-namespace viam::trajex {
+namespace viam::trajex::totg {
 
 ///
-/// Receiver for trajex_replay_planner. Holds the most recently generated
+/// Receiver for replay_planner. Holds the most recently generated
 /// trajectory so callers can access it after execute() completes.
 ///
-struct trajex_replay_receiver {
-    std::optional<totg::trajectory> traj;
+struct replay_receiver {
+    std::optional<trajectory> traj;
 };
 
 ///
@@ -26,20 +26,20 @@ struct trajex_replay_receiver {
 struct legacy_replay_receiver {};
 
 ///
-/// Replay planner for the trajex/TOTG algorithm.
+/// Replay planner for the TOTG algorithm.
 ///
 /// Loads a canonical JSON replay record, runs TOTG with an attached event collector,
 /// and provides the collector for downstream diagnostic JSON output.
 ///
 /// Typical usage:
 /// @code
-///   auto planner = trajex_replay_planner::create("failed.json");
-///   auto outcome = planner.execute([](const auto&, auto tx, auto) { return std::move(tx); });
-///   write_trajectory_json(std::cout, planner.collector(),
+///   auto p = replay_planner::create("failed.json");
+///   auto outcome = p.execute([](const auto&, auto tx, const auto&) { return tx; });
+///   write_trajectory_json(std::cout, p.collector(),
 ///                         outcome.receiver ? &outcome.receiver->traj.value() : nullptr);
 /// @endcode
 ///
-class trajex_replay_planner : public trajectory_planner<trajex_replay_receiver> {
+class replay_planner : public planner<replay_receiver> {
    public:
     ///
     /// Constructs a replay planner from a replay record stream.
@@ -47,7 +47,7 @@ class trajex_replay_planner : public trajectory_planner<trajex_replay_receiver> 
     /// @param in Stream containing a canonical JSON replay record
     /// @throws std::runtime_error if the stream cannot be parsed or required fields are missing
     ///
-    static trajex_replay_planner create(std::istream& in);
+    static replay_planner create(std::istream& in);
 
     ///
     /// Constructs a replay planner from a replay record file path.
@@ -55,20 +55,20 @@ class trajex_replay_planner : public trajectory_planner<trajex_replay_receiver> 
     /// @param path Path to a canonical JSON replay record file
     /// @throws std::runtime_error if the file cannot be opened or parsed
     ///
-    static trajex_replay_planner create(const std::filesystem::path& path);
+    static replay_planner create(const std::filesystem::path& path);
 
     ///
     /// Returns the event collector populated during execute().
     ///
-    const totg::trajectory_integration_event_collector& collector() const noexcept;
+    const trajectory_integration_event_collector& collector() const noexcept;
 
    private:
     // The collector lives on the heap so its address is stable through moves.
     // mutable_config().observer holds a raw pointer to it; the pointer remains
     // valid as long as the planner is alive.
-    std::unique_ptr<totg::trajectory_integration_event_collector> collector_;
+    std::unique_ptr<trajectory_integration_event_collector> collector_;
 
-    explicit trajex_replay_planner(config cfg, std::unique_ptr<totg::trajectory_integration_event_collector> collector);
+    explicit replay_planner(config cfg, std::unique_ptr<trajectory_integration_event_collector> collector);
 };
 
 ///
@@ -77,9 +77,9 @@ class trajex_replay_planner : public trajectory_planner<trajex_replay_receiver> 
 /// Loads a canonical JSON replay record and runs the legacy generator. Primarily
 /// useful for getting a debugger session on a known-bad trajectory.
 ///
-class legacy_replay_planner : public trajectory_planner<legacy_replay_receiver> {
+class legacy_replay_planner : public planner<legacy_replay_receiver> {
    public:
-    using trajectory_planner<legacy_replay_receiver>::trajectory_planner;
+    using planner<legacy_replay_receiver>::planner;
 
     ///
     /// Constructs a replay planner from a replay record stream.
@@ -92,4 +92,4 @@ class legacy_replay_planner : public trajectory_planner<legacy_replay_receiver> 
     static legacy_replay_planner create(const std::filesystem::path& path);
 };
 
-}  // namespace viam::trajex
+}  // namespace viam::trajex::totg

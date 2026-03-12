@@ -1,4 +1,4 @@
-#include <viam/trajex/service/trajectory_planner.hpp>
+#include <viam/trajex/totg/tools/planner.hpp>
 
 #include <chrono>
 #include <iomanip>
@@ -8,36 +8,35 @@
 
 #include <json/json.h>
 
-namespace viam::trajex {
+namespace viam::trajex::totg {
 
-trajectory_planner_base::trajectory_planner_base(struct config cfg) : config_(std::move(cfg)) {}
+planner_base::planner_base(struct config cfg) : config_(std::move(cfg)) {}
 
-const struct trajectory_planner_base::config& trajectory_planner_base::get_config() const noexcept {
+const struct planner_base::config& planner_base::get_config() const noexcept {
     return config_;
 }
 
-const trajectory_planner_base::timing_stats& trajectory_planner_base::timing() const noexcept {
+const planner_base::timing_stats& planner_base::timing() const noexcept {
     return timing_;
 }
 
-std::size_t trajectory_planner_base::processed_waypoint_count() const noexcept {
+std::size_t planner_base::processed_waypoint_count() const noexcept {
     return processed_waypoint_count_;
 }
 
-struct trajectory_planner_base::config& trajectory_planner_base::mutable_config() noexcept {
+struct planner_base::config& planner_base::mutable_config() noexcept {
     return config_;
 }
 
-trajectory_planner_base::timing_stats& trajectory_planner_base::mutable_timing() noexcept {
+planner_base::timing_stats& planner_base::mutable_timing() noexcept {
     return timing_;
 }
 
-std::size_t& trajectory_planner_base::mutable_processed_waypoint_count() noexcept {
+std::size_t& planner_base::mutable_processed_waypoint_count() noexcept {
     return processed_waypoint_count_;
 }
 
-std::string trajectory_planner_base::serialize_for_replay(const totg::waypoint_accumulator& waypoints,
-                                                          std::optional<std::string_view> error_message) const {
+std::string planner_base::serialize_for_replay(const waypoint_accumulator& waypoints, std::optional<std::string_view> error_message) const {
     // Build ISO 8601 timestamp with microsecond precision.
     const auto now = std::chrono::system_clock::now();
     const auto seconds_part = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch());
@@ -51,9 +50,9 @@ std::string trajectory_planner_base::serialize_for_replay(const totg::waypoint_a
     std::ostringstream ts;
     ts << std::put_time(&buf, "%FT%T") << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
 
-    // Reconstruct path::options the same way run_trajex_ does, so we can read off the
+    // Reconstruct path::options the same way run_totg_ does, so we can read off the
     // min/max blend curvature defaults that are currently not configurable via get_config().
-    auto path_opts = totg::path::options{}.set_max_blend_deviation(get_config().path_blend_tolerance);
+    auto path_opts = path::options{}.set_max_blend_deviation(get_config().path_blend_tolerance);
     if (get_config().colinearization_ratio) {
         path_opts.set_max_linear_deviation(get_config().path_blend_tolerance * *get_config().colinearization_ratio);
     }
@@ -100,4 +99,4 @@ std::string trajectory_planner_base::serialize_for_replay(const totg::waypoint_a
     return Json::writeString(writer, root);
 }
 
-}  // namespace viam::trajex
+}  // namespace viam::trajex::totg

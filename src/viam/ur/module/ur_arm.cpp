@@ -42,7 +42,7 @@
 #include <third_party/trajectories/Trajectory.h>
 
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
-#include <viam/trajex/service/trajectory_planner.hpp>
+#include <viam/trajex/totg/tools/planner.hpp>
 #include <viam/trajex/totg/totg.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
@@ -853,12 +853,12 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
 
-    auto planner = viam::trajex::trajectory_planner<segment_accumulator>({
+    auto planner = viam::trajex::totg::planner<segment_accumulator>({
         .velocity_limits = xt::adapt(velocity_limits_data),
         .acceleration_limits = xt::adapt(acceleration_limits_data),
         .path_blend_tolerance = current_state_->get_path_tolerance_delta_rads(),
         .colinearization_ratio = current_state_->get_path_colinearization_ratio(),
-        .segment_trajex = current_state_->segment_for_trajex(),
+        .segment_totg = current_state_->segment_for_trajex(),
     });
 
     planner
@@ -908,7 +908,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         });
 
     if (current_state_->use_new_trajectory_planner()) {
-        planner.with_trajex(
+        planner.with_totg(
             [&](const auto&,
                 segment_accumulator& acc,
                 const viam::trajex::totg::waypoint_accumulator& segment,
@@ -1081,7 +1081,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                             << " validation=" << format_optional(timing.move_validation)
                             << " segmentation=" << format_optional(timing.segmentation)
                             << " colinearization=" << format_optional(timing.colinearization)
-                            << " trajex_total_gen=" << format_optional(timing.trajex_generation_total)
+                            << " totg_total_gen=" << format_optional(timing.totg_generation_total)
                             << " legacy_total_gen=" << format_optional(timing.legacy_generation_total);
     }
 

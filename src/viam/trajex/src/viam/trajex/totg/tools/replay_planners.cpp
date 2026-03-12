@@ -19,13 +19,13 @@
 #include <xtensor/xmath.hpp>
 #endif
 
-namespace viam::trajex {
+namespace viam::trajex::totg {
 
 namespace {
 
-// Parse a JSON replay record stream into a trajectory_planner_base::config and a waypoints
+// Parse a JSON replay record stream into a planner_base::config and a waypoints
 // xarray. Throws std::runtime_error on malformed input.
-std::pair<trajectory_planner_base::config, xt::xarray<double>> parse_replay_record(std::istream& in) {
+std::pair<planner_base::config, xt::xarray<double>> parse_replay_record(std::istream& in) {
     Json::Value root;
     const Json::CharReaderBuilder reader;
     std::string errs;
@@ -78,7 +78,7 @@ std::pair<trajectory_planner_base::config, xt::xarray<double>> parse_replay_reco
         }
     }
 
-    trajectory_planner_base::config cfg;
+    planner_base::config cfg;
     cfg.velocity_limits = std::move(velocity_limits);
     cfg.acceleration_limits = std::move(acceleration_limits);
     cfg.path_blend_tolerance = require("path_tolerance_delta_rads").asDouble();
@@ -91,30 +91,27 @@ std::pair<trajectory_planner_base::config, xt::xarray<double>> parse_replay_reco
 
 }  // namespace
 
-trajex_replay_planner::trajex_replay_planner(config cfg, std::unique_ptr<totg::trajectory_integration_event_collector> collector)
-    : trajectory_planner<trajex_replay_receiver>(std::move(cfg)), collector_(std::move(collector)) {
+replay_planner::replay_planner(config cfg, std::unique_ptr<trajectory_integration_event_collector> collector)
+    : planner<replay_receiver>(std::move(cfg)), collector_(std::move(collector)) {
     mutable_config().observer = collector_.get();
 }
 
-trajex_replay_planner trajex_replay_planner::create(std::istream& in) {
+replay_planner replay_planner::create(std::istream& in) {
     auto [cfg, waypoints] = parse_replay_record(in);
 
-    auto collector = std::make_unique<totg::trajectory_integration_event_collector>();
-    trajex_replay_planner planner(std::move(cfg), std::move(collector));
+    auto collector = std::make_unique<trajectory_integration_event_collector>();
+    replay_planner p(std::move(cfg), std::move(collector));
 
     // Stash the waypoints array and provision it as a single unsegmented waypoint set.
-    auto data = planner.stash(std::move(waypoints));
-    planner.with_waypoint_provider([data](auto&) { return totg::waypoint_accumulator{*data}; });
+    auto data = p.stash(std::move(waypoints));
+    p.with_waypoint_provider([data](auto&) { return waypoint_accumulator{*data}; });
 
-    planner.with_trajex(
-        [](const auto&, trajex_replay_receiver& recv, const totg::waypoint_accumulator&, const totg::trajectory& traj, auto) {
-            recv.traj = traj;
-        });
+    p.with_totg([](const auto&, replay_receiver& recv, const waypoint_accumulator&, const trajectory& traj, auto) { recv.traj = traj; });
 
-    return planner;
+    return p;
 }
 
-trajex_replay_planner trajex_replay_planner::create(const std::filesystem::path& path) {
+replay_planner replay_planner::create(const std::filesystem::path& path) {
     std::ifstream in(path);
     if (!in) {
         throw std::runtime_error("failed to open replay record file: " + path.string());
@@ -122,22 +119,21 @@ trajex_replay_planner trajex_replay_planner::create(const std::filesystem::path&
     return create(in);
 }
 
-const totg::trajectory_integration_event_collector& trajex_replay_planner::collector() const noexcept {
+const trajectory_integration_event_collector& replay_planner::collector() const noexcept {
     return *collector_;
 }
 
 legacy_replay_planner legacy_replay_planner::create(std::istream& in) {
     auto [cfg, waypoints] = parse_replay_record(in);
 
-    legacy_replay_planner planner(std::move(cfg));
+    legacy_replay_planner p(std::move(cfg));
 
-    auto data = planner.stash(std::move(waypoints));
-    planner.with_waypoint_provider([data](auto&) { return totg::waypoint_accumulator{*data}; });
+    auto data = p.stash(std::move(waypoints));
+    p.with_waypoint_provider([data](auto&) { return waypoint_accumulator{*data}; });
 
-    planner.with_legacy(
-        [](const auto&, legacy_replay_receiver&, const totg::waypoint_accumulator&, const Path&, const Trajectory&, auto) {});
+    p.with_legacy([](const auto&, legacy_replay_receiver&, const waypoint_accumulator&, const Path&, const Trajectory&, auto) {});
 
-    return planner;
+    return p;
 }
 
 legacy_replay_planner legacy_replay_planner::create(const std::filesystem::path& path) {
@@ -148,4 +144,4 @@ legacy_replay_planner legacy_replay_planner::create(const std::filesystem::path&
     return create(in);
 }
 
-}  // namespace viam::trajex
+}  // namespace viam::trajex::totg

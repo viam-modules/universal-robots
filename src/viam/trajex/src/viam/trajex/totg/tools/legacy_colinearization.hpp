@@ -4,7 +4,7 @@
 
 #include <Eigen/Dense>
 
-namespace viam::trajex {
+namespace viam::trajex::totg {
 
 ///
 /// Check if point is within tolerance cylinder around line segment.
@@ -37,4 +37,4 @@ bool within_colinearization_tolerance(const Eigen::VectorXd& point,
 ///
 void apply_colinearization(std::list<Eigen::VectorXd>& waypoints, double tolerance);
 
-}  // namespace viam::trajex
+}  // namespace viam::trajex::totg

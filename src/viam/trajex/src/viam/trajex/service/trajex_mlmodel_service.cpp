@@ -22,7 +22,7 @@
 #include <viam/sdk/log/logging.hpp>
 
 #include <viam/trajex/service/sampling_utils.hpp>
-#include <viam/trajex/service/trajectory_planner.hpp>
+#include <viam/trajex/totg/tools/planner.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/totg/waypoint_utils.hpp>
 #include <viam/trajex/types/hertz.hpp>
@@ -205,12 +205,12 @@ std::shared_ptr<trajex_mlmodel_service::named_tensor_views> trajex_mlmodel_servi
     xt::xarray<double> acceleration_limits(acceleration_limits_view);
 
     // Build the planner
-    auto planner = trajectory_planner<service_result>({
+    auto planner = totg::planner<service_result>({
         .velocity_limits = std::move(velocity_limits),
         .acceleration_limits = std::move(acceleration_limits),
         .path_blend_tolerance = path_tolerance,
         .colinearization_ratio = colinearization_ratio,
-        .segment_trajex = local_config.segment_for_trajex,
+        .segment_totg = local_config.segment_for_trajex,
     });
 
     planner
@@ -228,7 +228,7 @@ std::shared_ptr<trajex_mlmodel_service::named_tensor_views> trajex_mlmodel_servi
     // Register algorithms based on configured sequence
     for (const auto& algo : local_config.generator_sequence) {
         if (algo == "totg") {
-            planner.with_trajex(
+            planner.with_totg(
                 [&, dof](const auto&, service_result& acc, const totg::waypoint_accumulator&, const totg::trajectory& traj, auto) {
                     acc.dof = dof;
                     acc.total_duration += traj.duration().count();
