@@ -73,7 +73,7 @@ mlmodel::named_tensor_views make_simple_inputs() {
 BOOST_AUTO_TEST_SUITE(trajex_service_config_tests)
 
 BOOST_AUTO_TEST_CASE(default_config) {
-    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config());
+    auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config());
     // Should not throw -- default config is ["totg", "legacy"]
     auto result = service->infer(make_simple_inputs(), {});
     BOOST_CHECK(result);
@@ -83,7 +83,7 @@ BOOST_AUTO_TEST_CASE(totg_only_config) {
     vsdk::ProtoStruct attrs;
     attrs.emplace("generator_sequence", std::vector<vsdk::ProtoValue>{vsdk::ProtoValue{"totg"}});
 
-    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config(attrs));
+    auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config(attrs));
     auto result = service->infer(make_simple_inputs(), {});
     BOOST_CHECK(result);
 
@@ -95,7 +95,7 @@ BOOST_AUTO_TEST_CASE(legacy_only_config) {
     vsdk::ProtoStruct attrs;
     attrs.emplace("generator_sequence", std::vector<vsdk::ProtoValue>{vsdk::ProtoValue{"legacy"}});
 
-    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config(attrs));
+    auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config(attrs));
     auto result = service->infer(make_simple_inputs(), {});
     BOOST_CHECK(result);
 
@@ -107,14 +107,14 @@ BOOST_AUTO_TEST_CASE(unknown_algorithm_rejects) {
     vsdk::ProtoStruct attrs;
     attrs.emplace("generator_sequence", std::vector<vsdk::ProtoValue>{vsdk::ProtoValue{"unknown"}});
 
-    BOOST_CHECK_THROW(std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config(attrs)), std::invalid_argument);
+    BOOST_CHECK_THROW(std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config(attrs)), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(empty_sequence_rejects) {
     vsdk::ProtoStruct attrs;
     attrs.emplace("generator_sequence", std::vector<vsdk::ProtoValue>{});
 
-    BOOST_CHECK_THROW(std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config(attrs)), std::invalid_argument);
+    BOOST_CHECK_THROW(std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config(attrs)), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
@@ -122,7 +122,7 @@ BOOST_AUTO_TEST_SUITE_END()
 BOOST_AUTO_TEST_SUITE(trajex_service_input_validation_tests)
 
 BOOST_AUTO_TEST_CASE(missing_tensor_throws) {
-    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config());
+    auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config());
     const mlmodel::named_tensor_views empty_inputs;
     BOOST_CHECK_THROW(service->infer(empty_inputs, {}), std::invalid_argument);
 }
@@ -145,7 +145,7 @@ BOOST_AUTO_TEST_CASE(dof_mismatch_throws) {
     inputs.emplace("waypoint_deduplication_tolerance_rads", mlmodel::make_tensor_view(dedup_tolerance.data(), 1, {1}));
     inputs.emplace("trajectory_sampling_freq_hz", mlmodel::make_tensor_view(sampling_freq.data(), 1, {1}));
 
-    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config());
+    auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config());
     BOOST_CHECK_THROW(service->infer(inputs, {}), std::invalid_argument);
 }
 
@@ -154,7 +154,7 @@ BOOST_AUTO_TEST_SUITE_END()
 BOOST_AUTO_TEST_SUITE(trajex_service_inference_tests)
 
 BOOST_AUTO_TEST_CASE(simple_trajectory_produces_valid_output) {
-    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config());
+    auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config());
     auto result = service->infer(make_simple_inputs(), {});
 
     BOOST_REQUIRE(result);
@@ -187,7 +187,7 @@ BOOST_AUTO_TEST_CASE(single_waypoint_returns_empty) {
     inputs.emplace("waypoint_deduplication_tolerance_rads", mlmodel::make_tensor_view(dedup_tolerance.data(), 1, {1}));
     inputs.emplace("trajectory_sampling_freq_hz", mlmodel::make_tensor_view(sampling_freq.data(), 1, {1}));
 
-    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config());
+    auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config());
     auto result = service->infer(inputs, {});
 
     // Single waypoint: nothing to do, should return empty views
@@ -199,7 +199,7 @@ BOOST_AUTO_TEST_CASE(totg_trajectory_has_samples_and_accelerations) {
     vsdk::ProtoStruct attrs;
     attrs.emplace("generator_sequence", std::vector<vsdk::ProtoValue>{vsdk::ProtoValue{"totg"}});
 
-    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config(attrs));
+    auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config(attrs));
     auto result = service->infer(make_simple_inputs(), {});
 
     BOOST_REQUIRE(result);
@@ -219,7 +219,7 @@ BOOST_AUTO_TEST_CASE(legacy_trajectory_has_samples_but_no_accelerations) {
     vsdk::ProtoStruct attrs;
     attrs.emplace("generator_sequence", std::vector<vsdk::ProtoValue>{vsdk::ProtoValue{"legacy"}});
 
-    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config(attrs));
+    auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config(attrs));
     auto result = service->infer(make_simple_inputs(), {});
 
     BOOST_REQUIRE(result);
@@ -230,7 +230,7 @@ BOOST_AUTO_TEST_CASE(legacy_trajectory_has_samples_but_no_accelerations) {
 }
 
 BOOST_AUTO_TEST_CASE(dual_algorithm_prefers_totg) {
-    auto service = std::make_shared<trajex_mlmodel_service>(vsdk::Dependencies{}, make_config());
+    auto service = std::make_shared<mlmodel>(vsdk::Dependencies{}, make_config());
     auto result = service->infer(make_simple_inputs(), {});
 
     BOOST_REQUIRE(result);

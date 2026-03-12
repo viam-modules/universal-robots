@@ -133,10 +133,10 @@ endif()
 
 
 #
-# Targets
+# Library targets
 #
 
-# Legacy target: reference implementation from third_party/trajectories submodule
+# Legacy library: reference implementation from third_party/trajectories submodule
 add_library(viam-trajex-totg-legacy)
 
 set_target_properties(viam-trajex-totg-legacy PROPERTIES SYSTEM TRUE)
@@ -160,10 +160,10 @@ target_link_libraries(viam-trajex-totg-legacy
     Eigen3::Eigen
 )
 
-add_library(viam::trajex::totg-legacy ALIAS viam-trajex-totg-legacy)
+add_library(viam::trajex::totg::legacy ALIAS viam-trajex-totg-legacy)
 
 
-# Core target: TOTG implementation
+# New TOTG implementation
 add_library(viam-trajex-totg)
 
 target_sources(viam-trajex-totg
@@ -198,14 +198,41 @@ apply_wall_werror(viam-trajex-totg)
 add_library(viam::trajex::totg ALIAS viam-trajex-totg)
 
 
-# Service layer: Eigen-dependent helpers (always built) and the MLModelService
-# wrapper (conditionally built when VIAM_TRAJEX_BUILD_SERVICE is ON).
+# Support and tooling for new TOTG and legacy
+add_library(viam-trajex-totg-tools)
+
+target_sources(viam-trajex-totg-tools
+  PRIVATE
+    src/viam/trajex/totg/tools/legacy.cpp
+    src/viam/trajex/totg/tools/planner.cpp
+    src/viam/trajex/totg/tools/replay.cpp
+)
+
+target_link_libraries(viam-trajex-totg-tools
+  PUBLIC
+    Eigen3::Eigen
+    viam::trajex::totg
+    viam::trajex::totg::legacy
+  PRIVATE
+    jsoncpp_lib
+)
+
+apply_wall_werror(viam-trajex-totg-tools)
+
+add_library(viam::trajex::totg::tools ALIAS viam-trajex-totg-tools)
+
+
+# Service layer: SDK-facing MLModel service. Only layer that depends on viam-cpp-sdk.
+
+if(NOT TARGET viam-cpp-sdk::viamsdk)
+  find_package(viam-cpp-sdk CONFIG REQUIRED viamsdk)
+endif()
+
 add_library(viam-trajex-service)
 
 target_sources(viam-trajex-service
   PRIVATE
-    src/viam/trajex/service/colinearization.cpp
-    src/viam/trajex/service/trajectory_planner.cpp
+    src/viam/trajex/service/mlmodel.cpp
 )
 
 target_include_directories(viam-trajex-service
@@ -216,11 +243,9 @@ target_include_directories(viam-trajex-service
 
 target_link_libraries(viam-trajex-service
   PUBLIC
-    Eigen3::Eigen
-    viam::trajex::totg
-    viam::trajex::totg-legacy
+    viam-cpp-sdk::viamsdk
   PRIVATE
-    jsoncpp_lib
+    viam::trajex::totg::tools
 )
 
 apply_wall_werror(viam-trajex-service)
@@ -228,75 +253,46 @@ apply_wall_werror(viam-trajex-service)
 add_library(viam::trajex::service ALIAS viam-trajex-service)
 
 
-# Replay and diagnostic tooling (depends on service layer)
-add_library(viam-trajex-tools)
+#
+# Service executable target
+#
 
-target_sources(viam-trajex-tools
+add_executable(viam-trajex-service-exe)
+
+target_sources(viam-trajex-service-exe
   PRIVATE
-    src/viam/trajex/totg/tools/replay_planners.cpp
+    src/viam/trajex/service/main.cpp
 )
 
-target_link_libraries(viam-trajex-tools
-  PUBLIC
+set_target_properties(viam-trajex-service-exe PROPERTIES OUTPUT_NAME viam-trajex-service)
+
+target_link_libraries(viam-trajex-service-exe
+  PRIVATE
     viam::trajex::service
-  PRIVATE
-    jsoncpp_lib
 )
 
-apply_wall_werror(viam-trajex-tools)
-
-add_library(viam::trajex::tools ALIAS viam-trajex-tools)
+apply_wall_werror(viam-trajex-service-exe)
 
 
 #
-# Service executable and SDK-dependent sources
-# Always built (provides testing in both standalone and FetchContent modes)
-# Only installed/packaged in standalone mode
+# Tools
 #
 
-if(NOT TARGET viam-cpp-sdk::viamsdk)
-  find_package(viam-cpp-sdk CONFIG REQUIRED viamsdk)
-endif()
+add_executable(viam-trajex-totg-replay-exe)
 
-target_sources(viam-trajex-service
+target_sources(viam-trajex-totg-replay-exe
   PRIVATE
-    src/viam/trajex/service/trajex_mlmodel_service.cpp
+    src/viam/trajex/totg/tools/replay_main.cpp
 )
 
-target_link_libraries(viam-trajex-service
-  PUBLIC
-    viam-cpp-sdk::viamsdk
-)
+set_target_properties(viam-trajex-totg-replay-exe PROPERTIES OUTPUT_NAME viam-trajex-totg-replay)
 
-add_executable(trajex-service
-  src/viam/trajex/service/main.cpp
-)
-
-set_target_properties(trajex-service PROPERTIES OUTPUT_NAME viam-trajex-service)
-
-target_link_libraries(trajex-service
+target_link_libraries(viam-trajex-totg-replay-exe
   PRIVATE
-    viam::trajex::service
+    viam::trajex::totg::tools
 )
 
-apply_wall_werror(trajex-service)
-
-add_executable(trajex-service-test
-  src/viam/trajex/service/test/trajex_mlmodel_service.cpp
-)
-
-target_link_libraries(trajex-service-test
-  PRIVATE
-    viam::trajex::service
-    Boost::boost
-)
-
-apply_wall_werror(trajex-service-test)
-
-add_test(
-  NAME trajex-service
-  COMMAND trajex-service-test
-)
+apply_wall_werror(viam-trajex-totg-replay-exe)
 
 
 #
@@ -305,11 +301,10 @@ add_test(
 
 enable_testing()
 
-add_executable(trajex-test)
+add_executable(viam-trajex-totg-test)
 
-target_sources(trajex-test
+target_sources(viam-trajex-totg-test
   PRIVATE
-    src/viam/trajex/service/test/trajectory_planner.cpp
     src/viam/trajex/totg/test/main.cpp
     src/viam/trajex/totg/test/test_utils.cpp
     src/viam/trajex/totg/test/waypoint_accumulator.cpp
@@ -324,62 +319,92 @@ target_sources(trajex-test
     src/viam/trajex/totg/test/observers.cpp
 )
 
-target_link_libraries(trajex-test
+target_link_libraries(viam-trajex-totg-test
   PRIVATE
-    viam::trajex::tools
+    viam::trajex::totg::tools
     Boost::boost
     jsoncpp_lib
 )
 
-target_compile_definitions(trajex-test PRIVATE
+target_compile_definitions(viam-trajex-totg-test PRIVATE
     VIAM_TRAJEX_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex/totg/test/data"
 )
 
-apply_wall_werror(trajex-test)
+apply_wall_werror(viam-trajex-totg-test)
 
 add_test(
-  NAME trajex
-  COMMAND trajex-test
+  NAME viam-trajex-totg-test
+  COMMAND viam-trajex-totg-test
 )
 
 
-add_executable(trajex-types-test)
+add_executable(viam-trajex-totg-tools-test)
 
-target_sources(trajex-types-test
+target_sources(viam-trajex-totg-tools-test
+  PRIVATE
+    src/viam/trajex/totg/tools/test/main.cpp
+    src/viam/trajex/totg/tools/test/legacy.cpp
+    src/viam/trajex/totg/tools/test/planner.cpp
+)
+
+target_link_libraries(viam-trajex-totg-tools-test
+  PRIVATE
+    viam::trajex::totg::tools
+    Boost::boost
+)
+
+apply_wall_werror(viam-trajex-totg-tools-test)
+
+add_test(
+  NAME viam-trajex-totg-tools-test
+  COMMAND viam-trajex-totg-tools-test
+)
+
+
+add_executable(viam-trajex-types-test)
+
+target_sources(viam-trajex-types-test
   PRIVATE
     src/viam/trajex/types/test.cpp
 )
 
-target_include_directories(trajex-types-test
+target_include_directories(viam-trajex-types-test
   PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
 )
 
-target_link_libraries(trajex-types-test
+target_link_libraries(viam-trajex-types-test
   PRIVATE
     Boost::boost
 )
 
-apply_wall_werror(trajex-types-test)
+apply_wall_werror(viam-trajex-types-test)
 
 add_test(
-  NAME trajex-types
-  COMMAND trajex-types-test
+  NAME viam-trajex-types-test
+  COMMAND viam-trajex-types-test
 )
 
 
-#
-# Tools
-#
+add_executable(viam-trajex-service-test)
 
-add_executable(trajex-replay-trajectory
-  src/viam/trajex/totg/tools/replay_trajectory.cpp
-)
-target_link_libraries(trajex-replay-trajectory
+target_sources(viam-trajex-service-test
   PRIVATE
-    viam::trajex::tools
+    src/viam/trajex/service/test/mlmodel.cpp
 )
-apply_wall_werror(trajex-replay-trajectory)
+
+target_link_libraries(viam-trajex-service-test
+  PRIVATE
+    viam::trajex::service
+    Boost::boost
+)
+
+apply_wall_werror(viam-trajex-service-test)
+
+add_test(
+  NAME viam-trajex-service-test
+  COMMAND viam-trajex-service-test
+)
 
 
 #
@@ -393,8 +418,9 @@ install(
   TARGETS
   viam-trajex-totg-legacy
   viam-trajex-totg
+  viam-trajex-totg-tools
   viam-trajex-service
-  trajex-replay-trajectory
+  viam-trajex-totg-replay-exe
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -404,7 +430,7 @@ if(TRAJEX_STANDALONE_BUILD)
   # Install service executable (standalone only)
   install(
     TARGETS
-    trajex-service
+    viam-trajex-service-exe
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   )
 
