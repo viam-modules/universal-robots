@@ -60,12 +60,6 @@ std::string arm_joint_positions_filename(const std::string& path, const std::str
 std::string move_to_position_pose_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string unix_time_iso8601();
-std::string serialize_failed_trajectory_to_json(const viam::trajex::totg::waypoint_accumulator& waypoints,
-                                                const xt::xarray<double>& max_velocity_vec,
-                                                const xt::xarray<double>& max_acceleration_vec,
-                                                double path_tolerance_delta_rads,
-                                                const std::optional<double>& path_colinearization_ratio,
-                                                double segmentation_threshold);
 
 class URArm final : public Arm, public Reconfigurable {
    public:

@@ -205,6 +205,7 @@ add_library(viam-trajex-service)
 target_sources(viam-trajex-service
   PRIVATE
     src/viam/trajex/service/colinearization.cpp
+    src/viam/trajex/service/trajectory_planner.cpp
 )
 
 target_include_directories(viam-trajex-service
@@ -218,11 +219,33 @@ target_link_libraries(viam-trajex-service
     Eigen3::Eigen
     viam::trajex::totg
     viam::trajex::totg-legacy
+  PRIVATE
+    jsoncpp_lib
 )
 
 apply_wall_werror(viam-trajex-service)
 
 add_library(viam::trajex::service ALIAS viam-trajex-service)
+
+
+# Replay and diagnostic tooling (depends on service layer)
+add_library(viam-trajex-tools)
+
+target_sources(viam-trajex-tools
+  PRIVATE
+    src/viam/trajex/totg/tools/replay_planners.cpp
+)
+
+target_link_libraries(viam-trajex-tools
+  PUBLIC
+    viam::trajex::service
+  PRIVATE
+    jsoncpp_lib
+)
+
+apply_wall_werror(viam-trajex-tools)
+
+add_library(viam::trajex::tools ALIAS viam-trajex-tools)
 
 
 #
@@ -303,9 +326,13 @@ target_sources(trajex-test
 
 target_link_libraries(trajex-test
   PRIVATE
-    viam::trajex::service
+    viam::trajex::tools
     Boost::boost
     jsoncpp_lib
+)
+
+target_compile_definitions(trajex-test PRIVATE
+    VIAM_TRAJEX_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex/totg/test/data"
 )
 
 apply_wall_werror(trajex-test)
@@ -342,17 +369,32 @@ add_test(
 
 
 #
+# Tools
+#
+
+add_executable(trajex-replay-trajectory
+  src/viam/trajex/totg/tools/replay_trajectory.cpp
+)
+target_link_libraries(trajex-replay-trajectory
+  PRIVATE
+    viam::trajex::tools
+)
+apply_wall_werror(trajex-replay-trajectory)
+
+
+#
 # Installation
 #
 
 include(GNUInstallDirs)
 
-# Always install libraries (UR uses service library for colinearization)
+# Always install libraries and diagnostic tools
 install(
   TARGETS
   viam-trajex-totg-legacy
   viam-trajex-totg
   viam-trajex-service
+  trajex-replay-trajectory
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}

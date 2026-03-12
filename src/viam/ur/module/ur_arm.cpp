@@ -399,58 +399,6 @@ std::string unix_time_iso8601() {
     return stream.str();
 }
 
-std::string serialize_failed_trajectory_to_json(const viam::trajex::totg::waypoint_accumulator& waypoints,
-                                                const xt::xarray<double>& max_velocity_vec,
-                                                const xt::xarray<double>& max_acceleration_vec,
-                                                double path_tolerance_delta_rads,
-                                                const std::optional<double>& path_colinearization_ratio,
-                                                double segmentation_threshold) {
-    namespace json = Json;
-
-    json::Value root;
-    root["timestamp"] = unix_time_iso8601();
-    root["path_tolerance_delta_rads"] = path_tolerance_delta_rads;
-    root["segmentation_threshold"] = segmentation_threshold;
-
-    if (path_colinearization_ratio) {
-        root["path_colinearization_ratio"] = *path_colinearization_ratio;
-    }
-
-    json::Value max_vel_array(json::arrayValue);
-    std::ranges::for_each(max_velocity_vec, [&](double item) {
-        std::stringstream ss;
-        ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
-        max_vel_array.append(ss.str());
-    });
-    root["max_velocity_vec_rads_per_sec"] = std::move(max_vel_array);
-
-    json::Value max_acc_array(json::arrayValue);
-    std::ranges::for_each(max_acceleration_vec, [&](double item) {
-        std::stringstream ss;
-        ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
-        max_acc_array.append(ss.str());
-    });
-    root["max_acceleration_vec_rads_per_sec2"] = std::move(max_acc_array);
-
-    json::Value waypoints_array(json::arrayValue);
-    waypoints_array.resize((json::ArrayIndex)waypoints.size());
-    for (const auto& [waypoint, json_waypoint] : boost::combine(waypoints, waypoints_array)) {
-        std::ranges::for_each(waypoint, [&](auto item) {
-            std::stringstream ss;
-            ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
-            // NOLINTBEGIN(clang-analyzer-core.CallAndMessage): json_waypoint is initialized as a nullValue and then lazily initialized
-            json_waypoint.append(ss.str());
-            // NOLINTEND(clang-analyzer-core.CallAndMessage)
-        });
-    }
-    root["waypoints_rads"] = std::move(waypoints_array);
-
-    json::StreamWriterBuilder writer;
-    writer["indentation"] = " ";
-
-    return json::writeString(writer, root);
-}
-
 const ModelFamily& URArm::model_family() {
     // TODO: If ModelFamily had a constexpr constructor, we wouldn't need
     // this function at all and could just inline it into the class definition.
@@ -961,7 +909,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     if (current_state_->use_new_trajectory_planner()) {
         planner.with_trajex(
-            [&](segment_accumulator& acc,
+            [&](const auto&,
+                segment_accumulator& acc,
                 const viam::trajex::totg::waypoint_accumulator& segment,
                 const viam::trajex::totg::trajectory& traj,
                 auto elapsed) {
@@ -1006,15 +955,13 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                    << ", waypoints: " << segment.size() << ", duration: " << traj.duration().count()
                                    << "s, samples: " << sample_count << ", arc length: " << traj.path().length();
             },
-            [&](const segment_accumulator& acc, const viam::trajex::totg::waypoint_accumulator& seg, const std::exception& e) {
+            [&](const auto& planner,
+                const segment_accumulator& acc,
+                const viam::trajex::totg::waypoint_accumulator& seg,
+                const std::exception& e) {
                 VIAM_SDK_LOG(warn) << "trajectory generation with trajex failed with an exception"
                                    << ", waypoints: " << acc.total_waypoints << ", exception: " << e.what();
-                const std::string json_content = serialize_failed_trajectory_to_json(seg,
-                                                                                     xt::adapt(velocity_limits_data),
-                                                                                     xt::adapt(acceleration_limits_data),
-                                                                                     current_state_->get_path_tolerance_delta_rads(),
-                                                                                     current_state_->get_path_colinearization_ratio(),
-                                                                                     current_state_->get_segmentation_threshold());
+                const std::string json_content = planner.serialize_for_replay(seg, e.what());
                 const auto filename = failed_trajectory_filename(
                     current_state_->telemetry_output_path(), current_state_->resource_name() + "_trajex", unix_time);
                 std::ofstream json_file(filename);
@@ -1023,7 +970,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
 
     planner.with_legacy(
-        [&](segment_accumulator& acc,
+        [&](const auto&,
+            segment_accumulator& acc,
             const viam::trajex::totg::waypoint_accumulator& segment,
             const Path& legacy_path,
             const Trajectory& traj,
@@ -1047,14 +995,9 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                                       boost::numeric_cast<float>(step)};
                 });
         },
-        [&](const segment_accumulator&, const viam::trajex::totg::waypoint_accumulator& seg, const std::exception& e) {
+        [&](const auto& planner, const segment_accumulator&, const viam::trajex::totg::waypoint_accumulator& seg, const std::exception& e) {
             VIAM_SDK_LOG(error) << "trajectory generation with legacy failed with an exception: " << e.what();
-            const std::string json_content = serialize_failed_trajectory_to_json(seg,
-                                                                                 xt::adapt(velocity_limits_data),
-                                                                                 xt::adapt(acceleration_limits_data),
-                                                                                 current_state_->get_path_tolerance_delta_rads(),
-                                                                                 current_state_->get_path_colinearization_ratio(),
-                                                                                 current_state_->get_segmentation_threshold());
+            const std::string json_content = planner.serialize_for_replay(seg, e.what());
             const auto filename =
                 failed_trajectory_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
             std::ofstream json_file(filename);

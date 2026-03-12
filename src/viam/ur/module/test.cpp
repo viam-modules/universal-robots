@@ -3,6 +3,8 @@
 #include "ur_arm.hpp"
 #include "utils.hpp"
 
+#include <viam/trajex/service/trajectory_planner.hpp>
+
 #include <boost/numeric/conversion/cast.hpp>
 
 #pragma GCC diagnostic push
@@ -995,8 +997,11 @@ BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_SUITE(failed_trajectory_tests)
 
-BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
+BOOST_AUTO_TEST_CASE(test_failed_trajectory_serialize_for_replay) {
     namespace json = Json;
+
+    // The last waypoint contains a value with many significant digits specifically to
+    // exercise round-trip precision at max_digits10.
     const std::list<Eigen::VectorXd> waypoints = {
         makeVector({-4.69128, -2.91963, -2.26317, 0.489444, 1.56107, 1.59114}),
         makeVector({-4.69117, -2.91964, -2.26309, 0.489552, 1.56106, 1.59116}),
@@ -1011,72 +1016,75 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_low_tolerance) {
         makeVector({-5.064311111111, -2.914144444, -2.3635444442, 1.2345678901234567, 1.54814444446, 1.22006}),
     };
 
-    const double k_tolerance = 5e-18;
-    const Path path(waypoints, k_tolerance);
-
-    // Create trajectory with normal velocity/acceleration constraints
-    constexpr std::array<double, 6> k_max_velocity = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
-    constexpr std::array<double, 6> k_max_acceleration = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
-
-    const Trajectory trajectory(
-        path, Eigen::Map<const Eigen::VectorXd>(k_max_velocity.data(), 6), Eigen::Map<const Eigen::VectorXd>(k_max_acceleration.data(), 6));
-
-    BOOST_REQUIRE(!trajectory.isValid());
-    const std::string k_test_path = std::filesystem::temp_directory_path();
-    const std::string k_resource_name = "test_arm";
-    const std::string k_timestamp = unix_time_iso8601();
-    const std::string k_filename = failed_trajectory_filename(k_test_path, k_resource_name, k_timestamp);
-
-    // Convert waypoints to xarray for serialize_failed_trajectory_to_json
-    const std::array<std::size_t, 2> shape = {waypoints.size(), 6};
+    constexpr std::array<std::size_t, 2> shape = {11, 6};
     xt::xarray<double> waypoints_xarray = xt::zeros<double>(shape);
-    size_t i = 0;
-    for (const auto& waypoint : waypoints) {
-        for (size_t j = 0; j < 6; ++j) {
-            waypoints_xarray(i, j) = waypoint(static_cast<Eigen::Index>(j));
+    std::size_t row = 0;
+    for (const auto& wp : waypoints) {
+        for (std::size_t j = 0; j < 6; ++j) {
+            waypoints_xarray(row, j) = wp(static_cast<Eigen::Index>(j));
         }
-        ++i;
+        ++row;
     }
     const viam::trajex::totg::waypoint_accumulator waypoint_acc(waypoints_xarray);
 
-    const std::string json_content = serialize_failed_trajectory_to_json(
-        waypoint_acc, xt::adapt(k_max_velocity), xt::adapt(k_max_acceleration), k_tolerance, 0.05, 0.005);
+    constexpr double k_tolerance = 0.01;
+    constexpr double k_colinearization_ratio = 2.0;
+    constexpr std::array<double, 6> k_max_velocity = {
+        2.094395102393195, 2.094395102393195, 2.094395102393195, 2.094395102393195, 2.094395102393195, 2.094395102393195};
+    constexpr std::array<double, 6> k_max_acceleration = {
+        2.617993877991495, 2.617993877991495, 2.617993877991495, 2.617993877991495, 2.617993877991495, 2.617993877991495};
 
-    // Write the failed trajectory JSON
-    std::ofstream json_file(k_filename);
-    json_file << json_content;
-    json_file.close();
+    // Use a dummy receiver type — we only need serialize_for_replay from the base.
+    struct dummy_receiver {};
+    auto planner = viam::trajex::trajectory_planner<dummy_receiver>({
+        .velocity_limits = xt::adapt(k_max_velocity),
+        .acceleration_limits = xt::adapt(k_max_acceleration),
+        .path_blend_tolerance = k_tolerance,
+        .colinearization_ratio = k_colinearization_ratio,
+    });
 
-    std::ifstream readback(k_filename);
-    BOOST_CHECK(readback.good());
+    const std::string json_content = planner.serialize_for_replay(waypoint_acc, "synthetic error");
 
-    std::stringstream buffer;
-    buffer << readback.rdbuf();
-    readback.close();
-
-    json::Value readback_parsed;
+    json::Value parsed;
     const json::CharReaderBuilder reader;
-    BOOST_REQUIRE(json::parseFromStream(reader, buffer, &readback_parsed, NULL));
+    std::istringstream iss(json_content);
+    BOOST_REQUIRE(json::parseFromStream(reader, iss, &parsed, nullptr));
 
-    BOOST_REQUIRE(readback_parsed.isMember("timestamp"));
-    BOOST_REQUIRE(readback_parsed.isMember("path_tolerance_delta_rads"));
-    BOOST_REQUIRE(readback_parsed.isMember("max_velocity_vec_rads_per_sec"));
-    BOOST_REQUIRE(readback_parsed.isMember("max_acceleration_vec_rads_per_sec2"));
-    BOOST_REQUIRE(readback_parsed.isMember("waypoints_rads"));
+    // Schema structure
+    BOOST_REQUIRE_EQUAL(parsed["schema_version"].asInt(), 1);
+    BOOST_REQUIRE(parsed["timestamp"].isString());
+    BOOST_REQUIRE_EQUAL(parsed["error_message"].asString(), "synthetic error");
+    BOOST_REQUIRE_CLOSE(parsed["path_tolerance_delta_rads"].asDouble(), k_tolerance, 1e-10);
+    BOOST_REQUIRE_CLOSE(parsed["path_colinearization_ratio"].asDouble(), k_colinearization_ratio, 1e-10);
+    BOOST_REQUIRE(parsed["max_velocity_vec_rads_per_sec"].isArray());
+    BOOST_REQUIRE(parsed["max_acceleration_vec_rads_per_sec2"].isArray());
+    BOOST_REQUIRE(parsed["min_blend_curvature"].isDouble());
+    BOOST_REQUIRE(parsed["max_blend_curvature"].isDouble());
+    BOOST_REQUIRE(parsed["waypoints_rads"].isArray());
 
-    BOOST_REQUIRE(readback_parsed["timestamp"].isString());
-    BOOST_REQUIRE(readback_parsed["path_tolerance_delta_rads"].isDouble());
-    BOOST_REQUIRE(readback_parsed["path_colinearization_ratio"].isDouble());
-    BOOST_REQUIRE(readback_parsed["segmentation_threshold"].isDouble());
-    BOOST_REQUIRE(readback_parsed["max_velocity_vec_rads_per_sec"].isArray());
-    BOOST_REQUIRE(readback_parsed["max_acceleration_vec_rads_per_sec2"].isArray());
-    BOOST_REQUIRE(readback_parsed["waypoints_rads"].isArray());
+    BOOST_REQUIRE_EQUAL(parsed["max_velocity_vec_rads_per_sec"].size(), 6);
+    BOOST_REQUIRE_EQUAL(parsed["max_acceleration_vec_rads_per_sec2"].size(), 6);
+    BOOST_REQUIRE_EQUAL(parsed["waypoints_rads"].size(), waypoint_acc.size());
 
-    BOOST_REQUIRE_EQUAL(readback_parsed["max_velocity_vec_rads_per_sec"].size(), 6);
-    BOOST_REQUIRE_EQUAL(readback_parsed["max_acceleration_vec_rads_per_sec2"].size(), 6);
-    BOOST_REQUIRE_EQUAL(readback_parsed["waypoints_rads"].size(), waypoints.size());
+    // Values are native JSON numbers, not strings.
+    BOOST_REQUIRE(parsed["max_velocity_vec_rads_per_sec"][0].isDouble());
+    BOOST_REQUIRE(parsed["max_acceleration_vec_rads_per_sec2"][0].isDouble());
+    BOOST_REQUIRE(parsed["waypoints_rads"][0][0].isDouble());
 
-    BOOST_REQUIRE_CLOSE(readback_parsed["path_tolerance_delta_rads"].asDouble(), k_tolerance, 1e-10);
+    // Velocity and acceleration values round-trip at full precision.
+    BOOST_REQUIRE_EQUAL(parsed["max_velocity_vec_rads_per_sec"][0].asDouble(), k_max_velocity[0]);
+    BOOST_REQUIRE_EQUAL(parsed["max_acceleration_vec_rads_per_sec2"][0].asDouble(), k_max_acceleration[0]);
+
+    // Waypoint values round-trip at full precision. The last waypoint's joint 3 has
+    // a value with 17 significant digits specifically to exercise max_digits10.
+    BOOST_REQUIRE_EQUAL(parsed["waypoints_rads"][10][3].asDouble(), 1.2345678901234567);
+
+    // error_message is omitted when not provided.
+    const std::string no_err = planner.serialize_for_replay(waypoint_acc);
+    json::Value parsed_no_err;
+    std::istringstream iss2(no_err);
+    BOOST_REQUIRE(json::parseFromStream(reader, iss2, &parsed_no_err, nullptr));
+    BOOST_REQUIRE(!parsed_no_err.isMember("error_message"));
 }
 
 BOOST_AUTO_TEST_CASE(test_state_estimation_mismatch_nearly_identical_waypoints) {
