@@ -36,13 +36,11 @@ BOOST_AUTO_TEST_CASE(test_for_each_sample_duration_shorter_than_period) {
 }
 
 BOOST_AUTO_TEST_CASE(test_for_each_sample_invalid_duration) {
-    std::vector<std::pair<double, double>> samples;
-    BOOST_CHECK_THROW(for_each_sample(0.0, 0.5, [&](double, double) { BOOST_FAIL("should not be called"); }), std::invalid_argument);
+    BOOST_CHECK_THROW(for_each_sample(0.0, 0.5, [](double, double) { BOOST_FAIL("should not be called"); }), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(test_for_each_sample_invalid_frequency) {
-    std::vector<std::pair<double, double>> samples;
-    BOOST_CHECK_THROW(for_each_sample(1.0, 0.0, [&](double, double) { BOOST_FAIL("should not be called"); }), std::invalid_argument);
+    BOOST_CHECK_THROW(for_each_sample(1.0, 0.0, [](double, double) { BOOST_FAIL("should not be called"); }), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_SUITE_END()  // legacy_for_each_sample_tests
