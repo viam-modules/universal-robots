@@ -1,4 +1,4 @@
-#include <viam/trajex/service/trajex_mlmodel_service.hpp>
+#include <viam/trajex/service/mlmodel.hpp>
 
 #include <algorithm>
 #include <iterator>
@@ -21,13 +21,13 @@
 
 #include <viam/sdk/log/logging.hpp>
 
-#include <viam/trajex/service/sampling_utils.hpp>
+#include <viam/trajex/totg/tools/legacy.hpp>
 #include <viam/trajex/totg/tools/planner.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
 #include <viam/trajex/totg/waypoint_utils.hpp>
 #include <viam/trajex/types/hertz.hpp>
 
-namespace viam::trajex {
+namespace viam::trajex::service {
 
 namespace vsdk = ::viam::sdk;
 
@@ -48,34 +48,34 @@ struct service_result {
 // Returned via an aliasing shared_ptr so the views remain valid for the caller.
 struct infer_result {
     service_result data;
-    trajex_mlmodel_service::named_tensor_views views;
+    mlmodel::named_tensor_views views;
 };
 
-const auto& get_double_tensor(const trajex_mlmodel_service::named_tensor_views& inputs, std::string_view name) {
+const auto& get_double_tensor(const mlmodel::named_tensor_views& inputs, std::string_view name) {
     const auto it = inputs.find(std::string(name));
     if (it == inputs.end()) {
         throw std::invalid_argument("missing required input tensor: " + std::string(name));
     }
-    const auto* view = boost::get<trajex_mlmodel_service::tensor_view<double>>(&it->second);
+    const auto* view = boost::get<mlmodel::tensor_view<double>>(&it->second);
     if (!view) {
         throw std::invalid_argument("input tensor '" + std::string(name) + "' has wrong type (expected float64)");
     }
     return *view;
 }
 
-const auto& get_int64_tensor(const trajex_mlmodel_service::named_tensor_views& inputs, std::string_view name) {
+const auto& get_int64_tensor(const mlmodel::named_tensor_views& inputs, std::string_view name) {
     const auto it = inputs.find(std::string(name));
     if (it == inputs.end()) {
         throw std::invalid_argument("missing required input tensor: " + std::string(name));
     }
-    const auto* view = boost::get<trajex_mlmodel_service::tensor_view<std::int64_t>>(&it->second);
+    const auto* view = boost::get<mlmodel::tensor_view<std::int64_t>>(&it->second);
     if (!view) {
         throw std::invalid_argument("input tensor '" + std::string(name) + "' has wrong type (expected int64)");
     }
     return *view;
 }
 
-double get_scalar_double(const trajex_mlmodel_service::named_tensor_views& inputs, std::string_view name) {
+double get_scalar_double(const mlmodel::named_tensor_views& inputs, std::string_view name) {
     const auto& view = get_double_tensor(inputs, name);
     if (view.size() != 1) {
         throw std::invalid_argument("input tensor '" + std::string(name) + "' must be a scalar (shape [1])");
@@ -85,7 +85,7 @@ double get_scalar_double(const trajex_mlmodel_service::named_tensor_views& input
 
 }  // namespace
 
-std::vector<std::string> trajex_mlmodel_service::validate(const vsdk::ResourceConfig& cfg) {
+std::vector<std::string> mlmodel::validate(const vsdk::ResourceConfig& cfg) {
     std::vector<std::string> errors;
 
     auto seq_attr = cfg.attributes().find("generator_sequence");
@@ -118,11 +118,11 @@ std::vector<std::string> trajex_mlmodel_service::validate(const vsdk::ResourceCo
 }
 
 // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature fixed by ModelRegistration factory.
-trajex_mlmodel_service::trajex_mlmodel_service(vsdk::Dependencies deps, vsdk::ResourceConfig config) : MLModelService(config.name()) {
+mlmodel::mlmodel(vsdk::Dependencies deps, vsdk::ResourceConfig config) : MLModelService(config.name()) {
     reconfigure(deps, config);
 }
 
-void trajex_mlmodel_service::reconfigure(const vsdk::Dependencies&, const vsdk::ResourceConfig& cfg) {
+void mlmodel::reconfigure(const vsdk::Dependencies&, const vsdk::ResourceConfig& cfg) {
     config new_config;
 
     // Parse generator_sequence
@@ -159,8 +159,7 @@ void trajex_mlmodel_service::reconfigure(const vsdk::Dependencies&, const vsdk::
     config_ = std::move(new_config);
 }
 
-std::shared_ptr<trajex_mlmodel_service::named_tensor_views> trajex_mlmodel_service::infer(const named_tensor_views& inputs,
-                                                                                          const vsdk::ProtoStruct&) {
+std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_views& inputs, const vsdk::ProtoStruct&) {
     // Snapshot config under the read lock, then release
     config local_config;
     {
@@ -250,7 +249,7 @@ std::shared_ptr<trajex_mlmodel_service::named_tensor_views> trajex_mlmodel_servi
                     acc.dof = dof;
                     acc.total_duration += traj.getDuration();
 
-                    for_each_sample(traj.getDuration(), sampling_freq, [&](double t, double) {
+                    totg::legacy::for_each_sample(traj.getDuration(), sampling_freq, [&](double t, double) {
                         acc.times.push_back(t);
                         auto p = traj.getPosition(t);
                         auto v = traj.getVelocity(t);
@@ -264,9 +263,9 @@ std::shared_ptr<trajex_mlmodel_service::named_tensor_views> trajex_mlmodel_servi
     }
 
     // Execute the planner
-    auto planner_result = planner.execute([](const auto& p, auto trajex, auto legacy) -> std::optional<service_result> {
-        if (trajex.receiver) {
-            return std::move(trajex.receiver);
+    auto planner_result = planner.execute([](const auto& p, auto totg_out, auto legacy) -> std::optional<service_result> {
+        if (totg_out.receiver) {
+            return std::move(totg_out.receiver);
         }
         if (legacy.receiver) {
             return std::move(legacy.receiver);
@@ -276,8 +275,8 @@ std::shared_ptr<trajex_mlmodel_service::named_tensor_views> trajex_mlmodel_servi
         if (legacy.error) {
             std::rethrow_exception(legacy.error);
         }
-        if (trajex.error) {
-            std::rethrow_exception(trajex.error);
+        if (totg_out.error) {
+            std::rethrow_exception(totg_out.error);
         }
 
         if (p.processed_waypoint_count() < 2) {
@@ -330,7 +329,7 @@ std::shared_ptr<trajex_mlmodel_service::named_tensor_views> trajex_mlmodel_servi
     return {std::move(result_holder), views};
 }
 
-struct trajex_mlmodel_service::metadata trajex_mlmodel_service::metadata(const vsdk::ProtoStruct&) {
+struct mlmodel::metadata mlmodel::metadata(const vsdk::ProtoStruct&) {
     const std::shared_lock lock{config_mutex_};
     return {
         .name = "trajex",
@@ -411,4 +410,4 @@ struct trajex_mlmodel_service::metadata trajex_mlmodel_service::metadata(const v
     };
 }
 
-}  // namespace viam::trajex
+}  // namespace viam::trajex::service

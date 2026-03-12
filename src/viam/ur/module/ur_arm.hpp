@@ -21,7 +21,7 @@
 #include <xtensor/xarray.hpp>
 #endif
 
-#include <viam/trajex/service/sampling_utils.hpp>
+#include <viam/trajex/totg/tools/legacy.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 
 using namespace viam::sdk;
@@ -45,11 +45,6 @@ using trajectory_samples = std::variant<std::vector<trajectory_sample_point_pv>,
 struct pose_sample {
     vector6d_t p;
 };
-
-template <typename Func>
-void sampling_func(std::vector<trajectory_sample_point_pv>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
-    viam::trajex::for_each_sample(duration_sec, sampling_frequency_hz, [&](double t, double step) { samples.push_back(f(t, step)); });
-}
 
 void write_trajectory_to_file(const std::string& filepath, const trajectory_samples& samples);
 void write_pose_to_file(const std::string& filepath, const pose_sample& sample);

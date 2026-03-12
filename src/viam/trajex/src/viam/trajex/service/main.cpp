@@ -7,7 +7,7 @@
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/services/mlmodel.hpp>
 
-#include <viam/trajex/service/trajex_mlmodel_service.hpp>
+#include <viam/trajex/service/mlmodel.hpp>
 
 namespace {
 
@@ -20,9 +20,9 @@ int serve(const std::string& socket_path) try {
         vsdk::API::get<vsdk::MLModelService>(),
         vsdk::Model{"viam", "trajex", "mlmodel"},
         [](vsdk::Dependencies deps, vsdk::ResourceConfig config) {
-            return std::make_shared<viam::trajex::trajex_mlmodel_service>(std::move(deps), std::move(config));
+            return std::make_shared<viam::trajex::service::mlmodel>(std::move(deps), std::move(config));
         },
-        &viam::trajex::trajex_mlmodel_service::validate);
+        &viam::trajex::service::mlmodel::validate);
 
     vsdk::Registry::get().register_model(registration);
 

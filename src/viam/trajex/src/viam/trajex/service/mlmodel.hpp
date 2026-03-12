@@ -10,11 +10,11 @@
 #include <viam/sdk/resource/reconfigurable.hpp>
 #include <viam/sdk/services/mlmodel.hpp>
 
-namespace viam::trajex {
+namespace viam::trajex::service {
 
-class trajex_mlmodel_service final : public ::viam::sdk::MLModelService, public ::viam::sdk::Reconfigurable {
+class mlmodel final : public ::viam::sdk::MLModelService, public ::viam::sdk::Reconfigurable {
    public:
-    trajex_mlmodel_service(::viam::sdk::Dependencies deps, ::viam::sdk::ResourceConfig config);
+    mlmodel(::viam::sdk::Dependencies deps, ::viam::sdk::ResourceConfig config);
 
     void reconfigure(const ::viam::sdk::Dependencies&, const ::viam::sdk::ResourceConfig&) override;
 
@@ -34,4 +34,4 @@ class trajex_mlmodel_service final : public ::viam::sdk::MLModelService, public 
     config config_;
 };
 
-}  // namespace viam::trajex
+}  // namespace viam::trajex::service

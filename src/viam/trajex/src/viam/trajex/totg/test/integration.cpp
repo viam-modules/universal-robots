@@ -36,7 +36,7 @@
 #include <third_party/trajectories/Path.h>
 #include <third_party/trajectories/Trajectory.h>
 
-#include <viam/trajex/totg/tools/replay_planners.hpp>
+#include <viam/trajex/totg/tools/replay.hpp>
 
 namespace {
 

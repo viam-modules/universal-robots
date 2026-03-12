@@ -16,7 +16,7 @@
 #include <Eigen/Dense>
 
 #include <viam/trajex/totg/path.hpp>
-#include <viam/trajex/totg/tools/legacy_colinearization.hpp>
+#include <viam/trajex/totg/tools/legacy.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 #include <viam/trajex/totg/waypoint_utils.hpp>
@@ -381,7 +381,7 @@ class planner : public planner_base {
 
                 if (get_config().colinearization_ratio) {
                     auto colinear_start = std::chrono::steady_clock::now();
-                    apply_colinearization(eigen_waypoints, get_config().path_blend_tolerance * *get_config().colinearization_ratio);
+                    legacy::apply_colinearization(eigen_waypoints, get_config().path_blend_tolerance * *get_config().colinearization_ratio);
                     total_colinear +=
                         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - colinear_start);
                 }

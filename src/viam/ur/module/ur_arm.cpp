@@ -986,13 +986,14 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 acc.samples = std::vector<trajectory_sample_point_pv>{};
             }
             auto& pv_samples = std::get<std::vector<trajectory_sample_point_pv>>(*acc.samples);
-            sampling_func(
-                pv_samples, traj.getDuration(), current_state_->get_trajectory_sampling_freq_hz(), [&](const double t, const double step) {
+            viam::trajex::totg::legacy::for_each_sample(
+                traj.getDuration(), current_state_->get_trajectory_sampling_freq_hz(), [&](const double t, const double step) {
                     auto p_eigen = traj.getPosition(t);
                     auto v_eigen = traj.getVelocity(t);
-                    return trajectory_sample_point_pv{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
-                                                      {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
-                                                      boost::numeric_cast<float>(step)};
+                    pv_samples.push_back(
+                        trajectory_sample_point_pv{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                                   {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+                                                   boost::numeric_cast<float>(step)});
                 });
         },
         [&](const auto& planner, const segment_accumulator&, const viam::trajex::totg::waypoint_accumulator& seg, const std::exception& e) {
