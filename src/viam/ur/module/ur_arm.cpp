@@ -912,7 +912,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             [&](const auto&,
                 segment_accumulator& acc,
                 const viam::trajex::totg::waypoint_accumulator& segment,
-                const viam::trajex::totg::trajectory& traj,
+                viam::trajex::totg::trajectory&& traj,
                 auto elapsed) {
                 acc.total_generation_time += elapsed;
                 acc.total_duration += traj.duration().count();
@@ -973,8 +973,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         [&](const auto&,
             segment_accumulator& acc,
             const viam::trajex::totg::waypoint_accumulator& segment,
-            const Path& legacy_path,
-            const Trajectory& traj,
+            Path&& legacy_path,
+            Trajectory&& traj,
             auto elapsed) {
             acc.total_generation_time += elapsed;
             acc.total_duration += traj.getDuration();

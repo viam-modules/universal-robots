@@ -227,25 +227,24 @@ std::shared_ptr<mlmodel::named_tensor_views> mlmodel::infer(const named_tensor_v
     // Register algorithms based on configured sequence
     for (const auto& algo : local_config.generator_sequence) {
         if (algo == "totg") {
-            planner.with_totg(
-                [&, dof](const auto&, service_result& acc, const totg::waypoint_accumulator&, const totg::trajectory& traj, auto) {
-                    acc.dof = dof;
-                    acc.total_duration += traj.duration().count();
-                    if (!acc.accelerations) {
-                        acc.accelerations.emplace();
-                    }
+            planner.with_totg([&, dof](const auto&, service_result& acc, const totg::waypoint_accumulator&, totg::trajectory&& traj, auto) {
+                acc.dof = dof;
+                acc.total_duration += traj.duration().count();
+                if (!acc.accelerations) {
+                    acc.accelerations.emplace();
+                }
 
-                    auto sampler = totg::uniform_sampler::quantized_for_trajectory(traj, types::hertz{sampling_freq});
-                    for (const auto& sample : traj.samples(sampler) | std::views::drop(1)) {
-                        acc.times.push_back(sample.time.count());
-                        std::ranges::copy(sample.configuration, std::back_inserter(acc.configurations));
-                        std::ranges::copy(sample.velocity, std::back_inserter(acc.velocities));
-                        std::ranges::copy(sample.acceleration, std::back_inserter(*acc.accelerations));
-                    }
-                });
+                auto sampler = totg::uniform_sampler::quantized_for_trajectory(traj, types::hertz{sampling_freq});
+                for (const auto& sample : traj.samples(sampler) | std::views::drop(1)) {
+                    acc.times.push_back(sample.time.count());
+                    std::ranges::copy(sample.configuration, std::back_inserter(acc.configurations));
+                    std::ranges::copy(sample.velocity, std::back_inserter(acc.velocities));
+                    std::ranges::copy(sample.acceleration, std::back_inserter(*acc.accelerations));
+                }
+            });
         } else if (algo == "legacy") {
             planner.with_legacy(
-                [&, dof](const auto&, service_result& acc, const totg::waypoint_accumulator&, const Path&, const Trajectory& traj, auto) {
+                [&, dof](const auto&, service_result& acc, const totg::waypoint_accumulator&, Path&&, Trajectory&& traj, auto) {
                     acc.dof = dof;
                     acc.total_duration += traj.getDuration();
 

@@ -151,11 +151,10 @@ class planner : public planner_base {
 
     using segmenter_fn = std::function<std::vector<waypoint_accumulator>(planner&, waypoint_accumulator)>;
 
-    using success_fn =
-        std::function<void(const planner&, Receiver&, const waypoint_accumulator&, const trajectory&, std::chrono::microseconds)>;
+    using success_fn = std::function<void(const planner&, Receiver&, const waypoint_accumulator&, trajectory&&, std::chrono::microseconds)>;
 
-    using legacy_success_fn = std::function<void(
-        const planner&, Receiver&, const waypoint_accumulator&, const Path&, const Trajectory&, std::chrono::microseconds)>;
+    using legacy_success_fn =
+        std::function<void(const planner&, Receiver&, const waypoint_accumulator&, Path&&, Trajectory&&, std::chrono::microseconds)>;
 
     using algorithm_failure_fn = std::function<void(const planner&, const Receiver&, const waypoint_accumulator&, const std::exception&)>;
     /// @}
@@ -336,7 +335,7 @@ class planner : public planner_base {
                 auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start);
                 total_gen += elapsed;
 
-                on_success_(*this, *outcome.receiver, segment, traj, elapsed);
+                on_success_(*this, *outcome.receiver, segment, std::move(traj), elapsed);
 
             } catch (const std::exception& e) {
                 outcome.error = std::current_exception();
@@ -401,7 +400,7 @@ class planner : public planner_base {
                     throw std::runtime_error("legacy trajectory generator produced invalid result");
                 }
 
-                legacy_on_success_(*this, *outcome.receiver, segment, legacy_path, traj, elapsed);
+                legacy_on_success_(*this, *outcome.receiver, segment, std::move(legacy_path), std::move(traj), elapsed);
 
             } catch (const std::exception& e) {
                 outcome.error = std::current_exception();

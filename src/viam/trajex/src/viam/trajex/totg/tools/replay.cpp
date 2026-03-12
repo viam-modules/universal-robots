@@ -106,7 +106,8 @@ replay_planner replay_planner::create(std::istream& in) {
     auto data = p.stash(std::move(waypoints));
     p.with_waypoint_provider([data](auto&) { return waypoint_accumulator{*data}; });
 
-    p.with_totg([](const auto&, replay_receiver& recv, const waypoint_accumulator&, const trajectory& traj, auto) { recv.traj = traj; });
+    p.with_totg(
+        [](const auto&, replay_receiver& recv, const waypoint_accumulator&, trajectory&& traj, auto) { recv.traj = std::move(traj); });
 
     return p;
 }
@@ -131,7 +132,9 @@ legacy_replay_planner legacy_replay_planner::create(std::istream& in) {
     auto data = p.stash(std::move(waypoints));
     p.with_waypoint_provider([data](auto&) { return waypoint_accumulator{*data}; });
 
-    p.with_legacy([](const auto&, legacy_replay_receiver&, const waypoint_accumulator&, const Path&, const Trajectory&, auto) {});
+    p.with_legacy([](const auto&, legacy_replay_receiver& recv, const waypoint_accumulator&, Path&& path, Trajectory&& traj, auto) {
+        recv.result.emplace(std::move(path), std::move(traj));
+    });
 
     return p;
 }

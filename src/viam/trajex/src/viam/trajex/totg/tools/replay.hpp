@@ -20,10 +20,12 @@ struct replay_receiver {
 };
 
 ///
-/// Receiver for legacy_replay_planner. No-op accumulator; the legacy algorithm
-/// is replayed for debugger access only.
+/// Receiver for legacy_replay_planner. Holds the path and trajectory produced
+/// by the legacy generator so callers can access them after execute() completes.
 ///
-struct legacy_replay_receiver {};
+struct legacy_replay_receiver {
+    std::optional<std::pair<Path, Trajectory>> result;
+};
 
 ///
 /// Replay planner for the TOTG algorithm.

@@ -70,7 +70,7 @@ BOOST_AUTO_TEST_CASE(totg_only_success) {
 
     auto result = planner<test_receiver>(simple_config())
                       .with_waypoint_provider([](auto& p) { return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}); })
-                      .with_totg([&](const auto&, test_receiver& acc, const waypoint_accumulator&, const trajectory& traj, auto elapsed) {
+                      .with_totg([&](const auto&, test_receiver& acc, const waypoint_accumulator&, trajectory&& traj, auto elapsed) {
                           success_called = true;
                           acc.segment_count++;
                           acc.total_duration += traj.duration().count();
@@ -121,7 +121,7 @@ BOOST_AUTO_TEST_CASE(both_algorithms_success) {
     auto result =
         planner<test_receiver>(simple_config())
             .with_waypoint_provider([](auto& p) { return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}); })
-            .with_totg([&](const auto&, test_receiver& acc, const waypoint_accumulator&, const trajectory& traj, auto) {
+            .with_totg([&](const auto&, test_receiver& acc, const waypoint_accumulator&, trajectory&& traj, auto) {
                 totg_called = true;
                 acc.segment_count++;
                 acc.total_duration += traj.duration().count();
@@ -245,8 +245,7 @@ BOOST_AUTO_TEST_CASE(segment_totg_false_passes_unsegmented_to_totg) {
         .with_waypoint_provider([](auto& p) { return stash_waypoints(p, {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}, {0.0, 0.0, 0.0}}); })
         .with_segmenter([](auto&, waypoint_accumulator accumulator) { return segment_at_reversals(std::move(accumulator)); })
         .with_totg([&](const auto&, test_receiver&, const waypoint_accumulator&, const trajectory&, auto) { totg_segments_seen++; })
-        .with_legacy(
-            [&](const auto&, test_receiver&, const waypoint_accumulator&, const Path&, const Trajectory&, auto) { legacy_segments_seen++; })
+        .with_legacy([&](const auto&, test_receiver&, const waypoint_accumulator&, Path&&, Trajectory&&, auto) { legacy_segments_seen++; })
         .execute([](const auto&, const auto&, const auto&) -> std::optional<test_receiver> { return std::nullopt; });
 
     BOOST_CHECK_EQUAL(totg_segments_seen, 1);
