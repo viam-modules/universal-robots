@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 
@@ -34,6 +35,8 @@
 // Legacy trajectory generator
 #include <third_party/trajectories/Path.h>
 #include <third_party/trajectories/Trajectory.h>
+
+#include <viam/trajex/totg/tools/replay.hpp>
 
 namespace {
 
@@ -2416,3 +2419,29 @@ BOOST_AUTO_TEST_CASE(zero_vel_and_accel_limit_moving_joint_throws) {
 }
 
 BOOST_AUTO_TEST_SUITE_END()  // zero_limit_joint
+
+namespace {
+
+void generate_trajectory_from_replay_file(const std::string& filename) {
+    auto planner = viam::trajex::totg::replay_planner::create(std::filesystem::path(VIAM_TRAJEX_TEST_DATA_DIR) / filename);
+
+    auto outcome = planner.execute([](const auto&, auto tx, const auto&) { return tx; });
+
+    BOOST_REQUIRE_MESSAGE(outcome.receiver.has_value(), "trajectory generation failed");
+    BOOST_REQUIRE(outcome.receiver->traj.has_value());
+    // TODO(RSDK-12981): add joint kinematic validation here once backward integration correctness is resolved.
+}
+
+}  // namespace
+
+BOOST_AUTO_TEST_SUITE(replay_regression_tests)
+
+BOOST_AUTO_TEST_CASE(gp12_backward_integration_exceeded_limit_curve) {
+    generate_trajectory_from_replay_file("gp12_backward_integration_exceeded-20260305.trajex-totg-replay.json");
+}
+
+BOOST_AUTO_TEST_CASE(gp12_splice_point_infeasible_acceleration) {
+    generate_trajectory_from_replay_file("gp12_splice_point_infeasible-20260305.trajex-totg-replay.json");
+}
+
+BOOST_AUTO_TEST_SUITE_END()  // replay_regression_tests

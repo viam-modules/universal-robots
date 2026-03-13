@@ -239,7 +239,7 @@ target_compile_definitions(viam-ur
 
 target_link_libraries(viam-ur
   PUBLIC
-    viam::trajex::service
+    viam::trajex::totg::tools
     urcl
     viam-cpp-sdk::viamapi # Proxy for gRPC
     viam-cpp-sdk::viamsdk

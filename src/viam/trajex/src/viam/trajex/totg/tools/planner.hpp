@@ -8,13 +8,15 @@
 #include <optional>
 #include <ranges>
 #include <stdexcept>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include <Eigen/Dense>
 
-#include <viam/trajex/service/colinearization.hpp>
 #include <viam/trajex/totg/path.hpp>
+#include <viam/trajex/totg/tools/legacy.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 #include <viam/trajex/totg/waypoint_utils.hpp>
@@ -22,19 +24,21 @@
 #include <third_party/trajectories/Path.h>
 #include <third_party/trajectories/Trajectory.h>
 
-namespace viam::trajex {
+namespace viam::trajex::totg {
 
 ///
-/// Non-template base holding config and types shared across all trajectory_planner
-/// instantiations regardless of Receiver type.
+/// Non-template base holding config, state, and serialization for all
+/// planner instantiations regardless of Receiver type.
 ///
-struct trajectory_planner_base {
+class planner_base {
+   public:
     struct config {
         xt::xarray<double> velocity_limits;
         xt::xarray<double> acceleration_limits;
         double path_blend_tolerance = 0.0;
         std::optional<double> colinearization_ratio;
-        bool segment_trajex = true;
+        bool segment_totg = true;
+        trajectory::integration_observer* observer = nullptr;  // totg only; ignored by legacy
     };
 
     ///
@@ -52,9 +56,56 @@ struct trajectory_planner_base {
         std::optional<std::chrono::microseconds> move_validation;
         std::optional<std::chrono::microseconds> segmentation;
         std::optional<std::chrono::microseconds> colinearization;
-        std::optional<std::chrono::microseconds> trajex_generation_total;
+        std::optional<std::chrono::microseconds> totg_generation_total;
         std::optional<std::chrono::microseconds> legacy_generation_total;
     };
+
+    ///
+    /// Returns the planner configuration.
+    ///
+    const struct config& get_config() const noexcept;
+
+    ///
+    /// Per-phase wall-clock timing from the most recent execute() call.
+    ///
+    /// Available after execute() returns.
+    ///
+    const timing_stats& timing() const noexcept;
+
+    ///
+    /// Number of waypoints that survived preprocessing.
+    ///
+    /// Available after execute() has been called. Allows the decider to
+    /// distinguish "nothing to do" (< 2 waypoints) from "both generators failed."
+    ///
+    std::size_t processed_waypoint_count() const noexcept;
+
+    ///
+    /// Serializes the planner's configuration and the supplied waypoints to a
+    /// canonical JSON replay record suitable for replay and regression testing.
+    ///
+    /// The record contains everything needed to reproduce a trajectory generation
+    /// attempt: waypoints, velocity/acceleration limits, and path options. Pass
+    /// e.what() on failure paths; omit on success paths.
+    ///
+    /// @param waypoints Waypoints to serialize
+    /// @param error_message Optional error message from a failed generation
+    /// @return JSON string in canonical replay record format
+    ///
+    std::string serialize_for_replay(const waypoint_accumulator& waypoints,
+                                     std::optional<std::string_view> error_message = std::nullopt) const;
+
+   protected:
+    explicit planner_base(struct config cfg);
+
+    struct config& mutable_config() noexcept;
+    timing_stats& mutable_timing() noexcept;
+    std::size_t& mutable_processed_waypoint_count() noexcept;
+
+   private:
+    struct config config_;
+    timing_stats timing_;
+    std::size_t processed_waypoint_count_ = 0;
 };
 
 ///
@@ -75,9 +126,9 @@ struct trajectory_planner_base {
 /// @tparam Receiver Default-constructible type for accumulating per-segment results
 ///
 template <typename Receiver>
-class trajectory_planner : public trajectory_planner_base {
+class planner : public planner_base {
    public:
-    using config = trajectory_planner_base::config;
+    using config = planner_base::config;
 
     ///
     /// Result of running a single algorithm across all segments.
@@ -92,24 +143,23 @@ class trajectory_planner : public trajectory_planner_base {
 
     /// @name Handler type aliases
     /// @{
-    using waypoint_provider_fn = std::function<totg::waypoint_accumulator(trajectory_planner&)>;
+    using waypoint_provider_fn = std::function<waypoint_accumulator(planner&)>;
 
-    using waypoint_preprocessor_fn = std::function<void(trajectory_planner&, totg::waypoint_accumulator&)>;
+    using waypoint_preprocessor_fn = std::function<void(planner&, waypoint_accumulator&)>;
 
-    using move_validator_fn = std::function<void(trajectory_planner&, const totg::waypoint_accumulator&)>;
+    using move_validator_fn = std::function<void(planner&, const waypoint_accumulator&)>;
 
-    using segmenter_fn = std::function<std::vector<totg::waypoint_accumulator>(trajectory_planner&, totg::waypoint_accumulator)>;
+    using segmenter_fn = std::function<std::vector<waypoint_accumulator>(planner&, waypoint_accumulator)>;
 
-    using trajex_success_fn =
-        std::function<void(Receiver&, const totg::waypoint_accumulator&, const totg::trajectory&, std::chrono::microseconds)>;
+    using success_fn = std::function<void(const planner&, Receiver&, const waypoint_accumulator&, trajectory&&, std::chrono::microseconds)>;
 
     using legacy_success_fn =
-        std::function<void(Receiver&, const totg::waypoint_accumulator&, const Path&, const Trajectory&, std::chrono::microseconds)>;
+        std::function<void(const planner&, Receiver&, const waypoint_accumulator&, Path&&, Trajectory&&, std::chrono::microseconds)>;
 
-    using algorithm_failure_fn = std::function<void(const Receiver&, const totg::waypoint_accumulator&, const std::exception&)>;
+    using algorithm_failure_fn = std::function<void(const planner&, const Receiver&, const waypoint_accumulator&, const std::exception&)>;
     /// @}
 
-    explicit trajectory_planner(config cfg) : config_(std::move(cfg)) {}
+    explicit planner(config cfg) : planner_base(std::move(cfg)) {}
 
     ///
     /// Extends the lifetime of data created inside callbacks.
@@ -133,7 +183,7 @@ class trajectory_planner : public trajectory_planner_base {
     ///
     /// Required. Returns the initial waypoint_accumulator.
     ///
-    trajectory_planner& with_waypoint_provider(waypoint_provider_fn fn) {
+    planner& with_waypoint_provider(waypoint_provider_fn fn) {
         waypoint_provider_ = std::move(fn);
         return *this;
     }
@@ -141,7 +191,7 @@ class trajectory_planner : public trajectory_planner_base {
     ///
     /// Optional. Mutates the waypoint accumulator in place (e.g. deduplication).
     ///
-    trajectory_planner& with_waypoint_preprocessor(waypoint_preprocessor_fn fn) {
+    planner& with_waypoint_preprocessor(waypoint_preprocessor_fn fn) {
         preprocessor_ = std::move(fn);
         return *this;
     }
@@ -149,7 +199,7 @@ class trajectory_planner : public trajectory_planner_base {
     ///
     /// Optional. Throws if waypoints violate some precondition.
     ///
-    trajectory_planner& with_move_validator(move_validator_fn fn) {
+    planner& with_move_validator(move_validator_fn fn) {
         validator_ = std::move(fn);
         return *this;
     }
@@ -158,7 +208,7 @@ class trajectory_planner : public trajectory_planner_base {
     /// Optional. Splits waypoints into segments. If omitted, the entire
     /// waypoint sequence is treated as a single segment.
     ///
-    trajectory_planner& with_segmenter(segmenter_fn fn) {
+    planner& with_segmenter(segmenter_fn fn) {
         segmenter_ = std::move(fn);
         return *this;
     }
@@ -169,18 +219,18 @@ class trajectory_planner : public trajectory_planner_base {
     /// @{
 
     ///
-    /// Enables the trajex/totg algorithm.
+    /// Enables the TOTG algorithm.
     ///
-    trajectory_planner& with_trajex(trajex_success_fn on_success, algorithm_failure_fn on_failure = nullptr) {
-        trajex_on_success_ = std::move(on_success);
-        trajex_on_failure_ = std::move(on_failure);
+    planner& with_totg(success_fn on_success, algorithm_failure_fn on_failure = nullptr) {
+        on_success_ = std::move(on_success);
+        on_failure_ = std::move(on_failure);
         return *this;
     }
 
     ///
     /// Enables the legacy generator.
     ///
-    trajectory_planner& with_legacy(legacy_success_fn on_success, algorithm_failure_fn on_failure = nullptr) {
+    planner& with_legacy(legacy_success_fn on_success, algorithm_failure_fn on_failure = nullptr) {
         legacy_on_success_ = std::move(on_success);
         legacy_on_failure_ = std::move(on_failure);
         return *this;
@@ -189,89 +239,72 @@ class trajectory_planner : public trajectory_planner_base {
     /// @}
 
     ///
-    /// Number of waypoints that survived preprocessing.
-    ///
-    /// Available after execute() has been called. Allows the decider to
-    /// distinguish "nothing to do" (< 2 waypoints) from "both generators failed."
-    ///
-    std::size_t processed_waypoint_count() const noexcept {
-        return processed_waypoint_count_;
-    }
-
-    ///
-    /// Timing data for each planning phase.
-    ///
-    /// Available after execute() returns.
-    ///
-    const timing_stats& timing() const noexcept {
-        return timing_;
-    }
-
-    ///
     /// Runs the full planning workflow and invokes the decider.
     ///
-    /// @param decider Callable receiving (const trajectory_planner&,
+    /// @param decider Callable receiving (const planner&,
     ///        algorithm_outcome, algorithm_outcome). Return type is deduced.
     ///
     template <typename Decider>
-    auto execute(Decider&& decider) -> std::invoke_result_t<Decider, const trajectory_planner&, algorithm_outcome, algorithm_outcome> {
+    auto execute(Decider&& decider) -> std::invoke_result_t<Decider, const planner&, algorithm_outcome, algorithm_outcome> {
         if (!waypoint_provider_) {
             throw std::logic_error("waypoint provider not set");
         }
 
-        if (!trajex_on_success_ && !legacy_on_success_) {
+        if (!on_success_ && !legacy_on_success_) {
             throw std::logic_error("no algorithms registered");
         }
 
+        auto& timing = mutable_timing();
+
         auto t = std::chrono::steady_clock::now();
         auto accumulator = waypoint_provider_(*this);
-        timing_.waypoint_provisioning = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t);
+        timing.waypoint_provisioning = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t);
 
         if (preprocessor_) {
             t = std::chrono::steady_clock::now();
             preprocessor_(*this, accumulator);
-            timing_.waypoint_preprocessing = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t);
+            timing.waypoint_preprocessing = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t);
         }
 
-        processed_waypoint_count_ = accumulator.size();
-        if (processed_waypoint_count_ < 2) {
+        mutable_processed_waypoint_count() = accumulator.size();
+        if (processed_waypoint_count() < 2) {
             return std::forward<Decider>(decider)(*this, algorithm_outcome{}, algorithm_outcome{});
         }
 
         if (validator_) {
             t = std::chrono::steady_clock::now();
             validator_(*this, accumulator);
-            timing_.move_validation = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t);
+            timing.move_validation = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t);
         }
 
-        // When segment_trajex is false, copy the accumulator before the segmenter
-        // consumes it. The copy is used as a single unsegmented input for trajex.
-        std::optional<std::vector<totg::waypoint_accumulator>> unsegmented_for_trajex;
-        if (!config_.segment_trajex && segmenter_) {
-            unsegmented_for_trajex.emplace();
-            unsegmented_for_trajex->push_back(accumulator);
+        // When segment_totg is false, copy the accumulator before the segmenter
+        // consumes it. The copy is used as a single unsegmented input for TOTG.
+        std::optional<std::vector<waypoint_accumulator>> unsegmented_for_totg;
+        if (!get_config().segment_totg && segmenter_) {
+            unsegmented_for_totg.emplace();
+            unsegmented_for_totg->push_back(accumulator);
         }
 
-        std::vector<totg::waypoint_accumulator> segments;
+        std::vector<waypoint_accumulator> segments;
         if (segmenter_) {
             t = std::chrono::steady_clock::now();
             segments = segmenter_(*this, std::move(accumulator));
-            timing_.segmentation = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t);
+            timing.segmentation = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t);
         } else {
             segments.push_back(std::move(accumulator));
         }
 
-        const auto& trajex_segments = unsegmented_for_trajex ? *unsegmented_for_trajex : segments;
+        const auto& totg_segments = unsegmented_for_totg ? *unsegmented_for_totg : segments;
 
-        auto trajex_outcome = run_trajex_(trajex_segments);
+        auto totg_outcome = run_totg_(totg_segments);
         auto legacy_outcome = run_legacy_(segments);
 
-        return std::forward<Decider>(decider)(*this, std::move(trajex_outcome), std::move(legacy_outcome));
+        return std::forward<Decider>(decider)(*this, std::move(totg_outcome), std::move(legacy_outcome));
     }
 
    private:
-    algorithm_outcome run_trajex_(const std::vector<totg::waypoint_accumulator>& segments) {
-        if (!trajex_on_success_) {
+    algorithm_outcome run_totg_(const std::vector<waypoint_accumulator>& segments) {
+        if (!on_success_) {
             return {};
         }
 
@@ -285,38 +318,39 @@ class trajectory_planner : public trajectory_planner_base {
             }
 
             try {
-                auto path_opts = totg::path::options{}.set_max_blend_deviation(config_.path_blend_tolerance);
-                if (config_.colinearization_ratio) {
-                    path_opts.set_max_linear_deviation(config_.path_blend_tolerance * *config_.colinearization_ratio);
+                auto path_opts = path::options{}.set_max_blend_deviation(get_config().path_blend_tolerance);
+                if (get_config().colinearization_ratio) {
+                    path_opts.set_max_linear_deviation(get_config().path_blend_tolerance * *get_config().colinearization_ratio);
                 }
 
-                auto p = totg::path::create(segment, path_opts);
+                auto p = path::create(segment, path_opts);
 
-                totg::trajectory::options topts;
-                topts.max_velocity = config_.velocity_limits;
-                topts.max_acceleration = config_.acceleration_limits;
+                trajectory::options topts;
+                topts.max_velocity = get_config().velocity_limits;
+                topts.max_acceleration = get_config().acceleration_limits;
+                topts.observer = get_config().observer;
 
                 auto start = std::chrono::steady_clock::now();
-                auto traj = totg::trajectory::create(std::move(p), std::move(topts));
+                auto traj = trajectory::create(std::move(p), std::move(topts));
                 auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start);
                 total_gen += elapsed;
 
-                trajex_on_success_(*outcome.receiver, segment, traj, elapsed);
+                on_success_(*this, *outcome.receiver, segment, std::move(traj), elapsed);
 
             } catch (const std::exception& e) {
                 outcome.error = std::current_exception();
-                if (trajex_on_failure_) {
-                    trajex_on_failure_(*outcome.receiver, segment, e);
+                if (on_failure_) {
+                    on_failure_(*this, *outcome.receiver, segment, e);
                 }
                 outcome.receiver.reset();
             }
         }
 
-        timing_.trajex_generation_total = total_gen;
+        mutable_timing().totg_generation_total = total_gen;
         return outcome;
     }
 
-    algorithm_outcome run_legacy_(const std::vector<totg::waypoint_accumulator>& segments) {
+    algorithm_outcome run_legacy_(const std::vector<waypoint_accumulator>& segments) {
         if (!legacy_on_success_) {
             return {};
         }
@@ -344,19 +378,19 @@ class trajectory_planner : public trajectory_planner_base {
                 auto transformed = segment | std::views::transform(to_eigen);
                 std::list<Eigen::VectorXd> eigen_waypoints(std::begin(transformed), std::end(transformed));
 
-                if (config_.colinearization_ratio) {
+                if (get_config().colinearization_ratio) {
                     auto colinear_start = std::chrono::steady_clock::now();
-                    apply_colinearization(eigen_waypoints, config_.path_blend_tolerance * *config_.colinearization_ratio);
+                    legacy::apply_colinearization(eigen_waypoints, get_config().path_blend_tolerance * *get_config().colinearization_ratio);
                     total_colinear +=
                         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - colinear_start);
                 }
 
-                Path legacy_path(eigen_waypoints, config_.path_blend_tolerance);
+                Path legacy_path(eigen_waypoints, get_config().path_blend_tolerance);
 
-                auto vel_eigen = Eigen::Map<const Eigen::VectorXd>(config_.velocity_limits.data(),
-                                                                   static_cast<Eigen::Index>(config_.velocity_limits.size()));
-                auto acc_eigen = Eigen::Map<const Eigen::VectorXd>(config_.acceleration_limits.data(),
-                                                                   static_cast<Eigen::Index>(config_.acceleration_limits.size()));
+                auto vel_eigen = Eigen::Map<const Eigen::VectorXd>(get_config().velocity_limits.data(),
+                                                                   static_cast<Eigen::Index>(get_config().velocity_limits.size()));
+                auto acc_eigen = Eigen::Map<const Eigen::VectorXd>(get_config().acceleration_limits.data(),
+                                                                   static_cast<Eigen::Index>(get_config().acceleration_limits.size()));
 
                 Trajectory traj(legacy_path, vel_eigen, acc_eigen);
                 auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start);
@@ -366,27 +400,25 @@ class trajectory_planner : public trajectory_planner_base {
                     throw std::runtime_error("legacy trajectory generator produced invalid result");
                 }
 
-                legacy_on_success_(*outcome.receiver, segment, legacy_path, traj, elapsed);
+                legacy_on_success_(*this, *outcome.receiver, segment, std::move(legacy_path), std::move(traj), elapsed);
 
             } catch (const std::exception& e) {
                 outcome.error = std::current_exception();
                 if (legacy_on_failure_) {
-                    legacy_on_failure_(*outcome.receiver, segment, e);
+                    legacy_on_failure_(*this, *outcome.receiver, segment, e);
                 }
                 outcome.receiver.reset();
             }
         }
 
-        timing_.legacy_generation_total = total_gen;
+        auto& timing = mutable_timing();
+        timing.legacy_generation_total = total_gen;
         if (total_colinear.count() > 0) {
-            timing_.colinearization = total_colinear;
+            timing.colinearization = total_colinear;
         }
         return outcome;
     }
 
-    config config_;
-    std::size_t processed_waypoint_count_ = 0;
-    timing_stats timing_;
     std::vector<std::shared_ptr<void>> stashed_;
 
     waypoint_provider_fn waypoint_provider_;
@@ -394,11 +426,11 @@ class trajectory_planner : public trajectory_planner_base {
     move_validator_fn validator_;
     segmenter_fn segmenter_;
 
-    trajex_success_fn trajex_on_success_;
-    algorithm_failure_fn trajex_on_failure_;
+    success_fn on_success_;
+    algorithm_failure_fn on_failure_;
 
     legacy_success_fn legacy_on_success_;
     algorithm_failure_fn legacy_on_failure_;
 };
 
-}  // namespace viam::trajex
+}  // namespace viam::trajex::totg

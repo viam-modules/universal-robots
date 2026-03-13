@@ -42,7 +42,7 @@
 #include <third_party/trajectories/Trajectory.h>
 
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
-#include <viam/trajex/service/trajectory_planner.hpp>
+#include <viam/trajex/totg/tools/planner.hpp>
 #include <viam/trajex/totg/totg.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
@@ -397,58 +397,6 @@ std::string unix_time_iso8601() {
     stream << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
 
     return stream.str();
-}
-
-std::string serialize_failed_trajectory_to_json(const viam::trajex::totg::waypoint_accumulator& waypoints,
-                                                const xt::xarray<double>& max_velocity_vec,
-                                                const xt::xarray<double>& max_acceleration_vec,
-                                                double path_tolerance_delta_rads,
-                                                const std::optional<double>& path_colinearization_ratio,
-                                                double segmentation_threshold) {
-    namespace json = Json;
-
-    json::Value root;
-    root["timestamp"] = unix_time_iso8601();
-    root["path_tolerance_delta_rads"] = path_tolerance_delta_rads;
-    root["segmentation_threshold"] = segmentation_threshold;
-
-    if (path_colinearization_ratio) {
-        root["path_colinearization_ratio"] = *path_colinearization_ratio;
-    }
-
-    json::Value max_vel_array(json::arrayValue);
-    std::ranges::for_each(max_velocity_vec, [&](double item) {
-        std::stringstream ss;
-        ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
-        max_vel_array.append(ss.str());
-    });
-    root["max_velocity_vec_rads_per_sec"] = std::move(max_vel_array);
-
-    json::Value max_acc_array(json::arrayValue);
-    std::ranges::for_each(max_acceleration_vec, [&](double item) {
-        std::stringstream ss;
-        ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
-        max_acc_array.append(ss.str());
-    });
-    root["max_acceleration_vec_rads_per_sec2"] = std::move(max_acc_array);
-
-    json::Value waypoints_array(json::arrayValue);
-    waypoints_array.resize((json::ArrayIndex)waypoints.size());
-    for (const auto& [waypoint, json_waypoint] : boost::combine(waypoints, waypoints_array)) {
-        std::ranges::for_each(waypoint, [&](auto item) {
-            std::stringstream ss;
-            ss << std::setprecision(std::numeric_limits<double>::max_digits10) << item;
-            // NOLINTBEGIN(clang-analyzer-core.CallAndMessage): json_waypoint is initialized as a nullValue and then lazily initialized
-            json_waypoint.append(ss.str());
-            // NOLINTEND(clang-analyzer-core.CallAndMessage)
-        });
-    }
-    root["waypoints_rads"] = std::move(waypoints_array);
-
-    json::StreamWriterBuilder writer;
-    writer["indentation"] = " ";
-
-    return json::writeString(writer, root);
 }
 
 const ModelFamily& URArm::model_family() {
@@ -905,12 +853,12 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
 
-    auto planner = viam::trajex::trajectory_planner<segment_accumulator>({
+    auto planner = viam::trajex::totg::planner<segment_accumulator>({
         .velocity_limits = xt::adapt(velocity_limits_data),
         .acceleration_limits = xt::adapt(acceleration_limits_data),
         .path_blend_tolerance = current_state_->get_path_tolerance_delta_rads(),
         .colinearization_ratio = current_state_->get_path_colinearization_ratio(),
-        .segment_trajex = current_state_->segment_for_trajex(),
+        .segment_totg = current_state_->segment_for_trajex(),
     });
 
     planner
@@ -960,10 +908,11 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         });
 
     if (current_state_->use_new_trajectory_planner()) {
-        planner.with_trajex(
-            [&](segment_accumulator& acc,
+        planner.with_totg(
+            [&](const auto&,
+                segment_accumulator& acc,
                 const viam::trajex::totg::waypoint_accumulator& segment,
-                const viam::trajex::totg::trajectory& traj,
+                viam::trajex::totg::trajectory&& traj,
                 auto elapsed) {
                 acc.total_generation_time += elapsed;
                 acc.total_duration += traj.duration().count();
@@ -1006,15 +955,13 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                    << ", waypoints: " << segment.size() << ", duration: " << traj.duration().count()
                                    << "s, samples: " << sample_count << ", arc length: " << traj.path().length();
             },
-            [&](const segment_accumulator& acc, const viam::trajex::totg::waypoint_accumulator& seg, const std::exception& e) {
+            [&](const auto& planner,
+                const segment_accumulator& acc,
+                const viam::trajex::totg::waypoint_accumulator& seg,
+                const std::exception& e) {
                 VIAM_SDK_LOG(warn) << "trajectory generation with trajex failed with an exception"
                                    << ", waypoints: " << acc.total_waypoints << ", exception: " << e.what();
-                const std::string json_content = serialize_failed_trajectory_to_json(seg,
-                                                                                     xt::adapt(velocity_limits_data),
-                                                                                     xt::adapt(acceleration_limits_data),
-                                                                                     current_state_->get_path_tolerance_delta_rads(),
-                                                                                     current_state_->get_path_colinearization_ratio(),
-                                                                                     current_state_->get_segmentation_threshold());
+                const std::string json_content = planner.serialize_for_replay(seg, e.what());
                 const auto filename = failed_trajectory_filename(
                     current_state_->telemetry_output_path(), current_state_->resource_name() + "_trajex", unix_time);
                 std::ofstream json_file(filename);
@@ -1023,10 +970,11 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
 
     planner.with_legacy(
-        [&](segment_accumulator& acc,
+        [&](const auto&,
+            segment_accumulator& acc,
             const viam::trajex::totg::waypoint_accumulator& segment,
-            const Path& legacy_path,
-            const Trajectory& traj,
+            Path&& legacy_path,
+            Trajectory&& traj,
             auto elapsed) {
             acc.total_generation_time += elapsed;
             acc.total_duration += traj.getDuration();
@@ -1038,23 +986,19 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 acc.samples = std::vector<trajectory_sample_point_pv>{};
             }
             auto& pv_samples = std::get<std::vector<trajectory_sample_point_pv>>(*acc.samples);
-            sampling_func(
-                pv_samples, traj.getDuration(), current_state_->get_trajectory_sampling_freq_hz(), [&](const double t, const double step) {
+            viam::trajex::totg::legacy::for_each_sample(
+                traj.getDuration(), current_state_->get_trajectory_sampling_freq_hz(), [&](const double t, const double step) {
                     auto p_eigen = traj.getPosition(t);
                     auto v_eigen = traj.getVelocity(t);
-                    return trajectory_sample_point_pv{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
-                                                      {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
-                                                      boost::numeric_cast<float>(step)};
+                    pv_samples.push_back(
+                        trajectory_sample_point_pv{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                                   {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+                                                   boost::numeric_cast<float>(step)});
                 });
         },
-        [&](const segment_accumulator&, const viam::trajex::totg::waypoint_accumulator& seg, const std::exception& e) {
+        [&](const auto& planner, const segment_accumulator&, const viam::trajex::totg::waypoint_accumulator& seg, const std::exception& e) {
             VIAM_SDK_LOG(error) << "trajectory generation with legacy failed with an exception: " << e.what();
-            const std::string json_content = serialize_failed_trajectory_to_json(seg,
-                                                                                 xt::adapt(velocity_limits_data),
-                                                                                 xt::adapt(acceleration_limits_data),
-                                                                                 current_state_->get_path_tolerance_delta_rads(),
-                                                                                 current_state_->get_path_colinearization_ratio(),
-                                                                                 current_state_->get_segmentation_threshold());
+            const std::string json_content = planner.serialize_for_replay(seg, e.what());
             const auto filename =
                 failed_trajectory_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
             std::ofstream json_file(filename);
@@ -1138,7 +1082,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                             << " validation=" << format_optional(timing.move_validation)
                             << " segmentation=" << format_optional(timing.segmentation)
                             << " colinearization=" << format_optional(timing.colinearization)
-                            << " trajex_total_gen=" << format_optional(timing.trajex_generation_total)
+                            << " totg_total_gen=" << format_optional(timing.totg_generation_total)
                             << " legacy_total_gen=" << format_optional(timing.legacy_generation_total);
     }
 

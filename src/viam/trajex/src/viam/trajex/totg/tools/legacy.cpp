@@ -1,6 +1,6 @@
-#include <viam/trajex/service/colinearization.hpp>
+#include <viam/trajex/totg/tools/legacy.hpp>
 
-namespace viam::trajex {
+namespace viam::trajex::totg::legacy {
 
 bool within_colinearization_tolerance(const Eigen::VectorXd& point,
                                       const Eigen::VectorXd& line_start,
@@ -77,4 +77,4 @@ void apply_colinearization(std::list<Eigen::VectorXd>& waypoints, double toleran
     }
 }
 
-}  // namespace viam::trajex
+}  // namespace viam::trajex::totg::legacy

@@ -21,7 +21,7 @@
 #include <xtensor/xarray.hpp>
 #endif
 
-#include <viam/trajex/service/sampling_utils.hpp>
+#include <viam/trajex/totg/tools/legacy.hpp>
 #include <viam/trajex/totg/waypoint_accumulator.hpp>
 
 using namespace viam::sdk;
@@ -46,11 +46,6 @@ struct pose_sample {
     vector6d_t p;
 };
 
-template <typename Func>
-void sampling_func(std::vector<trajectory_sample_point_pv>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
-    viam::trajex::for_each_sample(duration_sec, sampling_frequency_hz, [&](double t, double step) { samples.push_back(f(t, step)); });
-}
-
 void write_trajectory_to_file(const std::string& filepath, const trajectory_samples& samples);
 void write_pose_to_file(const std::string& filepath, const pose_sample& sample);
 void write_waypoints_to_csv(const std::string& filepath, const viam::trajex::totg::waypoint_accumulator& waypoints);
@@ -60,12 +55,6 @@ std::string arm_joint_positions_filename(const std::string& path, const std::str
 std::string move_to_position_pose_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string unix_time_iso8601();
-std::string serialize_failed_trajectory_to_json(const viam::trajex::totg::waypoint_accumulator& waypoints,
-                                                const xt::xarray<double>& max_velocity_vec,
-                                                const xt::xarray<double>& max_acceleration_vec,
-                                                double path_tolerance_delta_rads,
-                                                const std::optional<double>& path_colinearization_ratio,
-                                                double segmentation_threshold);
 
 class URArm final : public Arm, public Reconfigurable {
    public:
