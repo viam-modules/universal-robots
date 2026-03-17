@@ -138,6 +138,8 @@ class trajectory {
     struct phase_point {
         arc_length s;        ///< Arc length position on path
         arc_velocity s_dot;  ///< Path velocity (ds/dt)
+
+        friend constexpr bool operator==(const phase_point&, const phase_point&) = default;
     };
 
     ///
@@ -153,6 +155,8 @@ class trajectory {
         arc_length s;             ///< Arc length position on path
         arc_velocity s_dot;       ///< Path velocity (ds/dt)
         arc_acceleration s_ddot;  ///< Path acceleration (d^2s/dt^2)
+
+        friend constexpr bool operator==(const phase_state&, const phase_state&) = default;
     };
 
     ///
@@ -168,6 +172,8 @@ class trajectory {
         arc_length s;             ///< Arc length position on path
         arc_velocity s_dot;       ///< Path velocity (ds/dt)
         arc_acceleration s_ddot;  ///< Path acceleration (d^2s/dt^2)
+
+        friend constexpr bool operator==(const integration_point&, const integration_point&) = default;
     };
 
     ///

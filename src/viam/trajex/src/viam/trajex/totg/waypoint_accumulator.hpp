@@ -178,6 +178,18 @@ class waypoint_accumulator {
     ///
     const waypoint_view_t& at(size_t i) const;
 
+    ///
+    /// Accesses the last waypoint.
+    ///
+    /// @return Reference to last waypoint view
+    ///
+    const waypoint_view_t& back() const noexcept;
+
+    ///
+    /// Removes the last waypoint.
+    ///
+    void pop_back() noexcept;
+
    private:
     size_t dof_;
     std::vector<waypoint_view_t> waypoints_;

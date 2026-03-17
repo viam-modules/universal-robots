@@ -107,4 +107,12 @@ const waypoint_accumulator::waypoint_view_t& waypoint_accumulator::at(size_t i) 
     return waypoints_[i];
 }
 
+const waypoint_accumulator::waypoint_view_t& waypoint_accumulator::back() const noexcept {
+    return waypoints_.back();
+}
+
+void waypoint_accumulator::pop_back() noexcept {
+    waypoints_.pop_back();
+}
+
 }  // namespace viam::trajex::totg
