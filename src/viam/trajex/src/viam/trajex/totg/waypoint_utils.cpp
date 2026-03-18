@@ -10,21 +10,31 @@
 #include <xtensor/xnorm.hpp>
 #endif
 
+#include <viam/trajex/totg/waypoint_accumulator.hpp>
+
 namespace viam::trajex::totg {
 
 waypoint_accumulator deduplicate_waypoints(const waypoint_accumulator& waypoints, double tolerance) {
     if (waypoints.empty()) {
-        throw std::invalid_argument("Cannot deduplicate empty waypoints");
+        return waypoint_accumulator{waypoints};
     }
 
     // Always keep first waypoint
     waypoint_accumulator result(waypoints[0]);
 
-    // Keep waypoints that differ from previous by more than tolerance
-    for (size_t i = 1; i < waypoints.size(); ++i) {
-        if (xt::norm_linf(waypoints[i] - waypoints[i - 1])() > tolerance) {
-            result.add_waypoint(waypoints[i]);
+    std::ranges::for_each(waypoints | std::views::drop(1), [&](const auto& waypoint) {
+        if (xt::norm_linf(waypoint - result.back())() > tolerance) {
+            result.add_waypoint(waypoint);
         }
+    });
+
+    // Ensure the original last waypoint is preserved exactly as the destination.
+    // If it was deduplicated away, replace the last kept point with it. If the
+    // entire sequence collapsed to a single point, leave it as the start and let
+    // path creation fail with a clear error.
+    if ((result.size() > 1) && (result.back() != waypoints.back())) {
+        result.pop_back();
+        result.add_waypoint(waypoints.back());
     }
 
     return result;

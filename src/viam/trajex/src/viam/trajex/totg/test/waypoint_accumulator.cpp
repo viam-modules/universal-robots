@@ -301,4 +301,38 @@ BOOST_AUTO_TEST_CASE(segment_with_multiple_reversals) {
     BOOST_CHECK_EQUAL(segments.size(), 4);
 }
 
+// Deduplication must compare against the last kept point, not the
+// original predecessor. With tolerance=10:
+//   wp[0]=0  (kept)
+//   wp[1]=8  (dropped: |8-0|=8 < 10)
+//   wp[2]=-5 (buggy: kept because |(-5)-8|=13 > 10 vs original predecessor;
+//             correct: dropped because |(-5)-0|=5 < 10 vs last kept)
+//   wp[3]=20 (kept by both: distance from 0 or -5 exceeds 10)
+// Correct result: [0, 20]. Buggy result: [0, -5, 20].
+BOOST_AUTO_TEST_CASE(deduplicate_compares_against_last_kept) {
+    using namespace viam::trajex::totg;
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {8.0, 8.0}, {-5.0, -5.0}, {20.0, 20.0}};
+    const waypoint_accumulator source{waypoints};
+    const auto result = deduplicate_waypoints(source, 10.0);
+    BOOST_REQUIRE_EQUAL(result.size(), 2);
+    BOOST_CHECK_EQUAL(result[0](0), 0.0);
+    BOOST_CHECK_EQUAL(result[1](0), 20.0);
+}
+
+// The original last waypoint must be preserved exactly as the
+// destination, even if it was deduplicated away. With tolerance=10:
+//   wp[0]=0  (kept)
+//   wp[1]=50 (kept: |50-0|=50 > 10)
+//   wp[2]=55 (dropped by loop: |55-50|=5 < 10, but is the destination)
+// Pre-fix result: [0, 55]. Improved result result: [0, 50].
+BOOST_AUTO_TEST_CASE(deduplicate_preserves_last_waypoint) {
+    using namespace viam::trajex::totg;
+    const xt::xarray<double> waypoints = {{0.0, 0.0}, {50.0, 50.0}, {55.0, 55.0}};
+    const waypoint_accumulator source{waypoints};
+    const auto result = deduplicate_waypoints(source, 10.0);
+    BOOST_REQUIRE_EQUAL(result.size(), 2);
+    BOOST_CHECK_EQUAL(result[0](0), 0.0);
+    BOOST_CHECK_EQUAL(result[1](0), 55.0);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
