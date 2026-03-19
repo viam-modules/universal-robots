@@ -166,7 +166,9 @@ find_package(Boost CONFIG REQUIRED
 
 FetchContent_Declare(
   trajex
-  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/viam/trajex
+  GIT_REPOSITORY https://github.com/viam-modules/trajex.git
+  GIT_TAG v0.6.0-rc9
+  GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(trajex)
 

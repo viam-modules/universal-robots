@@ -1,3 +1,0 @@
-[submodule "trajectories"]
-	path = src/viam/trajex/src/third_party/trajectories
-	url = https://github.com/tobiaskunz/trajectories.git

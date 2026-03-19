@@ -15,7 +15,7 @@
 	docker-arm64-ci \
 	docker-amd64-ci
 
-SOURCE_FILES := $(shell find src/viam/ur/module src/viam/trajex/src/viam -type f \( -name '*.cpp' -o -name '*.hpp' \))
+SOURCE_FILES := $(shell find src/viam/ur/module -type f \( -name '*.cpp' -o -name '*.hpp' \))
 CPP_FILES := $(filter %.cpp,$(SOURCE_FILES))
 
 default: module.tar.gz
@@ -46,14 +46,14 @@ run-clang-tidy:
 	clang-tidy-19 \
         -p build \
         --config-file ./.clang-tidy \
-        --header-filter=".*/viam/(ur/module|trajex)/.*" \
+        --header-filter=".*/viam/ur/module/.*" \
 	$(CPP_FILES)
 
 run-clang-tidy-parallel:
 	run-clang-tidy-19 \
         -p build \
         -config-file ./.clang-tidy \
-        -header-filter=".*/viam/(ur/module|trajex)/.*" \
+        -header-filter=".*/viam/ur/module/.*" \
 	$(CPP_FILES)
 
 run-clang-check:
