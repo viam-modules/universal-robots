@@ -167,7 +167,7 @@ find_package(Boost CONFIG REQUIRED
 FetchContent_Declare(
   trajex
   GIT_REPOSITORY https://github.com/viam-modules/trajex.git
-  GIT_TAG v0.6.0-rc9
+  GIT_TAG v0.100.0-rc1
   GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(trajex)
