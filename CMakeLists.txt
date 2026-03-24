@@ -125,7 +125,7 @@ include(FetchContent)
 FetchContent_Declare(
   Universal_Robots_Client_Library
   GIT_REPOSITORY https://github.com/UniversalRobots/Universal_Robots_Client_Library
-  GIT_TAG        2.2.0
+  GIT_TAG        2.8.0
   GIT_SHALLOW TRUE
   SYSTEM
 )
