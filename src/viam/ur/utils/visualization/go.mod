@@ -119,16 +119,16 @@ require (
 	go.uber.org/zap v1.27.0 // indirect
 	go.viam.com/api v0.1.496 // indirect
 	go.viam.com/utils v0.4.0 // indirect
-	golang.org/x/crypto v0.45.0 // indirect
+	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/exp v0.0.0-20241009180824-f66d83c29e7c // indirect
-	golang.org/x/image v0.25.0 // indirect
-	golang.org/x/mod v0.29.0 // indirect
-	golang.org/x/net v0.47.0 // indirect
+	golang.org/x/image v0.38.0 // indirect
+	golang.org/x/mod v0.33.0 // indirect
+	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sync v0.18.0 // indirect
-	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
-	golang.org/x/tools v0.38.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sys v0.41.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/tools v0.42.0 // indirect
 	gonum.org/v1/gonum v0.16.0 // indirect
 	gonum.org/v1/plot v0.15.2 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250825161204-c5933d9347a5 // indirect
