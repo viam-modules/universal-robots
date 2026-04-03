@@ -155,7 +155,7 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     }
 
     VIAM_SDK_LOG(debug) << "While in state " << describe()
-                       << ", recovery appears to have been successful; transitioning to independent mode";
+                        << ", recovery appears to have been successful; transitioning to independent mode";
     return arm_connection;
 }
 
