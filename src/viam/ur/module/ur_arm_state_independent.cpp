@@ -86,11 +86,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         return event_connection_lost_::data_communication_failure();
     }
 
-    if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
-        VIAM_SDK_LOG(debug) << "While in state " << describe() << ", dashboard client is disconnected; dropping connection";
-        return event_connection_lost_::dashboard_communication_failure();
-    }
-
     // If we aren't stopped, but the safety flags say we are, become stopped immediately.
     if (!stopped() && !arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
         return event_stop_detected_{};

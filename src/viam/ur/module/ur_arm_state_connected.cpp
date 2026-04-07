@@ -21,8 +21,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     const auto prior_robot_status_bits = std::exchange(arm_conn_->robot_status_bits, std::nullopt);
     const auto prior_safety_status_bits = std::exchange(arm_conn_->safety_status_bits, std::nullopt);
 
-    auto new_packet = arm_conn_->driver->getDataPackage();
-    if (!new_packet) {
+    // On failure, getDataPackage leaves data_package unmodified, so we retain the last good packet.
+    if (!arm_conn_->driver->getDataPackage(*arm_conn_->data_package)) {
         consecutive_missed_packets++;
         // how many packets we can drop before restarting the connection
         if (consecutive_missed_packets > 3) {
@@ -31,7 +31,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
         }
         VIAM_SDK_LOG(warn) << "Failed to read a data package from the arm: missed a packet: " << consecutive_missed_packets;
     } else {
-        arm_conn_->data_package = std::move(new_packet);
         consecutive_missed_packets = 0;
     }
 

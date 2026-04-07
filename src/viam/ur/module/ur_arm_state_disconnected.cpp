@@ -149,7 +149,8 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     arm_connection->driver->startRTDECommunication();
 
     VIAM_SDK_LOG(debug) << "While in state " << describe() << ", attempting to reconnect: attempting to read a data package from the arm";
-    if (!arm_connection->driver->getDataPackage()) {
+    arm_connection->data_package = std::make_unique<urcl::rtde_interface::DataPackage>(arm_connection->driver->getRTDEOutputRecipe());
+    if (!arm_connection->driver->getDataPackage(*arm_connection->data_package)) {
         throw std::runtime_error("could not read data package from newly established driver connection ");
     }
 

@@ -33,11 +33,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
         return event_stop_detected_{};
     }
 
-    if (arm_conn_->dashboard->getState() != urcl::comm::SocketState::Connected) {
-        VIAM_SDK_LOG(warn) << "While in state " << describe() << ", dashboard client is disconnected; dropping connection";
-        return event_connection_lost_::dashboard_communication_failure();
-    }
-
     // If we get anything but a positive answer from the dashboard
     // that we are in remote control, assume that we need to
     // completely re-create our connection, since sockets aren't
