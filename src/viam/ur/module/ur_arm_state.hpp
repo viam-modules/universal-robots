@@ -182,7 +182,7 @@ class URArm::state_ {
 
         ~arm_connection_();
 
-        std::unique_ptr<urcl::DashboardClient> dashboard;
+        std::unique_ptr<DashboardClient> dashboard;
         std::unique_ptr<UrDriver> driver;
         std::unique_ptr<rtde_interface::DataPackage> data_package;
         std::optional<std::bitset<k_num_robot_status_bits>> robot_status_bits;
