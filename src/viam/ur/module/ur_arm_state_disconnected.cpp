@@ -68,7 +68,7 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
         VIAM_SDK_LOG(info) << "While in state " << describe() << ", attempting to reconnect";
     }
 
-    arm_connection->dashboard = std::make_unique<urcl::DashboardClient>(state.host_);
+    arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_);
     if (reconnect_attempts % k_log_at_n_attempts == 0) {
         VIAM_SDK_LOG(debug) << "While in state " << describe() << ", attempting to reconnect: trying to connect to dashboard";
     }
