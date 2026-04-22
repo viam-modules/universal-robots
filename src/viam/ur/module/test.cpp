@@ -63,16 +63,16 @@ BOOST_AUTO_TEST_CASE(test_logger_construction_destruction_writes_json) {
     const std::string expected_file = test_dir + "/" + timestamp + "_" + resource + "_realtime_trajectory.json";
 
     {
-        RealtimeTrajectoryLogger logger(test_dir, timestamp, model, resource);
+        const RealtimeTrajectoryLogger logger(test_dir, timestamp, model, resource);
     }  // destructor writes JSON
 
-    std::ifstream in(expected_file);
+    const std::ifstream in(expected_file);
     BOOST_REQUIRE(in.good());
     std::stringstream buf;
     buf << in.rdbuf();
 
     Json::Value parsed;
-    Json::CharReaderBuilder reader;
+    const Json::CharReaderBuilder reader;
     std::istringstream iss(buf.str());
     BOOST_REQUIRE(Json::parseFromStream(reader, iss, &parsed, nullptr));
 
@@ -80,9 +80,9 @@ BOOST_AUTO_TEST_CASE(test_logger_construction_destruction_writes_json) {
     BOOST_CHECK_EQUAL(parsed["robot_model"].asString(), model);
     BOOST_CHECK_EQUAL(parsed["resource_name"].asString(), resource);
     BOOST_CHECK(parsed["realtime_samples"].isArray());
-    BOOST_CHECK_EQUAL(parsed["realtime_samples"].size(), 0u);
+    BOOST_CHECK_EQUAL(parsed["realtime_samples"].size(), 0U);
 
-    std::remove(expected_file.c_str());
+    (void)std::remove(expected_file.c_str());
     std::filesystem::remove_all(test_dir);
 }
 
@@ -101,18 +101,18 @@ BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pv) {
         logger.set_planned_trajectory(samples);
     }
 
-    std::ifstream in(expected_file);
+    const std::ifstream in(expected_file);
     BOOST_REQUIRE(in.good());
     std::stringstream buf;
     buf << in.rdbuf();
 
     Json::Value parsed;
-    Json::CharReaderBuilder reader;
+    const Json::CharReaderBuilder reader;
     std::istringstream iss(buf.str());
     BOOST_REQUIRE(Json::parseFromStream(reader, iss, &parsed, nullptr));
 
     BOOST_REQUIRE(parsed["planned_trajectory"].isArray());
-    BOOST_CHECK_EQUAL(parsed["planned_trajectory"].size(), 2u);
+    BOOST_CHECK_EQUAL(parsed["planned_trajectory"].size(), 2U);
 
     const auto& first = parsed["planned_trajectory"][0];
     BOOST_CHECK(first["positions_rad"].isArray());
@@ -123,7 +123,7 @@ BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pv) {
     const auto& second = parsed["planned_trajectory"][1];
     BOOST_CHECK_CLOSE(second["time_from_start_sec"].asDouble(), 1.0, 1e-3);
 
-    std::remove(expected_file.c_str());
+    (void)std::remove(expected_file.c_str());
     std::filesystem::remove_all(test_dir);
 }
 
@@ -141,21 +141,21 @@ BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pva) {
         logger.set_planned_trajectory(samples);
     }
 
-    std::ifstream in(expected_file);
+    const std::ifstream in(expected_file);
     BOOST_REQUIRE(in.good());
     std::stringstream buf;
     buf << in.rdbuf();
 
     Json::Value parsed;
-    Json::CharReaderBuilder reader;
+    const Json::CharReaderBuilder reader;
     std::istringstream iss(buf.str());
     BOOST_REQUIRE(Json::parseFromStream(reader, iss, &parsed, nullptr));
 
     const auto& first = parsed["planned_trajectory"][0];
     BOOST_CHECK(first.isMember("accelerations_rad_per_sec2"));
-    BOOST_CHECK_EQUAL(first["accelerations_rad_per_sec2"].size(), 6u);
+    BOOST_CHECK_EQUAL(first["accelerations_rad_per_sec2"].size(), 6U);
 
-    std::remove(expected_file.c_str());
+    (void)std::remove(expected_file.c_str());
     std::filesystem::remove_all(test_dir);
 }
 
@@ -187,25 +187,25 @@ BOOST_AUTO_TEST_CASE(test_logger_append_realtime_sample) {
         logger.append_realtime_sample("2026-04-21T12:00:00.010000Z", data, std::nullopt, std::nullopt);
     }
 
-    std::ifstream in(expected_file);
+    const std::ifstream in(expected_file);
     BOOST_REQUIRE(in.good());
     std::stringstream buf;
     buf << in.rdbuf();
 
     Json::Value parsed;
-    Json::CharReaderBuilder reader;
+    const Json::CharReaderBuilder reader;
     std::istringstream iss(buf.str());
     BOOST_REQUIRE(Json::parseFromStream(reader, iss, &parsed, nullptr));
 
-    BOOST_REQUIRE_EQUAL(parsed["realtime_samples"].size(), 2u);
+    BOOST_REQUIRE_EQUAL(parsed["realtime_samples"].size(), 2U);
 
     const auto& s0 = parsed["realtime_samples"][0];
     BOOST_CHECK_EQUAL(s0["timestamp"].asString(), "2026-04-21T12:00:00.000000Z");
-    BOOST_CHECK_EQUAL(s0["positions_rad"].size(), 6u);
+    BOOST_CHECK_EQUAL(s0["positions_rad"].size(), 6U);
     BOOST_CHECK_CLOSE(s0["positions_rad"][0].asDouble(), 1.0, 1e-9);
-    BOOST_CHECK_EQUAL(s0["robot_status_bits"].asUInt(), 3u);
-    BOOST_CHECK_EQUAL(s0["safety_status_bits"].asUInt(), 1u);
-    BOOST_CHECK_EQUAL(s0["safety_status"].asUInt(), 1u);
+    BOOST_CHECK_EQUAL(s0["robot_status_bits"].asUInt(), 3U);
+    BOOST_CHECK_EQUAL(s0["safety_status_bits"].asUInt(), 1U);
+    BOOST_CHECK_EQUAL(s0["safety_status"].asUInt(), 1U);
     BOOST_CHECK(s0.isMember("target_positions_rad"));
     BOOST_CHECK(s0.isMember("joint_temperatures"));
     BOOST_CHECK(s0.isMember("joint_control_output"));
@@ -214,7 +214,7 @@ BOOST_AUTO_TEST_CASE(test_logger_append_realtime_sample) {
     BOOST_CHECK(!s1.isMember("robot_status_bits"));
     BOOST_CHECK(!s1.isMember("safety_status_bits"));
 
-    std::remove(expected_file.c_str());
+    (void)std::remove(expected_file.c_str());
     std::filesystem::remove_all(test_dir);
 }
 

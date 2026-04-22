@@ -27,9 +27,9 @@ RealtimeTrajectoryLogger::~RealtimeTrajectoryLogger() {
         } catch (const std::exception& e) {
             // Use stderr instead of VIAM_SDK_LOG since the SDK logger may
             // not be alive during destruction (e.g. in tests or shutdown).
-            std::cerr << "RealtimeTrajectoryLogger failed to write JSON on destruction: " << e.what() << std::endl;
+            std::cerr << "RealtimeTrajectoryLogger failed to write JSON on destruction: " << e.what() << '\n';
         } catch (...) {
-            std::cerr << "RealtimeTrajectoryLogger failed to write JSON on destruction (unknown error)" << std::endl;
+            std::cerr << "RealtimeTrajectoryLogger failed to write JSON on destruction (unknown error)\n";
         }
     }
 }
@@ -42,7 +42,10 @@ RealtimeTrajectoryLogger& RealtimeTrajectoryLogger::operator=(RealtimeTrajectory
         if (active_) {
             try {
                 write_and_flush();
+            } catch (const std::exception& e) {
+                std::cerr << "RealtimeTrajectoryLogger failed to write JSON on move: " << e.what() << '\n';
             } catch (...) {
+                std::cerr << "RealtimeTrajectoryLogger failed to write JSON on move: (unknown error)\n";
             }
         }
         root_ = std::move(other.root_);
