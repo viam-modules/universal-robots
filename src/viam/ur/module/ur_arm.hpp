@@ -46,13 +46,6 @@ struct pose_sample {
     vector6d_t p;
 };
 
-void write_trajectory_to_file(const std::string& filepath, const trajectory_samples& samples);
-void write_pose_to_file(const std::string& filepath, const pose_sample& sample);
-void write_waypoints_to_csv(const std::string& filepath, const viam::trajex::totg::waypoint_accumulator& waypoints);
-std::string waypoints_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
-std::string trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
-std::string arm_joint_positions_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
-std::string move_to_position_pose_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string unix_time_iso8601();
 

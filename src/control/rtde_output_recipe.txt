@@ -26,3 +26,13 @@ robot_status_bits
 safety_status_bits
 actual_current
 tcp_offset
+target_q
+target_qd
+target_qdd
+target_current
+target_moment
+target_TCP_speed
+actual_TCP_speed
+joint_temperatures
+joint_control_output
+safety_status

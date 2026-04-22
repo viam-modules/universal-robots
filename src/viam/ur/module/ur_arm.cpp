@@ -1,5 +1,7 @@
 #include "ur_arm.hpp"
 
+#include "trajectory_logger.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -296,82 +298,6 @@ auto make_scope_guard(Callable&& cleanup) {
 }
 
 }  // namespace
-
-void write_trajectory_to_file(const std::string& filepath, const trajectory_samples& samples) {
-    std::ofstream of(filepath);
-    std::visit(
-        [&of](const auto& pts) {
-            using point_type = typename std::decay_t<decltype(pts)>::value_type;
-            if constexpr (std::is_same_v<point_type, trajectory_sample_point_pva>) {
-                of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5,a0,a1,a2,a3,a4,a5\n";
-            } else {
-                of << "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n";
-            }
-            float time_traj = 0;
-            for (const auto& pt : pts) {
-                time_traj += pt.timestep;
-                of << time_traj;
-                for (size_t j = 0; j < pt.p.size(); j++) {
-                    of << "," << pt.p[j];
-                }
-                for (size_t j = 0; j < pt.v.size(); j++) {
-                    of << "," << pt.v[j];
-                }
-                if constexpr (requires { pt.a; }) {
-                    for (size_t j = 0; j < pt.a.size(); j++) {
-                        of << "," << pt.a[j];
-                    }
-                }
-                of << "\n";
-            }
-        },
-        samples);
-    of.close();
-}
-
-void write_pose_to_file(const std::string& filepath, const pose_sample& sample) {
-    std::ofstream of(filepath);
-    of << "x,y,z,rx,ry,rz\n";
-    of << sample.p[0];
-    for (size_t i = 1; i < sample.p.size(); i++) {
-        of << "," << sample.p[i];
-    }
-    of << "\n";
-    of.close();
-}
-
-void write_waypoints_to_csv(const std::string& filepath, const viam::trajex::totg::waypoint_accumulator& waypoints) {
-    std::ofstream of(filepath);
-    for (const auto& waypoint : waypoints) {
-        boost::copy(waypoint, boost::io::make_ostream_joiner(of, ","));
-        of << "\n";
-    }
-    of.close();
-}
-
-std::string waypoints_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
-    constexpr char kWaypointsCsvNameTemplate[] = "/%1%_%2%_waypoints.csv";
-    auto fmt = boost::format(path + kWaypointsCsvNameTemplate);
-    return (fmt % unix_time % resource_name).str();
-}
-
-std::string trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
-    constexpr char kTrajectoryCsvNameTemplate[] = "/%1%_%2%_trajectory.csv";
-    auto fmt = boost::format(path + kTrajectoryCsvNameTemplate);
-    return (fmt % unix_time % resource_name).str();
-}
-
-std::string move_to_position_pose_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
-    constexpr char kPoseCsvNameTemplate[] = "/%1%_%2%_move_to_position_pose.csv";
-    auto fmt = boost::format(path + kPoseCsvNameTemplate);
-    return (fmt % unix_time % resource_name).str();
-}
-
-std::string arm_joint_positions_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
-    constexpr char kArmJointPositionsCsvNameTemplate[] = "/%1%_%2%_arm_joint_positions.csv";
-    auto fmt = boost::format(path + kArmJointPositionsCsvNameTemplate);
-    return (fmt % unix_time % resource_name).str();
-}
 
 std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
     constexpr char kFailedTrajectoryJsonNameTemplate[] = "/%1%_%2%_failed_trajectory.json";
@@ -793,13 +719,15 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     // create a pose_sample for tool-space movement
     const pose_sample ps{target_pose};
 
-    // Write ur pose to file for debugging purposes
-    const std::string& path = current_state_->telemetry_output_path();
-    write_pose_to_file(move_to_position_pose_filename(path, current_state_->resource_name(), unix_time), ps);
+    const std::string& telemetry_path = current_state_->telemetry_output_path();
 
-    // For pose-space moves, we don't log joint data since we only have the target pose
-    auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock)]() mutable {
-        return current_state_->enqueue_move_request(current_move_epoch, std::nullopt, std::move(async_cancellation_monitor), ps);
+    RealtimeTrajectoryLogger logger(telemetry_path, unix_time, model_.to_string(), current_state_->resource_name());
+    logger.set_velocity_limits(current_state_->get_velocity_limits());
+    logger.set_acceleration_limits(current_state_->get_acceleration_limits());
+
+    auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
+        return current_state_->enqueue_move_request(
+            current_move_epoch, std::optional<RealtimeTrajectoryLogger>{std::move(logger)}, std::move(async_cancellation_monitor), ps);
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
@@ -861,6 +789,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         .segment_totg = current_state_->segment_for_trajex(),
     });
 
+    std::optional<viam::trajex::totg::waypoint_accumulator> captured_waypoints;
+
     planner
         .with_waypoint_provider([&](auto& p) {
             auto curr_joint_pos = get_joint_positions_rad_(our_config_rlock);
@@ -870,8 +800,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             viam::trajex::totg::waypoint_accumulator accumulator{*current_pos};
             accumulator.add_waypoints(waypoints);
 
-            write_waypoints_to_csv(waypoints_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time),
-                                   accumulator);
+            captured_waypoints = accumulator;
             return accumulator;
         })
 
@@ -1100,16 +1029,18 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
 
     const std::string& telemetry_path = current_state_->telemetry_output_path();
-    write_trajectory_to_file(trajectory_filename(telemetry_path, current_state_->resource_name(), unix_time), *result->samples);
 
-    std::ofstream ajp_of(arm_joint_positions_filename(telemetry_path, current_state_->resource_name(), unix_time));
-    ajp_of << "time_ms,read_attempt,"
-              "joint_0_pos,joint_1_pos,joint_2_pos,joint_3_pos,joint_4_pos,joint_5_pos,"
-              "joint_0_vel,joint_1_vel,joint_2_vel,joint_3_vel,joint_4_vel,joint_5_vel\n";
+    RealtimeTrajectoryLogger logger(telemetry_path, unix_time, model_.to_string(), current_state_->resource_name());
+    logger.set_velocity_limits(current_state_->get_velocity_limits());
+    logger.set_acceleration_limits(current_state_->get_acceleration_limits());
+    if (captured_waypoints) {
+        logger.set_waypoints(*captured_waypoints);
+    }
+    logger.set_planned_trajectory(*result->samples);
 
-    auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), ajp_of = std::move(ajp_of)]() mutable {
+    auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
         return current_state_->enqueue_move_request(current_move_epoch,
-                                                    std::optional<std::ofstream>{std::move(ajp_of)},
+                                                    std::optional<RealtimeTrajectoryLogger>{std::move(logger)},
                                                     std::move(async_cancellation_monitor),
                                                     std::move(*result->samples));
     }();

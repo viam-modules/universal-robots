@@ -134,7 +134,14 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
 
                 } else {
                     // TODO: is it assured that we have positions/velocities here?
-                    state.move_request_->write_joint_data(state.ephemeral_->joint_positions, state.ephemeral_->joint_velocities);
+                    state.move_request_->write_realtime_sample(
+                        *state.ephemeral_,
+                        arm_conn_->robot_status_bits
+                            ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->robot_status_bits->to_ulong()))
+                            : std::nullopt,
+                        arm_conn_->safety_status_bits
+                            ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->safety_status_bits->to_ulong()))
+                            : std::nullopt);
                     return std::nullopt;
                 }
 
@@ -187,7 +194,15 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     return std::nullopt;
 
                 } else {
-                    // If already sent, nothing to do
+                    // Pose sent, waiting for completion — record realtime sample
+                    state.move_request_->write_realtime_sample(
+                        *state.ephemeral_,
+                        arm_conn_->robot_status_bits
+                            ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->robot_status_bits->to_ulong()))
+                            : std::nullopt,
+                        arm_conn_->safety_status_bits
+                            ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->safety_status_bits->to_ulong()))
+                            : std::nullopt);
                     return std::nullopt;
                 }
             }
