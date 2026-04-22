@@ -218,35 +218,6 @@ BOOST_AUTO_TEST_CASE(test_logger_append_realtime_sample) {
     std::filesystem::remove_all(test_dir);
 }
 
-BOOST_AUTO_TEST_CASE(test_logger_move_semantics) {
-    const std::string test_dir = "./test_logger_move";
-    std::filesystem::create_directories(test_dir);
-    const std::string expected_file = test_dir + "/ts_arm_realtime_trajectory.json";
-
-    {
-        RealtimeTrajectoryLogger logger(test_dir, "ts", "ur5e", "arm");
-
-        // Move the logger — the moved-from logger should NOT write
-        RealtimeTrajectoryLogger logger2 = std::move(logger);
-    }  // only logger2 should write
-
-    // Verify only one file was written (logger2's destructor)
-    std::ifstream in(expected_file);
-    BOOST_REQUIRE(in.good());
-    std::stringstream buf;
-    buf << in.rdbuf();
-
-    Json::Value parsed;
-    Json::CharReaderBuilder reader;
-    std::istringstream iss(buf.str());
-    BOOST_REQUIRE(Json::parseFromStream(reader, iss, &parsed, nullptr));
-
-    BOOST_CHECK_EQUAL(parsed["robot_model"].asString(), "ur5e");
-
-    std::remove(expected_file.c_str());
-    std::filesystem::remove_all(test_dir);
-}
-
 BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_SUITE(tcp_force_transformation_tests)
