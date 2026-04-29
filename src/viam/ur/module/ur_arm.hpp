@@ -196,5 +196,10 @@ class URArm final : public Arm, public Reconfigurable {
     std::shared_mutex config_mutex_;
     std::unique_ptr<state_> current_state_;
 
+    // Empty when the arm uses the static-file kinematics path; non-empty when
+    // the DH-form JSON synthesized from the controller's DH parameters should
+    // be returned by get_kinematics().
+    std::string dh_kinematics_json_;
+
     std::unordered_map<std::string, std::vector<std::string>> arm_name_to_model_parts_;
 };

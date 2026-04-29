@@ -21,7 +21,7 @@ class universal_robots(ConanFile):
     }
 
     def export_sources(self):
-        for pat in ["CMakeLists.txt", "LICENSE", "src/*", "meta.json*", "*.sh"]:
+        for pat in ["CMakeLists.txt", "LICENSE", "src/*", "meta.json*", "*.sh", "cmake/*"]:
             copy(self, pat, self.recipe_folder, self.export_sources_folder)
 
     def set_version(self):
@@ -34,9 +34,9 @@ class universal_robots(ConanFile):
     def requirements(self):
         # NOTE: If you update the `viam-cpp-sdk` dependency here, it
         # should also be updated in `bin/setup.sh`.
+        self.requires("boost/[>=1.74.0 <1.90.0]", override=True, force=True)
         self.requires("viam-cpp-sdk/[>=0.31.0]")
         self.requires("eigen/[>=3.4 <5.0]")
-        self.requires("boost/[>=1.74.0]")
         self.requires("jsoncpp/[>=1.9.5]")
         self.requires("grpc/[>=1.48.4]")
 

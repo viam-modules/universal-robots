@@ -803,3 +803,47 @@ vector6d_t URArm::state_::clamp_limits_(vector6d_t desired, const std::optional<
     }
     return desired;
 }
+
+urcl::primary_interface::ConfigurationData URArm::state_::fetch_configuration_data_() {
+    const std::lock_guard lock{mutex_};
+    return std::visit(
+        [](auto& s) -> urcl::primary_interface::ConfigurationData {
+            using S = std::decay_t<decltype(s)>;
+            if constexpr (std::is_base_of_v<state_connected_, S>) {
+                auto primary = s.arm_conn_->driver->getPrimaryClient();
+                if (!primary) {
+                    throw std::runtime_error("primary client unavailable on UrDriver");
+                }
+                auto cfg = primary->getConfigurationData();
+                if (!cfg) {
+                    throw std::runtime_error("controller has not delivered ConfigurationData yet");
+                }
+                return *cfg;
+            } else {
+                throw std::runtime_error("cannot fetch configuration data: arm is not connected");
+            }
+        },
+        current_state_);
+}
+
+urcl::primary_interface::KinematicsInfo URArm::state_::fetch_kinematics_info_() {
+    const std::lock_guard lock{mutex_};
+    return std::visit(
+        [](auto& s) -> urcl::primary_interface::KinematicsInfo {
+            using S = std::decay_t<decltype(s)>;
+            if constexpr (std::is_base_of_v<state_connected_, S>) {
+                auto primary = s.arm_conn_->driver->getPrimaryClient();
+                if (!primary) {
+                    throw std::runtime_error("primary client unavailable on UrDriver");
+                }
+                auto kin = primary->getKinematicsInfo();
+                if (!kin) {
+                    throw std::runtime_error("controller has not delivered KinematicsInfo yet");
+                }
+                return *kin;
+            } else {
+                throw std::runtime_error("cannot fetch kinematics info: arm is not connected");
+            }
+        },
+        current_state_);
+}

@@ -8,6 +8,9 @@
 #include <thread>
 #include <variant>
 
+#include <ur_client_library/primary/primary_consumer.h>
+#include <ur_client_library/primary/robot_state/configuration_data.h>
+#include <ur_client_library/primary/robot_state/kinematics_info.h>
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
@@ -98,6 +101,18 @@ class URArm::state_ {
     bool is_moving() const;
     std::string describe() const;
     bool is_current_state_controlled(std::string* description = nullptr) const;
+
+    // Fetches the controller's ConfigurationData via the primary client.
+    // Throws std::runtime_error if no arm connection is currently established
+    // (i.e. state machine is in state_disconnected_) or if the primary client
+    // has not yet received configuration data.
+    urcl::primary_interface::ConfigurationData fetch_configuration_data_();
+
+    // Fetches the controller's KinematicsInfo (calibrated DH parameters: nominal
+    // values combined with the per-arm calibration deltas).
+    // Throws std::runtime_error if no arm connection is currently established
+    // or if no KinematicsInfo packet arrives within the polling timeout.
+    urcl::primary_interface::KinematicsInfo fetch_kinematics_info_();
 
     std::optional<std::shared_future<void>> cancel_move_request();
 

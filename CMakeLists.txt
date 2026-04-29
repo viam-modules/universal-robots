@@ -128,6 +128,10 @@ FetchContent_Declare(
   GIT_TAG        2.10.0
   GIT_SHALLOW TRUE
   SYSTEM
+  # Expose getKinematicsInfo() on PrimaryClient so URArm can read the controller's
+  # calibrated DH parameters. Idempotent: if the patch is already applied (e.g. on
+  # a re-fetch), the reverse-check succeeds and we skip re-applying.
+  PATCH_COMMAND sh -c "git apply --reverse --check ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/urcl-expose-kinematics-info.patch 2>/dev/null || git apply ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/urcl-expose-kinematics-info.patch"
 )
 FetchContent_MakeAvailable(Universal_Robots_Client_Library)
 
@@ -223,6 +227,7 @@ target_include_directories(viam-ur
 
 target_sources(viam-ur
   PRIVATE
+    src/viam/ur/module/dh_kinematics.cpp
     src/viam/ur/module/ur_arm.cpp
     src/viam/ur/module/ur_arm_state.cpp
     src/viam/ur/module/ur_arm_state_connected.cpp

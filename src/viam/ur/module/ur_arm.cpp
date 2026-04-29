@@ -63,6 +63,7 @@
 #include <xtensor/xnorm.hpp>
 #endif
 
+#include "dh_kinematics.hpp"
 #include "ur_arm_state.hpp"
 #include "utils.hpp"
 
@@ -477,6 +478,42 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     VIAM_SDK_LOG(debug) << "URArm starting up";
     current_state_ = state_::create(configured_model_type, name(), cfg, ports_);
 
+    const std::string dh_model_name = [&]() -> std::string {
+        if (model_ == URArm::model("ur20")) return "ur20";
+        if (model_ == URArm::model("ur5e")) return "ur5e";
+        return "";
+    }();
+    if (!dh_model_name.empty()) {
+        VIAM_SDK_LOG(info) << "Fetching calibrated DH parameters from controller for " << dh_model_name;
+        auto kin_info = current_state_->fetch_kinematics_info_();
+
+        const auto fmt6 = [](const urcl::vector6d_t& v) {
+            std::ostringstream os;
+            os << "[";
+            for (size_t i = 0; i < v.size(); ++i) {
+                if (i) os << ", ";
+                os << v[i];
+            }
+            os << "]";
+            return os.str();
+        };
+        VIAM_SDK_LOG(info) << "Calibrated KinematicsInfo received -- "
+                           << "a="     << fmt6(kin_info.dh_a_)     << ", "
+                           << "d="     << fmt6(kin_info.dh_d_)     << ", "
+                           << "alpha=" << fmt6(kin_info.dh_alpha_) << ", "
+                           << "theta=" << fmt6(kin_info.dh_theta_)
+                           << " (theta is dropped: rdk-fork DH schema has no theta field)";
+
+        viam_ur::DHParams6 dh{};
+        dh.a = kin_info.dh_a_;
+        dh.d = kin_info.dh_d_;
+        dh.alpha = kin_info.dh_alpha_;
+
+        dh_kinematics_json_ = viam_ur::build_dh_kinematics_json(dh_model_name, dh);
+        VIAM_SDK_LOG(info) << "Synthesized DH-form kinematics JSON for " << dh_model_name << " from calibrated DH ("
+                           << dh_kinematics_json_.size() << " bytes)";
+    }
+
     VIAM_SDK_LOG(info) << "URArm startup complete";
     failure_handler.deactivate();
 }
@@ -566,6 +603,11 @@ void URArm::move_to_position(const pose& p, const ProtoStruct&) {
 viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
+
+    if (!dh_kinematics_json_.empty()) {
+        return viam::sdk::KinematicsDataSVA(
+            std::vector<unsigned char>(dh_kinematics_json_.begin(), dh_kinematics_json_.end()));
+    }
 
     // The `Model` class absurdly lacks accessors
     const std::string model_string = [&] {
@@ -667,6 +709,8 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     constexpr char k_clear_pstop[] = "clear_pstop";
     constexpr char k_is_controllable[] = "is_controllable_state";
     constexpr char k_get_state_description[] = "get_state_description";
+    constexpr char k_get_dh_params[] = "get_dh_params";
+    constexpr char k_get_calibrated_dh_params[] = "get_calibrated_dh_params";
 
     // Cache TCP state to ensure atomic read of pose and forces from same timestamp
     std::optional<decltype(current_state_->read_tcp_state_snapshot())> cached_tcp_state;
@@ -737,6 +781,38 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
                 cached_controlled_info->controlled = current_state_->is_current_state_controlled(&cached_controlled_info->description);
             }
             resp.emplace(k_get_state_description, cached_controlled_info->description);
+        } else if (kv.first == k_get_dh_params) {
+            auto controller_cfg = current_state_->fetch_configuration_data_();
+            auto to_array = [](const vector6d_t& v) {
+                std::vector<ProtoValue> arr;
+                arr.reserve(v.size());
+                for (size_t i = 0; i < v.size(); ++i) {
+                    arr.push_back(ProtoValue{v[i]});
+                }
+                return arr;
+            };
+            ProtoStruct dh;
+            dh.emplace("a", to_array(controller_cfg.dh_a_));
+            dh.emplace("d", to_array(controller_cfg.dh_d_));
+            dh.emplace("alpha", to_array(controller_cfg.dh_alpha_));
+            dh.emplace("theta", to_array(controller_cfg.dh_theta_));
+            resp.emplace("dh_params", std::move(dh));
+        } else if (kv.first == k_get_calibrated_dh_params) {
+            auto kin_info = current_state_->fetch_kinematics_info_();
+            auto to_array = [](const vector6d_t& v) {
+                std::vector<ProtoValue> arr;
+                arr.reserve(v.size());
+                for (size_t i = 0; i < v.size(); ++i) {
+                    arr.push_back(ProtoValue{v[i]});
+                }
+                return arr;
+            };
+            ProtoStruct dh;
+            dh.emplace("a", to_array(kin_info.dh_a_));
+            dh.emplace("d", to_array(kin_info.dh_d_));
+            dh.emplace("alpha", to_array(kin_info.dh_alpha_));
+            dh.emplace("theta", to_array(kin_info.dh_theta_));
+            resp.emplace("calibrated_dh_params", std::move(dh));
         } else {
             throw std::runtime_error("unsupported do_command key: " + kv.first);
         }
