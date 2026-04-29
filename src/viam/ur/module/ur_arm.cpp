@@ -502,12 +502,13 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
                            << "d="     << fmt6(kin_info.dh_d_)     << ", "
                            << "alpha=" << fmt6(kin_info.dh_alpha_) << ", "
                            << "theta=" << fmt6(kin_info.dh_theta_)
-                           << " (theta is dropped: rdk-fork DH schema has no theta field)";
+                           << " (theta is baked into the static link pose; chain is emitted in SVA form)";
 
         viam_ur::DHParams6 dh{};
         dh.a = kin_info.dh_a_;
         dh.d = kin_info.dh_d_;
         dh.alpha = kin_info.dh_alpha_;
+        dh.theta = kin_info.dh_theta_;
 
         dh_kinematics_json_ = viam_ur::build_dh_kinematics_json(dh_model_name, dh);
         VIAM_SDK_LOG(info) << "Synthesized DH-form kinematics JSON for " << dh_model_name << " from calibrated DH ("
