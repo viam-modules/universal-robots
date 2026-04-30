@@ -8,6 +8,8 @@
 #include <thread>
 #include <variant>
 
+#include "trajectory_logger.hpp"
+
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
@@ -254,6 +256,14 @@ class URArm::state_ {
         // track how often we attempt to reconnect.
         // We will use this to limit how often logs spam during expected behaviors.
         int local_reconnect_attempts{-1};
+
+        // When a stop event interrupts a move, the trajectory logger is
+        // moved out of the move_request and kept here so it continues to
+        // record realtime samples (capturing the robot's deceleration
+        // behavior during the stop) for a cooldown period.
+        static constexpr auto k_post_stop_recording_duration = std::chrono::seconds(1);
+        std::unique_ptr<RealtimeTrajectoryLogger> post_stop_logger_;
+        std::optional<std::chrono::steady_clock::time_point> post_stop_recording_deadline_;
     };
 
     struct event_connection_established_ {
@@ -324,15 +334,17 @@ class URArm::state_ {
 
         using async_cancellation_monitor = std::function<bool()>;
 
-        explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream,
+        explicit move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
                               move_command_data&& move_command);
 
-        explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream,
+        explicit move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
                               trajectory_samples&& ts);
 
-        explicit move_request(std::optional<std::ofstream> arm_joint_positions_stream, async_cancellation_monitor monitor, pose_sample ps);
+        explicit move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+                              async_cancellation_monitor monitor,
+                              pose_sample ps);
 
         std::shared_future<void> cancel();
 
@@ -342,12 +354,13 @@ class URArm::state_ {
         void complete_error(std::string_view message);
         void cancel_error(std::string_view message);
 
-        void write_joint_data(vector6d_t& position, vector6d_t& velocity);
+        void write_realtime_sample(const ephemeral_data& data,
+                                   std::optional<uint32_t> robot_status_bits,
+                                   std::optional<uint32_t> safety_status_bits) const;
 
-        std::optional<std::ofstream> arm_joint_positions_stream;
+        std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger;
         async_cancellation_monitor async_cancel_monitor;
         move_command_data move_command;
-        std::size_t arm_joint_positions_sample{0};
         std::promise<void> completion;
 
         struct cancellation_request {
@@ -430,13 +443,7 @@ class URArm::state_ {
     std::atomic<std::size_t> move_epoch_{0};
     std::optional<move_request> move_request_;
 
-    struct ephemeral_ {
-        vector6d_t joint_positions;
-        vector6d_t joint_velocities;
-        vector6d_t tcp_state;
-        vector6d_t tcp_forces;
-    };
-    std::optional<struct ephemeral_> ephemeral_;
+    std::optional<ephemeral_data> ephemeral_;
 };
 
 template <typename... Args>

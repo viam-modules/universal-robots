@@ -223,6 +223,7 @@ target_include_directories(viam-ur
 
 target_sources(viam-ur
   PRIVATE
+    src/viam/ur/module/trajectory_logger.cpp
     src/viam/ur/module/ur_arm.cpp
     src/viam/ur/module/ur_arm_state.cpp
     src/viam/ur/module/ur_arm_state_connected.cpp

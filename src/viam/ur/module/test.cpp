@@ -1,5 +1,6 @@
 #define BOOST_TEST_MODULE test module test_ur5e
 
+#include "trajectory_logger.hpp"
 #include "ur_arm.hpp"
 #include "utils.hpp"
 
@@ -40,86 +41,184 @@ Eigen::VectorXd makeVector(std::vector<double> data) {
 
 BOOST_AUTO_TEST_SUITE(test_1)
 
-BOOST_AUTO_TEST_CASE(test_write_waypoints_to_csv) {
-    const xt::xarray<double> waypoints_array = {{10.1, 0, 0, 0, 0, 0},
-                                                {20.2, 0, 0, 0, 0, 0},
-                                                {30.3, 0, 0, 0, 0, 0},
-                                                {40.4, 0, 0, 0, 0, 0},
-                                                {50.5, 0, 0, 0, 0, 0},
-                                                {60.6, 0, 0, 0, 0, 0},
-                                                {70.7, 0, 0, 0, 0, 0},
-                                                {80.8, 0, 0, 0, 0, 0}};
-    const viam::trajex::totg::waypoint_accumulator waypoints(waypoints_array);
-
-    const auto* const expected =
-        "10.1,0,0,0,0,0\n"
-        "20.2,0,0,0,0,0\n"
-        "30.3,0,0,0,0,0\n"
-        "40.4,0,0,0,0,0\n"
-        "50.5,0,0,0,0,0\n"
-        "60.6,0,0,0,0,0\n"
-        "70.7,0,0,0,0,0\n"
-        "80.8,0,0,0,0,0\n";
-
-    write_waypoints_to_csv("./write_waypoints_to_csv_test.csv", waypoints);
-    const std::ifstream csv("./write_waypoints_to_csv_test.csv");
-    std::stringstream buf;
-    buf << csv.rdbuf();
-    BOOST_CHECK_EQUAL(std::remove("./write_waypoints_to_csv_test.csv"), 0);
-    BOOST_CHECK_EQUAL(buf.str(), expected);
-}
-
-BOOST_AUTO_TEST_CASE(test_write_trajectory_to_file) {
-    const trajectory_samples samples = std::vector<trajectory_sample_point_pv>{{{1.1, 2, 3, 4, 5, 6}, {1.2, 2, 3, 4, 5, 6}, 1.2F},
-                                                                               {{3.1, 2, 3, 4, 5, 6}, {4.2, 2, 3, 4, 5, 6}, 0.8F},
-                                                                               {{6.1, 2, 3, 4, 5, 6}, {7.1, 2, 3, 4, 5, 6}, 1},
-                                                                               {{9.1, 2, 3, 4, 5, 6}, {10.1, 2, 3, 4, 5, 6}, 1}};
-
-    const auto* const expected =
-        "t(s),j0,j1,j2,j3,j4,j5,v0,v1,v2,v3,v4,v5\n"
-        "1.2,1.1,2,3,4,5,6,1.2,2,3,4,5,6\n"
-        "2,3.1,2,3,4,5,6,4.2,2,3,4,5,6\n"
-        "3,6.1,2,3,4,5,6,7.1,2,3,4,5,6\n"
-        "4,9.1,2,3,4,5,6,10.1,2,3,4,5,6\n";
-
-    write_trajectory_to_file("./write_trajectory_to_file_test.csv", samples);
-    const std::ifstream csv("./write_trajectory_to_file_test.csv");
-    std::stringstream buf;
-    buf << csv.rdbuf();
-    BOOST_CHECK_EQUAL(std::remove("./write_trajectory_to_file_test.csv"), 0);
-    BOOST_CHECK_EQUAL(buf.str(), expected);
-}
-
 using namespace std::chrono_literals;
 
-BOOST_AUTO_TEST_CASE(test_waypoints_filename) {
+BOOST_AUTO_TEST_CASE(test_realtime_trajectory_filename) {
     const std::string k_path = "/home/user";
     const std::string k_resource_name = "test_arm";
     const auto timestamp = unix_time_iso8601();
-    const auto path = k_path + "/" + timestamp + "_" + k_resource_name + "_waypoints.csv";
+    const auto expected = k_path + "/" + timestamp + "_" + k_resource_name + "_realtime_trajectory.json";
 
-    auto x = waypoints_filename(k_path, k_resource_name, timestamp);
-    BOOST_CHECK_EQUAL(x, path);
+    auto x = RealtimeTrajectoryLogger::realtime_trajectory_filename(k_path, k_resource_name, timestamp);
+    BOOST_CHECK_EQUAL(x, expected);
 }
 
-BOOST_AUTO_TEST_CASE(test_trajectory_filename) {
-    const std::string k_path = "/home/user";
-    const std::string k_resource_name = "test_arm";
-    const auto timestamp = unix_time_iso8601();
-    const auto path = k_path + "/" + timestamp + "_" + k_resource_name + "_trajectory.csv";
+BOOST_AUTO_TEST_CASE(test_logger_construction_destruction_writes_json) {
+    const std::string test_dir = "./test_logger_output";
+    std::filesystem::create_directories(test_dir);
 
-    auto x = trajectory_filename(k_path, k_resource_name, timestamp);
-    BOOST_CHECK_EQUAL(x, path);
+    const std::string timestamp = "2026-04-21T00:00:00.000000Z";
+    const std::string model = "ur5e";
+    const std::string resource = "test_arm";
+    const std::string expected_file = test_dir + "/" + timestamp + "_" + resource + "_realtime_trajectory.json";
+
+    {
+        const RealtimeTrajectoryLogger logger(test_dir, timestamp, model, resource);
+    }  // destructor writes JSON
+
+    const std::ifstream in(expected_file);
+    BOOST_REQUIRE(in.good());
+    std::stringstream buf;
+    buf << in.rdbuf();
+
+    Json::Value parsed;
+    const Json::CharReaderBuilder reader;
+    std::istringstream iss(buf.str());
+    BOOST_REQUIRE(Json::parseFromStream(reader, iss, &parsed, nullptr));
+
+    BOOST_CHECK_EQUAL(parsed["timestamp"].asString(), timestamp);
+    BOOST_CHECK_EQUAL(parsed["robot_model"].asString(), model);
+    BOOST_CHECK_EQUAL(parsed["resource_name"].asString(), resource);
+    BOOST_CHECK(parsed["realtime_samples"].isArray());
+    BOOST_CHECK_EQUAL(parsed["realtime_samples"].size(), 0U);
+
+    (void)std::remove(expected_file.c_str());
+    std::filesystem::remove_all(test_dir);
 }
 
-BOOST_AUTO_TEST_CASE(test_arm_joint_positions_filename) {
-    const std::string k_path = "/home/user";
-    const std::string k_resource_name = "test_arm";
-    const auto timestamp = unix_time_iso8601();
-    const auto path = k_path + "/" + timestamp + "_" + k_resource_name + "_arm_joint_positions.csv";
+BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pv) {
+    const std::string test_dir = "./test_logger_pv";
+    std::filesystem::create_directories(test_dir);
+    const std::string expected_file = test_dir + "/ts_arm_realtime_trajectory.json";
 
-    auto x = arm_joint_positions_filename(k_path, k_resource_name, timestamp);
-    BOOST_CHECK_EQUAL(x, path);
+    {
+        RealtimeTrajectoryLogger logger(test_dir, "ts", "ur5e", "arm");
+
+        const trajectory_samples samples = std::vector<trajectory_sample_point_pv>{
+            {{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {0.1, 0.2, 0.3, 0.4, 0.5, 0.6}, 0.5F},
+            {{2.0, 3.0, 4.0, 5.0, 6.0, 7.0}, {0.2, 0.3, 0.4, 0.5, 0.6, 0.7}, 0.5F},
+        };
+        logger.set_planned_trajectory(samples);
+    }
+
+    const std::ifstream in(expected_file);
+    BOOST_REQUIRE(in.good());
+    std::stringstream buf;
+    buf << in.rdbuf();
+
+    Json::Value parsed;
+    const Json::CharReaderBuilder reader;
+    std::istringstream iss(buf.str());
+    BOOST_REQUIRE(Json::parseFromStream(reader, iss, &parsed, nullptr));
+
+    BOOST_REQUIRE(parsed["planned_trajectory"].isArray());
+    BOOST_CHECK_EQUAL(parsed["planned_trajectory"].size(), 2U);
+
+    const auto& first = parsed["planned_trajectory"][0];
+    BOOST_CHECK(first["positions_rad"].isArray());
+    BOOST_CHECK(first["velocities_rad_per_sec"].isArray());
+    BOOST_CHECK(!first.isMember("accelerations_rad_per_sec2"));
+    BOOST_CHECK_CLOSE(first["time_from_start_sec"].asDouble(), 0.5, 1e-3);
+
+    const auto& second = parsed["planned_trajectory"][1];
+    BOOST_CHECK_CLOSE(second["time_from_start_sec"].asDouble(), 1.0, 1e-3);
+
+    (void)std::remove(expected_file.c_str());
+    std::filesystem::remove_all(test_dir);
+}
+
+BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pva) {
+    const std::string test_dir = "./test_logger_pva";
+    std::filesystem::create_directories(test_dir);
+    const std::string expected_file = test_dir + "/ts_arm_realtime_trajectory.json";
+
+    {
+        RealtimeTrajectoryLogger logger(test_dir, "ts", "ur5e", "arm");
+
+        const trajectory_samples samples = std::vector<trajectory_sample_point_pva>{
+            {{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {0.1, 0.2, 0.3, 0.4, 0.5, 0.6}, {0.01, 0.02, 0.03, 0.04, 0.05, 0.06}, 1.0F},
+        };
+        logger.set_planned_trajectory(samples);
+    }
+
+    const std::ifstream in(expected_file);
+    BOOST_REQUIRE(in.good());
+    std::stringstream buf;
+    buf << in.rdbuf();
+
+    Json::Value parsed;
+    const Json::CharReaderBuilder reader;
+    std::istringstream iss(buf.str());
+    BOOST_REQUIRE(Json::parseFromStream(reader, iss, &parsed, nullptr));
+
+    const auto& first = parsed["planned_trajectory"][0];
+    BOOST_CHECK(first.isMember("accelerations_rad_per_sec2"));
+    BOOST_CHECK_EQUAL(first["accelerations_rad_per_sec2"].size(), 6U);
+
+    (void)std::remove(expected_file.c_str());
+    std::filesystem::remove_all(test_dir);
+}
+
+BOOST_AUTO_TEST_CASE(test_logger_append_realtime_sample) {
+    const std::string test_dir = "./test_logger_samples";
+    std::filesystem::create_directories(test_dir);
+    const std::string expected_file = test_dir + "/ts_arm_realtime_trajectory.json";
+
+    {
+        RealtimeTrajectoryLogger logger(test_dir, "ts", "ur5e", "arm");
+
+        ephemeral_data data{};
+        data.joint_positions = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
+        data.joint_velocities = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6};
+        data.tcp_state = {0.5, 0.6, 0.7, 0.8, 0.9, 1.0};
+        data.tcp_forces = {10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
+        data.target_joint_positions = {1.1, 2.1, 3.1, 4.1, 5.1, 6.1};
+        data.target_joint_velocities = {0.11, 0.21, 0.31, 0.41, 0.51, 0.61};
+        data.target_joint_accelerations = {0.01, 0.02, 0.03, 0.04, 0.05, 0.06};
+        data.target_current = {0.5, 0.5, 0.5, 0.5, 0.5, 0.5};
+        data.target_moment = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+        data.target_tcp_speed = {0.1, 0.1, 0.1, 0.1, 0.1, 0.1};
+        data.actual_tcp_speed = {0.09, 0.09, 0.09, 0.09, 0.09, 0.09};
+        data.joint_temperatures = {30.0, 31.0, 32.0, 33.0, 34.0, 35.0};
+        data.joint_control_output = {0.5, 0.6, 0.7, 0.8, 0.9, 1.0};
+        data.actual_current = {0.4, 0.5, 0.6, 0.7, 0.8, 0.9};
+        data.actual_joint_voltage = {48.0, 48.0, 48.0, 48.0, 48.0, 48.0};
+        data.speed_scaling = 1.0;
+        data.safety_status = 1;
+
+        logger.append_realtime_sample(1776952800000000ULL, data, 3, 1);
+        logger.append_realtime_sample(1776952800010000ULL, data, std::nullopt, std::nullopt);
+    }
+
+    const std::ifstream in(expected_file);
+    BOOST_REQUIRE(in.good());
+    std::stringstream buf;
+    buf << in.rdbuf();
+
+    Json::Value parsed;
+    const Json::CharReaderBuilder reader;
+    std::istringstream iss(buf.str());
+    BOOST_REQUIRE(Json::parseFromStream(reader, iss, &parsed, nullptr));
+
+    BOOST_REQUIRE_EQUAL(parsed["realtime_samples"].size(), 2U);
+
+    const auto& s0 = parsed["realtime_samples"][0];
+    BOOST_CHECK_EQUAL(s0["timestamp_us"].asUInt64(), 1776952800000000ULL);
+    BOOST_CHECK_EQUAL(s0["positions_rad"].size(), 6U);
+    BOOST_CHECK_CLOSE(s0["positions_rad"][0].asDouble(), 1.0, 1e-9);
+    BOOST_CHECK_EQUAL(s0["robot_status_bits"].asUInt(), 3U);
+    BOOST_CHECK_EQUAL(s0["safety_status_bits"].asUInt(), 1U);
+    BOOST_CHECK_EQUAL(s0["safety_status"].asUInt(), 1U);
+    BOOST_CHECK(s0.isMember("target_positions_rad"));
+    BOOST_CHECK(s0.isMember("joint_temperatures"));
+    BOOST_CHECK(s0.isMember("joint_control_output"));
+
+    const auto& s1 = parsed["realtime_samples"][1];
+    BOOST_CHECK(!s1.isMember("robot_status_bits"));
+    BOOST_CHECK(!s1.isMember("safety_status_bits"));
+
+    (void)std::remove(expected_file.c_str());
+    std::filesystem::remove_all(test_dir);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

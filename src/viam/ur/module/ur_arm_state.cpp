@@ -23,28 +23,6 @@
 #include "ur_arm_config.hpp"
 #include "utils.hpp"
 
-namespace {
-
-void write_joint_data(const vector6d_t& jp, const vector6d_t& jv, std::ostream& of, const std::string& unix_time, std::size_t attempt) {
-    of << unix_time << "," << attempt << ",";
-    for (const double joint_pos : jp) {
-        of << joint_pos << ",";
-    }
-
-    unsigned i = 0;
-    for (const double joint_velocity : jv) {
-        i++;
-        if (i == jv.size()) {
-            of << joint_velocity;
-        } else {
-            of << joint_velocity << ",";
-        }
-    }
-    of << "\n";
-}
-
-}  // namespace
-
 URArm::state_::state_(private_,
                       std::string configured_model_type,
                       std::string resource_name,
@@ -524,12 +502,10 @@ URArm::state_::arm_connection_::~arm_connection_() {
     dashboard.reset();
 }
 
-URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream,
+URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           move_command_data&& move_command)
-    : arm_joint_positions_stream(std::move(arm_joint_positions_stream)),
-      async_cancel_monitor(std::move(monitor)),
-      move_command(std::move(move_command)) {
+    : trajectory_logger(std::move(trajectory_logger)), async_cancel_monitor(std::move(monitor)), move_command(std::move(move_command)) {
     // Validate the move command based on its type
     std::visit(
         [](const auto& cmd) {
@@ -547,16 +523,15 @@ URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint
         this->move_command);
 }
 
-URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream,
+URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           trajectory_samples&& ts)
-    : move_request(std::move(arm_joint_positions_stream), std::move(monitor), move_command_data{std::move(ts)}) {}
+    : move_request(std::move(trajectory_logger), std::move(monitor), move_command_data{std::move(ts)}) {}
 
-URArm::state_::move_request::move_request(std::optional<std::ofstream> arm_joint_positions_stream,
+URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           pose_sample ps)
-    : move_request(
-          std::move(arm_joint_positions_stream), std::move(monitor), move_command_data{std::optional<pose_sample>{std::move(ps)}}) {}
+    : move_request(std::move(trajectory_logger), std::move(monitor), move_command_data{std::optional<pose_sample>{std::move(ps)}}) {}
 
 std::shared_future<void> URArm::state_::move_request::cancel() {
     if (!cancellation_request) {
@@ -598,9 +573,13 @@ void URArm::state_::move_request::cancel_error(std::string_view message) {
     std::exchange(cancellation_request, {})->promise.set_exception(std::make_exception_ptr(std::runtime_error{std::string{message}}));
 }
 
-void URArm::state_::move_request::write_joint_data(vector6d_t& position, vector6d_t& velocity) {
-    if (arm_joint_positions_stream) {
-        ::write_joint_data(position, velocity, *arm_joint_positions_stream, unix_time_iso8601(), arm_joint_positions_sample++);
+void URArm::state_::move_request::write_realtime_sample(const ephemeral_data& data,
+                                                        std::optional<uint32_t> robot_status_bits,
+                                                        std::optional<uint32_t> safety_status_bits) const {
+    if (trajectory_logger) {
+        const auto now_us = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+        trajectory_logger->append_realtime_sample(now_us, data, robot_status_bits, safety_status_bits);
     }
 }
 
