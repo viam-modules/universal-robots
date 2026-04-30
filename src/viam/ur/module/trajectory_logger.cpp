@@ -99,6 +99,9 @@ void RealtimeTrajectoryLogger::append_realtime_sample(uint64_t timestamp_us,
     sample["tcp_forces"] = vector6d_to_json(data.tcp_forces);
     sample["joint_temperatures"] = vector6d_to_json(data.joint_temperatures);
     sample["joint_control_output"] = vector6d_to_json(data.joint_control_output);
+    sample["actual_current"] = vector6d_to_json(data.actual_current);
+    sample["actual_joint_voltage"] = vector6d_to_json(data.actual_joint_voltage);
+    sample["speed_scaling"] = data.speed_scaling;
     if (robot_status_bits) {
         sample["robot_status_bits"] = *robot_status_bits;
     }

@@ -4,6 +4,7 @@ actual_TCP_speed
 actual_current
 actual_digital_input_bits
 actual_digital_output_bits
+actual_joint_voltage
 actual_q
 actual_qd
 analog_io_types

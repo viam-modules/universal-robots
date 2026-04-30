@@ -66,20 +66,23 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     }
     arm_conn_->safety_status_bits = safety_status_bits;
 
+    static const std::string k_actual_current_key = "actual_current";
+    static const std::string k_actual_joint_voltage_key = "actual_joint_voltage";
     static const std::string k_actual_tcp_speed_key = "actual_TCP_speed";
+    static const std::string k_joint_control_output_key = "joint_control_output";
+    static const std::string k_joint_temperatures_key = "joint_temperatures";
     static const std::string k_joints_position_key = "actual_q";
     static const std::string k_joints_velocity_key = "actual_qd";
-    static const std::string k_joint_temperatures_key = "joint_temperatures";
-    static const std::string k_joint_control_output_key = "joint_control_output";
     static const std::string k_safety_status_key = "safety_status";
-    static const std::string k_tcp_key = "actual_TCP_pose";
-    static const std::string k_tcp_force_key = "actual_TCP_force";
+    static const std::string k_speed_scaling_key = "speed_scaling";
+    static const std::string k_target_current_key = "target_current";
+    static const std::string k_target_moment_key = "target_moment";
     static const std::string k_target_q_key = "target_q";
     static const std::string k_target_qd_key = "target_qd";
     static const std::string k_target_qdd_key = "target_qdd";
-    static const std::string k_target_current_key = "target_current";
-    static const std::string k_target_moment_key = "target_moment";
     static const std::string k_target_tcp_speed_key = "target_TCP_speed";
+    static const std::string k_tcp_force_key = "actual_TCP_force";
+    static const std::string k_tcp_key = "actual_TCP_pose";
 
     bool data_good = true;
     vector6d_t joint_positions{};
@@ -135,6 +138,15 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     vector6d_t joint_control_output{};
     arm_conn_->data_package->getData(k_joint_control_output_key, joint_control_output);
 
+    vector6d_t actual_current{};
+    arm_conn_->data_package->getData(k_actual_current_key, actual_current);
+
+    vector6d_t actual_joint_voltage{};
+    arm_conn_->data_package->getData(k_actual_joint_voltage_key, actual_joint_voltage);
+
+    double speed_scaling_val{};
+    arm_conn_->data_package->getData(k_speed_scaling_key, speed_scaling_val);
+
     std::optional<uint32_t> safety_status_val;
     int32_t safety_status_raw{};
     if (arm_conn_->data_package->getData(k_safety_status_key, safety_status_raw)) {
@@ -145,20 +157,23 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     // calls succeed.
     if (data_good) {
         state.ephemeral_ = {
+            std::move(actual_current),
+            std::move(actual_joint_voltage),
+            std::move(actual_tcp_speed),
+            std::move(joint_control_output),
             std::move(joint_positions),
+            std::move(joint_temperatures),
             std::move(joint_velocities),
-            std::move(tcp_state),
-            std::move(tcp_force),
+            safety_status_val,
+            speed_scaling_val,
+            std::move(target_current),
+            std::move(target_qdd),
             std::move(target_q),
             std::move(target_qd),
-            std::move(target_qdd),
-            std::move(target_current),
             std::move(target_moment),
             std::move(target_tcp_speed),
-            std::move(actual_tcp_speed),
-            std::move(joint_temperatures),
-            std::move(joint_control_output),
-            safety_status_val,
+            std::move(tcp_force),
+            std::move(tcp_state),
         };
     }
 

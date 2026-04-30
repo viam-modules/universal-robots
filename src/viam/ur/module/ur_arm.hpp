@@ -47,20 +47,23 @@ struct pose_sample {
 };
 
 struct ephemeral_data_ {
+    vector6d_t actual_current;
+    vector6d_t actual_joint_voltage;
+    vector6d_t actual_tcp_speed;
+    vector6d_t joint_control_output;
     vector6d_t joint_positions;
+    vector6d_t joint_temperatures;
     vector6d_t joint_velocities;
-    vector6d_t tcp_state;
-    vector6d_t tcp_forces;
+    std::optional<uint32_t> safety_status;
+    double speed_scaling;
+    vector6d_t target_current;
+    vector6d_t target_joint_accelerations;
     vector6d_t target_joint_positions;
     vector6d_t target_joint_velocities;
-    vector6d_t target_joint_accelerations;
-    vector6d_t target_current;
     vector6d_t target_moment;
     vector6d_t target_tcp_speed;
-    vector6d_t actual_tcp_speed;
-    vector6d_t joint_temperatures;
-    vector6d_t joint_control_output;
-    std::optional<uint32_t> safety_status;
+    vector6d_t tcp_forces;
+    vector6d_t tcp_state;
 };
 
 std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);

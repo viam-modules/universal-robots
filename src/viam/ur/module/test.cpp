@@ -181,6 +181,9 @@ BOOST_AUTO_TEST_CASE(test_logger_append_realtime_sample) {
         data.actual_tcp_speed = {0.09, 0.09, 0.09, 0.09, 0.09, 0.09};
         data.joint_temperatures = {30.0, 31.0, 32.0, 33.0, 34.0, 35.0};
         data.joint_control_output = {0.5, 0.6, 0.7, 0.8, 0.9, 1.0};
+        data.actual_current = {0.4, 0.5, 0.6, 0.7, 0.8, 0.9};
+        data.actual_joint_voltage = {48.0, 48.0, 48.0, 48.0, 48.0, 48.0};
+        data.speed_scaling = 1.0;
         data.safety_status = 1;
 
         logger.append_realtime_sample(1776952800000000ULL, data, 3, 1);
