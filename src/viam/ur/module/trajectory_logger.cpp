@@ -2,7 +2,6 @@
 
 #include <fstream>
 #include <iostream>
-#include <utility>
 
 #include <boost/format.hpp>
 
@@ -21,38 +20,15 @@ RealtimeTrajectoryLogger::RealtimeTrajectoryLogger(const std::filesystem::path& 
 }
 
 RealtimeTrajectoryLogger::~RealtimeTrajectoryLogger() {
-    if (active_) {
-        try {
-            write_and_flush();
-        } catch (const std::exception& e) {
-            // Use stderr instead of VIAM_SDK_LOG since the SDK logger may
-            // not be alive during destruction (e.g. in tests or shutdown).
-            std::cerr << "RealtimeTrajectoryLogger failed to write JSON on destruction: " << e.what() << '\n';
-        } catch (...) {
-            std::cerr << "RealtimeTrajectoryLogger failed to write JSON on destruction (unknown error)\n";
-        }
+    try {
+        write_and_flush();
+    } catch (const std::exception& e) {
+        // Use stderr instead of VIAM_SDK_LOG since the SDK logger may
+        // not be alive during destruction (e.g. in tests or shutdown).
+        std::cerr << "RealtimeTrajectoryLogger failed to write JSON on destruction: " << e.what() << '\n';
+    } catch (...) {
+        std::cerr << "RealtimeTrajectoryLogger failed to write JSON on destruction (unknown error)\n";
     }
-}
-
-RealtimeTrajectoryLogger::RealtimeTrajectoryLogger(RealtimeTrajectoryLogger&& other) noexcept
-    : root_(std::move(other.root_)), output_path_(std::move(other.output_path_)), active_(std::exchange(other.active_, false)) {}
-
-RealtimeTrajectoryLogger& RealtimeTrajectoryLogger::operator=(RealtimeTrajectoryLogger&& other) noexcept {
-    if (this != &other) {
-        if (active_) {
-            try {
-                write_and_flush();
-            } catch (const std::exception& e) {
-                std::cerr << "RealtimeTrajectoryLogger failed to write JSON on move: " << e.what() << '\n';
-            } catch (...) {
-                std::cerr << "RealtimeTrajectoryLogger failed to write JSON on move: (unknown error)\n";
-            }
-        }
-        root_ = std::move(other.root_);
-        output_path_ = std::move(other.output_path_);
-        active_ = std::exchange(other.active_, false);
-    }
-    return *this;
 }
 
 Json::Value RealtimeTrajectoryLogger::vector6d_to_json(const vector6d_t& v) {
@@ -104,12 +80,12 @@ void RealtimeTrajectoryLogger::set_planned_trajectory(const trajectory_samples& 
     root_["planned_trajectory"] = arr;
 }
 
-void RealtimeTrajectoryLogger::append_realtime_sample(const std::string& timestamp_iso,
-                                                      const ephemeral_data& data,
+void RealtimeTrajectoryLogger::append_realtime_sample(uint64_t timestamp_us,
+                                                      const ephemeral_data_& data,
                                                       std::optional<uint32_t> robot_status_bits,
                                                       std::optional<uint32_t> safety_status_bits) {
     Json::Value sample;
-    sample["timestamp"] = timestamp_iso;
+    sample["timestamp_us"] = static_cast<Json::UInt64>(timestamp_us);
     sample["positions_rad"] = vector6d_to_json(data.joint_positions);
     sample["velocities_rad_per_sec"] = vector6d_to_json(data.joint_velocities);
     sample["target_positions_rad"] = vector6d_to_json(data.target_joint_positions);

@@ -721,13 +721,13 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 
     const std::string& telemetry_path = current_state_->telemetry_output_path();
 
-    RealtimeTrajectoryLogger logger(telemetry_path, unix_time, model_.to_string(), current_state_->resource_name());
-    logger.set_velocity_limits(current_state_->get_velocity_limits());
-    logger.set_acceleration_limits(current_state_->get_acceleration_limits());
+    auto logger =
+        std::make_unique<RealtimeTrajectoryLogger>(telemetry_path, unix_time, model_.to_string(), current_state_->resource_name());
+    logger->set_velocity_limits(current_state_->get_velocity_limits());
+    logger->set_acceleration_limits(current_state_->get_acceleration_limits());
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
-        return current_state_->enqueue_move_request(
-            current_move_epoch, std::optional<RealtimeTrajectoryLogger>{std::move(logger)}, std::move(async_cancellation_monitor), ps);
+        return current_state_->enqueue_move_request(current_move_epoch, std::move(logger), std::move(async_cancellation_monitor), ps);
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
@@ -1030,19 +1030,18 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     const std::string& telemetry_path = current_state_->telemetry_output_path();
 
-    RealtimeTrajectoryLogger logger(telemetry_path, unix_time, model_.to_string(), current_state_->resource_name());
-    logger.set_velocity_limits(current_state_->get_velocity_limits());
-    logger.set_acceleration_limits(current_state_->get_acceleration_limits());
+    auto logger =
+        std::make_unique<RealtimeTrajectoryLogger>(telemetry_path, unix_time, model_.to_string(), current_state_->resource_name());
+    logger->set_velocity_limits(current_state_->get_velocity_limits());
+    logger->set_acceleration_limits(current_state_->get_acceleration_limits());
     if (captured_waypoints) {
-        logger.set_waypoints(*captured_waypoints);
+        logger->set_waypoints(*captured_waypoints);
     }
-    logger.set_planned_trajectory(*result->samples);
+    logger->set_planned_trajectory(*result->samples);
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
-        return current_state_->enqueue_move_request(current_move_epoch,
-                                                    std::optional<RealtimeTrajectoryLogger>{std::move(logger)},
-                                                    std::move(async_cancellation_monitor),
-                                                    std::move(*result->samples));
+        return current_state_->enqueue_move_request(
+            current_move_epoch, std::move(logger), std::move(async_cancellation_monitor), std::move(*result->samples));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact

@@ -502,7 +502,7 @@ URArm::state_::arm_connection_::~arm_connection_() {
     dashboard.reset();
 }
 
-URArm::state_::move_request::move_request(std::optional<RealtimeTrajectoryLogger> trajectory_logger,
+URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           move_command_data&& move_command)
     : trajectory_logger(std::move(trajectory_logger)), async_cancel_monitor(std::move(monitor)), move_command(std::move(move_command)) {
@@ -523,12 +523,12 @@ URArm::state_::move_request::move_request(std::optional<RealtimeTrajectoryLogger
         this->move_command);
 }
 
-URArm::state_::move_request::move_request(std::optional<RealtimeTrajectoryLogger> trajectory_logger,
+URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           trajectory_samples&& ts)
     : move_request(std::move(trajectory_logger), std::move(monitor), move_command_data{std::move(ts)}) {}
 
-URArm::state_::move_request::move_request(std::optional<RealtimeTrajectoryLogger> trajectory_logger,
+URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           pose_sample ps)
     : move_request(std::move(trajectory_logger), std::move(monitor), move_command_data{std::optional<pose_sample>{std::move(ps)}}) {}
@@ -573,29 +573,13 @@ void URArm::state_::move_request::cancel_error(std::string_view message) {
     std::exchange(cancellation_request, {})->promise.set_exception(std::make_exception_ptr(std::runtime_error{std::string{message}}));
 }
 
-void URArm::state_::move_request::write_realtime_sample(const struct URArm::state_::ephemeral_& data,
+void URArm::state_::move_request::write_realtime_sample(const ephemeral_data_& data,
                                                         std::optional<uint32_t> robot_status_bits,
-                                                        std::optional<uint32_t> safety_status_bits) {
+                                                        std::optional<uint32_t> safety_status_bits) const {
     if (trajectory_logger) {
-        trajectory_logger->append_realtime_sample(unix_time_iso8601(),
-                                                  RealtimeTrajectoryLogger::ephemeral_data{
-                                                      data.joint_positions,
-                                                      data.joint_velocities,
-                                                      data.tcp_state,
-                                                      data.tcp_forces,
-                                                      data.target_joint_positions,
-                                                      data.target_joint_velocities,
-                                                      data.target_joint_accelerations,
-                                                      data.target_current,
-                                                      data.target_moment,
-                                                      data.target_tcp_speed,
-                                                      data.actual_tcp_speed,
-                                                      data.joint_temperatures,
-                                                      data.joint_control_output,
-                                                      data.safety_status,
-                                                  },
-                                                  robot_status_bits,
-                                                  safety_status_bits);
+        const auto now_us = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+        trajectory_logger->append_realtime_sample(now_us, data, robot_status_bits, safety_status_bits);
     }
 }
 

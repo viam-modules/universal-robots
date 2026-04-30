@@ -167,7 +167,7 @@ BOOST_AUTO_TEST_CASE(test_logger_append_realtime_sample) {
     {
         RealtimeTrajectoryLogger logger(test_dir, "ts", "ur5e", "arm");
 
-        RealtimeTrajectoryLogger::ephemeral_data data{};
+        ephemeral_data_ data{};
         data.joint_positions = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
         data.joint_velocities = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6};
         data.tcp_state = {0.5, 0.6, 0.7, 0.8, 0.9, 1.0};
@@ -183,8 +183,8 @@ BOOST_AUTO_TEST_CASE(test_logger_append_realtime_sample) {
         data.joint_control_output = {0.5, 0.6, 0.7, 0.8, 0.9, 1.0};
         data.safety_status = 1;
 
-        logger.append_realtime_sample("2026-04-21T12:00:00.000000Z", data, 3, 1);
-        logger.append_realtime_sample("2026-04-21T12:00:00.010000Z", data, std::nullopt, std::nullopt);
+        logger.append_realtime_sample(1776952800000000ULL, data, 3, 1);
+        logger.append_realtime_sample(1776952800010000ULL, data, std::nullopt, std::nullopt);
     }
 
     const std::ifstream in(expected_file);
@@ -200,7 +200,7 @@ BOOST_AUTO_TEST_CASE(test_logger_append_realtime_sample) {
     BOOST_REQUIRE_EQUAL(parsed["realtime_samples"].size(), 2U);
 
     const auto& s0 = parsed["realtime_samples"][0];
-    BOOST_CHECK_EQUAL(s0["timestamp"].asString(), "2026-04-21T12:00:00.000000Z");
+    BOOST_CHECK_EQUAL(s0["timestamp_us"].asUInt64(), 1776952800000000ULL);
     BOOST_CHECK_EQUAL(s0["positions_rad"].size(), 6U);
     BOOST_CHECK_CLOSE(s0["positions_rad"][0].asDouble(), 1.0, 1e-9);
     BOOST_CHECK_EQUAL(s0["robot_status_bits"].asUInt(), 3U);

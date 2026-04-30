@@ -257,10 +257,12 @@ class URArm::state_ {
         // We will use this to limit how often logs spam during expected behaviors.
         int local_reconnect_attempts{-1};
 
-        // When a stop event interrupts a move, we keep the move_request alive
-        // for a cooldown period so the trajectory logger continues to record
-        // realtime samples (capturing the robot's behavior during the stop).
+        // When a stop event interrupts a move, the trajectory logger is
+        // moved out of the move_request and kept here so it continues to
+        // record realtime samples (capturing the robot's deceleration
+        // behavior during the stop) for a cooldown period.
         static constexpr auto k_post_stop_recording_duration = std::chrono::seconds(1);
+        std::unique_ptr<RealtimeTrajectoryLogger> post_stop_logger_;
         std::optional<std::chrono::steady_clock::time_point> post_stop_recording_deadline_;
     };
 
@@ -319,8 +321,6 @@ class URArm::state_ {
         std::string_view describe() const;
     };
 
-    struct ephemeral_;  // forward declaration
-
     // TODO: Arguably, this should be a class since it has some
     // non-trivial members. But the state_ class needs pretty deep
     // access. When I tried to turn it into a class, it ended up with a
@@ -334,15 +334,15 @@ class URArm::state_ {
 
         using async_cancellation_monitor = std::function<bool()>;
 
-        explicit move_request(std::optional<RealtimeTrajectoryLogger> trajectory_logger,
+        explicit move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
                               move_command_data&& move_command);
 
-        explicit move_request(std::optional<RealtimeTrajectoryLogger> trajectory_logger,
+        explicit move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
                               trajectory_samples&& ts);
 
-        explicit move_request(std::optional<RealtimeTrajectoryLogger> trajectory_logger,
+        explicit move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
                               pose_sample ps);
 
@@ -354,11 +354,11 @@ class URArm::state_ {
         void complete_error(std::string_view message);
         void cancel_error(std::string_view message);
 
-        void write_realtime_sample(const ephemeral_& data,
+        void write_realtime_sample(const ephemeral_data_& data,
                                    std::optional<uint32_t> robot_status_bits,
-                                   std::optional<uint32_t> safety_status_bits);
+                                   std::optional<uint32_t> safety_status_bits) const;
 
-        std::optional<RealtimeTrajectoryLogger> trajectory_logger;
+        std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger;
         async_cancellation_monitor async_cancel_monitor;
         move_command_data move_command;
         std::promise<void> completion;
@@ -443,23 +443,7 @@ class URArm::state_ {
     std::atomic<std::size_t> move_epoch_{0};
     std::optional<move_request> move_request_;
 
-    struct ephemeral_ {
-        vector6d_t joint_positions;
-        vector6d_t joint_velocities;
-        vector6d_t tcp_state;
-        vector6d_t tcp_forces;
-        vector6d_t target_joint_positions;
-        vector6d_t target_joint_velocities;
-        vector6d_t target_joint_accelerations;
-        vector6d_t target_current;
-        vector6d_t target_moment;
-        vector6d_t target_tcp_speed;
-        vector6d_t actual_tcp_speed;
-        vector6d_t joint_temperatures;
-        vector6d_t joint_control_output;
-        std::optional<uint32_t> safety_status;
-    };
-    std::optional<struct ephemeral_> ephemeral_;
+    std::optional<ephemeral_data_> ephemeral_;
 };
 
 template <typename... Args>

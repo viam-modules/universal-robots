@@ -66,8 +66,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     }
     arm_conn_->safety_status_bits = safety_status_bits;
 
+    static const std::string k_actual_tcp_speed_key = "actual_TCP_speed";
     static const std::string k_joints_position_key = "actual_q";
     static const std::string k_joints_velocity_key = "actual_qd";
+    static const std::string k_joint_temperatures_key = "joint_temperatures";
+    static const std::string k_joint_control_output_key = "joint_control_output";
+    static const std::string k_safety_status_key = "safety_status";
     static const std::string k_tcp_key = "actual_TCP_pose";
     static const std::string k_tcp_force_key = "actual_TCP_force";
     static const std::string k_target_q_key = "target_q";
@@ -76,10 +80,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
     static const std::string k_target_current_key = "target_current";
     static const std::string k_target_moment_key = "target_moment";
     static const std::string k_target_tcp_speed_key = "target_TCP_speed";
-    static const std::string k_actual_tcp_speed_key = "actual_TCP_speed";
-    static const std::string k_joint_temperatures_key = "joint_temperatures";
-    static const std::string k_joint_control_output_key = "joint_control_output";
-    static const std::string k_safety_status_key = "safety_status";
 
     bool data_good = true;
     vector6d_t joint_positions{};

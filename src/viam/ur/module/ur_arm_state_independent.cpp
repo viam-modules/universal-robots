@@ -208,31 +208,44 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::handle_move_request(state_& state) {
-    // if there are no move request reset the deadline
-    if (!state.move_request_) {
-        post_stop_recording_deadline_.reset();
-        return std::nullopt;
-    }
+    // If there is a pending move request, move the logger out, complete
+    // the move with an error, and start the post-stop recording cooldown.
+    if (state.move_request_) {
+        auto logger = std::move(state.move_request_->trajectory_logger);
 
-    // If the move request has a trajectory logger, keep it alive for a
-    // cooldown period so we capture post-stop telemetry (e.g. pstop/estop
-    // deceleration behavior).
-    if (state.move_request_->trajectory_logger) {
-        const auto now = std::chrono::steady_clock::now();
+        std::exchange(state.move_request_, {})->complete_error([this]() -> std::string {
+            switch (reason_) {
+                case reason::k_stopped: {
+                    return "arm is stopped";
+                }
+                case reason::k_local_mode: {
+                    return "arm is in local mode";
+                }
+                case reason::k_both: {
+                    return "arm is in local mode and stopped";
+                }
+                default: {
+                    return "arm is in an unknown and uncontrolled state";
+                }
+            }
+        }());
 
-        if (!post_stop_recording_deadline_) {
-            // First time seeing this move request in independent state —
-            // start the cooldown timer.
-            post_stop_recording_deadline_ = now + k_post_stop_recording_duration;
+        if (logger) {
+            post_stop_logger_ = std::move(logger);
+            post_stop_recording_deadline_ = std::chrono::steady_clock::now() + k_post_stop_recording_duration;
             VIAM_SDK_LOG(debug) << "post-stop telemetry recording started; will record for "
                                 << std::chrono::duration_cast<std::chrono::milliseconds>(k_post_stop_recording_duration).count() << "ms";
         }
+    }
 
-        if (now < *post_stop_recording_deadline_) {
-            // Still within the cooldown window — record a sample and keep
-            // the move request alive.
+    // Continue recording post-stop samples until the deadline expires.
+    if (post_stop_logger_) {
+        if (std::chrono::steady_clock::now() < *post_stop_recording_deadline_) {
             if (state.ephemeral_) {
-                state.move_request_->write_realtime_sample(
+                const auto now_us = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                post_stop_logger_->append_realtime_sample(
+                    now_us,
                     *state.ephemeral_,
                     arm_conn_->robot_status_bits ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->robot_status_bits->to_ulong()))
                                                  : std::nullopt,
@@ -240,30 +253,13 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
                         ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->safety_status_bits->to_ulong()))
                         : std::nullopt);
             }
-            return std::nullopt;
+        } else {
+            VIAM_SDK_LOG(debug) << "post-stop telemetry recording complete";
+            post_stop_logger_.reset();
+            post_stop_recording_deadline_.reset();
         }
-
-        // Cooldown expired — fall through to destroy the move request.
-        VIAM_SDK_LOG(debug) << "post-stop telemetry recording complete";
     }
 
-    post_stop_recording_deadline_.reset();
-    std::exchange(state.move_request_, {})->complete_error([this]() -> std::string {
-        switch (reason_) {
-            case reason::k_stopped: {
-                return "arm is stopped";
-            }
-            case reason::k_local_mode: {
-                return "arm is in local mode";
-            }
-            case reason::k_both: {
-                return "arm is in local mode and stopped";
-            }
-            default: {
-                return "arm is in an unknown and uncontrolled state";
-            }
-        }
-    }());
     return std::nullopt;
 }
 
