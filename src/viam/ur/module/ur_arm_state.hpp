@@ -354,7 +354,7 @@ class URArm::state_ {
         void complete_error(std::string_view message);
         void cancel_error(std::string_view message);
 
-        void write_realtime_sample(const ephemeral_data_& data,
+        void write_realtime_sample(const ephemeral_data& data,
                                    std::optional<uint32_t> robot_status_bits,
                                    std::optional<uint32_t> safety_status_bits) const;
 
@@ -443,7 +443,7 @@ class URArm::state_ {
     std::atomic<std::size_t> move_epoch_{0};
     std::optional<move_request> move_request_;
 
-    std::optional<ephemeral_data_> ephemeral_;
+    std::optional<ephemeral_data> ephemeral_;
 };
 
 template <typename... Args>

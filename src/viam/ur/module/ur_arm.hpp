@@ -46,7 +46,7 @@ struct pose_sample {
     vector6d_t p;
 };
 
-struct ephemeral_data_ {
+struct ephemeral_data {
     vector6d_t actual_current;
     vector6d_t actual_joint_voltage;
     vector6d_t actual_tcp_speed;

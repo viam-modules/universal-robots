@@ -167,7 +167,7 @@ BOOST_AUTO_TEST_CASE(test_logger_append_realtime_sample) {
     {
         RealtimeTrajectoryLogger logger(test_dir, "ts", "ur5e", "arm");
 
-        ephemeral_data_ data{};
+        ephemeral_data data{};
         data.joint_positions = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
         data.joint_velocities = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6};
         data.tcp_state = {0.5, 0.6, 0.7, 0.8, 0.9, 1.0};

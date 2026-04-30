@@ -573,7 +573,7 @@ void URArm::state_::move_request::cancel_error(std::string_view message) {
     std::exchange(cancellation_request, {})->promise.set_exception(std::make_exception_ptr(std::runtime_error{std::string{message}}));
 }
 
-void URArm::state_::move_request::write_realtime_sample(const ephemeral_data_& data,
+void URArm::state_::move_request::write_realtime_sample(const ephemeral_data& data,
                                                         std::optional<uint32_t> robot_status_bits,
                                                         std::optional<uint32_t> safety_status_bits) const {
     if (trajectory_logger) {

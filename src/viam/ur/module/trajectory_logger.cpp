@@ -81,7 +81,7 @@ void RealtimeTrajectoryLogger::set_planned_trajectory(const trajectory_samples& 
 }
 
 void RealtimeTrajectoryLogger::append_realtime_sample(uint64_t timestamp_us,
-                                                      const ephemeral_data_& data,
+                                                      const ephemeral_data& data,
                                                       std::optional<uint32_t> robot_status_bits,
                                                       std::optional<uint32_t> safety_status_bits) {
     Json::Value sample;
