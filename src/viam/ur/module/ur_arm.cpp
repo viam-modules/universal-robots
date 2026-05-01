@@ -606,9 +606,12 @@ viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     check_configured_(rlock);
 
     if (!dh_kinematics_json_.empty()) {
+        VIAM_SDK_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH ("
+                           << dh_kinematics_json_.size() << " bytes)";
         return viam::sdk::KinematicsDataSVA(
             std::vector<unsigned char>(dh_kinematics_json_.begin(), dh_kinematics_json_.end()));
     }
+    VIAM_SDK_LOG(info) << "get_kinematics: dh_kinematics_json_ is empty -- falling back to static kinematics/<model>.json";
 
     // The `Model` class absurdly lacks accessors
     const std::string model_string = [&] {

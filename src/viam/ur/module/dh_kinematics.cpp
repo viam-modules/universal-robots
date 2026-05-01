@@ -7,6 +7,8 @@
 #include <string>
 #include <variant>
 
+#include <Eigen/Geometry>
+
 #include <json/json.h>
 
 namespace viam_ur {
@@ -45,10 +47,24 @@ struct SphereGeometry {
 
 using Geometry = std::variant<CapsuleGeometry, SphereGeometry>;
 
+// Nominal (published spec) DH parameters for the model. Used to compute target
+// link world poses against which calibrated link world poses are compared, so the
+// geometry's local pose can be corrected to land at the nominal world position.
+// Units: meters and radians.
+struct NominalDH {
+    std::array<double, 6> a;
+    std::array<double, 6> d;
+    std::array<double, 6> alpha;
+};
+
 struct ModelTables {
     std::array<JointLimits, 6> limits;
     // One optional geometry per DH entry. nullopt means "no geometry on this segment".
+    // Geometry poses are expressed in the *nominal* link's local frame -- the runtime
+    // builder applies a per-link correction so they land at the right world position
+    // when the chain is calibrated.
     std::array<std::optional<Geometry>, 6> geometries;
+    NominalDH nominal;
 };
 
 // Per-model static tables. To register a new UR model, add an entry here.
@@ -133,6 +149,13 @@ const std::map<std::string, ModelTables>& model_tables() {
             /* qy */ 0.0,
             /* qz */ 0.0,
         };  // wrist_3_link
+        // Nominal UR20 DH parameters from UR's published spec. Used as the
+        // reference chain whose link world poses define where geometries should
+        // physically sit. d[4] is positive to match the controller's sign convention
+        // (`KinematicsInfo.dh_d_[4] > 0` for a real ur20).
+        ur20.nominal.a     = {0.0,        -0.862,    -0.7287,    0.0,        0.0,         0.0};
+        ur20.nominal.d     = {0.2363,      0.0,       0.0,       0.201,      0.1593,      0.1543};
+        ur20.nominal.alpha = {M_PI / 2.0,  0.0,       0.0,       M_PI / 2.0, -M_PI / 2.0, 0.0};
         t.emplace("ur20", std::move(ur20));
 
         // ur5e: limits taken from existing kinematics/ur5e.json. Geometries are
@@ -217,11 +240,69 @@ const std::map<std::string, ModelTables>& model_tables() {
             /* qy */ 0.0,
             /* qz */ 0.0,
         };  // ee_link / wrist_3
+        // Nominal UR5e DH parameters from UR's published spec. Used as the reference
+        // chain for geometry-pose correction (analogous to ur20 above).
+        ur5e.nominal.a     = {0.0,        -0.425,    -0.3922,    0.0,        0.0,         0.0};
+        ur5e.nominal.d     = {0.1625,      0.0,       0.0,       0.1333,     0.0997,      0.0996};
+        ur5e.nominal.alpha = {M_PI / 2.0,  0.0,       0.0,       M_PI / 2.0, -M_PI / 2.0, 0.0};
         t.emplace("ur5e", std::move(ur5e));
 
         return t;
     }();
     return tables;
+}
+
+// Build a 4x4 homogeneous transform for a link's static pose:
+//   Rz(theta) * T(a, 0, d) * Rx(alpha)
+// All inputs in millimeters/radians. Output is the matrix that takes a child-frame
+// point to its parent-frame coordinates.
+Eigen::Matrix4d dh_link_pose_matrix(double a_mm, double d_mm, double alpha_rad, double theta_rad) {
+    const double ca = std::cos(alpha_rad);
+    const double sa = std::sin(alpha_rad);
+    const double ct = std::cos(theta_rad);
+    const double st = std::sin(theta_rad);
+
+    Eigen::Matrix4d M = Eigen::Matrix4d::Identity();
+    // Rotation = Rz(theta) * Rx(alpha)
+    M(0, 0) = ct;          M(0, 1) = -st * ca;    M(0, 2) = st * sa;
+    M(1, 0) = st;          M(1, 1) = ct * ca;     M(1, 2) = -ct * sa;
+    M(2, 0) = 0.0;         M(2, 1) = sa;          M(2, 2) = ca;
+    // Translation = Rz(theta) * (a, 0, d)
+    M(0, 3) = a_mm * ct;
+    M(1, 3) = a_mm * st;
+    M(2, 3) = d_mm;
+    return M;
+}
+
+// Compose a Pose-like (translation + quaternion) on the left by a 4x4 transform.
+// Returns the composed (translation, quaternion) tuple, suitable for emitting into
+// a geometry's "translation"/"orientation" fields.
+struct PoseTQ {
+    double tx, ty, tz;
+    double qw, qx, qy, qz;
+};
+
+PoseTQ apply_correction(const Eigen::Matrix4d& correction, const PoseTQ& g) {
+    Eigen::Quaterniond q_g(g.qw, g.qx, g.qy, g.qz);
+    Eigen::Matrix4d G = Eigen::Matrix4d::Identity();
+    G.block<3, 3>(0, 0) = q_g.toRotationMatrix();
+    G(0, 3) = g.tx;
+    G(1, 3) = g.ty;
+    G(2, 3) = g.tz;
+
+    const Eigen::Matrix4d Result = correction * G;
+    PoseTQ out;
+    out.tx = Result(0, 3);
+    out.ty = Result(1, 3);
+    out.tz = Result(2, 3);
+    Eigen::Matrix3d R = Result.block<3, 3>(0, 0);
+    Eigen::Quaterniond q_out(R);
+    q_out.normalize();
+    out.qw = q_out.w();
+    out.qx = q_out.x();
+    out.qy = q_out.y();
+    out.qz = q_out.z();
+    return out;
 }
 
 Json::Value capsule_to_json(const CapsuleGeometry& c) {
@@ -276,6 +357,47 @@ Json::Value geometry_to_json(const Geometry& geom) {
         geom);
 }
 
+// Returns a copy of `geom` with its translation+orientation transformed by `correction`.
+Geometry apply_correction_to_geometry(const Geometry& geom, const Eigen::Matrix4d& correction) {
+    return std::visit(
+        [&correction](const auto& g) -> Geometry {
+            using T = std::decay_t<decltype(g)>;
+            PoseTQ in;
+            in.tx = g.tx_mm;
+            in.ty = g.ty_mm;
+            in.tz = g.tz_mm;
+            if constexpr (std::is_same_v<T, CapsuleGeometry>) {
+                in.qw = g.qw;
+                in.qx = g.qx;
+                in.qy = g.qy;
+                in.qz = g.qz;
+                const PoseTQ out = apply_correction(correction, in);
+                CapsuleGeometry r = g;
+                r.tx_mm = out.tx;
+                r.ty_mm = out.ty;
+                r.tz_mm = out.tz;
+                r.qw = out.qw;
+                r.qx = out.qx;
+                r.qy = out.qy;
+                r.qz = out.qz;
+                return r;
+            } else {
+                // Spheres have no orientation; only translation needs correcting.
+                in.qw = 1.0;
+                in.qx = 0.0;
+                in.qy = 0.0;
+                in.qz = 0.0;
+                const PoseTQ out = apply_correction(correction, in);
+                SphereGeometry r = g;
+                r.tx_mm = out.tx;
+                r.ty_mm = out.ty;
+                r.tz_mm = out.tz;
+                return r;
+            }
+        },
+        geom);
+}
+
 }  // namespace
 
 std::string build_dh_kinematics_json(const std::string& model_name, const DHParams6& dh) {
@@ -289,6 +411,36 @@ std::string build_dh_kinematics_json(const std::string& model_name, const DHPara
     Json::Value root(Json::objectValue);
     root["name"] = model_name;
     root["kinematic_param_type"] = "SVA";
+
+    // Compute cumulative world transforms at zero joints for both the calibrated
+    // chain (the one we emit) and a reference nominal chain. Each link i's
+    // geometry should land at the *nominal* world pose; we apply
+    // correction_i = inv(W_cal_i) * W_nom_i to the geometry's local pose so
+    // it does, regardless of how UR's calibration redistributed parallel-axis
+    // offsets across segments.
+    //
+    // RDK's SVA chain composition for ur20.json places link_i's own frame at
+    // q_i's frame -- i.e., link_i.translation/orientation positions the *next*
+    // joint, not link_i's own frame. So the cumulative world pose of link_i is
+    // the product of link_0..link_{i-1}, NOT including link_i itself.
+    std::array<Eigen::Matrix4d, 6> W_cal_links;
+    std::array<Eigen::Matrix4d, 6> W_nom_links;
+    {
+        Eigen::Matrix4d W_cal = Eigen::Matrix4d::Identity();
+        Eigen::Matrix4d W_nom = Eigen::Matrix4d::Identity();
+        for (size_t i = 0; i < 6; ++i) {
+            // link_i's frame is at the cumulative pose *before* link_i's own
+            // pose is composed -- snapshot here, then compose for the next iteration.
+            W_cal_links[i] = W_cal;
+            W_nom_links[i] = W_nom;
+            const Eigen::Matrix4d L_cal =
+                dh_link_pose_matrix(dh.a[i] * k_m_to_mm, dh.d[i] * k_m_to_mm, dh.alpha[i], dh.theta[i]);
+            const Eigen::Matrix4d L_nom = dh_link_pose_matrix(
+                tbl.nominal.a[i] * k_m_to_mm, tbl.nominal.d[i] * k_m_to_mm, tbl.nominal.alpha[i], 0.0);
+            W_cal = W_cal * L_cal;
+            W_nom = W_nom * L_nom;
+        }
+    }
 
     Json::Value joints(Json::arrayValue);
     Json::Value links(Json::arrayValue);
@@ -351,7 +503,9 @@ std::string build_dh_kinematics_json(const std::string& model_name, const DHPara
         link["translation"] = translation;
         link["orientation"] = orient;
         if (tbl.geometries[i].has_value()) {
-            link["geometry"] = geometry_to_json(*tbl.geometries[i]);
+            const Eigen::Matrix4d correction = W_cal_links[i].inverse() * W_nom_links[i];
+            const Geometry corrected = apply_correction_to_geometry(*tbl.geometries[i], correction);
+            link["geometry"] = geometry_to_json(corrected);
         }
         links.append(link);
     }
