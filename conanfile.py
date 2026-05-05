@@ -21,7 +21,7 @@ class universal_robots(ConanFile):
     }
 
     def export_sources(self):
-        for pat in ["CMakeLists.txt", "LICENSE", "src/*", "meta.json*", "*.sh", "cmake/*"]:
+        for pat in ["CMakeLists.txt", "LICENSE", "src/*", "meta.json*", "*.sh"]:
             copy(self, pat, self.recipe_folder, self.export_sources_folder)
 
     def set_version(self):

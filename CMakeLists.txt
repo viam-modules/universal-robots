@@ -125,13 +125,9 @@ include(FetchContent)
 FetchContent_Declare(
   Universal_Robots_Client_Library
   GIT_REPOSITORY https://github.com/UniversalRobots/Universal_Robots_Client_Library
-  GIT_TAG        2.10.0
+  GIT_TAG        2.11.0
   GIT_SHALLOW TRUE
   SYSTEM
-  # Expose getKinematicsInfo() on PrimaryClient so URArm can read the controller's
-  # calibrated DH parameters. Idempotent: if the patch is already applied (e.g. on
-  # a re-fetch), the reverse-check succeeds and we skip re-applying.
-  PATCH_COMMAND sh -c "git apply --reverse --check ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/urcl-expose-kinematics-info.patch 2>/dev/null || git apply ${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/urcl-expose-kinematics-info.patch"
 )
 FetchContent_MakeAvailable(Universal_Robots_Client_Library)
 

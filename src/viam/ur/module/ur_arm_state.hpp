@@ -8,6 +8,7 @@
 #include <thread>
 #include <variant>
 
+#include <ur_client_library/comm/pipeline.h>
 #include <ur_client_library/primary/primary_consumer.h>
 #include <ur_client_library/primary/robot_state/configuration_data.h>
 #include <ur_client_library/primary/robot_state/kinematics_info.h>
