@@ -167,7 +167,7 @@ find_package(Boost CONFIG REQUIRED
 FetchContent_Declare(
   trajex
   GIT_REPOSITORY https://github.com/viam-modules/trajex.git
-  GIT_TAG v0.100.0-rc3
+  GIT_TAG v0.100.0-rc4
   GIT_SHALLOW TRUE
 )
 FetchContent_MakeAvailable(trajex)
@@ -224,6 +224,7 @@ target_include_directories(viam-ur
 target_sources(viam-ur
   PRIVATE
     src/viam/ur/module/dh_kinematics.cpp
+    src/viam/ur/module/trajectory_logger.cpp
     src/viam/ur/module/ur_arm.cpp
     src/viam/ur/module/ur_arm_state.cpp
     src/viam/ur/module/ur_arm_state_connected.cpp

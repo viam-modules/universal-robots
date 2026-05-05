@@ -208,7 +208,11 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
 }
 
 std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::handle_move_request(state_& state) {
+    // If there is a pending move request, move the logger out, complete
+    // the move with an error, and start the post-stop recording cooldown.
     if (state.move_request_) {
+        auto logger = std::move(state.move_request_->trajectory_logger);
+
         std::exchange(state.move_request_, {})->complete_error([this]() -> std::string {
             switch (reason_) {
                 case reason::k_stopped: {
@@ -225,7 +229,37 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
                 }
             }
         }());
+
+        if (logger) {
+            post_stop_logger_ = std::move(logger);
+            post_stop_recording_deadline_ = std::chrono::steady_clock::now() + k_post_stop_recording_duration;
+            VIAM_SDK_LOG(debug) << "post-stop telemetry recording started; will record for "
+                                << std::chrono::duration_cast<std::chrono::milliseconds>(k_post_stop_recording_duration).count() << "ms";
+        }
     }
+
+    // Continue recording post-stop samples until the deadline expires.
+    if (post_stop_logger_) {
+        if (std::chrono::steady_clock::now() < *post_stop_recording_deadline_) {
+            if (state.ephemeral_) {
+                const auto now_us = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+                post_stop_logger_->append_realtime_sample(
+                    now_us,
+                    *state.ephemeral_,
+                    arm_conn_->robot_status_bits ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->robot_status_bits->to_ulong()))
+                                                 : std::nullopt,
+                    arm_conn_->safety_status_bits
+                        ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->safety_status_bits->to_ulong()))
+                        : std::nullopt);
+            }
+        } else {
+            VIAM_SDK_LOG(debug) << "post-stop telemetry recording complete";
+            post_stop_logger_.reset();
+            post_stop_recording_deadline_.reset();
+        }
+    }
+
     return std::nullopt;
 }
 
