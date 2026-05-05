@@ -199,7 +199,7 @@ struct PoseTQ {
 };
 
 PoseTQ apply_correction(const Eigen::Matrix4d& correction, const PoseTQ& g) {
-    Eigen::Quaterniond q_g(g.qw, g.qx, g.qy, g.qz);
+    const Eigen::Quaterniond q_g(g.qw, g.qx, g.qy, g.qz);
     Eigen::Matrix4d G = Eigen::Matrix4d::Identity();
     G.block<3, 3>(0, 0) = q_g.toRotationMatrix();
     G(0, 3) = g.tx;
@@ -211,7 +211,7 @@ PoseTQ apply_correction(const Eigen::Matrix4d& correction, const PoseTQ& g) {
     out.tx = Result(0, 3);
     out.ty = Result(1, 3);
     out.tz = Result(2, 3);
-    Eigen::Matrix3d R = Result.block<3, 3>(0, 0);
+    const Eigen::Matrix3d R = Result.block<3, 3>(0, 0);
     Eigen::Quaterniond q_out(R);
     q_out.normalize();
     out.qw = q_out.w();
