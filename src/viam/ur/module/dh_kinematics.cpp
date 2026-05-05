@@ -153,9 +153,9 @@ const std::map<std::string, ModelTables>& model_tables() {
         // reference chain whose link world poses define where geometries should
         // physically sit. d[4] is positive to match the controller's sign convention
         // (`KinematicsInfo.dh_d_[4] > 0` for a real ur20).
-        ur20.nominal.a     = {0.0,        -0.862,    -0.7287,    0.0,        0.0,         0.0};
-        ur20.nominal.d     = {0.2363,      0.0,       0.0,       0.201,      0.1593,      0.1543};
-        ur20.nominal.alpha = {M_PI / 2.0,  0.0,       0.0,       M_PI / 2.0, -M_PI / 2.0, 0.0};
+        ur20.nominal.a = {0.0, -0.862, -0.7287, 0.0, 0.0, 0.0};
+        ur20.nominal.d = {0.2363, 0.0, 0.0, 0.201, 0.1593, 0.1543};
+        ur20.nominal.alpha = {M_PI / 2.0, 0.0, 0.0, M_PI / 2.0, -M_PI / 2.0, 0.0};
         t.emplace("ur20", std::move(ur20));
 
         return t;
@@ -175,9 +175,15 @@ Eigen::Matrix4d dh_link_pose_matrix(double a_mm, double d_mm, double alpha_rad, 
 
     Eigen::Matrix4d M = Eigen::Matrix4d::Identity();
     // Rotation = Rz(theta) * Rx(alpha)
-    M(0, 0) = ct;          M(0, 1) = -st * ca;    M(0, 2) = st * sa;
-    M(1, 0) = st;          M(1, 1) = ct * ca;     M(1, 2) = -ct * sa;
-    M(2, 0) = 0.0;         M(2, 1) = sa;          M(2, 2) = ca;
+    M(0, 0) = ct;
+    M(0, 1) = -st * ca;
+    M(0, 2) = st * sa;
+    M(1, 0) = st;
+    M(1, 1) = ct * ca;
+    M(1, 2) = -ct * sa;
+    M(2, 0) = 0.0;
+    M(2, 1) = sa;
+    M(2, 2) = ca;
     // Translation = Rz(theta) * (a, 0, d)
     M(0, 3) = a_mm * ct;
     M(1, 3) = a_mm * st;
@@ -344,10 +350,9 @@ std::string build_dh_kinematics_json(const std::string& model_name, const DHPara
             // pose is composed -- snapshot here, then compose for the next iteration.
             W_cal_links[i] = W_cal;
             W_nom_links[i] = W_nom;
-            const Eigen::Matrix4d L_cal =
-                dh_link_pose_matrix(dh.a[i] * k_m_to_mm, dh.d[i] * k_m_to_mm, dh.alpha[i], dh.theta[i]);
-            const Eigen::Matrix4d L_nom = dh_link_pose_matrix(
-                tbl.nominal.a[i] * k_m_to_mm, tbl.nominal.d[i] * k_m_to_mm, tbl.nominal.alpha[i], 0.0);
+            const Eigen::Matrix4d L_cal = dh_link_pose_matrix(dh.a[i] * k_m_to_mm, dh.d[i] * k_m_to_mm, dh.alpha[i], dh.theta[i]);
+            const Eigen::Matrix4d L_nom =
+                dh_link_pose_matrix(tbl.nominal.a[i] * k_m_to_mm, tbl.nominal.d[i] * k_m_to_mm, tbl.nominal.alpha[i], 0.0);
             W_cal = W_cal * L_cal;
             W_nom = W_nom * L_nom;
         }

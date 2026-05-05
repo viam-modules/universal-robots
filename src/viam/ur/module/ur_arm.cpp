@@ -412,15 +412,16 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
             std::ostringstream os;
             os << "[";
             for (size_t i = 0; i < v.size(); ++i) {
-                if (i) os << ", ";
+                if (i)
+                    os << ", ";
                 os << v[i];
             }
             os << "]";
             return os.str();
         };
         VIAM_SDK_LOG(info) << "Calibrated KinematicsInfo received -- "
-                           << "a="     << fmt6(kin_info.dh_a_)     << ", "
-                           << "d="     << fmt6(kin_info.dh_d_)     << ", "
+                           << "a=" << fmt6(kin_info.dh_a_) << ", "
+                           << "d=" << fmt6(kin_info.dh_d_) << ", "
                            << "alpha=" << fmt6(kin_info.dh_alpha_) << ", "
                            << "theta=" << fmt6(kin_info.dh_theta_)
                            << " (theta is baked into the static link pose; chain is emitted in SVA form)";
@@ -432,8 +433,8 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
         dh.theta = kin_info.dh_theta_;
 
         dh_kinematics_json_ = viam_ur::build_dh_kinematics_json("ur20", dh);
-        VIAM_SDK_LOG(info) << "Synthesized DH-form kinematics JSON for ur20 from calibrated DH ("
-                           << dh_kinematics_json_.size() << " bytes)";
+        VIAM_SDK_LOG(info) << "Synthesized DH-form kinematics JSON for ur20 from calibrated DH (" << dh_kinematics_json_.size()
+                           << " bytes)";
     }
 
     VIAM_SDK_LOG(info) << "URArm startup complete";
@@ -527,10 +528,9 @@ viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     check_configured_(rlock);
 
     if (!dh_kinematics_json_.empty()) {
-        VIAM_SDK_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH ("
-                           << dh_kinematics_json_.size() << " bytes)";
-        return viam::sdk::KinematicsDataSVA(
-            std::vector<unsigned char>(dh_kinematics_json_.begin(), dh_kinematics_json_.end()));
+        VIAM_SDK_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH (" << dh_kinematics_json_.size()
+                           << " bytes)";
+        return viam::sdk::KinematicsDataSVA(std::vector<unsigned char>(dh_kinematics_json_.begin(), dh_kinematics_json_.end()));
     }
     VIAM_SDK_LOG(info) << "get_kinematics: dh_kinematics_json_ is empty -- falling back to static kinematics/<model>.json";
 
