@@ -5,10 +5,13 @@
 
 namespace viam_ur {
 
-// DH parameters as returned by the UR controller's primary client.
-// Units match what urcl reports: meters for a/d, radians for alpha and theta.
-// `theta` is the per-joint calibration offset (NOT the joint variable).
-struct DHParams6 {
+// Per-joint DH parameters for a 6-DOF UR arm, as reported by the controller via
+// `urcl::primary_interface::KinematicsInfo`. Each array holds one entry per joint;
+// units match what urcl reports: meters for `a` and `d`, radians for `alpha` and
+// `theta`. `theta` is the per-joint calibration offset baked into the static link
+// pose -- it is NOT the joint variable (the joint angle is supplied by the
+// revolute joint frame in the synthesized chain).
+struct DHParams {
     std::array<double, 6> a;
     std::array<double, 6> d;
     std::array<double, 6> alpha;
@@ -29,6 +32,6 @@ struct DHParams6 {
 // without resorting to numerically degenerate huge `d` values.
 //
 // Throws std::invalid_argument if model_name has no per-model table registered.
-std::string build_dh_kinematics_json(const std::string& model_name, const DHParams6& dh);
+std::string build_dh_kinematics_json(const std::string& model_name, const DHParams& dh);
 
 }  // namespace viam_ur

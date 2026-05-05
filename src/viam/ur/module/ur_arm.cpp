@@ -499,7 +499,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
                            << "theta=" << fmt6(kin_info.dh_theta_)
                            << " (theta is baked into the static link pose; chain is emitted in SVA form)";
 
-        viam_ur::DHParams6 dh{};
+        viam_ur::DHParams dh{};
         dh.a = kin_info.dh_a_;
         dh.d = kin_info.dh_d_;
         dh.alpha = kin_info.dh_alpha_;

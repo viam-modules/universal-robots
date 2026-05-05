@@ -311,7 +311,7 @@ Geometry apply_correction_to_geometry(const Geometry& geom, const Eigen::Matrix4
 
 }  // namespace
 
-std::string build_dh_kinematics_json(const std::string& model_name, const DHParams6& dh) {
+std::string build_dh_kinematics_json(const std::string& model_name, const DHParams& dh) {
     const auto& tables = model_tables();
     const auto it = tables.find(model_name);
     if (it == tables.end()) {
