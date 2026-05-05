@@ -478,13 +478,8 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     VIAM_SDK_LOG(debug) << "URArm starting up";
     current_state_ = state_::create(configured_model_type, name(), cfg, ports_);
 
-    const std::string dh_model_name = [&]() -> std::string {
-        if (model_ == URArm::model("ur20")) return "ur20";
-        if (model_ == URArm::model("ur5e")) return "ur5e";
-        return "";
-    }();
-    if (!dh_model_name.empty()) {
-        VIAM_SDK_LOG(info) << "Fetching calibrated DH parameters from controller for " << dh_model_name;
+    if (model_ == URArm::model("ur20")) {
+        VIAM_SDK_LOG(info) << "Fetching calibrated DH parameters from controller for ur20";
         auto kin_info = current_state_->fetch_kinematics_info_();
 
         const auto fmt6 = [](const urcl::vector6d_t& v) {
@@ -510,8 +505,8 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
         dh.alpha = kin_info.dh_alpha_;
         dh.theta = kin_info.dh_theta_;
 
-        dh_kinematics_json_ = viam_ur::build_dh_kinematics_json(dh_model_name, dh);
-        VIAM_SDK_LOG(info) << "Synthesized DH-form kinematics JSON for " << dh_model_name << " from calibrated DH ("
+        dh_kinematics_json_ = viam_ur::build_dh_kinematics_json("ur20", dh);
+        VIAM_SDK_LOG(info) << "Synthesized DH-form kinematics JSON for ur20 from calibrated DH ("
                            << dh_kinematics_json_.size() << " bytes)";
     }
 
@@ -713,7 +708,6 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     constexpr char k_clear_pstop[] = "clear_pstop";
     constexpr char k_is_controllable[] = "is_controllable_state";
     constexpr char k_get_state_description[] = "get_state_description";
-    constexpr char k_get_dh_params[] = "get_dh_params";
     constexpr char k_get_calibrated_dh_params[] = "get_calibrated_dh_params";
 
     // Cache TCP state to ensure atomic read of pose and forces from same timestamp
@@ -785,22 +779,6 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
                 cached_controlled_info->controlled = current_state_->is_current_state_controlled(&cached_controlled_info->description);
             }
             resp.emplace(k_get_state_description, cached_controlled_info->description);
-        } else if (kv.first == k_get_dh_params) {
-            auto controller_cfg = current_state_->fetch_configuration_data_();
-            auto to_array = [](const vector6d_t& v) {
-                std::vector<ProtoValue> arr;
-                arr.reserve(v.size());
-                for (size_t i = 0; i < v.size(); ++i) {
-                    arr.push_back(ProtoValue{v[i]});
-                }
-                return arr;
-            };
-            ProtoStruct dh;
-            dh.emplace("a", to_array(controller_cfg.dh_a_));
-            dh.emplace("d", to_array(controller_cfg.dh_d_));
-            dh.emplace("alpha", to_array(controller_cfg.dh_alpha_));
-            dh.emplace("theta", to_array(controller_cfg.dh_theta_));
-            resp.emplace("dh_params", std::move(dh));
         } else if (kv.first == k_get_calibrated_dh_params) {
             auto kin_info = current_state_->fetch_kinematics_info_();
             auto to_array = [](const vector6d_t& v) {
