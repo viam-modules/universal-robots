@@ -782,3 +782,42 @@ vector6d_t URArm::state_::clamp_limits_(vector6d_t desired, const std::optional<
     }
     return desired;
 }
+
+urcl::primary_interface::KinematicsInfo URArm::state_::fetch_kinematics_info_() {
+    // KinematicsInfo arrives on the primary stream shortly after the connection
+    // is established. state_::create returns once the state machine is connected,
+    // but the consumer may not have processed the KinematicsInfo packet yet -- so
+    // we poll with a bounded timeout. The lock is released between attempts so
+    // the worker thread can keep pumping the primary stream.
+    constexpr auto k_timeout = std::chrono::seconds{5};
+    constexpr auto k_poll_interval = std::chrono::milliseconds{100};
+    const auto deadline = std::chrono::steady_clock::now() + k_timeout;
+
+    while (true) {
+        std::shared_ptr<urcl::primary_interface::KinematicsInfo> kin;
+        {
+            const std::lock_guard lock{mutex_};
+            kin = std::visit(
+                [](auto& s) -> std::shared_ptr<urcl::primary_interface::KinematicsInfo> {
+                    using S = std::decay_t<decltype(s)>;
+                    if constexpr (std::is_base_of_v<state_connected_, S>) {
+                        auto primary = s.arm_conn_->driver->getPrimaryClient();
+                        if (!primary) {
+                            throw std::runtime_error("primary client unavailable on UrDriver");
+                        }
+                        return primary->getKinematicsInfo();
+                    } else {
+                        throw std::runtime_error("cannot fetch kinematics info: arm is not connected");
+                    }
+                },
+                current_state_);
+        }
+        if (kin) {
+            return *kin;
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            throw std::runtime_error("controller has not delivered KinematicsInfo within timeout");
+        }
+        std::this_thread::sleep_for(k_poll_interval);
+    }
+}

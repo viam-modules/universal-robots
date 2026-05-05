@@ -8,6 +8,7 @@
 #include <thread>
 #include <variant>
 
+#include <ur_client_library/primary/robot_state/kinematics_info.h>
 #include "trajectory_logger.hpp"
 
 #include <ur_client_library/types.h>
@@ -100,6 +101,12 @@ class URArm::state_ {
     bool is_moving() const;
     std::string describe() const;
     bool is_current_state_controlled(std::string* description = nullptr) const;
+
+    // Fetches the controller's KinematicsInfo (calibrated DH parameters: nominal
+    // values combined with the per-arm calibration deltas).
+    // Throws std::runtime_error if no arm connection is currently established
+    // or if the primary client has not yet received KinematicsInfo.
+    urcl::primary_interface::KinematicsInfo fetch_kinematics_info_();
 
     std::optional<std::shared_future<void>> cancel_move_request();
 
