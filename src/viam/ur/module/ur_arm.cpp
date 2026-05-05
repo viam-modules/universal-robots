@@ -404,9 +404,15 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     VIAM_SDK_LOG(debug) << "URArm starting up";
     current_state_ = state_::create(configured_model_type, name(), cfg, ports_);
 
+    // state_::create blocks until the state machine reaches a connected state
+    // (its constructor loops on upgrade_downgrade_ until current_state_ is no
+    // longer state_disconnected_), so by the time we reach this point the
+    // primary client is up and we can read from it.
     if (model_ == URArm::model("ur20")) {
         VIAM_SDK_LOG(info) << "Fetching calibrated DH parameters from controller for ur20";
-        auto kin_info = current_state_->fetch_kinematics_info_();
+        // KinematicsInfo isn't assignable -- copy-construct in place via emplace.
+        const auto kin_info = current_state_->fetch_kinematics_info_();
+        calibrated_kin_info_.emplace(kin_info);
 
         const auto fmt6 = [](const urcl::vector6d_t& v) {
             std::ostringstream os;
@@ -531,6 +537,11 @@ viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         VIAM_SDK_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH (" << dh_kinematics_json_.size()
                            << " bytes)";
         return viam::sdk::KinematicsDataSVA(std::vector<unsigned char>(dh_kinematics_json_.begin(), dh_kinematics_json_.end()));
+    }
+    // For models that are supposed to ship synthesized kinematics, refuse to fall through
+    // to the static file -- empty json here indicates a configuration bug.
+    if (model_ == model("ur20")) {
+        throw std::runtime_error("get_kinematics: synthesized kinematics not available for ur20; calibrated DH was expected at configure time");
     }
     VIAM_SDK_LOG(info) << "get_kinematics: dh_kinematics_json_ is empty -- falling back to static kinematics/<model>.json";
 
@@ -706,7 +717,10 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             }
             resp.emplace(k_get_state_description, cached_controlled_info->description);
         } else if (kv.first == k_get_calibrated_dh_params) {
-            auto kin_info = current_state_->fetch_kinematics_info_();
+            if (!calibrated_kin_info_) {
+                throw std::runtime_error("calibrated DH parameters not available for this arm model");
+            }
+            const auto& kin_info = *calibrated_kin_info_;
             auto to_array = [](const vector6d_t& v) {
                 std::vector<ProtoValue> arr;
                 arr.reserve(v.size());

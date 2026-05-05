@@ -7,6 +7,7 @@
 
 #include <Eigen/Core>
 
+#include <ur_client_library/primary/robot_state/kinematics_info.h>
 #include <ur_client_library/types.h>
 
 #include <viam/sdk/common/mesh.hpp>
@@ -213,6 +214,12 @@ class URArm final : public Arm, public Reconfigurable {
     // the DH-form JSON synthesized from the controller's DH parameters should
     // be returned by get_kinematics().
     std::string dh_kinematics_json_;
+
+    // Calibrated DH parameters captured once at configure_, reused by the
+    // get_calibrated_dh_params do_command. Calibration does not change at
+    // runtime, so caching the value avoids re-walking the state-machine
+    // variant and re-acquiring its mutex on every call.
+    std::optional<urcl::primary_interface::KinematicsInfo> calibrated_kin_info_;
 
     std::unordered_map<std::string, std::vector<std::string>> arm_name_to_model_parts_;
 };
