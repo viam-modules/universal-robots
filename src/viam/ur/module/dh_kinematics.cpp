@@ -15,7 +15,6 @@ namespace viam_ur {
 
 namespace {
 
-constexpr double k_rad_to_deg = 180.0 / M_PI;
 constexpr double k_m_to_mm = 1000.0;
 
 struct JointLimits {
