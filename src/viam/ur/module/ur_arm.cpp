@@ -418,8 +418,9 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
             std::ostringstream os;
             os << "[";
             for (size_t i = 0; i < v.size(); ++i) {
-                if (i)
+                if (i) {
                     os << ", ";
+                }
                 os << v[i];
             }
             os << "]";
@@ -541,7 +542,8 @@ viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     // For models that are supposed to ship synthesized kinematics, refuse to fall through
     // to the static file -- empty json here indicates a configuration bug.
     if (model_ == model("ur20")) {
-        throw std::runtime_error("get_kinematics: synthesized kinematics not available for ur20; calibrated DH was expected at configure time");
+        throw std::runtime_error(
+            "get_kinematics: synthesized kinematics not available for ur20; calibrated DH was expected at configure time");
     }
     VIAM_SDK_LOG(info) << "get_kinematics: dh_kinematics_json_ is empty -- falling back to static kinematics/<model>.json";
 
