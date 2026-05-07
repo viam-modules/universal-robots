@@ -8,9 +8,9 @@
 #include <thread>
 #include <variant>
 
-#include <ur_client_library/primary/robot_state/kinematics_info.h>
 #include "trajectory_logger.hpp"
 
+#include <ur_client_library/primary/robot_state/kinematics_info.h>
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
@@ -102,11 +102,26 @@ class URArm::state_ {
     std::string describe() const;
     bool is_current_state_controlled(std::string* description = nullptr) const;
 
-    // Fetches the controller's KinematicsInfo (calibrated DH parameters: nominal
-    // values combined with the per-arm calibration deltas).
+    // Returns the calibrated DH parameters for the currently-connected arm
+    // (controller's nominal DH combined with the per-arm calibration deltas).
+    //
+    // The returned value is cached per arm-connection lifetime: a fresh fetch
+    // is performed on first call after each (re)connect, and subsequent calls
+    // return the cached value. Calibration is therefore re-read on every
+    // reconnect, which matters if the arm is disconnected, recalibrated, and
+    // reconnected without restarting this module.
+    //
     // Throws std::runtime_error if no arm connection is currently established
-    // or if the primary client has not yet received KinematicsInfo.
-    urcl::primary_interface::KinematicsInfo fetch_kinematics_info_();
+    // or if the primary client does not deliver KinematicsInfo within a short
+    // timeout after a fresh connect.
+    urcl::primary_interface::KinematicsInfo get_calibrated_kinematics_info();
+
+    // Returns the synthesized kinematics JSON (SVA form) built from the
+    // calibrated DH parameters of the currently-connected arm. Returns an
+    // empty string for models that ship static `kinematics/<model>.json`
+    // files. Refreshes whenever the underlying calibrated kinematics info
+    // refreshes (i.e., on reconnect).
+    std::string get_dh_kinematics_json();
 
     std::optional<std::shared_future<void>> cancel_move_request();
 
@@ -404,6 +419,12 @@ class URArm::state_ {
 
     static vector6d_t clamp_limits_(vector6d_t desired, const std::optional<vector6d_t>& limits);
 
+    // Polls the primary client of the current arm connection until KinematicsInfo
+    // is available or a short timeout elapses. Throws if not connected or if
+    // KinematicsInfo never arrives. Released `mutex_` between polling iterations
+    // so the worker thread can keep pumping the primary stream.
+    urcl::primary_interface::KinematicsInfo poll_kinematics_info_from_primary_();
+
     // TODO(RSDK-11620): Check if we still need this flag. We may
     // not, now that we examine status bits that include letting
     // us know whether the program is running.
@@ -451,6 +472,18 @@ class URArm::state_ {
     std::optional<move_request> move_request_;
 
     std::optional<ephemeral_data> ephemeral_;
+
+    // Cache for `get_calibrated_kinematics_info()` / `get_dh_kinematics_json()`,
+    // protected by `mutex_`. `kin_cache_owner_` is the raw pointer of the
+    // `arm_connection_` against which the cache was populated; the cache is
+    // considered stale (and a fresh fetch is performed) whenever the current
+    // connection's identity changes -- i.e., on every reconnect. Raw pointer
+    // identity is sufficient because the cache is invalidated whenever a new
+    // `arm_connection_` is constructed; we never compare against a freed
+    // pointer.
+    std::optional<urcl::primary_interface::KinematicsInfo> calibrated_kin_info_;
+    std::string dh_kinematics_json_;
+    const arm_connection_* kin_cache_owner_{nullptr};
 };
 
 template <typename... Args>

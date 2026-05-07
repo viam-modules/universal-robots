@@ -1,9 +1,8 @@
 #pragma once
 
-#include <array>
 #include <string>
 
-namespace viam_ur {
+#include <ur_client_library/types.h>
 
 // Per-joint DH parameters for a 6-DOF UR arm, as reported by the controller via
 // `urcl::primary_interface::KinematicsInfo`. Each array holds one entry per joint;
@@ -12,10 +11,10 @@ namespace viam_ur {
 // pose -- it is NOT the joint variable (the joint angle is supplied by the
 // revolute joint frame in the synthesized chain).
 struct DHParams {
-    std::array<double, 6> a;
-    std::array<double, 6> d;
-    std::array<double, 6> alpha;
-    std::array<double, 6> theta;
+    urcl::vector6d_t a;
+    urcl::vector6d_t d;
+    urcl::vector6d_t alpha;
+    urcl::vector6d_t theta;
 };
 
 // Builds an RDK-compatible kinematics JSON document for the given UR model from
@@ -33,5 +32,3 @@ struct DHParams {
 //
 // Throws std::invalid_argument if model_name has no per-model table registered.
 std::string build_dh_kinematics_json(const std::string& model_name, const DHParams& dh);
-
-}  // namespace viam_ur

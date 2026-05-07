@@ -410,9 +410,12 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     // primary client is up and we can read from it.
     if (model_ == URArm::model("ur20")) {
         VIAM_SDK_LOG(info) << "Fetching calibrated DH parameters from controller for ur20";
-        // KinematicsInfo isn't assignable -- copy-construct in place via emplace.
-        const auto kin_info = current_state_->fetch_kinematics_info_();
-        calibrated_kin_info_.emplace(kin_info);
+        // Force the eager fetch+build at startup so any failure to obtain
+        // KinematicsInfo from the controller surfaces here rather than on the
+        // first get_kinematics() call. The state_ owns the cache and refreshes
+        // it on every reconnect.
+        const auto json = current_state_->get_dh_kinematics_json();
+        const auto kin_info = current_state_->get_calibrated_kinematics_info();
 
         const auto fmt6 = [](const urcl::vector6d_t& v) {
             std::ostringstream os;
@@ -432,16 +435,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
                            << "alpha=" << fmt6(kin_info.dh_alpha_) << ", "
                            << "theta=" << fmt6(kin_info.dh_theta_)
                            << " (theta is baked into the static link pose; chain is emitted in SVA form)";
-
-        viam_ur::DHParams dh{};
-        dh.a = kin_info.dh_a_;
-        dh.d = kin_info.dh_d_;
-        dh.alpha = kin_info.dh_alpha_;
-        dh.theta = kin_info.dh_theta_;
-
-        dh_kinematics_json_ = viam_ur::build_dh_kinematics_json("ur20", dh);
-        VIAM_SDK_LOG(info) << "Synthesized DH-form kinematics JSON for ur20 from calibrated DH (" << dh_kinematics_json_.size()
-                           << " bytes)";
+        VIAM_SDK_LOG(info) << "Synthesized DH-form kinematics JSON for ur20 from calibrated DH (" << json.size() << " bytes)";
     }
 
     VIAM_SDK_LOG(info) << "URArm startup complete";
@@ -534,10 +528,10 @@ viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
-    if (!dh_kinematics_json_.empty()) {
-        VIAM_SDK_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH (" << dh_kinematics_json_.size()
-                           << " bytes)";
-        return viam::sdk::KinematicsDataSVA(std::vector<unsigned char>(dh_kinematics_json_.begin(), dh_kinematics_json_.end()));
+    auto dh_json = current_state_->get_dh_kinematics_json();
+    if (!dh_json.empty()) {
+        VIAM_SDK_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH (" << dh_json.size() << " bytes)";
+        return viam::sdk::KinematicsDataSVA(std::vector<unsigned char>(dh_json.begin(), dh_json.end()));
     }
     // For models that are supposed to ship synthesized kinematics, refuse to fall through
     // to the static file -- empty json here indicates a configuration bug.
@@ -545,7 +539,7 @@ viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         throw std::runtime_error(
             "get_kinematics: synthesized kinematics not available for ur20; calibrated DH was expected at configure time");
     }
-    VIAM_SDK_LOG(info) << "get_kinematics: dh_kinematics_json_ is empty -- falling back to static kinematics/<model>.json";
+    VIAM_SDK_LOG(info) << "get_kinematics: no synthesized JSON for this model -- falling back to static kinematics/<model>.json";
 
     // The `Model` class absurdly lacks accessors
     const std::string model_string = [&] {
@@ -719,10 +713,10 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             }
             resp.emplace(k_get_state_description, cached_controlled_info->description);
         } else if (kv.first == k_get_calibrated_dh_params) {
-            if (!calibrated_kin_info_) {
+            if (model_ != model("ur20")) {
                 throw std::runtime_error("calibrated DH parameters not available for this arm model");
             }
-            const auto& kin_info = *calibrated_kin_info_;
+            const auto kin_info = current_state_->get_calibrated_kinematics_info();
             auto to_array = [](const vector6d_t& v) {
                 std::vector<ProtoValue> arr;
                 arr.reserve(v.size());
