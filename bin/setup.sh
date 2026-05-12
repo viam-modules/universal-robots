@@ -68,4 +68,5 @@ conan install --update \
       -s:a "&:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=20 \
       -o:a "*:shared=False" \
-      -o:a "&:shared=False"
+      -o:a "&:shared=False" \
+      -o:a "boost/*:without_cobalt=True"

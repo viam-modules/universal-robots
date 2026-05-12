@@ -60,7 +60,8 @@ conan install ${REPO_ROOT} --update \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=20 \
       -o:a "*:shared=False" \
-      -o:a "&:shared=False"
+      -o:a "&:shared=False" \
+      -o:a "boost/*:without_cobalt=True"
 
 conan create ${REPO_ROOT} \
       --profile=protobuf-override.profile \
@@ -71,7 +72,8 @@ conan create ${REPO_ROOT} \
       -s:a "&:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=20 \
       -o:a "*:shared=False" \
-      -o:a "&:shared=False"
+      -o:a "&:shared=False" \
+      -o:a "boost/*:without_cobalt=True"
 
 conan install \
       --output-folder=. \
@@ -84,4 +86,5 @@ conan install \
       -s:a "&:build_type=RelWithDebInfo" \
       -s:a compiler.cppstd=20 \
       -o:a "*:shared=False" \
-      -o:a "&:shared=False"
+      -o:a "&:shared=False" \
+      -o:a "boost/*:without_cobalt=True"
