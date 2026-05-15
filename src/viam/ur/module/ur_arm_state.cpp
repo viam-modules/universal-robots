@@ -66,7 +66,16 @@ URArm::state_::state_(private_,
       max_velocity_limits_(std::move(max_velocity_limits)),
       max_acceleration_limits_(std::move(max_acceleration_limits)),
       trajectory_sampling_freq_hz_(trajectory_sampling_freq_hz),
-      telemetry_output_path_append_traceid_template_(std::move(telemetry_output_path_append_traceid_template)) {}
+      telemetry_output_path_append_traceid_template_(std::move(telemetry_output_path_append_traceid_template)) {
+    // Initialize the kinematics promise/future pair so that
+    // `kinematics_future_.valid()` is unconditionally true for the rest of
+    // `state_`'s lifetime. The producer side (see
+    // `state_connected_::recv_arm_data`) adopts this slot on the first tick
+    // of each connection period, fulfilling and (if needed) replacing it
+    // across connections; readers never have to check `valid()`.
+    kinematics_promise_.emplace();
+    kinematics_future_ = kinematics_promise_->get_future().share();
+}
 
 URArm::state_::~state_() {
     shutdown();
@@ -784,130 +793,57 @@ vector6d_t URArm::state_::clamp_limits_(vector6d_t desired, const std::optional<
     return desired;
 }
 
-urcl::primary_interface::KinematicsInfo URArm::state_::poll_kinematics_info_from_primary_() {
-    // KinematicsInfo arrives on the primary stream shortly after the connection
-    // is established. state_::create returns once the state machine is connected,
-    // but the consumer may not have processed the KinematicsInfo packet yet -- so
-    // we poll with a bounded timeout. The lock is released between attempts so
-    // the worker thread can keep pumping the primary stream.
-    constexpr auto k_timeout = std::chrono::seconds{5};
-    constexpr auto k_poll_interval = std::chrono::milliseconds{100};
-    const auto deadline = std::chrono::steady_clock::now() + k_timeout;
-
-    while (true) {
-        std::shared_ptr<urcl::primary_interface::KinematicsInfo> kin;
-        {
-            const std::lock_guard lock{mutex_};
-            kin = std::visit(
-                [](auto& s) -> std::shared_ptr<urcl::primary_interface::KinematicsInfo> {
-                    using S = std::decay_t<decltype(s)>;
-                    if constexpr (std::is_base_of_v<state_connected_, S>) {
-                        auto primary = s.arm_conn_->driver->getPrimaryClient();
-                        if (!primary) {
-                            throw std::runtime_error("primary client unavailable on UrDriver");
-                        }
-                        return primary->getKinematicsInfo();
-                    } else {
-                        throw std::runtime_error("cannot fetch kinematics info: arm is not connected");
-                    }
-                },
-                current_state_);
-        }
-        if (kin) {
-            return *kin;
-        }
-        if (std::chrono::steady_clock::now() >= deadline) {
-            throw std::runtime_error("controller has not delivered KinematicsInfo within timeout");
-        }
-        std::this_thread::sleep_for(k_poll_interval);
-    }
-}
-
-urcl::primary_interface::KinematicsInfo URArm::state_::get_calibrated_kinematics_info() {
-    // Identify the current arm connection (raw pointer is sufficient as a cache
-    // key: a fresh `arm_connection_` is always a fresh allocation, and we
-    // invalidate the cache before any release).
-    const arm_connection_* current_conn = nullptr;
+urcl::primary_interface::KinematicsInfo URArm::state_::get_calibrated_kinematics_info(std::chrono::steady_clock::duration wait_duration) {
+    // Copy the shared_future under the lock so we can release before
+    // potentially blocking. The copy bumps the shared-state refcount;
+    // any concurrent producer replacement of `kinematics_future_` does not
+    // affect our local handle.
+    std::shared_future<cached_kinematics_payload> fut;
     {
         const std::lock_guard lock{mutex_};
-        current_conn = std::visit(
-            [](auto& s) -> const arm_connection_* {
-                using S = std::decay_t<decltype(s)>;
-                if constexpr (std::is_base_of_v<state_connected_, S>) {
-                    return s.arm_conn_.get();
-                } else {
-                    return nullptr;
-                }
-            },
-            current_state_);
-        if (calibrated_kin_info_ && kin_cache_owner_ != nullptr && kin_cache_owner_ == current_conn) {
-            return *calibrated_kin_info_;
-        }
+        fut = kinematics_future_;
     }
-
-    // Cache miss. `poll_kinematics_info_from_primary_` polls the primary client
-    // (briefly releasing the lock between attempts).
-    auto info = poll_kinematics_info_from_primary_();
-
-    {
-        const std::lock_guard lock{mutex_};
-        const arm_connection_* now_current = std::visit(
-            [](auto& s) -> const arm_connection_* {
-                using S = std::decay_t<decltype(s)>;
-                if constexpr (std::is_base_of_v<state_connected_, S>) {
-                    return s.arm_conn_.get();
-                } else {
-                    return nullptr;
-                }
-            },
-            current_state_);
-        // If the connection identity changed during the poll, return the freshly
-        // fetched value to the caller without caching it -- the next caller will
-        // refetch against the now-current connection.
-        if (now_current != nullptr && now_current == current_conn) {
-            calibrated_kin_info_.emplace(info);
-            dh_kinematics_json_.clear();
-            kin_cache_owner_ = now_current;
-        }
+    if (fut.wait_for(wait_duration) != std::future_status::ready) {
+        throw std::runtime_error{"kinematics info not available within deadline"};
     }
-    return info;
+    // `.get()` rethrows any producer-side exception forwarded via the
+    // promise; otherwise it returns `const cached_kinematics_payload&` into
+    // the persistent shared state.
+    return fut.get().info;
 }
 
-std::string URArm::state_::get_dh_kinematics_json() {
-    // Only UR20 currently uses synthesized SVA kinematics; other models ship
-    // static `kinematics/<model>.json` files. Returning an empty string lets
-    // the URArm caller fall back to that path.
-    if (configured_model_type_ != "UR20") {
+std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration) {
+    // Only UR20 currently has a per-model table entry in `model_tables()`
+    // for synthesizing SVA kinematics from calibrated DH; other models ship
+    // static `kinematics/<model>.json` files. Gating *before* the wait means
+    // non-UR20 callers neither stall on nor throw from the kinematics
+    // future. `configured_model_type_` is `const` and set at construction,
+    // so reading it without the mutex is safe. This early-gate keeps the
+    // non-UR20 fallback minimal and sound; when other models gain
+    // `model_tables()` entries the gate widens accordingly.
+    if (configured_model_type_ != "ur20") {
         return {};
     }
 
-    // Force the calibrated info cache to be current. This refreshes both
-    // `calibrated_kin_info_` and (by clearing it) `dh_kinematics_json_` if a
-    // reconnect produced a new connection.
-    auto info = get_calibrated_kinematics_info();
-
+    std::shared_future<cached_kinematics_payload> fut;
     {
         const std::lock_guard lock{mutex_};
-        if (!dh_kinematics_json_.empty()) {
-            return dh_kinematics_json_;
-        }
+        fut = kinematics_future_;
     }
-
-    DHParams dh{};
-    dh.a = info.dh_a_;
-    dh.d = info.dh_d_;
-    dh.alpha = info.dh_alpha_;
-    dh.theta = info.dh_theta_;
-    auto json = build_dh_kinematics_json("ur20", dh);
-
-    {
-        const std::lock_guard lock{mutex_};
-        // Re-check in case a concurrent caller raced us; in either case the JSON
-        // is deterministic for a given KinematicsInfo, so it doesn't matter
-        // which one we keep.
-        if (dh_kinematics_json_.empty()) {
-            dh_kinematics_json_ = std::move(json);
-        }
-        return dh_kinematics_json_;
+    if (fut.wait_for(wait_duration) != std::future_status::ready) {
+        throw std::runtime_error{"kinematics info not available within deadline"};
     }
+    const auto& payload = fut.get();
+
+    // The first JSON-wanting caller builds the string under `call_once`;
+    // subsequent callers reuse the memoized value. `json_once`/`json` are
+    // `mutable` on `cached_kinematics_payload` precisely so this lazy build
+    // is legal through the `const&` returned by `shared_future::get()`;
+    // `json_once` is a `unique_ptr<once_flag>` (dereferenced here) because
+    // `std::once_flag` is neither copyable nor movable.
+    std::call_once(*payload.json_once, [&] {
+        const DHParams dh{payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_};
+        payload.json = build_dh_kinematics_json(payload.model_name, dh);
+    });
+    return payload.json;
 }

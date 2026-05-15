@@ -1,5 +1,7 @@
 #include "ur_arm_state.hpp"
 
+#include <boost/algorithm/string/case_conv.hpp>
+
 // NOLINTBEGIN(readability-convert-member-functions-to-static)
 
 URArm::state_::state_disconnected_::state_disconnected_(event_connection_lost_ triggering_event)
@@ -86,6 +88,11 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     if (!arm_connection->dashboard->commandGetRobotModel(actual_model_type)) {
         throw std::runtime_error("failed to get model info of connected arm");
     }
+    // The dashboard reports the model in uppercase (e.g. "UR20") while
+    // `configured_model_type_` is normalized to lowercase at the assignment
+    // site in `URArm::configure_`. Compare case-insensitively by lowering
+    // here.
+    boost::algorithm::to_lower(actual_model_type);
 
     if (state.configured_model_type_ != actual_model_type) {
         std::ostringstream buffer;
