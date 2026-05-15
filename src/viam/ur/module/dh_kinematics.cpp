@@ -1,10 +1,10 @@
 #include "dh_kinematics.hpp"
 
 #include <cmath>
-#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <variant>
 
 #include <Eigen/Geometry>
@@ -65,9 +65,9 @@ struct ModelTables {
 };
 
 // Per-model static tables. To register a new UR model, add an entry here.
-const std::map<std::string, ModelTables>& model_tables() {
-    static const std::map<std::string, ModelTables> tables = [] {
-        std::map<std::string, ModelTables> t;
+const std::unordered_map<std::string, ModelTables>& model_tables() {
+    static const std::unordered_map<std::string, ModelTables> tables = [] {
+        std::unordered_map<std::string, ModelTables> t;
 
         // ur20: limits taken from existing kinematics/ur20.json (verified in spec).
         ModelTables ur20;

@@ -420,21 +420,15 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
         const auto fmt6 = [](const urcl::vector6d_t& v) {
             std::ostringstream os;
             os << "[";
-            for (size_t i = 0; i < v.size(); ++i) {
-                if (i) {
-                    os << ", ";
-                }
-                os << v[i];
-            }
+            boost::copy(v, boost::io::make_ostream_joiner(os, ", "));
             os << "]";
             return os.str();
         };
-        VIAM_SDK_LOG(info) << "Calibrated KinematicsInfo received -- "
+        VIAM_SDK_LOG(info) << "Calibrated KinematicsInfo received: "
                            << "a=" << fmt6(kin_info.dh_a_) << ", "
                            << "d=" << fmt6(kin_info.dh_d_) << ", "
                            << "alpha=" << fmt6(kin_info.dh_alpha_) << ", "
-                           << "theta=" << fmt6(kin_info.dh_theta_)
-                           << " (theta is baked into the static link pose; chain is emitted in SVA form)";
+                           << "theta=" << fmt6(kin_info.dh_theta_);
         VIAM_SDK_LOG(info) << "Synthesized DH-form kinematics JSON for ur20 from calibrated DH (" << json.size() << " bytes)";
     }
 

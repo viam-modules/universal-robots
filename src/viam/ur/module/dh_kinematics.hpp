@@ -7,9 +7,8 @@
 // Per-joint DH parameters for a 6-DOF UR arm, as reported by the controller via
 // `urcl::primary_interface::KinematicsInfo`. Each array holds one entry per joint;
 // units match what urcl reports: meters for `a` and `d`, radians for `alpha` and
-// `theta`. `theta` is the per-joint calibration offset baked into the static link
-// pose -- it is NOT the joint variable (the joint angle is supplied by the
-// revolute joint frame in the synthesized chain).
+// `theta`. The reported `theta` is a fixed per-joint calibration offset; it does
+// not change as the joint moves.
 struct DHParams {
     urcl::vector6d_t a;
     urcl::vector6d_t d;
