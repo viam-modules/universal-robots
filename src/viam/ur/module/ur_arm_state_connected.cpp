@@ -177,6 +177,60 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
         };
     }
 
+    // Kinematics-info producer. On the first tick of this connection period,
+    // adopt the slot on `state_`: if the previous period's promise was
+    // already fulfilled (so `state.kinematics_promise_` is empty), install a
+    // fresh promise/future pair; otherwise keep the existing in-flight
+    // promise so this period's worker continues fulfilling the same
+    // shared_future that any waiting readers already hold.
+    if (!arm_conn_->kinematics_claimed_) {
+        if (!state.kinematics_promise_) {
+            state.kinematics_promise_.emplace();
+            state.kinematics_future_ = state.kinematics_promise_->get_future().share();
+        }
+        arm_conn_->kinematics_claimed_ = true;
+    }
+
+    if (state.kinematics_promise_) {
+        // A null primary client mid-connection indicates URCL has somehow
+        // lost internal state -- the primary client is set up at
+        // `UrDriver` construction and isn't expected to disappear. Rather
+        // than burn the kinematics promise on what is almost certainly a
+        // broader URCL state problem, treat it as a connection-level
+        // failure: tearing down the `arm_connection_` here forces a fresh
+        // `UrDriver` (and thus a fresh primary client) on reconnect, and
+        // the next period's first tick will adopt the kinematics slot
+        // afresh via `kinematics_claimed_{false}` on the new
+        // `arm_connection_`. This matches the policy used elsewhere in
+        // `recv_arm_data` for analogous failures (missed RTDE packages,
+        // missing status-bit fields, etc.).
+        const auto primary = arm_conn_->driver->getPrimaryClient();
+        if (!primary) {
+            return event_connection_lost_::data_communication_failure();
+        }
+        try {
+            // URCL data race note: `PrimaryConsumer::kinematics_info_` is
+            // assigned from URCL's primary-stream background thread (see
+            // `primary_consumer.h` ~110) and read here (see
+            // `primary_consumer.h` ~196) without synchronization on either
+            // side. The window is narrow in practice (assigned at most once
+            // per connection, just after the primary handshake) but is
+            // formally a data race.
+            // TODO(RSDK-XXXXX): file upstream against
+            // UniversalRobots/Universal_Robots_Client_Library.
+            if (auto kin = primary->getKinematicsInfo()) {
+                state.kinematics_promise_->set_value({
+                    .info = *kin,
+                    .model_name = state.configured_model_type_,
+                });
+                state.kinematics_promise_.reset();
+            }
+        } catch (...) {
+            state.kinematics_promise_->set_exception(std::current_exception());
+            state.kinematics_promise_.reset();
+        }
+    }
+
     return std::nullopt;
 }
 
