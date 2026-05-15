@@ -435,8 +435,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
                            << "a=" << fmt6(kin_info.dh_a_) << ", "
                            << "d=" << fmt6(kin_info.dh_d_) << ", "
                            << "alpha=" << fmt6(kin_info.dh_alpha_) << ", "
-                           << "theta=" << fmt6(kin_info.dh_theta_)
-                           << " (theta is baked into the static link pose; chain is emitted in SVA form)";
+                           << "theta=" << fmt6(kin_info.dh_theta_);
     }
 
     VIAM_SDK_LOG(info) << "URArm startup complete";
