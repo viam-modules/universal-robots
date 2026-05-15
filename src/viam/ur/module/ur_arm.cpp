@@ -424,18 +424,17 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
         // trigger that work under `std::call_once` in the future payload.
         const auto kin_info = current_state_->get_calibrated_kinematics_info(std::chrono::seconds{5});
 
-        const auto fmt6 = [](const urcl::vector6d_t& v) {
-            std::ostringstream os;
-            os << "[";
-            boost::copy(v, boost::io::make_ostream_joiner(os, ", "));
-            os << "]";
-            return os.str();
-        };
-        VIAM_SDK_LOG(info) << "Calibrated KinematicsInfo received: "
-                           << "a=" << fmt6(kin_info.dh_a_) << ", "
-                           << "d=" << fmt6(kin_info.dh_d_) << ", "
-                           << "alpha=" << fmt6(kin_info.dh_alpha_) << ", "
-                           << "theta=" << fmt6(kin_info.dh_theta_);
+        std::stringstream s;
+        s << "Calibrated KinematicsInfo received: a=[";
+        boost::copy(kin_info.dh_a_, boost::io::make_ostream_joiner(s, ", "));
+        s << "], d=[";
+        boost::copy(kin_info.dh_d_, boost::io::make_ostream_joiner(s, ", "));
+        s << "], alpha=[";
+        boost::copy(kin_info.dh_alpha_, boost::io::make_ostream_joiner(s, ", "));
+        s << "], theta=[";
+        boost::copy(kin_info.dh_theta_, boost::io::make_ostream_joiner(s, ", "));
+        s << "]";
+        VIAM_SDK_LOG(info) << s.str();
     }
 
     VIAM_SDK_LOG(info) << "URArm startup complete";
@@ -656,13 +655,17 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     };
     std::optional<controlled_info> cached_controlled_info;
 
-    const auto add_limits_response = [&resp](const std::string& key, const vector6d_t& limits_deg) {
+    const auto to_array = [](const vector6d_t& v) {
         std::vector<ProtoValue> arr;
-        arr.reserve(limits_deg.size());
-        for (size_t i = 0; i < limits_deg.size(); ++i) {
-            arr.push_back(ProtoValue{limits_deg[i]});
+        arr.reserve(v.size());
+        for (size_t i = 0; i < v.size(); ++i) {
+            arr.push_back(ProtoValue{v[i]});
         }
-        resp.emplace(key, arr);
+        return arr;
+    };
+
+    const auto add_limits_response = [&resp, &to_array](const std::string& key, const vector6d_t& limits_deg) {
+        resp.emplace(key, to_array(limits_deg));
     };
 
     for (const auto& kv : command) {
@@ -720,14 +723,6 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
                 throw std::runtime_error("calibrated DH parameters not available for this arm model");
             }
             const auto kin_info = current_state_->get_calibrated_kinematics_info(std::chrono::seconds{5});
-            auto to_array = [](const vector6d_t& v) {
-                std::vector<ProtoValue> arr;
-                arr.reserve(v.size());
-                for (size_t i = 0; i < v.size(); ++i) {
-                    arr.push_back(ProtoValue{v[i]});
-                }
-                return arr;
-            };
             ProtoStruct dh;
             dh.emplace("a", to_array(kin_info.dh_a_));
             dh.emplace("d", to_array(kin_info.dh_d_));
