@@ -237,7 +237,7 @@ class URArm::state_ {
         urcl::primary_interface::KinematicsInfo info;
         std::string model_name;  // canonical lowercase, e.g. "ur20"
         mutable std::unique_ptr<std::once_flag> json_once{std::make_unique<std::once_flag>()};
-        mutable std::string json{}; // NOLINT(readability-redundant-member-init)
+        mutable std::string json{};  // NOLINT(readability-redundant-member-init)
     };
 
     struct arm_connection_ {
