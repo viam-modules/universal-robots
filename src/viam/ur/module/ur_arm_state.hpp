@@ -1,15 +1,19 @@
 #include "ur_arm.hpp"
 
 #include <bitset>
+#include <chrono>
 #include <condition_variable>
 #include <filesystem>
 #include <future>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <thread>
 #include <variant>
 
 #include "trajectory_logger.hpp"
 
+#include <ur_client_library/primary/robot_state/kinematics_info.h>
 #include <ur_client_library/types.h>
 #include <ur_client_library/ur/dashboard_client.h>
 #include <ur_client_library/ur/ur_driver.h>
@@ -101,6 +105,41 @@ class URArm::state_ {
     std::string describe() const;
     bool is_current_state_controlled(std::string* description = nullptr) const;
 
+    // Returns the calibrated DH parameters for the currently-connected arm
+    // (controller's nominal DH combined with the per-arm calibration deltas).
+    //
+    // Blocks up to `wait_duration` waiting for the controller to deliver
+    // KinematicsInfo on the primary stream. May return a value populated by
+    // a *previous* connection while the arm is currently disconnected: this
+    // is intentional, because calibration is durable across transient
+    // disconnects and the last known value remains the best answer until
+    // the controller can be re-queried.
+    //
+    // Throws std::runtime_error if no KinematicsInfo has yet been observed
+    // and `wait_duration` elapses without one arriving. Rethrows any
+    // producer-side exception (e.g., a failure surfaced from URCL while
+    // attempting to read KinematicsInfo) forwarded via the underlying
+    // promise.
+    urcl::primary_interface::KinematicsInfo get_calibrated_kinematics_info(std::chrono::steady_clock::duration wait_duration);
+
+    // Returns the synthesized kinematics JSON (SVA form) built from the
+    // calibrated DH parameters of the currently-connected arm. Returns an
+    // empty string for models that ship static `kinematics/<model>.json`
+    // files (the non-UR20 cases are gated early and do not wait on the
+    // controller).
+    //
+    // For models that synthesize the JSON (currently only UR20), blocks up
+    // to `wait_duration` waiting for KinematicsInfo. May return a value
+    // built from a *previous* connection while currently disconnected, with
+    // the same rationale as `get_calibrated_kinematics_info`. The JSON
+    // itself is built once per payload via `std::call_once` and reused
+    // thereafter.
+    //
+    // Throws std::runtime_error on `wait_duration` expiry for a model that
+    // does synthesize JSON, and rethrows any producer-side exception
+    // forwarded via the underlying promise.
+    std::string get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration);
+
     std::optional<std::shared_future<void>> cancel_move_request();
 
    private:
@@ -178,6 +217,29 @@ class URArm::state_ {
         std::unique_ptr<event_connection_lost_> triggering_event_;
     };
 
+    // Fulfillment payload for the `kinematics_future_` cache slot.
+    //
+    // `mutable` is intentional on `json_once`/`json`: the shared state is
+    // accessed via `shared_future<T>::get()` returning `const T&`, and the
+    // JSON is a deterministic function of `info` and `model_name`. Every
+    // caller observes the same logical value; `std::call_once` synchronizes
+    // the first JSON-wanting caller's build with later reuses.
+    //
+    // `json_once` is held via `unique_ptr` because `std::once_flag` is
+    // neither copyable nor movable, and the payload must be at least
+    // move-constructible to flow through `std::promise::set_value`. Wrapping
+    // the once_flag (rather than the whole payload) keeps the future's
+    // value type a plain `cached_kinematics_payload` and confines the heap
+    // indirection to a single field. A default member initializer for
+    // `json_once` lets the payload remain a C++20 aggregate so the producer
+    // can still construct it with designated initializers.
+    struct cached_kinematics_payload {
+        urcl::primary_interface::KinematicsInfo info;
+        std::string model_name;  // canonical lowercase, e.g. "ur20"
+        mutable std::unique_ptr<std::once_flag> json_once{std::make_unique<std::once_flag>()};
+        mutable std::string json{};  // NOLINT(readability-redundant-member-init)
+    };
+
     struct arm_connection_ {
         static constexpr size_t k_num_robot_status_bits = 4;
         static constexpr size_t k_num_safety_status_bits = 11;
@@ -191,6 +253,16 @@ class URArm::state_ {
         std::optional<std::bitset<k_num_safety_status_bits>> safety_status_bits;
 
         bool log_destructor{false};
+
+        // True once `state_connected_::recv_arm_data` has adopted the
+        // `state_::kinematics_promise_` / `state_::kinematics_future_` slot
+        // on behalf of this connection period. Resets to false implicitly by
+        // virtue of being a per-connection field: each fresh
+        // `arm_connection_` starts with `false`, so the first tick of every
+        // new connection period reattempts adoption. This is what gives the
+        // future-based cache its identity tracking without raw-pointer
+        // comparisons.
+        bool kinematics_claimed_{false};
     };
 
     struct state_connected_ {
@@ -444,6 +516,21 @@ class URArm::state_ {
     std::optional<move_request> move_request_;
 
     std::optional<ephemeral_data> ephemeral_;
+
+    // Cache slot for `get_calibrated_kinematics_info()` /
+    // `get_dh_kinematics_json()`, protected by `mutex_`. The future is
+    // initialized at construction (so `kinematics_future_.valid()` is an
+    // invariant) and replaced only at the first tick of a new connection
+    // period whose worker observes that the previous period's promise has
+    // already been fulfilled (see `state_connected_::recv_arm_data`).
+    //
+    // The promise is engaged while a fetch is outstanding and reset (via
+    // `.reset()`) after `set_value` or `set_exception`. An empty promise
+    // therefore means "the current future is already fulfilled and the next
+    // connection period should install a fresh promise/future pair before
+    // attempting to populate it."
+    std::optional<std::promise<cached_kinematics_payload>> kinematics_promise_;
+    std::shared_future<cached_kinematics_payload> kinematics_future_;
 };
 
 template <typename... Args>

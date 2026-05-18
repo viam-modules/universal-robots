@@ -125,7 +125,7 @@ include(FetchContent)
 FetchContent_Declare(
   Universal_Robots_Client_Library
   GIT_REPOSITORY https://github.com/UniversalRobots/Universal_Robots_Client_Library
-  GIT_TAG        2.10.0
+  GIT_TAG        2.11.0
   GIT_SHALLOW TRUE
   SYSTEM
 )
@@ -223,6 +223,7 @@ target_include_directories(viam-ur
 
 target_sources(viam-ur
   PRIVATE
+    src/viam/ur/module/dh_kinematics.cpp
     src/viam/ur/module/trajectory_logger.cpp
     src/viam/ur/module/ur_arm.cpp
     src/viam/ur/module/ur_arm_state.cpp

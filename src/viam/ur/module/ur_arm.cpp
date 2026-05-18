@@ -65,6 +65,7 @@
 #include <xtensor/xnorm.hpp>
 #endif
 
+#include "dh_kinematics.hpp"
 #include "ur_arm_state.hpp"
 #include "utils.hpp"
 
@@ -378,13 +379,20 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
 
     // check model type is valid, map to ur_client data type
     // https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/bff7bf2e2a85c17fa3f88adda241763040596ff1/include/ur_client_library/ur/datatypes.h#L204
+    //
+    // The values returned here are stored verbatim into
+    // `state_::configured_model_type_` and compared elsewhere (against
+    // `actual_model_type` reported by the dashboard, and against literal
+    // model-name strings in the kinematics readers and `model_tables()`
+    // lookups). The canonical project-wide spelling is lowercase, so we
+    // produce lowercase here at the assignment site.
     const std::string configured_model_type = [&] {
         if (model_ == URArm::model("ur3e")) {
-            return "UR3";
+            return "ur3";
         } else if ((model_ == URArm::model("ur5e")) || (model_ == URArm::model("ur7e"))) {
-            return "UR5";
+            return "ur5";
         } else if (model_ == URArm::model("ur20")) {
-            return "UR20";
+            return "ur20";
         } else {
             std::ostringstream buffer;
             buffer << "unsupported model type: `" << model_.to_string() << "`";
@@ -402,6 +410,32 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
 
     VIAM_SDK_LOG(debug) << "URArm starting up";
     current_state_ = state_::create(configured_model_type, name(), cfg, ports_);
+
+    // state_::create blocks until the state machine reaches a connected state
+    // (its constructor loops on upgrade_downgrade_ until current_state_ is no
+    // longer state_disconnected_), so by the time we reach this point the
+    // primary client is up and we can read from it.
+    if (model_ == URArm::model("ur20")) {
+        VIAM_SDK_LOG(info) << "Fetching calibrated DH parameters from controller for ur20";
+        // Force the eager calibration fetch at startup so any failure to
+        // obtain KinematicsInfo from the controller surfaces here rather
+        // than on the first `get_kinematics()` call. We deliberately do not
+        // pre-build the JSON: the first `get_kinematics()` caller will
+        // trigger that work under `std::call_once` in the future payload.
+        const auto kin_info = current_state_->get_calibrated_kinematics_info(std::chrono::seconds{5});
+
+        std::stringstream s;
+        s << "Calibrated KinematicsInfo received: a=[";
+        boost::copy(kin_info.dh_a_, boost::io::make_ostream_joiner(s, ", "));
+        s << "], d=[";
+        boost::copy(kin_info.dh_d_, boost::io::make_ostream_joiner(s, ", "));
+        s << "], alpha=[";
+        boost::copy(kin_info.dh_alpha_, boost::io::make_ostream_joiner(s, ", "));
+        s << "], theta=[";
+        boost::copy(kin_info.dh_theta_, boost::io::make_ostream_joiner(s, ", "));
+        s << "]";
+        VIAM_SDK_LOG(info) << s.str();
+    }
 
     VIAM_SDK_LOG(info) << "URArm startup complete";
     failure_handler.deactivate();
@@ -492,6 +526,22 @@ void URArm::move_to_position(const pose& p, const ProtoStruct&) {
 viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
+
+    // 100ms is sized to cover a transient reconnect-in-progress window
+    // without blocking RDK callers meaningfully; in steady state the future
+    // is already fulfilled and the wait returns immediately.
+    auto dh_json = current_state_->get_dh_kinematics_json(std::chrono::milliseconds{100});
+    if (!dh_json.empty()) {
+        VIAM_SDK_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH (" << dh_json.size() << " bytes)";
+        return viam::sdk::KinematicsDataSVA(std::vector<unsigned char>(dh_json.begin(), dh_json.end()));
+    }
+    // For models that are supposed to ship synthesized kinematics, refuse to fall through
+    // to the static file -- empty json here indicates a configuration bug.
+    if (model_ == model("ur20")) {
+        throw std::runtime_error(
+            "get_kinematics: synthesized kinematics not available for ur20; calibrated DH was expected at configure time");
+    }
+    VIAM_SDK_LOG(info) << "get_kinematics: no synthesized JSON for this model -- falling back to static kinematics/<model>.json";
 
     // The `Model` class absurdly lacks accessors
     const std::string model_string = [&] {
@@ -593,6 +643,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     constexpr char k_clear_pstop[] = "clear_pstop";
     constexpr char k_is_controllable[] = "is_controllable_state";
     constexpr char k_get_state_description[] = "get_state_description";
+    constexpr char k_get_calibrated_dh_params[] = "get_calibrated_dh_params";
 
     // Cache TCP state to ensure atomic read of pose and forces from same timestamp
     std::optional<decltype(current_state_->read_tcp_state_snapshot())> cached_tcp_state;
@@ -604,13 +655,17 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     };
     std::optional<controlled_info> cached_controlled_info;
 
-    const auto add_limits_response = [&resp](const std::string& key, const vector6d_t& limits_deg) {
+    const auto to_array = [](const vector6d_t& v) {
         std::vector<ProtoValue> arr;
-        arr.reserve(limits_deg.size());
-        for (size_t i = 0; i < limits_deg.size(); ++i) {
-            arr.push_back(ProtoValue{limits_deg[i]});
+        arr.reserve(v.size());
+        for (size_t i = 0; i < v.size(); ++i) {
+            arr.push_back(ProtoValue{v[i]});
         }
-        resp.emplace(key, arr);
+        return arr;
+    };
+
+    const auto add_limits_response = [&resp, &to_array](const std::string& key, const vector6d_t& limits_deg) {
+        resp.emplace(key, to_array(limits_deg));
     };
 
     for (const auto& kv : command) {
@@ -663,6 +718,17 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
                 cached_controlled_info->controlled = current_state_->is_current_state_controlled(&cached_controlled_info->description);
             }
             resp.emplace(k_get_state_description, cached_controlled_info->description);
+        } else if (kv.first == k_get_calibrated_dh_params) {
+            if (model_ != model("ur20")) {
+                throw std::runtime_error("calibrated DH parameters not available for this arm model");
+            }
+            const auto kin_info = current_state_->get_calibrated_kinematics_info(std::chrono::seconds{5});
+            ProtoStruct dh;
+            dh.emplace("a", to_array(kin_info.dh_a_));
+            dh.emplace("d", to_array(kin_info.dh_d_));
+            dh.emplace("alpha", to_array(kin_info.dh_alpha_));
+            dh.emplace("theta", to_array(kin_info.dh_theta_));
+            resp.emplace("calibrated_dh_params", std::move(dh));
         } else {
             throw std::runtime_error("unsupported do_command key: " + kv.first);
         }

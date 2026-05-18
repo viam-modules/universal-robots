@@ -20,6 +20,7 @@
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
 
+#include "dh_kinematics.hpp"
 #include "ur_arm_config.hpp"
 #include "utils.hpp"
 
@@ -65,7 +66,16 @@ URArm::state_::state_(private_,
       max_velocity_limits_(std::move(max_velocity_limits)),
       max_acceleration_limits_(std::move(max_acceleration_limits)),
       trajectory_sampling_freq_hz_(trajectory_sampling_freq_hz),
-      telemetry_output_path_append_traceid_template_(std::move(telemetry_output_path_append_traceid_template)) {}
+      telemetry_output_path_append_traceid_template_(std::move(telemetry_output_path_append_traceid_template)) {
+    // Initialize the kinematics promise/future pair so that
+    // `kinematics_future_.valid()` is unconditionally true for the rest of
+    // `state_`'s lifetime. The producer side (see
+    // `state_connected_::recv_arm_data`) adopts this slot on the first tick
+    // of each connection period, fulfilling and (if needed) replacing it
+    // across connections; readers never have to check `valid()`.
+    kinematics_promise_.emplace();
+    kinematics_future_ = kinematics_promise_->get_future().share();
+}
 
 URArm::state_::~state_() {
     shutdown();
@@ -781,4 +791,59 @@ vector6d_t URArm::state_::clamp_limits_(vector6d_t desired, const std::optional<
         std::ranges::transform(desired, *limits, begin(desired), [](auto dd, auto ll) { return std::min(dd, ll); });
     }
     return desired;
+}
+
+urcl::primary_interface::KinematicsInfo URArm::state_::get_calibrated_kinematics_info(std::chrono::steady_clock::duration wait_duration) {
+    // Copy the shared_future under the lock so we can release before
+    // potentially blocking. The copy bumps the shared-state refcount;
+    // any concurrent producer replacement of `kinematics_future_` does not
+    // affect our local handle.
+    std::shared_future<cached_kinematics_payload> fut;
+    {
+        const std::lock_guard lock{mutex_};
+        fut = kinematics_future_;
+    }
+    if (fut.wait_for(wait_duration) != std::future_status::ready) {
+        throw std::runtime_error{"kinematics info not available within deadline"};
+    }
+    // `.get()` rethrows any producer-side exception forwarded via the
+    // promise; otherwise it returns `const cached_kinematics_payload&` into
+    // the persistent shared state.
+    return fut.get().info;
+}
+
+std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration) {
+    // Only UR20 currently has a per-model table entry in `model_tables()`
+    // for synthesizing SVA kinematics from calibrated DH; other models ship
+    // static `kinematics/<model>.json` files. Gating *before* the wait means
+    // non-UR20 callers neither stall on nor throw from the kinematics
+    // future. `configured_model_type_` is `const` and set at construction,
+    // so reading it without the mutex is safe. This early-gate keeps the
+    // non-UR20 fallback minimal and sound; when other models gain
+    // `model_tables()` entries the gate widens accordingly.
+    if (configured_model_type_ != "ur20") {
+        return {};
+    }
+
+    std::shared_future<cached_kinematics_payload> fut;
+    {
+        const std::lock_guard lock{mutex_};
+        fut = kinematics_future_;
+    }
+    if (fut.wait_for(wait_duration) != std::future_status::ready) {
+        throw std::runtime_error{"kinematics info not available within deadline"};
+    }
+    const auto& payload = fut.get();
+
+    // The first JSON-wanting caller builds the string under `call_once`;
+    // subsequent callers reuse the memoized value. `json_once`/`json` are
+    // `mutable` on `cached_kinematics_payload` precisely so this lazy build
+    // is legal through the `const&` returned by `shared_future::get()`;
+    // `json_once` is a `unique_ptr<once_flag>` (dereferenced here) because
+    // `std::once_flag` is neither copyable nor movable.
+    std::call_once(*payload.json_once, [&] {
+        const DHParams dh{payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_};
+        payload.json = build_dh_kinematics_json(payload.model_name, dh);
+    });
+    return payload.json;
 }
