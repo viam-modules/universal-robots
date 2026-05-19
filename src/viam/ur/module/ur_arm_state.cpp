@@ -813,18 +813,6 @@ urcl::primary_interface::KinematicsInfo URArm::state_::get_calibrated_kinematics
 }
 
 std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration) {
-    // Only UR20 currently has a per-model table entry in `model_tables()`
-    // for synthesizing SVA kinematics from calibrated DH; other models ship
-    // static `kinematics/<model>.json` files. Gating *before* the wait means
-    // non-UR20 callers neither stall on nor throw from the kinematics
-    // future. `configured_model_type_` is `const` and set at construction,
-    // so reading it without the mutex is safe. This early-gate keeps the
-    // non-UR20 fallback minimal and sound; when other models gain
-    // `model_tables()` entries the gate widens accordingly.
-    if (configured_model_type_ != "ur20") {
-        return {};
-    }
-
     std::shared_future<cached_kinematics_payload> fut;
     {
         const std::lock_guard lock{mutex_};
@@ -842,8 +830,10 @@ std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::dur
     // `json_once` is a `unique_ptr<once_flag>` (dereferenced here) because
     // `std::once_flag` is neither copyable nor movable.
     std::call_once(*payload.json_once, [&] {
+        const auto sva_path = resource_root_ / "kinematics" / (payload.model_name + ".json");
+        const ModelTables tbl = parse_kinematics(sva_path);
         const DHParams dh{payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_};
-        payload.json = build_dh_kinematics_json(payload.model_name, dh);
+        payload.json = build_dh_kinematics_json(payload.model_name, dh, tbl);
     });
     return payload.json;
 }

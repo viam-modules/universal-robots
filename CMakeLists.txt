@@ -232,6 +232,7 @@ target_sources(viam-ur
     src/viam/ur/module/ur_arm_state_disconnected.cpp
     src/viam/ur/module/ur_arm_state_events.cpp
     src/viam/ur/module/ur_arm_state_independent.cpp
+    src/viam/ur/module/kinematics_parser.cpp
     src/viam/ur/module/utils.cpp
 )
 

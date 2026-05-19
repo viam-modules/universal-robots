@@ -337,6 +337,21 @@ Model URArm::model(std::string model_name) {
     return {model_family(), std::move(model_name)};
 }
 
+std::string URArm::urcl_category(const std::string& sdk_model_name) {
+    // Categories per
+    // https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/bff7bf2e2a85c17fa3f88adda241763040596ff1/include/ur_client_library/ur/datatypes.h#L204
+    if (sdk_model_name == "ur3e") {
+        return "ur3";
+    }
+    if (sdk_model_name == "ur5e" || sdk_model_name == "ur7e") {
+        return "ur5";
+    }
+    if (sdk_model_name == "ur20") {
+        return "ur20";
+    }
+    throw std::invalid_argument("URArm::urcl_category: unsupported sdk model name `" + sdk_model_name + "`");
+}
+
 std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registrations() {
     const auto model_strings = {
         "ur3e",  //
@@ -377,28 +392,11 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
         throw std::logic_error("URArm::configure_ was called for a currently configured instance");
     }
 
-    // check model type is valid, map to ur_client data type
-    // https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/bff7bf2e2a85c17fa3f88adda241763040596ff1/include/ur_client_library/ur/datatypes.h#L204
-    //
-    // The values returned here are stored verbatim into
-    // `state_::configured_model_type_` and compared elsewhere (against
-    // `actual_model_type` reported by the dashboard, and against literal
-    // model-name strings in the kinematics readers and `model_tables()`
-    // lookups). The canonical project-wide spelling is lowercase, so we
-    // produce lowercase here at the assignment site.
-    const std::string configured_model_type = [&] {
-        if (model_ == URArm::model("ur3e")) {
-            return "ur3";
-        } else if ((model_ == URArm::model("ur5e")) || (model_ == URArm::model("ur7e"))) {
-            return "ur5";
-        } else if (model_ == URArm::model("ur20")) {
-            return "ur20";
-        } else {
-            std::ostringstream buffer;
-            buffer << "unsupported model type: `" << model_.to_string() << "`";
-            throw std::invalid_argument(buffer.str());
-        }
-    }();
+    // `state_::configured_model_type_` is the canonical SDK model name
+    // (e.g. "ur5e"); it identifies the arm for kinematics-file lookups and
+    // is translated to the URCL category at the dashboard handshake site
+    // via `URArm::urcl_category`.
+    const std::string configured_model_type = model_.model_name();
 
     // If we fail to make it through the startup sequence, execute the shutdown code. The
     // shutdown code must be prepared to be called from any intermediate state that this
@@ -415,27 +413,25 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     // (its constructor loops on upgrade_downgrade_ until current_state_ is no
     // longer state_disconnected_), so by the time we reach this point the
     // primary client is up and we can read from it.
-    if (model_ == URArm::model("ur20")) {
-        VIAM_SDK_LOG(info) << "Fetching calibrated DH parameters from controller for ur20";
-        // Force the eager calibration fetch at startup so any failure to
-        // obtain KinematicsInfo from the controller surfaces here rather
-        // than on the first `get_kinematics()` call. We deliberately do not
-        // pre-build the JSON: the first `get_kinematics()` caller will
-        // trigger that work under `std::call_once` in the future payload.
-        const auto kin_info = current_state_->get_calibrated_kinematics_info(std::chrono::seconds{5});
+    VIAM_SDK_LOG(info) << "Fetching calibrated DH parameters from controller";
+    // Force the eager calibration fetch at startup so any failure to obtain
+    // KinematicsInfo from the controller surfaces here rather than on the
+    // first `get_kinematics()` call. We deliberately do not pre-build the
+    // JSON: the first `get_kinematics()` caller will trigger that work
+    // under `std::call_once` in the future payload.
+    const auto kin_info = current_state_->get_calibrated_kinematics_info(std::chrono::seconds{5});
 
-        std::stringstream s;
-        s << "Calibrated KinematicsInfo received: a=[";
-        boost::copy(kin_info.dh_a_, boost::io::make_ostream_joiner(s, ", "));
-        s << "], d=[";
-        boost::copy(kin_info.dh_d_, boost::io::make_ostream_joiner(s, ", "));
-        s << "], alpha=[";
-        boost::copy(kin_info.dh_alpha_, boost::io::make_ostream_joiner(s, ", "));
-        s << "], theta=[";
-        boost::copy(kin_info.dh_theta_, boost::io::make_ostream_joiner(s, ", "));
-        s << "]";
-        VIAM_SDK_LOG(info) << s.str();
-    }
+    std::stringstream s;
+    s << "Calibrated KinematicsInfo received: a=[";
+    boost::copy(kin_info.dh_a_, boost::io::make_ostream_joiner(s, ", "));
+    s << "], d=[";
+    boost::copy(kin_info.dh_d_, boost::io::make_ostream_joiner(s, ", "));
+    s << "], alpha=[";
+    boost::copy(kin_info.dh_alpha_, boost::io::make_ostream_joiner(s, ", "));
+    s << "], theta=[";
+    boost::copy(kin_info.dh_theta_, boost::io::make_ostream_joiner(s, ", "));
+    s << "]";
+    VIAM_SDK_LOG(info) << s.str();
 
     VIAM_SDK_LOG(info) << "URArm startup complete";
     failure_handler.deactivate();

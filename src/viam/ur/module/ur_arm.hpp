@@ -107,6 +107,11 @@ class URArm final : public Arm, public Reconfigurable {
     /// @brief Returns a Model in the correct family for the given model name.
     static Model model(std::string model_name);
 
+    /// @brief Maps an SDK model name (e.g. "ur5e") to the URCL category the
+    /// controller's dashboard reports (e.g. "ur5"). Throws std::invalid_argument
+    /// on an unrecognized name.
+    static std::string urcl_category(const std::string& sdk_model_name);
+
     /// @brief Returns a registration for each model of ARM supported by this class.
     static std::vector<std::shared_ptr<ModelRegistration>> create_model_registrations();
 
