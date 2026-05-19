@@ -1143,9 +1143,6 @@ BOOST_AUTO_TEST_CASE(test_parse_ur20_link_names_and_limits) {
 }
 
 BOOST_AUTO_TEST_CASE(test_parse_ur20_geometry_world_centers) {
-    // Reference values from the spec's "Worked example: ur20 round-trip"
-    // table at docs/superpowers/specs/2026-05-18-construct-model-table-from-json-design.md.
-    // Indices line up with link_names: 0 = base_link, 1..6 = DH children.
     const auto tbl = parse_kinematics(test_kinematics_path("ur20"));
 
     // base_link's placeholder sphere lives at world origin in the static file.

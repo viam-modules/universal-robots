@@ -18,20 +18,11 @@
 
 namespace {
 
-// The six DH joints in canonical DH index order. Uniform across ur3e, ur5e,
-// ur7e, ur20 -- verified in the spec at
-// docs/superpowers/specs/2026-05-18-construct-model-table-from-json-design.md.
-constexpr std::array<const char*, 6> k_dh_joint_names = {
-    "shoulder_pan_joint",   //
-    "shoulder_lift_joint",  //
-    "elbow_joint",          //
-    "wrist_1_joint",        //
-    "wrist_2_joint",        //
-    "wrist_3_joint",        //
-};
+constexpr std::size_t k_num_dh_joints = 6;
 
-// Guards against a malformed parent chain creating a cycle.
-constexpr std::size_t k_max_chain_walk_depth = 64;
+// Guards against a malformed chain creating a runaway walk (cycle, or a
+// pathologically long sequence of intermediate static links).
+constexpr std::size_t k_max_chain_walk_steps = 64;
 
 [[noreturn]] void throw_parse_error(const std::filesystem::path& path, const std::string& msg) {
     throw std::invalid_argument("parse_kinematics: " + path.string() + ": " + msg);
@@ -245,126 +236,109 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
         throw_parse_error(sva_json_path, "missing `joints` array");
     }
 
-    // Index links and joints by id. Both are needed by the parent-chain walk:
-    // a "parent" name resolves against either map.
-    std::unordered_map<std::string, const Json::Value*> links_by_id;
-    std::unordered_map<std::string, const Json::Value*> joints_by_id;
-    for (const auto& link : root["links"]) {
-        if (!link.isMember("id") || !link["id"].isString()) {
-            throw_parse_error(sva_json_path, "link entry missing string `id`");
+    // Build `parent_id -> child_entity` so we can walk the chain forward from
+    // "world" without ever looking up entries by name. Per the shipped JSONs
+    // each parent has at most one child (no branching); we enforce that here.
+    std::unordered_map<std::string, const Json::Value*> child_of;
+    auto index_entry = [&](const Json::Value& entry, const char* kind) {
+        if (!entry.isMember("id") || !entry["id"].isString()) {
+            throw_parse_error(sva_json_path, std::string{kind} + " entry missing string `id`");
         }
-        links_by_id.emplace(link["id"].asString(), &link);
+        // A missing or null `parent` field is treated as "world": ur3e omits
+        // `parent` on `base_link` entirely, while ur5e/ur7e/ur20 spell it as
+        // an explicit `"parent": "world"`. Both forms denote the chain root.
+        const std::string parent =
+            (entry.isMember("parent") && entry["parent"].isString()) ? entry["parent"].asString() : std::string{"world"};
+        const auto [it, inserted] = child_of.emplace(parent, &entry);
+        if (!inserted) {
+            throw_parse_error(sva_json_path, "parent `" + parent + "` has multiple children (chain must be linear)");
+        }
+    };
+    for (const auto& link : root["links"]) {
+        index_entry(link, "link");
     }
     for (const auto& joint : root["joints"]) {
-        if (!joint.isMember("id") || !joint["id"].isString()) {
-            throw_parse_error(sva_json_path, "joint entry missing string `id`");
-        }
-        joints_by_id.emplace(joint["id"].asString(), &joint);
+        index_entry(joint, "joint");
     }
 
-    // For each DH joint, find the unique link whose parent is the joint.
-    auto find_child_link = [&](const std::string& joint_id) -> const Json::Value& {
-        const Json::Value* found = nullptr;
-        for (const auto& link : root["links"]) {
-            if (link.isMember("parent") && link["parent"].isString() && link["parent"].asString() == joint_id) {
-                if (found != nullptr) {
-                    throw_parse_error(sva_json_path, "DH joint `" + joint_id + "` has multiple child links");
-                }
-                found = &link;
-            }
-        }
-        if (found == nullptr) {
-            throw_parse_error(sva_json_path, "DH joint `" + joint_id + "` has no child link");
-        }
-        return *found;
+    // `axis` is on joints; links don't have it. Use it as the joint/link discriminator.
+    const auto is_joint = [](const Json::Value& entry) { return entry.isMember("axis"); };
+
+    const auto next_in_chain = [&](const Json::Value& entry) -> const Json::Value* {
+        const auto it = child_of.find(entry["id"].asString());
+        return (it == child_of.end()) ? nullptr : it->second;
     };
 
+    // Chain root: the entity whose parent is "world". Must be a link.
+    const auto root_it = child_of.find("world");
+    if (root_it == child_of.end()) {
+        throw_parse_error(sva_json_path, "no entity has parent `world`");
+    }
+    const Json::Value& chain_root = *root_it->second;
+    if (is_joint(chain_root)) {
+        throw_parse_error(sva_json_path, "entity attached directly to `world` must be a link, got a joint");
+    }
+
     ModelTables out{};
+    out.link_names[0] = chain_root["id"].asString();
 
-    // Resolve and stash the chain-root link name (link_names[0]) by walking
-    // the first DH joint's child back. All shipped UR models share the same
-    // root ("base_link") in practice, but we read it rather than assume.
-    std::string chain_root_name;
+    // base_link's frame *is* the world frame (parent="world"), so its
+    // geometry's local pose is already world-frame. ur5e/ur7e ship a real
+    // base capsule here; ur20 ships a 1mm placeholder sphere; ur3e ships a
+    // box which `parse_geometry_world` intentionally drops.
+    out.geometries[0] = parse_geometry_world(sva_json_path, chain_root, Eigen::Matrix4d::Identity());
 
-    for (std::size_t i = 0; i < k_dh_joint_names.size(); ++i) {
-        const std::string joint_id = k_dh_joint_names[i];
-        const auto joint_it = joints_by_id.find(joint_id);
-        if (joint_it == joints_by_id.end()) {
-            throw_parse_error(sva_json_path, "missing DH joint `" + joint_id + "`");
+    // Walk the chain forward, accumulating W as we go. Each link composes its
+    // own local transform into W (so W is the cumulative pose at the link's
+    // *next* slot in the chain -- which, by the SVA convention, is the frame
+    // in which the next link's geometry lives). Joints contribute identity
+    // at zero joint state and are not composed.
+    Eigen::Matrix4d W = local_transform(sva_json_path, chain_root);
+    const Json::Value* cursor = &chain_root;
+    std::size_t dh_count = 0;
+    std::size_t steps = 0;
+    while (dh_count < k_num_dh_joints) {
+        if (steps++ > k_max_chain_walk_steps) {
+            throw_parse_error(sva_json_path, "chain walk exceeded max steps (cycle or pathologically long chain?)");
         }
-        out.limits[i] = parse_joint_limits(sva_json_path, *joint_it->second);
-
-        const Json::Value& child = find_child_link(joint_id);
-        out.link_names[i + 1] = child["id"].asString();
-
-        // Walk the parent chain back from `child` to a root: each step looks
-        // up the named parent in either map; entries are pushed in
-        // child-to-root order. Termination: parent absent (no map hit) or
-        // equal to "world". The link whose parent triggers termination IS
-        // included.
-        std::vector<const Json::Value*> chain_rev;
-        std::string cur_parent = child.isMember("parent") ? child["parent"].asString() : std::string{};
-        std::size_t depth = 0;
-        while (!cur_parent.empty() && cur_parent != "world") {
-            if (depth++ > k_max_chain_walk_depth) {
-                throw_parse_error(sva_json_path, "parent chain for `" + std::string{child["id"].asString()} +
-                                                     "` exceeded max walk depth (cycle?)");
-            }
-            const Json::Value* entry = nullptr;
-            if (auto it = joints_by_id.find(cur_parent); it != joints_by_id.end()) {
-                entry = it->second;
-            } else if (auto it = links_by_id.find(cur_parent); it != links_by_id.end()) {
-                entry = it->second;
-            } else {
-                throw_parse_error(sva_json_path, "parent `" + cur_parent + "` not found in links or joints");
-            }
-            chain_rev.push_back(entry);
-            cur_parent = entry->isMember("parent") ? (*entry)["parent"].asString() : std::string{};
+        const Json::Value* next = next_in_chain(*cursor);
+        if (next == nullptr) {
+            throw_parse_error(sva_json_path,
+                              "chain terminated after " + std::to_string(dh_count) + " DH joints; expected " +
+                                  std::to_string(k_num_dh_joints));
+        }
+        if (!is_joint(*next)) {
+            // Intermediate static link (e.g., ur3e's
+            // `base_link-base_link_inertia` and `base_link_inertia` between
+            // base_link and shoulder_pan_joint). Compose its transform and
+            // continue.
+            W = W * local_transform(sva_json_path, *next);
+            cursor = next;
+            continue;
         }
 
-        // Reversed-back-to-root: chain_rev is child-up; iterate in reverse to
-        // multiply in root-down order.
-        Eigen::Matrix4d W = Eigen::Matrix4d::Identity();
-        for (auto it = chain_rev.rbegin(); it != chain_rev.rend(); ++it) {
-            const Json::Value& entry = **it;
-            const bool is_joint = entry.isMember("axis");  // joints carry `axis`; links don't
-            if (is_joint) {
-                continue;  // joints are identity at zero joint state
-            }
-            W = W * local_transform(sva_json_path, entry);
+        // `next` is a DH joint. Record its limits, then advance to its child
+        // link (the DH-frame-i link). The joint itself contributes identity
+        // to W.
+        out.limits[dh_count] = parse_joint_limits(sva_json_path, *next);
+        const Json::Value* dh_link = next_in_chain(*next);
+        if (dh_link == nullptr) {
+            throw_parse_error(sva_json_path, "DH joint `" + next->operator[]("id").asString() + "` has no child link");
+        }
+        if (is_joint(*dh_link)) {
+            throw_parse_error(sva_json_path,
+                              "DH joint `" + next->operator[]("id").asString() + "` child must be a link, got a joint");
         }
 
-        // The first DH joint's chain establishes link_names[0]. Subsequent
-        // joints must agree (sanity check, not load-bearing).
-        if (!chain_rev.empty()) {
-            const Json::Value& root_entry = *chain_rev.back();
-            const std::string root_name = root_entry["id"].asString();
-            if (i == 0) {
-                chain_root_name = root_name;
-            } else if (root_name != chain_root_name) {
-                throw_parse_error(sva_json_path,
-                                  "DH joint `" + joint_id + "` chain root `" + root_name +
-                                      "` disagrees with joint 0's chain root `" + chain_root_name + "`");
-            }
-        }
+        // Geometry on `dh_link` sits in its parent (joint) frame, which at
+        // zero joints is the current W.
+        out.link_names[dh_count + 1] = (*dh_link)["id"].asString();
+        out.geometries[dh_count + 1] = parse_geometry_world(sva_json_path, *dh_link, W);
 
-        out.geometries[i + 1] = parse_geometry_world(sva_json_path, child, W);
+        W = W * local_transform(sva_json_path, *dh_link);
+        cursor = dh_link;
+        dh_count++;
     }
-
-    if (chain_root_name.empty()) {
-        throw_parse_error(sva_json_path, "could not determine chain root link name");
-    }
-    out.link_names[0] = chain_root_name;
-
-    // base_link's geometry lives in its parent (world) frame at zero joints,
-    // so W is identity. ur5e/ur7e ship a real base capsule here; ur20 ships a
-    // 1mm placeholder sphere; ur3e ships a box which `parse_geometry_world`
-    // intentionally skips.
-    const auto base_it = links_by_id.find(chain_root_name);
-    if (base_it == links_by_id.end()) {
-        throw_parse_error(sva_json_path, "chain root link `" + chain_root_name + "` not found in links map");
-    }
-    out.geometries[0] = parse_geometry_world(sva_json_path, *base_it->second, Eigen::Matrix4d::Identity());
 
     return out;
 }
