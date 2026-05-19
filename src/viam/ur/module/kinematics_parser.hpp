@@ -6,6 +6,8 @@
 #include <string>
 #include <variant>
 
+#include <viam/sdk/spatialmath/geometry.hpp>
+
 // Joint angular limits, in degrees, matching the `min`/`max` fields in
 // shipped `kinematics/<model>.json` files.
 struct JointLimits {
@@ -13,13 +15,13 @@ struct JointLimits {
     double max_deg;
 };
 
-// Capsule geometry. Pose (translation + quaternion) is in whatever frame the
-// producer stored it -- the parser populates these in world frame at zero
-// joints; `build_dh_kinematics_json` then applies the calibrated runtime
-// correction.
-struct CapsuleGeometry {
-    double radius_mm;
-    double length_mm;
+// A geometry stored in world frame at zero joints: pose (translation in mm
+// plus a quaternion) and shape, where the shape is one of viam-cpp-sdk's
+// primitives (radius in mm; capsule additionally carries length in mm).
+// The quaternion fields are only meaningful when `shape` holds a
+// `viam::sdk::capsule`; for spheres they are stored as identity and ignored
+// at emission.
+struct Geometry {
     double tx_mm;
     double ty_mm;
     double tz_mm;
@@ -27,17 +29,8 @@ struct CapsuleGeometry {
     double qx;
     double qy;
     double qz;
+    std::variant<viam::sdk::sphere, viam::sdk::capsule> shape;
 };
-
-// Sphere geometry. Translation only -- spheres have no orientation.
-struct SphereGeometry {
-    double radius_mm;
-    double tx_mm;
-    double ty_mm;
-    double tz_mm;
-};
-
-using Geometry = std::variant<CapsuleGeometry, SphereGeometry>;
 
 // Per-model data extracted from a shipped `kinematics/<model>.json` file:
 // joint limits for the six DH joints, the world-frame pose at zero joints of

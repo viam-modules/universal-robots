@@ -1116,11 +1116,10 @@ void check_capsule_world_center(const std::optional<Geometry>& g,
                                 double expected_z_mm,
                                 double tol_mm = 1e-3) {
     BOOST_REQUIRE(g.has_value());
-    BOOST_REQUIRE(std::holds_alternative<CapsuleGeometry>(*g));
-    const auto& cap = std::get<CapsuleGeometry>(*g);
-    BOOST_CHECK_SMALL(cap.tx_mm - expected_x_mm, tol_mm);
-    BOOST_CHECK_SMALL(cap.ty_mm - expected_y_mm, tol_mm);
-    BOOST_CHECK_SMALL(cap.tz_mm - expected_z_mm, tol_mm);
+    BOOST_REQUIRE(std::holds_alternative<viam::sdk::capsule>(g->shape));
+    BOOST_CHECK_SMALL(g->tx_mm - expected_x_mm, tol_mm);
+    BOOST_CHECK_SMALL(g->ty_mm - expected_y_mm, tol_mm);
+    BOOST_CHECK_SMALL(g->tz_mm - expected_z_mm, tol_mm);
 }
 
 }  // namespace
@@ -1149,12 +1148,11 @@ BOOST_AUTO_TEST_CASE(test_parse_ur20_geometry_world_centers) {
 
     // base_link's placeholder sphere lives at world origin in the static file.
     BOOST_REQUIRE(tbl.geometries[0].has_value());
-    BOOST_REQUIRE(std::holds_alternative<SphereGeometry>(*tbl.geometries[0]));
-    const auto& base = std::get<SphereGeometry>(*tbl.geometries[0]);
-    BOOST_CHECK_EQUAL(base.radius_mm, 1.0);
-    BOOST_CHECK_EQUAL(base.tx_mm, 0.0);
-    BOOST_CHECK_EQUAL(base.ty_mm, 0.0);
-    BOOST_CHECK_EQUAL(base.tz_mm, 0.0);
+    BOOST_REQUIRE(std::holds_alternative<viam::sdk::sphere>(tbl.geometries[0]->shape));
+    BOOST_CHECK_EQUAL(std::get<viam::sdk::sphere>(tbl.geometries[0]->shape).radius, 1.0);
+    BOOST_CHECK_EQUAL(tbl.geometries[0]->tx_mm, 0.0);
+    BOOST_CHECK_EQUAL(tbl.geometries[0]->ty_mm, 0.0);
+    BOOST_CHECK_EQUAL(tbl.geometries[0]->tz_mm, 0.0);
 
     check_capsule_world_center(tbl.geometries[1], 0.0, 0.0, 136.3);
     check_capsule_world_center(tbl.geometries[2], -421.6, -260.0, 236.3);
@@ -1165,10 +1163,10 @@ BOOST_AUTO_TEST_CASE(test_parse_ur20_geometry_world_centers) {
 
     // Spot-check capsule dimensions on the shoulder (r=122.5, l=333).
     BOOST_REQUIRE(tbl.geometries[1].has_value());
-    BOOST_REQUIRE(std::holds_alternative<CapsuleGeometry>(*tbl.geometries[1]));
-    const auto& shoulder = std::get<CapsuleGeometry>(*tbl.geometries[1]);
-    BOOST_CHECK_EQUAL(shoulder.radius_mm, 122.5);
-    BOOST_CHECK_EQUAL(shoulder.length_mm, 333);
+    BOOST_REQUIRE(std::holds_alternative<viam::sdk::capsule>(tbl.geometries[1]->shape));
+    const auto& shoulder = std::get<viam::sdk::capsule>(tbl.geometries[1]->shape);
+    BOOST_CHECK_EQUAL(shoulder.radius, 122.5);
+    BOOST_CHECK_EQUAL(shoulder.length, 333);
 }
 
 BOOST_AUTO_TEST_CASE(test_parse_ur3e_skips_base_link_box) {
@@ -1197,13 +1195,13 @@ BOOST_AUTO_TEST_CASE(test_parse_ur5e_ee_link_and_ov_degrees) {
     // a placeholder. Regressing this caused get_3d_models to lose the base
     // collision shape under the synthesized path.
     BOOST_REQUIRE(tbl.geometries[0].has_value());
-    BOOST_REQUIRE(std::holds_alternative<CapsuleGeometry>(*tbl.geometries[0]));
-    const auto& base = std::get<CapsuleGeometry>(*tbl.geometries[0]);
-    BOOST_CHECK_EQUAL(base.radius_mm, 60.0);
-    BOOST_CHECK_EQUAL(base.length_mm, 260.0);
-    BOOST_CHECK_SMALL(base.tx_mm - 0.0, 1e-6);
-    BOOST_CHECK_SMALL(base.ty_mm - 0.0, 1e-6);
-    BOOST_CHECK_SMALL(base.tz_mm - 130.0, 1e-6);
+    BOOST_REQUIRE(std::holds_alternative<viam::sdk::capsule>(tbl.geometries[0]->shape));
+    const auto& base = std::get<viam::sdk::capsule>(tbl.geometries[0]->shape);
+    BOOST_CHECK_EQUAL(base.radius, 60.0);
+    BOOST_CHECK_EQUAL(base.length, 260.0);
+    BOOST_CHECK_SMALL(tbl.geometries[0]->tx_mm - 0.0, 1e-6);
+    BOOST_CHECK_SMALL(tbl.geometries[0]->ty_mm - 0.0, 1e-6);
+    BOOST_CHECK_SMALL(tbl.geometries[0]->tz_mm - 130.0, 1e-6);
 }
 
 BOOST_AUTO_TEST_CASE(test_parse_ur7e_has_no_shoulder_geometry) {
@@ -1212,7 +1210,7 @@ BOOST_AUTO_TEST_CASE(test_parse_ur7e_has_no_shoulder_geometry) {
     BOOST_CHECK_EQUAL(tbl.link_names[6], "ee_link");
     // ur7e ships the same r=60/l=260 base capsule as ur5e.
     BOOST_REQUIRE(tbl.geometries[0].has_value());
-    BOOST_REQUIRE(std::holds_alternative<CapsuleGeometry>(*tbl.geometries[0]));
+    BOOST_REQUIRE(std::holds_alternative<viam::sdk::capsule>(tbl.geometries[0]->shape));
     // No shoulder geometry (index 1).
     BOOST_CHECK(!tbl.geometries[1].has_value());
 }

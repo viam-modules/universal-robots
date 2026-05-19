@@ -74,99 +74,48 @@ PoseTQ apply_correction(const Eigen::Matrix4d& correction, const PoseTQ& g) {
     return out;
 }
 
-Json::Value capsule_to_json(const CapsuleGeometry& c) {
-    Json::Value g(Json::objectValue);
-    g["type"] = "capsule";
-    g["r"] = c.radius_mm;
-    g["l"] = c.length_mm;
-
-    Json::Value translation(Json::objectValue);
-    translation["x"] = c.tx_mm;
-    translation["y"] = c.ty_mm;
-    translation["z"] = c.tz_mm;
-    g["translation"] = translation;
-
-    Json::Value orient(Json::objectValue);
-    orient["type"] = "quaternion";
-    Json::Value qval(Json::objectValue);
-    qval["W"] = c.qw;
-    qval["X"] = c.qx;
-    qval["Y"] = c.qy;
-    qval["Z"] = c.qz;
-    orient["value"] = qval;
-    g["orientation"] = orient;
-
-    return g;
-}
-
-Json::Value sphere_to_json(const SphereGeometry& s) {
-    Json::Value g(Json::objectValue);
-    g["type"] = "sphere";
-    g["r"] = s.radius_mm;
-
-    Json::Value translation(Json::objectValue);
-    translation["x"] = s.tx_mm;
-    translation["y"] = s.ty_mm;
-    translation["z"] = s.tz_mm;
-    g["translation"] = translation;
-
-    return g;
-}
-
 Json::Value geometry_to_json(const Geometry& geom) {
-    return std::visit(
-        [](const auto& g) -> Json::Value {
-            using T = std::decay_t<decltype(g)>;
-            if constexpr (std::is_same_v<T, CapsuleGeometry>) {
-                return capsule_to_json(g);
+    Json::Value json(Json::objectValue);
+
+    Json::Value translation(Json::objectValue);
+    translation["x"] = geom.tx_mm;
+    translation["y"] = geom.ty_mm;
+    translation["z"] = geom.tz_mm;
+    json["translation"] = translation;
+
+    std::visit(
+        [&](const auto& shape) {
+            using S = std::decay_t<decltype(shape)>;
+            json["r"] = shape.radius;
+            if constexpr (std::is_same_v<S, viam::sdk::capsule>) {
+                json["type"] = "capsule";
+                json["l"] = shape.length;
+                Json::Value orient(Json::objectValue);
+                orient["type"] = "quaternion";
+                Json::Value qval(Json::objectValue);
+                qval["W"] = geom.qw;
+                qval["X"] = geom.qx;
+                qval["Y"] = geom.qy;
+                qval["Z"] = geom.qz;
+                orient["value"] = qval;
+                json["orientation"] = orient;
             } else {
-                return sphere_to_json(g);
+                // Spheres carry no orientation; emit dimensions only.
+                json["type"] = "sphere";
             }
         },
-        geom);
+        geom.shape);
+
+    return json;
 }
 
 // Returns a copy of `geom` with its translation+orientation transformed by
-// `correction`.
+// `correction`. Spheres' identity-stored quaternion travels through harmlessly
+// and is ignored at emission.
 Geometry apply_correction_to_geometry(const Geometry& geom, const Eigen::Matrix4d& correction) {
-    return std::visit(
-        [&correction](const auto& g) -> Geometry {
-            using T = std::decay_t<decltype(g)>;
-            PoseTQ in;
-            in.tx = g.tx_mm;
-            in.ty = g.ty_mm;
-            in.tz = g.tz_mm;
-            if constexpr (std::is_same_v<T, CapsuleGeometry>) {
-                in.qw = g.qw;
-                in.qx = g.qx;
-                in.qy = g.qy;
-                in.qz = g.qz;
-                const PoseTQ out = apply_correction(correction, in);
-                CapsuleGeometry r = g;
-                r.tx_mm = out.tx;
-                r.ty_mm = out.ty;
-                r.tz_mm = out.tz;
-                r.qw = out.qw;
-                r.qx = out.qx;
-                r.qy = out.qy;
-                r.qz = out.qz;
-                return r;
-            } else {
-                // Spheres carry no orientation; correction reduces to its
-                // translation component on the input point.
-                in.qw = 1.0;
-                in.qx = 0.0;
-                in.qy = 0.0;
-                in.qz = 0.0;
-                const PoseTQ out = apply_correction(correction, in);
-                SphereGeometry r = g;
-                r.tx_mm = out.tx;
-                r.ty_mm = out.ty;
-                r.tz_mm = out.tz;
-                return r;
-            }
-        },
-        geom);
+    const PoseTQ in{geom.tx_mm, geom.ty_mm, geom.tz_mm, geom.qw, geom.qx, geom.qy, geom.qz};
+    const PoseTQ out = apply_correction(correction, in);
+    return Geometry{out.tx, out.ty, out.tz, out.qw, out.qx, out.qy, out.qz, geom.shape};
 }
 
 }  // namespace

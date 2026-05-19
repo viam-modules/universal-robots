@@ -175,12 +175,7 @@ std::optional<Geometry> parse_geometry_world(const std::filesystem::path& path,
     const Eigen::Vector3d t = G_world.block<3, 1>(0, 3);
 
     if (type == "sphere") {
-        return Geometry{SphereGeometry{
-            /* radius_mm */ r,
-            /* tx_mm */ t.x(),
-            /* ty_mm */ t.y(),
-            /* tz_mm */ t.z(),
-        }};
+        return Geometry{t.x(), t.y(), t.z(), 1.0, 0.0, 0.0, 0.0, viam::sdk::sphere{r}};
     }
 
     // capsule
@@ -189,17 +184,7 @@ std::optional<Geometry> parse_geometry_world(const std::filesystem::path& path,
     }
     const double l = g["l"].asDouble();
     const Eigen::Quaterniond q = Eigen::Quaterniond{G_world.block<3, 3>(0, 0)}.normalized();
-    return Geometry{CapsuleGeometry{
-        /* radius_mm */ r,
-        /* length_mm */ l,
-        /* tx_mm */ t.x(),
-        /* ty_mm */ t.y(),
-        /* tz_mm */ t.z(),
-        /* qw */ q.w(),
-        /* qx */ q.x(),
-        /* qy */ q.y(),
-        /* qz */ q.z(),
-    }};
+    return Geometry{t.x(), t.y(), t.z(), q.w(), q.x(), q.y(), q.z(), viam::sdk::capsule{r, l}};
 }
 
 JointLimits parse_joint_limits(const std::filesystem::path& path, const Json::Value& joint) {
