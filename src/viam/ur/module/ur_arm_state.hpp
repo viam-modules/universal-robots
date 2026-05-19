@@ -221,10 +221,9 @@ class URArm::state_ {
     //
     // `mutable` is intentional on `json_once`/`json`: the shared state is
     // accessed via `shared_future<T>::get()` returning `const T&`, and the
-    // JSON is a deterministic function of `info` and the SDK model name
-    // supplied by the caller. Every caller observes the same logical value;
-    // `std::call_once` synchronizes the first JSON-wanting caller's build
-    // with later reuses.
+    // JSON is a deterministic function of `info` and `model_name`. Every
+    // caller observes the same logical value; `std::call_once` synchronizes
+    // the first JSON-wanting caller's build with later reuses.
     //
     // `json_once` is held via `unique_ptr` because `std::once_flag` is
     // neither copyable nor movable, and the payload must be at least
@@ -236,6 +235,7 @@ class URArm::state_ {
     // can still construct it with designated initializers.
     struct cached_kinematics_payload {
         urcl::primary_interface::KinematicsInfo info;
+        std::string model_name;  // canonical lowercase, e.g. "ur20"
         mutable std::unique_ptr<std::once_flag> json_once{std::make_unique<std::once_flag>()};
         mutable std::string json{};  // NOLINT(readability-redundant-member-init)
     };
