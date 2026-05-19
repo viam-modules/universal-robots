@@ -24,7 +24,6 @@ class URArm::state_ {
    public:
     explicit state_(private_,
                     std::string configured_model_type,
-                    std::string sdk_model_name,
                     std::string resource_name,
                     std::string host,
                     std::filesystem::path resource_root,
@@ -48,7 +47,6 @@ class URArm::state_ {
     ~state_();
 
     static std::unique_ptr<state_> create(std::string configured_model_type,
-                                          std::string sdk_model_name,
                                           std::string resource_name,
                                           const ResourceConfig& config,
                                           const struct ports_& ports);
@@ -140,7 +138,7 @@ class URArm::state_ {
     // Throws std::runtime_error on `wait_duration` expiry for a model that
     // does synthesize JSON, and rethrows any producer-side exception
     // forwarded via the underlying promise.
-    std::string get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration);
+    std::string get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration, const std::string& model_name);
 
     std::optional<std::shared_future<void>> cancel_move_request();
 
@@ -223,9 +221,10 @@ class URArm::state_ {
     //
     // `mutable` is intentional on `json_once`/`json`: the shared state is
     // accessed via `shared_future<T>::get()` returning `const T&`, and the
-    // JSON is a deterministic function of `info` and `model_name`. Every
-    // caller observes the same logical value; `std::call_once` synchronizes
-    // the first JSON-wanting caller's build with later reuses.
+    // JSON is a deterministic function of `info` and the SDK model name
+    // supplied by the caller. Every caller observes the same logical value;
+    // `std::call_once` synchronizes the first JSON-wanting caller's build
+    // with later reuses.
     //
     // `json_once` is held via `unique_ptr` because `std::once_flag` is
     // neither copyable nor movable, and the payload must be at least
@@ -237,7 +236,6 @@ class URArm::state_ {
     // can still construct it with designated initializers.
     struct cached_kinematics_payload {
         urcl::primary_interface::KinematicsInfo info;
-        std::string model_name;  // canonical lowercase, e.g. "ur20"
         mutable std::unique_ptr<std::once_flag> json_once{std::make_unique<std::once_flag>()};
         mutable std::string json{};  // NOLINT(readability-redundant-member-init)
     };
@@ -477,12 +475,6 @@ class URArm::state_ {
     std::atomic<bool> program_running_flag{false};
 
     const std::string configured_model_type_;
-    // SDK model name as declared in `URArm::create_model_registrations` (e.g.
-    // "ur5e", "ur7e"); distinct from `configured_model_type_` which is the
-    // coarser URCL category ("ur5" covers both ur5e and ur7e) used for the
-    // controller-side handshake. Drives kinematics-file lookups and the
-    // `"name"` field of the synthesized SVA JSON.
-    const std::string sdk_model_name_;
     const std::string resource_name_;
     const std::string host_;
     const std::filesystem::path resource_root_;

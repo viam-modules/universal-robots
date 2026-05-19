@@ -221,7 +221,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::re
             if (auto kin = primary->getKinematicsInfo()) {
                 state.kinematics_promise_->set_value({
                     .info = *kin,
-                    .model_name = state.sdk_model_name_,
                 });
                 state.kinematics_promise_.reset();
             }

@@ -409,7 +409,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     });
 
     VIAM_SDK_LOG(debug) << "URArm starting up";
-    current_state_ = state_::create(configured_model_type, model_.model_name(), name(), cfg, ports_);
+    current_state_ = state_::create(configured_model_type, name(), cfg, ports_);
 
     // state_::create blocks until the state machine reaches a connected state
     // (its constructor loops on upgrade_downgrade_ until current_state_ is no
@@ -530,7 +530,7 @@ viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     // 100ms is sized to cover a transient reconnect-in-progress window
     // without blocking RDK callers meaningfully; in steady state the future
     // is already fulfilled and the wait returns immediately.
-    auto dh_json = current_state_->get_dh_kinematics_json(std::chrono::milliseconds{100});
+    auto dh_json = current_state_->get_dh_kinematics_json(std::chrono::milliseconds{100}, model_.model_name());
     if (!dh_json.empty()) {
         VIAM_SDK_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH (" << dh_json.size() << " bytes)";
         return viam::sdk::KinematicsDataSVA(std::vector<unsigned char>(dh_json.begin(), dh_json.end()));

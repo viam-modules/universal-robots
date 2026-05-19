@@ -26,7 +26,6 @@
 
 URArm::state_::state_(private_,
                       std::string configured_model_type,
-                      std::string sdk_model_name,
                       std::string resource_name,
                       std::string host,
                       std::filesystem::path resource_root,
@@ -48,7 +47,6 @@ URArm::state_::state_(private_,
                       std::string telemetry_output_path_append_traceid_template,
                       const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
-      sdk_model_name_{std::move(sdk_model_name)},
       resource_name_{std::move(resource_name)},
       host_{std::move(host)},
       resource_root_{std::move(resource_root)},
@@ -84,7 +82,6 @@ URArm::state_::~state_() {
 }
 
 std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_model_type,
-                                                     std::string sdk_model_name,
                                                      std::string resource_name,
                                                      const ResourceConfig& config,
                                                      const struct ports_& ports) {
@@ -184,7 +181,6 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
 
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
-                                          std::move(sdk_model_name),
                                           std::move(resource_name),
                                           std::move(host),
                                           std::move(resource_root),
@@ -816,7 +812,8 @@ urcl::primary_interface::KinematicsInfo URArm::state_::get_calibrated_kinematics
     return fut.get().info;
 }
 
-std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration) {
+std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration,
+                                                  const std::string& model_name) {
     std::shared_future<cached_kinematics_payload> fut;
     {
         const std::lock_guard lock{mutex_};
@@ -834,10 +831,10 @@ std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::dur
     // `json_once` is a `unique_ptr<once_flag>` (dereferenced here) because
     // `std::once_flag` is neither copyable nor movable.
     std::call_once(*payload.json_once, [&] {
-        const auto sva_path = resource_root_ / "kinematics" / (payload.model_name + ".json");
+        const auto sva_path = resource_root_ / "kinematics" / (model_name + ".json");
         const ModelTables tbl = parse_kinematics(sva_path);
         const DHParams dh{payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_};
-        payload.json = build_dh_kinematics_json(payload.model_name, dh, tbl);
+        payload.json = build_dh_kinematics_json(model_name, dh, tbl);
     });
     return payload.json;
 }
