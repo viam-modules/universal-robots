@@ -541,7 +541,7 @@ viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         throw std::runtime_error(
             "get_kinematics: synthesized kinematics not available for ur20; calibrated DH was expected at configure time");
     }
-    VIAM_SDK_LOG(info) << "get_kinematics: synthesized JSON unavailable (calibrated DH not ready) -- falling back to static kinematics/<model>.json";
+    VIAM_SDK_LOG(info) << "get_kinematics: no synthesized JSON for this model -- falling back to static kinematics/<model>.json";
 
     // The `Model` class absurdly lacks accessors
     const std::string model_string = [&] {

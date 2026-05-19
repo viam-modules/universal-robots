@@ -817,33 +817,20 @@ urcl::primary_interface::KinematicsInfo URArm::state_::get_calibrated_kinematics
 }
 
 std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration) {
-    // All four UR models flow through the synthesized path. When calibrated
-    // DH is not yet available (timeout) or the producer failed
-    // (set_exception), return empty -- the caller decides whether to error or
-    // fall back to the shipped static `kinematics/<model>.json`.
     std::shared_future<cached_kinematics_payload> fut;
     {
         const std::lock_guard lock{mutex_};
         fut = kinematics_future_;
     }
     if (fut.wait_for(wait_duration) != std::future_status::ready) {
-        return {};
+        throw std::runtime_error{"kinematics info not available within deadline"};
     }
-    const cached_kinematics_payload* payload_ptr = nullptr;
-    try {
-        payload_ptr = &fut.get();
-    } catch (const std::exception& e) {
-        VIAM_SDK_LOG(warn) << "get_dh_kinematics_json: calibrated DH unavailable: " << e.what();
-        return {};
-    }
-    const auto& payload = *payload_ptr;
+    const auto& payload = fut.get();
 
-    // The first JSON-wanting caller parses the shipped kinematics JSON and
-    // builds the synthesized output under `call_once`; subsequent callers
-    // reuse the memoized value. A parse failure here is a configuration bug
-    // (broken shipped file) and is allowed to propagate. `json_once`/`json`
-    // are `mutable` on `cached_kinematics_payload` precisely so this lazy
-    // build is legal through the `const&` returned by `shared_future::get()`;
+    // The first JSON-wanting caller builds the string under `call_once`;
+    // subsequent callers reuse the memoized value. `json_once`/`json` are
+    // `mutable` on `cached_kinematics_payload` precisely so this lazy build
+    // is legal through the `const&` returned by `shared_future::get()`;
     // `json_once` is a `unique_ptr<once_flag>` (dereferenced here) because
     // `std::once_flag` is neither copyable nor movable.
     std::call_once(*payload.json_once, [&] {
