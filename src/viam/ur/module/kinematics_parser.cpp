@@ -4,7 +4,6 @@
 #include <fstream>
 #include <initializer_list>
 #include <memory>
-#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -109,7 +108,7 @@ std::pair<Eigen::Vector3d, Eigen::Quaterniond> translation_quaternion_from_pose(
 // RDK's canonical implementation; see
 // https://github.com/viamrobotics/rdk/blob/main/spatialmath/orientationVector.go
 Eigen::Quaterniond ov_degrees_to_quaternion(double x, double y, double z, double th_deg) {
-    const double theta_rad = th_deg * std::numbers::pi / 180.0;
+    const double theta_rad = degrees_to_radians(th_deg);
     const std::unique_ptr<void, decltype(&free_orientation_vector_memory)> ov{
         new_orientation_vector(x, y, z, theta_rad), &free_orientation_vector_memory};
     const std::unique_ptr<void, decltype(&free_quaternion_memory)> q{quaternion_from_orientation_vector(ov.get()),
