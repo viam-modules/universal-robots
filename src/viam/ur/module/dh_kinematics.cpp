@@ -180,136 +180,87 @@ std::string build_dh_kinematics_json(const std::string& model_name, const DHPara
     // meshes returned by `URArm::get_3d_models` attach to the right frames.
     // The first DH segment is split across two emitted links: a static
     // `base_link` (parent=world, pure z-elevation by d_0) carries the base
-    // mesh, and the DH-child link (parent=<model>_q_0) carries the post-joint
+    // mesh, and the next link (parent=<model>_q_0) carries the post-joint
     // Rz(theta_0)*Rx(alpha_0) rotation, a_0 offset, and any shoulder
     // geometry. Putting Rx(alpha_0) on base_link would tilt the shoulder-pan
     // axis off world z.
 
-    // Cumulative pose of the parent joint frame above each chain link at zero
-    // joints. W_cal_links[0] is base_link's transform (T(0,0,d_0_cal)). For
-    // i>=1 it is the running calibrated product, which equals base_link.T *
-    // (the first DH link's full L_cal[0]) -- the d_0 split between base_link
-    // and the shoulder link cancels in the product.
-    std::array<Eigen::Matrix4d, 6> W_cal_links;
-    {
-        Eigen::Matrix4d W_cal = Eigen::Matrix4d::Identity();
-        W_cal(2, 3) = dh.d[0] * k_m_to_mm;
-        for (std::size_t i = 0; i < 6; ++i) {
-            W_cal_links[i] = W_cal;
-            // The shoulder-side link drops the (0,0,d_0) translation that
-            // base_link absorbed; its accumulator contribution therefore uses
-            // d=0. Later DH segments contribute their full L_cal[i].
-            const double d_cal_chain = (i == 0) ? 0.0 : (dh.d[i] * k_m_to_mm);
-            W_cal = W_cal * dh_link_pose_matrix(dh.a[i] * k_m_to_mm, d_cal_chain, dh.alpha[i], dh.theta[i]);
+    // Static transform contributed by emitted link i, in DH form:
+    //   i = 0 (base_link):   T(0, 0, d_0) -- pure z-elevation, identity rotation.
+    //   i = 1 (shoulder):    Rz(theta_0) * T(a_0, 0, 0) * Rx(alpha_0)
+    //                        -- d_0 was hoisted onto base_link, so this drops it.
+    //   i = 2..6:            Rz(theta_{i-1}) * T(a_{i-1}, 0, d_{i-1}) * Rx(alpha_{i-1}).
+    const auto link_local_pose = [&](std::size_t i) -> Eigen::Matrix4d {
+        if (i == 0) {
+            return dh_link_pose_matrix(0.0, dh.d[0] * k_m_to_mm, 0.0, 0.0);
         }
+        const std::size_t s = i - 1;
+        const double d_mm = (i == 1) ? 0.0 : (dh.d[s] * k_m_to_mm);
+        return dh_link_pose_matrix(dh.a[s] * k_m_to_mm, d_mm, dh.alpha[s], dh.theta[s]);
+    };
+
+    // Cumulative pose of each emitted link's parent frame at zero joints.
+    // Index 0 is the world frame (base_link's parent); for i >= 1 it is the
+    // running calibrated product, which equals L_cal[0] * ... * L_cal[i-2]
+    // (the d_0 split between base_link and shoulder_link cancels in the
+    // product).
+    std::array<Eigen::Matrix4d, 7> parent_pose;
+    parent_pose[0] = Eigen::Matrix4d::Identity();
+    for (std::size_t i = 1; i < 7; ++i) {
+        parent_pose[i] = parent_pose[i - 1] * link_local_pose(i - 1);
     }
 
     Json::Value joints(Json::arrayValue);
     Json::Value links(Json::arrayValue);
 
-    // base_link: static z-elevation above world, holds the base mesh.
-    {
-        Json::Value base_link(Json::objectValue);
-        base_link["id"] = tbl.link_names[0];
-        base_link["parent"] = "world";
-
-        Json::Value translation(Json::objectValue);
-        translation["x"] = 0.0;
-        translation["y"] = 0.0;
-        translation["z"] = dh.d[0] * k_m_to_mm;
-        base_link["translation"] = translation;
-
-        Json::Value orient(Json::objectValue);
-        orient["type"] = "quaternion";
-        Json::Value qval(Json::objectValue);
-        qval["W"] = 1.0;
-        qval["X"] = 0.0;
-        qval["Y"] = 0.0;
-        qval["Z"] = 0.0;
-        orient["value"] = qval;
-        base_link["orientation"] = orient;
-
-        if (tbl.geometries[0].has_value()) {
-            // base_link's frame is the world frame (parent=world per SVA
-            // convention), and the parsed geometry is already in world frame,
-            // so no correction is needed.
-            base_link["geometry"] = geometry_to_json(*tbl.geometries[0]);
-        } else {
-            // Models with no usable base geometry (ur3e ships a box, which
-            // the parser intentionally drops) still need a frame present in
-            // RDK's frame system so any base mesh has somewhere to attach.
-            Json::Value geom(Json::objectValue);
-            geom["type"] = "sphere";
-            geom["r"] = 1.0;
-            base_link["geometry"] = geom;
+    for (std::size_t i = 0; i < 7; ++i) {
+        // Joint above this link: base_link has none (parent=world); links
+        // 1..6 are children of ur*_q_{i-1}.
+        if (i > 0) {
+            Json::Value joint(Json::objectValue);
+            joint["id"] = model_name + "_q_" + std::to_string(i - 1);
+            joint["type"] = "revolute";
+            joint["parent"] = tbl.link_names[i - 1];
+            Json::Value axis(Json::objectValue);
+            axis["x"] = 0.0;
+            axis["y"] = 0.0;
+            axis["z"] = 1.0;
+            joint["axis"] = axis;
+            joint["min"] = tbl.limits[i - 1].min_deg;
+            joint["max"] = tbl.limits[i - 1].max_deg;
+            joints.append(joint);
         }
 
-        links.append(base_link);
-    }
+        const Eigen::Matrix4d local_pose = link_local_pose(i);
+        const Eigen::Vector3d t = local_pose.block<3, 1>(0, 3);
+        const Eigen::Quaterniond q(local_pose.block<3, 3>(0, 0));
 
-    for (std::size_t i = 0; i < 6; ++i) {
-        const std::string joint_id = model_name + "_q_" + std::to_string(i);
-        const std::string& link_id = tbl.link_names[i + 1];
-        const std::string& joint_parent = tbl.link_names[i];
-
-        Json::Value joint(Json::objectValue);
-        joint["id"] = joint_id;
-        joint["type"] = "revolute";
-        joint["parent"] = joint_parent;
-        Json::Value axis(Json::objectValue);
-        axis["x"] = 0.0;
-        axis["y"] = 0.0;
-        axis["z"] = 1.0;
-        joint["axis"] = axis;
-        joint["min"] = tbl.limits[i].min_deg;
-        joint["max"] = tbl.limits[i].max_deg;
-        joints.append(joint);
-
-        // Static link pose = Rz(theta_i) * T(a_i, 0, d_i) * Rx(alpha_i).
-        // Composed:
-        //   translation = Rz(theta) * (a, 0, d) = (a*cos(theta), a*sin(theta), d)
-        //   rotation    = Rz(theta) * Rx(alpha)
-        // i=0 drops the d_0 z-translation; base_link absorbed it.
-        const double theta_i = dh.theta[i];
-        const double alpha_i = dh.alpha[i];
-        const double a_mm = dh.a[i] * k_m_to_mm;
-        const double d_mm = (i == 0) ? 0.0 : (dh.d[i] * k_m_to_mm);
-
-        const double ct = std::cos(theta_i);
-        const double st = std::sin(theta_i);
         Json::Value translation(Json::objectValue);
-        translation["x"] = a_mm * ct;
-        translation["y"] = a_mm * st;
-        translation["z"] = d_mm;
+        translation["x"] = t.x();
+        translation["y"] = t.y();
+        translation["z"] = t.z();
 
-        // Quaternion for Rz(theta) * Rx(alpha):
-        //   qZ = (cos(theta/2), 0, 0, sin(theta/2))
-        //   qX = (cos(alpha/2), sin(alpha/2), 0, 0)
-        //   qZ * qX = (cz*cx, cz*sx, sz*sx, sz*cx)
-        const double cz = std::cos(theta_i / 2.0);
-        const double sz = std::sin(theta_i / 2.0);
-        const double cx = std::cos(alpha_i / 2.0);
-        const double sx = std::sin(alpha_i / 2.0);
         Json::Value orient(Json::objectValue);
         orient["type"] = "quaternion";
         Json::Value qval(Json::objectValue);
-        qval["W"] = cz * cx;
-        qval["X"] = cz * sx;
-        qval["Y"] = sz * sx;
-        qval["Z"] = sz * cx;
+        qval["W"] = q.w();
+        qval["X"] = q.x();
+        qval["Y"] = q.y();
+        qval["Z"] = q.z();
         orient["value"] = qval;
 
         Json::Value link(Json::objectValue);
-        link["id"] = link_id;
-        link["parent"] = joint_id;
+        link["id"] = tbl.link_names[i];
+        link["parent"] = (i == 0) ? std::string{"world"} : (model_name + "_q_" + std::to_string(i - 1));
         link["translation"] = translation;
         link["orientation"] = orient;
-        if (tbl.geometries[i + 1].has_value()) {
-            // tbl.geometries[i+1] is in world frame at zero joints; pulling
-            // it back through inv(W_cal_i) yields the chain-link-local pose
-            // that RDK will re-compose with the calibrated chain at runtime.
-            const Eigen::Matrix4d correction = W_cal_links[i].inverse();
-            const Geometry corrected = apply_correction_to_geometry(*tbl.geometries[i + 1], correction);
+        if (tbl.geometries[i].has_value()) {
+            // tbl.geometries[i] is in world frame at zero joints; pulling it
+            // back through inv(parent_pose[i]) yields the chain-link-local
+            // pose that RDK will re-compose with the calibrated chain at
+            // runtime. For i=0 the correction is identity (parent is world).
+            const Eigen::Matrix4d correction = parent_pose[i].inverse();
+            const Geometry corrected = apply_correction_to_geometry(*tbl.geometries[i], correction);
             link["geometry"] = geometry_to_json(corrected);
         }
         links.append(link);

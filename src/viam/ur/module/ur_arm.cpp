@@ -596,7 +596,6 @@ std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
     for (const auto& part : parts_to_load) {
         const std::filesystem::path model_file_path =
             current_state_->resource_root() / str(boost::format(threeDModelFileTemplate) % model_name % part);
-            VIAM_SDK_LOG(info) << model_file_path;
 
         // Open the file in binary mode
         std::ifstream model_file(model_file_path, std::ios::binary);
