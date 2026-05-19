@@ -291,13 +291,6 @@ target_link_libraries(universal-robots-test
     viam-ur
 )
 
-# Lets tests resolve shipped per-model kinematics JSONs from the source tree
-# without depending on an `install` step or runtime cwd.
-target_compile_definitions(universal-robots-test
-  PRIVATE
-    TEST_KINEMATICS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/kinematics"
-)
-
 apply_wall_werror(universal-robots-test)
 
 add_test(

@@ -1105,7 +1105,9 @@ BOOST_AUTO_TEST_SUITE(kinematics_parser_tests)
 namespace {
 
 std::filesystem::path test_kinematics_path(const std::string& model) {
-    return std::filesystem::path{TEST_KINEMATICS_DIR} / (model + ".json");
+    // src/viam/ur/module/test.cpp -> src/kinematics/<model>.json
+    return std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path().parent_path() / "kinematics" /
+           (model + ".json");
 }
 
 void check_capsule_world_center(const std::optional<Geometry>& g,
