@@ -44,14 +44,30 @@ Eigen::Matrix4d dh_link_pose_matrix(double a_mm, double d_mm, double alpha_rad, 
     return M;
 }
 
+Json::Value translation_json(const Eigen::Vector3d& t) {
+    Json::Value out(Json::objectValue);
+    out["x"] = t.x();
+    out["y"] = t.y();
+    out["z"] = t.z();
+    return out;
+}
+
+Json::Value quaternion_json(const Eigen::Quaterniond& q) {
+    Json::Value out(Json::objectValue);
+    out["type"] = "quaternion";
+    Json::Value val(Json::objectValue);
+    val["W"] = q.w();
+    val["X"] = q.x();
+    val["Y"] = q.y();
+    val["Z"] = q.z();
+    out["value"] = val;
+    return out;
+}
+
 Json::Value geometry_to_json(const Geometry& geom) {
     Json::Value json(Json::objectValue);
 
-    Json::Value translation(Json::objectValue);
-    translation["x"] = geom.pose.coordinates.x;
-    translation["y"] = geom.pose.coordinates.y;
-    translation["z"] = geom.pose.coordinates.z;
-    json["translation"] = translation;
+    json["translation"] = translation_json({geom.pose.coordinates.x, geom.pose.coordinates.y, geom.pose.coordinates.z});
 
     std::visit(
         [&](const auto& shape) {
@@ -126,6 +142,15 @@ std::string build_dh_kinematics_json(const std::string& model_name, const DHPara
         parent_pose[i] = parent_pose[i - 1] * link_local_pose(i - 1);
     }
 
+    // Every DH joint rotates about its own local z-axis by definition of the
+    // Denavit-Hartenberg parameterization; the link transforms above have
+    // already rotated the parent frame so its z points along the physical
+    // joint axis. Build the JSON axis value once and reuse it.
+    Json::Value dh_z_axis(Json::objectValue);
+    dh_z_axis["x"] = 0.0;
+    dh_z_axis["y"] = 0.0;
+    dh_z_axis["z"] = 1.0;
+
     Json::Value joints(Json::arrayValue);
     Json::Value links(Json::arrayValue);
 
@@ -137,46 +162,25 @@ std::string build_dh_kinematics_json(const std::string& model_name, const DHPara
             joint["id"] = model_name + "_q_" + std::to_string(i - 1);
             joint["type"] = "revolute";
             joint["parent"] = tbl.link_names[i - 1];
-            Json::Value axis(Json::objectValue);
-            axis["x"] = 0.0;
-            axis["y"] = 0.0;
-            axis["z"] = 1.0;
-            joint["axis"] = axis;
+            joint["axis"] = dh_z_axis;
             joint["min"] = tbl.limits[i - 1].min_deg;
             joint["max"] = tbl.limits[i - 1].max_deg;
             joints.append(joint);
         }
 
         const Eigen::Matrix4d local_pose = link_local_pose(i);
-        const Eigen::Vector3d t = local_pose.block<3, 1>(0, 3);
-        const Eigen::Quaterniond q(local_pose.block<3, 3>(0, 0));
-
-        Json::Value translation(Json::objectValue);
-        translation["x"] = t.x();
-        translation["y"] = t.y();
-        translation["z"] = t.z();
-
-        Json::Value orient(Json::objectValue);
-        orient["type"] = "quaternion";
-        Json::Value qval(Json::objectValue);
-        qval["W"] = q.w();
-        qval["X"] = q.x();
-        qval["Y"] = q.y();
-        qval["Z"] = q.z();
-        orient["value"] = qval;
 
         Json::Value link(Json::objectValue);
         link["id"] = tbl.link_names[i];
         link["parent"] = (i == 0) ? std::string{"world"} : (model_name + "_q_" + std::to_string(i - 1));
-        link["translation"] = translation;
-        link["orientation"] = orient;
+        link["translation"] = translation_json(local_pose.block<3, 1>(0, 3));
+        link["orientation"] = quaternion_json(Eigen::Quaterniond{local_pose.block<3, 3>(0, 0)});
         if (tbl.geometries[i].has_value()) {
             // tbl.geometries[i] is in world frame at zero joints; pulling it
             // back through inv(parent_pose[i]) yields the chain-link-local
             // pose that RDK will re-compose with the calibrated chain at
             // runtime. For i=0 the correction is identity (parent is world).
-            const Eigen::Matrix4d correction = parent_pose[i].inverse();
-            const Geometry corrected = apply_correction_to_geometry(*tbl.geometries[i], correction);
+            const Geometry corrected = apply_correction_to_geometry(*tbl.geometries[i], parent_pose[i].inverse());
             link["geometry"] = geometry_to_json(corrected);
         }
         links.append(link);
