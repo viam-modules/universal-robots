@@ -1,8 +1,5 @@
 #include "kinematics_parser.hpp"
 
-#include <algorithm>
-#include <array>
-#include <cmath>
 #include <cstddef>
 #include <fstream>
 #include <initializer_list>
@@ -11,19 +8,19 @@
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
-#include <vector>
 
 #include <Eigen/Geometry>
 
 #include <json/json.h>
 
-// rust-utils FFI: lets us delegate the `ov_degrees` -> quaternion conversion
-// (RDK's canonical orientation-vector algorithm) to the same Rust
-// implementation already used by `ur_arm.cpp`, rather than reimplementing it
-// here in Eigen. Matches the unprefixed deprecated names ur_arm.cpp uses.
+// rust-utils FFI: lets us delegate the orientation -> quaternion conversions
+// (RDK's canonical algorithms) to the same Rust implementation already used
+// by `ur_arm.cpp`, rather than reimplementing them here. Matches the
+// unprefixed deprecated names ur_arm.cpp uses.
 extern "C" void* new_orientation_vector(double ox, double oy, double oz, double theta);
 extern "C" void free_orientation_vector_memory(void* ov);
 extern "C" void* quaternion_from_orientation_vector(void* ov);
+extern "C" void* quaternion_from_euler_angles(double roll, double pitch, double yaw);
 extern "C" void free_quaternion_memory(void* q);
 extern "C" double* quaternion_get_components(void* q);
 extern "C" void free_quaternion_components(double* ptr);
@@ -66,6 +63,13 @@ Eigen::Vector3d parse_translation(const Json::Value& parent) {
     };
 }
 
+// Read W/X/Y/Z out of a rust-utils Quaternion handle into Eigen.
+Eigen::Quaterniond eigen_from_rust_quaternion(void* q) {
+    const std::unique_ptr<double[], decltype(&free_quaternion_components)> comps{quaternion_get_components(q),
+                                                                                 &free_quaternion_components};
+    return Eigen::Quaterniond{comps[0], comps[1], comps[2], comps[3]};
+}
+
 // Delegate the `ov_degrees` -> quaternion conversion to rust-utils, which is
 // RDK's canonical implementation; see
 // https://github.com/viamrobotics/rdk/blob/main/spatialmath/orientationVector.go
@@ -75,9 +79,15 @@ Eigen::Quaterniond ov_degrees_to_quaternion(double x, double y, double z, double
         new_orientation_vector(x, y, z, theta_rad), &free_orientation_vector_memory};
     const std::unique_ptr<void, decltype(&free_quaternion_memory)> q{quaternion_from_orientation_vector(ov.get()),
                                                                      &free_quaternion_memory};
-    const std::unique_ptr<double[], decltype(&free_quaternion_components)> comps{quaternion_get_components(q.get()),
-                                                                                 &free_quaternion_components};
-    return Eigen::Quaterniond{comps[0], comps[1], comps[2], comps[3]};
+    return eigen_from_rust_quaternion(q.get());
+}
+
+// Delegate the `euler_angles` -> quaternion conversion to rust-utils
+// (Z-Y'-X" intrinsic Tait-Bryan; Z=yaw, Y=pitch, X=roll).
+Eigen::Quaterniond euler_angles_to_quaternion(double roll, double pitch, double yaw) {
+    const std::unique_ptr<void, decltype(&free_quaternion_memory)> q{quaternion_from_euler_angles(roll, pitch, yaw),
+                                                                     &free_quaternion_memory};
+    return eigen_from_rust_quaternion(q.get());
 }
 
 // Read an `orientation` sub-object, handling the three types the shipped
@@ -98,15 +108,7 @@ Eigen::Quaterniond parse_orientation(const std::filesystem::path& path, const Js
     const Json::Value& v = o["value"];
 
     if (type == "euler_angles") {
-        // RDK's ZYX intrinsic: R = Rz(yaw) * Ry(pitch) * Rx(roll), radians.
-        const double pitch = pick_double(v, {"pitch"}, 0.0);
-        const double roll = pick_double(v, {"roll"}, 0.0);
-        const double yaw = pick_double(v, {"yaw"}, 0.0);
-        const Eigen::Quaterniond q =                              //
-            Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *    //
-            Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *  //
-            Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX());    //
-        return q.normalized();
+        return euler_angles_to_quaternion(pick_double(v, {"roll"}, 0.0), pick_double(v, {"pitch"}, 0.0), pick_double(v, {"yaw"}, 0.0));
     }
     if (type == "quaternion") {
         const double qw = pick_double(v, {"W", "w"}, 1.0);
@@ -131,15 +133,11 @@ Eigen::Matrix4d to_homogeneous(const Eigen::Quaterniond& q, const Eigen::Vector3
     return M;
 }
 
-// A link/joint entry's local-frame transform: T(translation) * R(orientation),
-// translation in millimeters (the shipped JSONs always store millimeters).
-Eigen::Matrix4d local_transform(const std::filesystem::path& path, const Json::Value& entry) {
-    return to_homogeneous(parse_orientation(path, entry), parse_translation(entry));
-}
-
-// Pull the geometry pose out as a homogeneous matrix (mm + quaternion).
-Eigen::Matrix4d geometry_local_transform(const std::filesystem::path& path, const Json::Value& geom) {
-    return to_homogeneous(parse_orientation(path, geom), parse_translation(geom));
+// The local-frame transform of any JSON node with optional `translation` and
+// `orientation` sub-objects (chain links, joints, or geometry blocks):
+// T(translation) * R(orientation), translation in millimeters.
+Eigen::Matrix4d local_transform(const std::filesystem::path& path, const Json::Value& node) {
+    return to_homogeneous(parse_orientation(path, node), parse_translation(node));
 }
 
 // Compose `geom`'s local pose with the running world transform `W` and return
@@ -173,7 +171,7 @@ std::optional<Geometry> parse_geometry_world(const std::filesystem::path& path,
     }
     const double r = g["r"].asDouble();
 
-    const Eigen::Matrix4d G_world = W * geometry_local_transform(path, g);
+    const Eigen::Matrix4d G_world = W * local_transform(path, g);
     const Eigen::Vector3d t = G_world.block<3, 1>(0, 3);
 
     if (type == "sphere") {
@@ -190,18 +188,17 @@ std::optional<Geometry> parse_geometry_world(const std::filesystem::path& path,
         throw_parse_error(path, "capsule geometry missing required `l` (length)");
     }
     const double l = g["l"].asDouble();
-    const Eigen::Quaterniond q{G_world.block<3, 3>(0, 0)};
-    const Eigen::Quaterniond qn = q.normalized();
+    const Eigen::Quaterniond q = Eigen::Quaterniond{G_world.block<3, 3>(0, 0)}.normalized();
     return Geometry{CapsuleGeometry{
         /* radius_mm */ r,
         /* length_mm */ l,
         /* tx_mm */ t.x(),
         /* ty_mm */ t.y(),
         /* tz_mm */ t.z(),
-        /* qw */ qn.w(),
-        /* qx */ qn.x(),
-        /* qy */ qn.y(),
-        /* qz */ qn.z(),
+        /* qw */ q.w(),
+        /* qx */ q.x(),
+        /* qy */ q.y(),
+        /* qz */ q.z(),
     }};
 }
 
@@ -327,11 +324,11 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
         out.limits[dh_count] = parse_joint_limits(sva_json_path, *next);
         const Json::Value* dh_link = next_in_chain(*next);
         if (dh_link == nullptr) {
-            throw_parse_error(sva_json_path, "DH joint `" + next->operator[]("id").asString() + "` has no child link");
+            throw_parse_error(sva_json_path, "DH joint `" + (*next)["id"].asString() + "` has no child link");
         }
         if (is_joint(*dh_link)) {
             throw_parse_error(sva_json_path,
-                              "DH joint `" + next->operator[]("id").asString() + "` child must be a link, got a joint");
+                              "DH joint `" + (*next)["id"].asString() + "` child must be a link, got a joint");
         }
 
         // Geometry on `dh_link` sits in its parent (joint) frame, which at

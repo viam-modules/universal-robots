@@ -138,7 +138,7 @@ class URArm::state_ {
     // Throws std::runtime_error on `wait_duration` expiry for a model that
     // does synthesize JSON, and rethrows any producer-side exception
     // forwarded via the underlying promise.
-    std::string get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration, const std::string& model_name);
+    std::string get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration);
 
     std::optional<std::shared_future<void>> cancel_move_request();
 

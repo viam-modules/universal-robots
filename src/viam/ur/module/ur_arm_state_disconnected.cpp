@@ -88,13 +88,14 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     if (!arm_connection->dashboard->commandGetRobotModel(actual_model_type)) {
         throw std::runtime_error("failed to get model info of connected arm");
     }
-    // The dashboard reports the model in uppercase (e.g. "UR20") while
-    // `configured_model_type_` is normalized to lowercase at the assignment
-    // site in `URArm::configure_`. Compare case-insensitively by lowering
-    // here.
+    // The dashboard reports the model in uppercase (e.g. "UR20") and in the
+    // coarser URCL category form ("ur5" covers both ur5e and ur7e), while
+    // `configured_model_type_` is the SDK model name in lowercase (e.g.
+    // "ur5e"). Lower-case the dashboard side and translate our SDK name to
+    // its URCL category for the comparison.
     boost::algorithm::to_lower(actual_model_type);
 
-    if (state.configured_model_type_ != actual_model_type) {
+    if (URArm::urcl_category(state.configured_model_type_) != actual_model_type) {
         std::ostringstream buffer;
         buffer << "configured model type `" << state.configured_model_type_ << "` does not match connected arm `" << actual_model_type
                << "`";
