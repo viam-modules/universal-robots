@@ -1117,9 +1117,9 @@ void check_capsule_world_center(const std::optional<Geometry>& g,
                                 double tol_mm = 1e-3) {
     BOOST_REQUIRE(g.has_value());
     BOOST_REQUIRE(std::holds_alternative<viam::sdk::capsule>(g->shape));
-    BOOST_CHECK_SMALL(g->tx_mm - expected_x_mm, tol_mm);
-    BOOST_CHECK_SMALL(g->ty_mm - expected_y_mm, tol_mm);
-    BOOST_CHECK_SMALL(g->tz_mm - expected_z_mm, tol_mm);
+    BOOST_CHECK_SMALL(g->pose.coordinates.x - expected_x_mm, tol_mm);
+    BOOST_CHECK_SMALL(g->pose.coordinates.y - expected_y_mm, tol_mm);
+    BOOST_CHECK_SMALL(g->pose.coordinates.z - expected_z_mm, tol_mm);
 }
 
 }  // namespace
@@ -1150,9 +1150,9 @@ BOOST_AUTO_TEST_CASE(test_parse_ur20_geometry_world_centers) {
     BOOST_REQUIRE(tbl.geometries[0].has_value());
     BOOST_REQUIRE(std::holds_alternative<viam::sdk::sphere>(tbl.geometries[0]->shape));
     BOOST_CHECK_EQUAL(std::get<viam::sdk::sphere>(tbl.geometries[0]->shape).radius, 1.0);
-    BOOST_CHECK_EQUAL(tbl.geometries[0]->tx_mm, 0.0);
-    BOOST_CHECK_EQUAL(tbl.geometries[0]->ty_mm, 0.0);
-    BOOST_CHECK_EQUAL(tbl.geometries[0]->tz_mm, 0.0);
+    BOOST_CHECK_EQUAL(tbl.geometries[0]->pose.coordinates.x, 0.0);
+    BOOST_CHECK_EQUAL(tbl.geometries[0]->pose.coordinates.y, 0.0);
+    BOOST_CHECK_EQUAL(tbl.geometries[0]->pose.coordinates.z, 0.0);
 
     check_capsule_world_center(tbl.geometries[1], 0.0, 0.0, 136.3);
     check_capsule_world_center(tbl.geometries[2], -421.6, -260.0, 236.3);
@@ -1199,9 +1199,9 @@ BOOST_AUTO_TEST_CASE(test_parse_ur5e_ee_link_and_ov_degrees) {
     const auto& base = std::get<viam::sdk::capsule>(tbl.geometries[0]->shape);
     BOOST_CHECK_EQUAL(base.radius, 60.0);
     BOOST_CHECK_EQUAL(base.length, 260.0);
-    BOOST_CHECK_SMALL(tbl.geometries[0]->tx_mm - 0.0, 1e-6);
-    BOOST_CHECK_SMALL(tbl.geometries[0]->ty_mm - 0.0, 1e-6);
-    BOOST_CHECK_SMALL(tbl.geometries[0]->tz_mm - 130.0, 1e-6);
+    BOOST_CHECK_SMALL(tbl.geometries[0]->pose.coordinates.x - 0.0, 1e-6);
+    BOOST_CHECK_SMALL(tbl.geometries[0]->pose.coordinates.y - 0.0, 1e-6);
+    BOOST_CHECK_SMALL(tbl.geometries[0]->pose.coordinates.z - 130.0, 1e-6);
 }
 
 BOOST_AUTO_TEST_CASE(test_parse_ur7e_has_no_shoulder_geometry) {

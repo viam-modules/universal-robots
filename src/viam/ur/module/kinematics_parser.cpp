@@ -13,14 +13,20 @@
 
 #include <json/json.h>
 
+#include "utils.hpp"  // degrees_to_radians / radians_to_degrees
+
 // rust-utils FFI: lets us delegate the orientation -> quaternion conversions
 // (RDK's canonical algorithms) to the same Rust implementation already used
 // by `ur_arm.cpp`, rather than reimplementing them here. Matches the
 // unprefixed deprecated names ur_arm.cpp uses.
 extern "C" void* new_orientation_vector(double ox, double oy, double oz, double theta);
 extern "C" void free_orientation_vector_memory(void* ov);
+extern "C" double* orientation_vector_get_components(void* ov);
+extern "C" void free_orientation_vector_components(double* ptr);
+extern "C" void* orientation_vector_from_quaternion(void* q);
 extern "C" void* quaternion_from_orientation_vector(void* ov);
 extern "C" void* quaternion_from_euler_angles(double roll, double pitch, double yaw);
+extern "C" void* new_quaternion(double real, double i, double j, double k);
 extern "C" void free_quaternion_memory(void* q);
 extern "C" double* quaternion_get_components(void* q);
 extern "C" void free_quaternion_components(double* ptr);
@@ -68,6 +74,35 @@ Eigen::Quaterniond eigen_from_rust_quaternion(void* q) {
     const std::unique_ptr<double[], decltype(&free_quaternion_components)> comps{quaternion_get_components(q),
                                                                                  &free_quaternion_components};
     return Eigen::Quaterniond{comps[0], comps[1], comps[2], comps[3]};
+}
+
+// Build a viam-cpp-sdk pose from an Eigen translation+quaternion pair by
+// converting the quaternion to an orientation-vector via rust-utils. The pose
+// stores its translation in mm (whatever unit the caller supplies) and its
+// `theta` field in degrees.
+viam::sdk::pose pose_from_translation_quaternion(const Eigen::Vector3d& t, const Eigen::Quaterniond& q) {
+    const std::unique_ptr<void, decltype(&free_quaternion_memory)> rust_q{new_quaternion(q.w(), q.x(), q.y(), q.z()),
+                                                                          &free_quaternion_memory};
+    const std::unique_ptr<void, decltype(&free_orientation_vector_memory)> rust_ov{
+        orientation_vector_from_quaternion(rust_q.get()), &free_orientation_vector_memory};
+    const std::unique_ptr<double[], decltype(&free_orientation_vector_components)> comps{
+        orientation_vector_get_components(rust_ov.get()), &free_orientation_vector_components};
+    return viam::sdk::pose{
+        viam::sdk::coordinates{t.x(), t.y(), t.z()},
+        viam::sdk::pose_orientation{comps[0], comps[1], comps[2]},
+        radians_to_degrees(comps[3]),
+    };
+}
+
+// Inverse of `pose_from_translation_quaternion`: pull a viam-cpp-sdk pose
+// back into an Eigen translation + quaternion via rust-utils.
+std::pair<Eigen::Vector3d, Eigen::Quaterniond> translation_quaternion_from_pose(const viam::sdk::pose& p) {
+    const std::unique_ptr<void, decltype(&free_orientation_vector_memory)> rust_ov{
+        new_orientation_vector(p.orientation.o_x, p.orientation.o_y, p.orientation.o_z, degrees_to_radians(p.theta)),
+        &free_orientation_vector_memory};
+    const std::unique_ptr<void, decltype(&free_quaternion_memory)> rust_q{quaternion_from_orientation_vector(rust_ov.get()),
+                                                                          &free_quaternion_memory};
+    return {Eigen::Vector3d{p.coordinates.x, p.coordinates.y, p.coordinates.z}, eigen_from_rust_quaternion(rust_q.get())};
 }
 
 // Delegate the `ov_degrees` -> quaternion conversion to rust-utils, which is
@@ -173,18 +208,18 @@ std::optional<Geometry> parse_geometry_world(const std::filesystem::path& path,
 
     const Eigen::Matrix4d G_world = W * local_transform(path, g);
     const Eigen::Vector3d t = G_world.block<3, 1>(0, 3);
+    const Eigen::Quaterniond q = Eigen::Quaterniond{G_world.block<3, 3>(0, 0)}.normalized();
+    const viam::sdk::pose pose = pose_from_translation_quaternion(t, q);
 
     if (type == "sphere") {
-        return Geometry{t.x(), t.y(), t.z(), 1.0, 0.0, 0.0, 0.0, viam::sdk::sphere{r}};
+        return Geometry{pose, viam::sdk::sphere{r}};
     }
 
     // capsule
     if (!g.isMember("l") || !g["l"].isNumeric()) {
         throw_parse_error(path, "capsule geometry missing required `l` (length)");
     }
-    const double l = g["l"].asDouble();
-    const Eigen::Quaterniond q = Eigen::Quaterniond{G_world.block<3, 3>(0, 0)}.normalized();
-    return Geometry{t.x(), t.y(), t.z(), q.w(), q.x(), q.y(), q.z(), viam::sdk::capsule{r, l}};
+    return Geometry{pose, viam::sdk::capsule{r, g["l"].asDouble()}};
 }
 
 JointLimits parse_joint_limits(const std::filesystem::path& path, const Json::Value& joint) {
@@ -327,4 +362,18 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
     }
 
     return out;
+}
+
+viam::sdk::pose apply_correction_to_pose(const viam::sdk::pose& p, const Eigen::Matrix4d& correction) {
+    const auto [t_in, q_in] = translation_quaternion_from_pose(p);
+
+    Eigen::Matrix4d G_in = Eigen::Matrix4d::Identity();
+    G_in.block<3, 3>(0, 0) = q_in.toRotationMatrix();
+    G_in.block<3, 1>(0, 3) = t_in;
+
+    const Eigen::Matrix4d G_out = correction * G_in;
+    const Eigen::Vector3d t_out = G_out.block<3, 1>(0, 3);
+    const Eigen::Quaterniond q_out = Eigen::Quaterniond{G_out.block<3, 3>(0, 0)}.normalized();
+
+    return pose_from_translation_quaternion(t_out, q_out);
 }

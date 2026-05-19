@@ -6,6 +6,9 @@
 #include <string>
 #include <variant>
 
+#include <Eigen/Geometry>
+
+#include <viam/sdk/common/pose.hpp>
 #include <viam/sdk/spatialmath/geometry.hpp>
 
 // Joint angular limits, in degrees, matching the `min`/`max` fields in
@@ -15,22 +18,19 @@ struct JointLimits {
     double max_deg;
 };
 
-// A geometry stored in world frame at zero joints: pose (translation in mm
-// plus a quaternion) and shape, where the shape is one of viam-cpp-sdk's
-// primitives (radius in mm; capsule additionally carries length in mm).
-// The quaternion fields are only meaningful when `shape` holds a
-// `viam::sdk::capsule`; for spheres they are stored as identity and ignored
-// at emission.
+// A geometry stored in world frame at zero joints. `pose` is a viam-cpp-sdk
+// pose (translation in mm, orientation as an OV unit-vector with `theta` in
+// degrees). `shape` is one of viam-cpp-sdk's shape primitives (`radius` in
+// mm; capsule additionally carries `length` in mm).
 struct Geometry {
-    double tx_mm;
-    double ty_mm;
-    double tz_mm;
-    double qw;
-    double qx;
-    double qy;
-    double qz;
+    viam::sdk::pose pose;
     std::variant<viam::sdk::sphere, viam::sdk::capsule> shape;
 };
+
+// Apply a 4x4 correction matrix to a viam-cpp-sdk pose, returning a new
+// pose. Internally round-trips through a quaternion (via rust-utils) to
+// compose with the matrix.
+viam::sdk::pose apply_correction_to_pose(const viam::sdk::pose& p, const Eigen::Matrix4d& correction);
 
 // Per-model data extracted from a shipped `kinematics/<model>.json` file:
 // joint limits for the six DH joints, the world-frame pose at zero joints of

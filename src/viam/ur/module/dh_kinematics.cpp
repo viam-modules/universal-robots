@@ -44,43 +44,13 @@ Eigen::Matrix4d dh_link_pose_matrix(double a_mm, double d_mm, double alpha_rad, 
     return M;
 }
 
-struct PoseTQ {
-    double tx, ty, tz;
-    double qw, qx, qy, qz;
-};
-
-// Apply a 4x4 correction on the left of a translation+quaternion pose,
-// returning the composed pose. Used to push a world-frame geometry into its
-// chain-link-local frame for emission.
-PoseTQ apply_correction(const Eigen::Matrix4d& correction, const PoseTQ& g) {
-    const Eigen::Quaterniond q_g(g.qw, g.qx, g.qy, g.qz);
-    Eigen::Matrix4d G = Eigen::Matrix4d::Identity();
-    G.block<3, 3>(0, 0) = q_g.toRotationMatrix();
-    G(0, 3) = g.tx;
-    G(1, 3) = g.ty;
-    G(2, 3) = g.tz;
-
-    const Eigen::Matrix4d Result = correction * G;
-    PoseTQ out;
-    out.tx = Result(0, 3);
-    out.ty = Result(1, 3);
-    out.tz = Result(2, 3);
-    Eigen::Quaterniond q_out(Result.block<3, 3>(0, 0));
-    q_out.normalize();
-    out.qw = q_out.w();
-    out.qx = q_out.x();
-    out.qy = q_out.y();
-    out.qz = q_out.z();
-    return out;
-}
-
 Json::Value geometry_to_json(const Geometry& geom) {
     Json::Value json(Json::objectValue);
 
     Json::Value translation(Json::objectValue);
-    translation["x"] = geom.tx_mm;
-    translation["y"] = geom.ty_mm;
-    translation["z"] = geom.tz_mm;
+    translation["x"] = geom.pose.coordinates.x;
+    translation["y"] = geom.pose.coordinates.y;
+    translation["z"] = geom.pose.coordinates.z;
     json["translation"] = translation;
 
     std::visit(
@@ -91,13 +61,13 @@ Json::Value geometry_to_json(const Geometry& geom) {
                 json["type"] = "capsule";
                 json["l"] = shape.length;
                 Json::Value orient(Json::objectValue);
-                orient["type"] = "quaternion";
-                Json::Value qval(Json::objectValue);
-                qval["W"] = geom.qw;
-                qval["X"] = geom.qx;
-                qval["Y"] = geom.qy;
-                qval["Z"] = geom.qz;
-                orient["value"] = qval;
+                orient["type"] = "ov_degrees";
+                Json::Value val(Json::objectValue);
+                val["x"] = geom.pose.orientation.o_x;
+                val["y"] = geom.pose.orientation.o_y;
+                val["z"] = geom.pose.orientation.o_z;
+                val["th"] = geom.pose.theta;
+                orient["value"] = val;
                 json["orientation"] = orient;
             } else {
                 // Spheres carry no orientation; emit dimensions only.
@@ -109,13 +79,10 @@ Json::Value geometry_to_json(const Geometry& geom) {
     return json;
 }
 
-// Returns a copy of `geom` with its translation+orientation transformed by
-// `correction`. Spheres' identity-stored quaternion travels through harmlessly
-// and is ignored at emission.
+// Returns a copy of `geom` with its pose transformed by `correction`. Shape
+// dimensions pass through unchanged.
 Geometry apply_correction_to_geometry(const Geometry& geom, const Eigen::Matrix4d& correction) {
-    const PoseTQ in{geom.tx_mm, geom.ty_mm, geom.tz_mm, geom.qw, geom.qx, geom.qy, geom.qz};
-    const PoseTQ out = apply_correction(correction, in);
-    return Geometry{out.tx, out.ty, out.tz, out.qw, out.qx, out.qy, out.qz, geom.shape};
+    return Geometry{apply_correction_to_pose(geom.pose, correction), geom.shape};
 }
 
 }  // namespace
