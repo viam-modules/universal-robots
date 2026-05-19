@@ -159,10 +159,10 @@ Eigen::Quaterniond parse_orientation(const std::filesystem::path& path, const Js
 }
 
 Eigen::Matrix4d to_homogeneous(const Eigen::Quaterniond& q, const Eigen::Vector3d& t) {
-    Eigen::Matrix4d M = Eigen::Matrix4d::Identity();
-    M.block<3, 3>(0, 0) = q.toRotationMatrix();
-    M.block<3, 1>(0, 3) = t;
-    return M;
+    Eigen::Matrix4d transform = Eigen::Matrix4d::Identity();
+    transform.block<3, 3>(0, 0) = q.toRotationMatrix();
+    transform.block<3, 1>(0, 3) = t;
+    return transform;
 }
 
 // The local-frame transform of any JSON node with optional `translation` and
@@ -172,10 +172,12 @@ Eigen::Matrix4d local_transform(const std::filesystem::path& path, const Json::V
     return to_homogeneous(parse_orientation(path, node), parse_translation(node));
 }
 
-// Compose `geom`'s local pose with the running world transform `W` and return
-// a world-frame Geometry. Returns nullopt for "intentionally absent"
+// Compose `geom`'s local pose with the containing frame's world pose and
+// return a world-frame Geometry. Returns nullopt for "intentionally absent"
 // geometries (no `geometry` block, or a box -- ur3e's base_link placeholder).
-std::optional<Geometry> parse_geometry_world(const std::filesystem::path& path, const Json::Value& link_entry, const Eigen::Matrix4d& W) {
+std::optional<Geometry> parse_geometry_world(const std::filesystem::path& path,
+                                             const Json::Value& link_entry,
+                                             const Eigen::Matrix4d& parent_pose) {
     if (!link_entry.isMember("geometry")) {
         return std::nullopt;
     }
@@ -201,9 +203,9 @@ std::optional<Geometry> parse_geometry_world(const std::filesystem::path& path, 
     }
     const double r = g["r"].asDouble();
 
-    const Eigen::Matrix4d G_world = W * local_transform(path, g);
-    const Eigen::Vector3d t = G_world.block<3, 1>(0, 3);
-    const Eigen::Quaterniond q = Eigen::Quaterniond{G_world.block<3, 3>(0, 0)}.normalized();
+    const Eigen::Matrix4d world_pose = parent_pose * local_transform(path, g);
+    const Eigen::Vector3d t = world_pose.block<3, 1>(0, 3);
+    const Eigen::Quaterniond q = Eigen::Quaterniond{world_pose.block<3, 3>(0, 0)}.normalized();
     const viam::sdk::pose pose = pose_from_translation_quaternion(t, q);
 
     if (type == "sphere") {
@@ -236,7 +238,7 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
     }
 
     Json::Value root;
-    Json::CharReaderBuilder reader_builder;
+    const Json::CharReaderBuilder reader_builder;
     std::string errs;
     if (!Json::parseFromStream(reader_builder, in, &root, &errs)) {
         throw_parse_error(sva_json_path, "JSON parse failure: " + errs);
@@ -304,12 +306,13 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
     // box which `parse_geometry_world` intentionally drops.
     out.geometries[0] = parse_geometry_world(sva_json_path, chain_root, Eigen::Matrix4d::Identity());
 
-    // Walk the chain forward, accumulating W as we go. Each link composes its
-    // own local transform into W (so W is the cumulative pose at the link's
-    // *next* slot in the chain -- which, by the SVA convention, is the frame
-    // in which the next link's geometry lives). Joints contribute identity
-    // at zero joint state and are not composed.
-    Eigen::Matrix4d W = local_transform(sva_json_path, chain_root);
+    // Walk the chain forward, accumulating the cumulative world-frame pose as
+    // we go. Each link composes its own local transform into `chain_pose` (so
+    // `chain_pose` is the cumulative pose at the link's *next* slot in the
+    // chain -- which, by the SVA convention, is the frame in which the next
+    // link's geometry lives). Joints contribute identity at zero joint state
+    // and are not composed.
+    Eigen::Matrix4d chain_pose = local_transform(sva_json_path, chain_root);
     const Json::Value* cursor = &chain_root;
     std::size_t dh_count = 0;
     std::size_t steps = 0;
@@ -328,14 +331,14 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
             // `base_link-base_link_inertia` and `base_link_inertia` between
             // base_link and shoulder_pan_joint). Compose its transform and
             // continue.
-            W = W * local_transform(sva_json_path, *next);
+            chain_pose = chain_pose * local_transform(sva_json_path, *next);
             cursor = next;
             continue;
         }
 
         // `next` is a DH joint. Record its limits, then advance to its child
         // link (the DH-frame-i link). The joint itself contributes identity
-        // to W.
+        // to the chain pose.
         out.limits[dh_count] = parse_joint_limits(sva_json_path, *next);
         const Json::Value* dh_link = next_in_chain(*next);
         if (dh_link == nullptr) {
@@ -346,11 +349,11 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
         }
 
         // Geometry on `dh_link` sits in its parent (joint) frame, which at
-        // zero joints is the current W.
+        // zero joints is the current `chain_pose`.
         out.link_names[dh_count + 1] = (*dh_link)["id"].asString();
-        out.geometries[dh_count + 1] = parse_geometry_world(sva_json_path, *dh_link, W);
+        out.geometries[dh_count + 1] = parse_geometry_world(sva_json_path, *dh_link, chain_pose);
 
-        W = W * local_transform(sva_json_path, *dh_link);
+        chain_pose = chain_pose * local_transform(sva_json_path, *dh_link);
         cursor = dh_link;
         dh_count++;
     }
@@ -361,13 +364,13 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
 viam::sdk::pose apply_correction_to_pose(const viam::sdk::pose& p, const Eigen::Matrix4d& correction) {
     const auto [t_in, q_in] = translation_quaternion_from_pose(p);
 
-    Eigen::Matrix4d G_in = Eigen::Matrix4d::Identity();
-    G_in.block<3, 3>(0, 0) = q_in.toRotationMatrix();
-    G_in.block<3, 1>(0, 3) = t_in;
+    Eigen::Matrix4d input_pose = Eigen::Matrix4d::Identity();
+    input_pose.block<3, 3>(0, 0) = q_in.toRotationMatrix();
+    input_pose.block<3, 1>(0, 3) = t_in;
 
-    const Eigen::Matrix4d G_out = correction * G_in;
-    const Eigen::Vector3d t_out = G_out.block<3, 1>(0, 3);
-    const Eigen::Quaterniond q_out = Eigen::Quaterniond{G_out.block<3, 3>(0, 0)}.normalized();
+    const Eigen::Matrix4d output_pose = correction * input_pose;
+    const Eigen::Vector3d t_out = output_pose.block<3, 1>(0, 3);
+    const Eigen::Quaterniond q_out = Eigen::Quaterniond{output_pose.block<3, 3>(0, 0)}.normalized();
 
     return pose_from_translation_quaternion(t_out, q_out);
 }

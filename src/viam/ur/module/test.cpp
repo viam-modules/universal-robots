@@ -1225,7 +1225,7 @@ BOOST_AUTO_TEST_CASE(test_build_dh_kinematics_json_collapses_to_world_geom_at_no
 
     const std::string json_str = build_dh_kinematics_json("ur20", dh, tbl);
     Json::Value parsed;
-    Json::CharReaderBuilder rb;
+    const Json::CharReaderBuilder rb;
     std::istringstream is{json_str};
     std::string errs;
     BOOST_REQUIRE(Json::parseFromStream(rb, is, &parsed, &errs));
@@ -1259,13 +1259,13 @@ BOOST_AUTO_TEST_CASE(test_build_dh_kinematics_json_collapses_to_world_geom_at_no
     }
     for (std::size_t i = 0; i < 6; ++i) {
         const auto& link = parsed["links"][static_cast<Json::ArrayIndex>(i + 1)];
-        Eigen::Vector3d t{
+        const Eigen::Vector3d t{
             link["translation"]["x"].asDouble(),
             link["translation"]["y"].asDouble(),
             link["translation"]["z"].asDouble(),
         };
         const auto& q = link["orientation"]["value"];
-        Eigen::Quaterniond qq{q["W"].asDouble(), q["X"].asDouble(), q["Y"].asDouble(), q["Z"].asDouble()};
+        const Eigen::Quaterniond qq{q["W"].asDouble(), q["X"].asDouble(), q["Y"].asDouble(), q["Z"].asDouble()};
         Eigen::Matrix4d L = Eigen::Matrix4d::Identity();
         L.block<3, 3>(0, 0) = qq.toRotationMatrix();
         L.block<3, 1>(0, 3) = t;
@@ -1273,7 +1273,7 @@ BOOST_AUTO_TEST_CASE(test_build_dh_kinematics_json_collapses_to_world_geom_at_no
         // expressed in that frame in the emitted JSON.
         BOOST_REQUIRE(link.isMember("geometry"));
         const auto& g = link["geometry"];
-        Eigen::Vector3d gt{
+        const Eigen::Vector3d gt{
             g["translation"]["x"].asDouble(),
             g["translation"]["y"].asDouble(),
             g["translation"]["z"].asDouble(),
