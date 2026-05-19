@@ -1,169 +1,27 @@
 #include "dh_kinematics.hpp"
 
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <optional>
-#include <stdexcept>
 #include <string>
-#include <unordered_map>
+#include <type_traits>
 #include <variant>
 
 #include <Eigen/Geometry>
 
 #include <json/json.h>
 
+#include "kinematics_parser.hpp"
+
 namespace {
 
 constexpr double k_m_to_mm = 1000.0;
 
-struct JointLimits {
-    double min_deg;
-    double max_deg;
-};
-
-// A capsule geometry expressed in the DH static-link local frame.
-// All translations in millimeters; orientation as a unit quaternion (W, X, Y, Z).
-struct CapsuleGeometry {
-    double radius_mm;
-    double length_mm;
-    double tx_mm;
-    double ty_mm;
-    double tz_mm;
-    double qw;
-    double qx;
-    double qy;
-    double qz;
-};
-
-// A sphere geometry expressed in the DH static-link local frame.
-struct SphereGeometry {
-    double radius_mm;
-    double tx_mm;
-    double ty_mm;
-    double tz_mm;
-};
-
-using Geometry = std::variant<CapsuleGeometry, SphereGeometry>;
-
-// Nominal (published spec) DH parameters for the model. Used to compute target
-// link world poses against which calibrated link world poses are compared, so the
-// geometry's local pose can be corrected to land at the nominal world position.
-// Units: meters and radians.
-struct NominalDH {
-    std::array<double, 6> a;
-    std::array<double, 6> d;
-    std::array<double, 6> alpha;
-};
-
-struct ModelTables {
-    std::array<JointLimits, 6> limits;
-    // One optional geometry per DH entry. nullopt means "no geometry on this segment".
-    // Geometry poses are expressed in the *nominal* link's local frame -- the runtime
-    // builder applies a per-link correction so they land at the right world position
-    // when the chain is calibrated.
-    std::array<std::optional<Geometry>, 6> geometries;
-    NominalDH nominal;
-};
-
-// Per-model static tables. To register a new UR model, add an entry here.
-const std::unordered_map<std::string, ModelTables>& model_tables() {
-    static const std::unordered_map<std::string, ModelTables> tables = [] {
-        std::unordered_map<std::string, ModelTables> t;
-
-        // ur20: limits taken from existing kinematics/ur20.json (verified in spec).
-        ModelTables ur20;
-        ur20.limits = {{
-            {-360.0, 360.0},  // shoulder_pan
-            {-360.0, 360.0},  // shoulder_lift
-            {-180.0, 180.0},  // elbow
-            {-360.0, 360.0},  // wrist_1
-            {-360.0, 360.0},  // wrist_2
-            {-360.0, 360.0},  // wrist_3
-        }};
-
-        ur20.geometries[0] = CapsuleGeometry{
-            /* radius_mm */ 122.5,
-            /* length_mm */ 333,
-            /* tx_mm */ 0.0,
-            /* ty_mm */ 0.0,
-            /* tz_mm */ 136.3,
-            /* qw */ 0.0,
-            /* qx */ 0.0,
-            /* qy */ 0.0,
-            /* qz */ 1.0,
-        };  // shoulder_link
-        ur20.geometries[1] = CapsuleGeometry{
-            /* radius_mm */ 90,
-            /* length_mm */ 1032,
-            /* tx_mm */ -421.600000,
-            /* ty_mm */ -0.000000,
-            /* tz_mm */ 260.000000,
-            /* qw */ -0.500000000,
-            /* qx */ -0.500000000,
-            /* qy */ 0.500000000,
-            /* qz */ 0.500000000,
-        };  // upper_arm_link
-        ur20.geometries[2] = CapsuleGeometry{
-            /* radius_mm */ 75,
-            /* length_mm */ 858,
-            /* tx_mm */ -360.0,
-            /* ty_mm */ 0.0,
-            /* tz_mm */ 43.0,
-            /* qw */ -0.5,
-            /* qx */ -0.5,
-            /* qy */ 0.5,
-            /* qz */ 0.5,
-        };  // forearm_link
-        ur20.geometries[3] = CapsuleGeometry{
-            /* radius_mm */ 48.5,
-            /* length_mm */ 262,
-            /* tx_mm */ 0.0,
-            /* ty_mm */ 0.0,
-            /* tz_mm */ 123.5,
-            /* qw */ 1.0,
-            /* qx */ 0.0,
-            /* qy */ 0.0,
-            /* qz */ 0.0,
-        };  // wrist_1_link
-        ur20.geometries[4] = CapsuleGeometry{
-            /* radius_mm */ 48.5,
-            /* length_mm */ 260,
-            /* tx_mm */ 0.0,
-            /* ty_mm */ 0.0,
-            /* tz_mm */ 84.4,
-            /* qw */ 1.0,
-            /* qx */ 0.0,
-            /* qy */ 0.0,
-            /* qz */ 0.0,
-        };  // wrist_2_link
-        ur20.geometries[5] = CapsuleGeometry{
-            /* radius_mm */ 48.5,
-            /* length_mm */ 204,
-            /* tx_mm */ 0.0,
-            /* ty_mm */ 0.0,
-            /* tz_mm */ 85.0,
-            /* qw */ 1.0,
-            /* qx */ 0.0,
-            /* qy */ 0.0,
-            /* qz */ 0.0,
-        };  // wrist_3_link
-        // Nominal UR20 DH parameters from UR's published spec. Used as the
-        // reference chain whose link world poses define where geometries should
-        // physically sit. d[4] is positive to match the controller's sign convention
-        // (`KinematicsInfo.dh_d_[4] > 0` for a real ur20).
-        ur20.nominal.a = {0.0, -0.862, -0.7287, 0.0, 0.0, 0.0};
-        ur20.nominal.d = {0.2363, 0.0, 0.0, 0.201, 0.1593, 0.1543};
-        ur20.nominal.alpha = {M_PI / 2.0, 0.0, 0.0, M_PI / 2.0, -M_PI / 2.0, 0.0};
-        t.emplace("ur20", std::move(ur20));
-
-        return t;
-    }();
-    return tables;
-}
-
 // Build a 4x4 homogeneous transform for a link's static pose:
 //   Rz(theta) * T(a, 0, d) * Rx(alpha)
-// All inputs in millimeters/radians. Output is the matrix that takes a child-frame
-// point to its parent-frame coordinates.
+// All inputs in millimeters/radians. Output is the matrix that takes a
+// child-frame point to its parent-frame coordinates.
 Eigen::Matrix4d dh_link_pose_matrix(double a_mm, double d_mm, double alpha_rad, double theta_rad) {
     const double ca = std::cos(alpha_rad);
     const double sa = std::sin(alpha_rad);
@@ -171,7 +29,6 @@ Eigen::Matrix4d dh_link_pose_matrix(double a_mm, double d_mm, double alpha_rad, 
     const double st = std::sin(theta_rad);
 
     Eigen::Matrix4d M = Eigen::Matrix4d::Identity();
-    // Rotation = Rz(theta) * Rx(alpha)
     M(0, 0) = ct;
     M(0, 1) = -st * ca;
     M(0, 2) = st * sa;
@@ -181,21 +38,20 @@ Eigen::Matrix4d dh_link_pose_matrix(double a_mm, double d_mm, double alpha_rad, 
     M(2, 0) = 0.0;
     M(2, 1) = sa;
     M(2, 2) = ca;
-    // Translation = Rz(theta) * (a, 0, d)
     M(0, 3) = a_mm * ct;
     M(1, 3) = a_mm * st;
     M(2, 3) = d_mm;
     return M;
 }
 
-// Compose a Pose-like (translation + quaternion) on the left by a 4x4 transform.
-// Returns the composed (translation, quaternion) tuple, suitable for emitting into
-// a geometry's "translation"/"orientation" fields.
 struct PoseTQ {
     double tx, ty, tz;
     double qw, qx, qy, qz;
 };
 
+// Apply a 4x4 correction on the left of a translation+quaternion pose,
+// returning the composed pose. Used to push a world-frame geometry into its
+// chain-link-local frame for emission.
 PoseTQ apply_correction(const Eigen::Matrix4d& correction, const PoseTQ& g) {
     const Eigen::Quaterniond q_g(g.qw, g.qx, g.qy, g.qz);
     Eigen::Matrix4d G = Eigen::Matrix4d::Identity();
@@ -209,8 +65,7 @@ PoseTQ apply_correction(const Eigen::Matrix4d& correction, const PoseTQ& g) {
     out.tx = Result(0, 3);
     out.ty = Result(1, 3);
     out.tz = Result(2, 3);
-    const Eigen::Matrix3d R = Result.block<3, 3>(0, 0);
-    Eigen::Quaterniond q_out(R);
+    Eigen::Quaterniond q_out(Result.block<3, 3>(0, 0));
     q_out.normalize();
     out.qw = q_out.w();
     out.qx = q_out.x();
@@ -271,7 +126,8 @@ Json::Value geometry_to_json(const Geometry& geom) {
         geom);
 }
 
-// Returns a copy of `geom` with its translation+orientation transformed by `correction`.
+// Returns a copy of `geom` with its translation+orientation transformed by
+// `correction`.
 Geometry apply_correction_to_geometry(const Geometry& geom, const Eigen::Matrix4d& correction) {
     return std::visit(
         [&correction](const auto& g) -> Geometry {
@@ -296,7 +152,8 @@ Geometry apply_correction_to_geometry(const Geometry& geom, const Eigen::Matrix4
                 r.qz = out.qz;
                 return r;
             } else {
-                // Spheres have no orientation; only translation needs correcting.
+                // Spheres carry no orientation; correction reduces to its
+                // translation component on the input point.
                 in.qw = 1.0;
                 in.qx = 0.0;
                 in.qy = 0.0;
@@ -314,56 +171,87 @@ Geometry apply_correction_to_geometry(const Geometry& geom, const Eigen::Matrix4
 
 }  // namespace
 
-std::string build_dh_kinematics_json(const std::string& model_name, const DHParams& dh) {
-    const auto& tables = model_tables();
-    const auto it = tables.find(model_name);
-    if (it == tables.end()) {
-        throw std::invalid_argument("build_dh_kinematics_json: no per-model table for `" + model_name + "`");
-    }
-    const ModelTables& tbl = it->second;
-
+std::string build_dh_kinematics_json(const std::string& model_name, const DHParams& dh, const ModelTables& tbl) {
     Json::Value root(Json::objectValue);
     root["name"] = model_name;
     root["kinematic_param_type"] = "SVA";
 
-    // Compute cumulative world transforms at zero joints for both the calibrated
-    // chain (the one we emit) and a reference nominal chain. Each link i's
-    // geometry should land at the *nominal* world pose; we apply
-    // correction_i = inv(W_cal_i) * W_nom_i to the geometry's local pose so
-    // it does, regardless of how UR's calibration redistributed parallel-axis
-    // offsets across segments.
-    //
-    // RDK's SVA chain composition for ur20.json places link_i's own frame at
-    // q_i's frame -- i.e., link_i.translation/orientation positions the *next*
-    // joint, not link_i's own frame. So the cumulative world pose of link_i is
-    // the product of link_0..link_{i-1}, NOT including link_i itself.
+    // Emitted link names match the chain in `kinematics/<model>.json` so the
+    // meshes returned by `URArm::get_3d_models` attach to the right frames.
+    // The first DH segment is split across two emitted links: a static
+    // `base_link` (parent=world, pure z-elevation by d_0) carries the base
+    // mesh, and the DH-child link (parent=<model>_q_0) carries the post-joint
+    // Rz(theta_0)*Rx(alpha_0) rotation, a_0 offset, and any shoulder
+    // geometry. Putting Rx(alpha_0) on base_link would tilt the shoulder-pan
+    // axis off world z.
+
+    // Cumulative pose of the parent joint frame above each chain link at zero
+    // joints. W_cal_links[0] is base_link's transform (T(0,0,d_0_cal)). For
+    // i>=1 it is the running calibrated product, which equals base_link.T *
+    // (the first DH link's full L_cal[0]) -- the d_0 split between base_link
+    // and the shoulder link cancels in the product.
     std::array<Eigen::Matrix4d, 6> W_cal_links;
-    std::array<Eigen::Matrix4d, 6> W_nom_links;
     {
         Eigen::Matrix4d W_cal = Eigen::Matrix4d::Identity();
-        Eigen::Matrix4d W_nom = Eigen::Matrix4d::Identity();
-        for (size_t i = 0; i < 6; ++i) {
-            // link_i's frame is at the cumulative pose *before* link_i's own
-            // pose is composed -- snapshot here, then compose for the next iteration.
+        W_cal(2, 3) = dh.d[0] * k_m_to_mm;
+        for (std::size_t i = 0; i < 6; ++i) {
             W_cal_links[i] = W_cal;
-            W_nom_links[i] = W_nom;
-            const Eigen::Matrix4d L_cal = dh_link_pose_matrix(dh.a[i] * k_m_to_mm, dh.d[i] * k_m_to_mm, dh.alpha[i], dh.theta[i]);
-            const Eigen::Matrix4d L_nom =
-                dh_link_pose_matrix(tbl.nominal.a[i] * k_m_to_mm, tbl.nominal.d[i] * k_m_to_mm, tbl.nominal.alpha[i], 0.0);
-            W_cal = W_cal * L_cal;
-            W_nom = W_nom * L_nom;
+            // The shoulder-side link drops the (0,0,d_0) translation that
+            // base_link absorbed; its accumulator contribution therefore uses
+            // d=0. Later DH segments contribute their full L_cal[i].
+            const double d_cal_chain = (i == 0) ? 0.0 : (dh.d[i] * k_m_to_mm);
+            W_cal = W_cal * dh_link_pose_matrix(dh.a[i] * k_m_to_mm, d_cal_chain, dh.alpha[i], dh.theta[i]);
         }
     }
 
     Json::Value joints(Json::arrayValue);
     Json::Value links(Json::arrayValue);
 
-    for (size_t i = 0; i < 6; ++i) {
-        const std::string joint_id = model_name + "_q_" + std::to_string(i);
-        const std::string link_id = model_name + "_link_" + std::to_string(i);
-        const std::string joint_parent = (i == 0) ? std::string{"world"} : (model_name + "_link_" + std::to_string(i - 1));
+    // base_link: static z-elevation above world, holds the base mesh.
+    {
+        Json::Value base_link(Json::objectValue);
+        base_link["id"] = tbl.link_names[0];
+        base_link["parent"] = "world";
 
-        // Revolute joint around Z. Limits in degrees per the per-model table.
+        Json::Value translation(Json::objectValue);
+        translation["x"] = 0.0;
+        translation["y"] = 0.0;
+        translation["z"] = dh.d[0] * k_m_to_mm;
+        base_link["translation"] = translation;
+
+        Json::Value orient(Json::objectValue);
+        orient["type"] = "quaternion";
+        Json::Value qval(Json::objectValue);
+        qval["W"] = 1.0;
+        qval["X"] = 0.0;
+        qval["Y"] = 0.0;
+        qval["Z"] = 0.0;
+        orient["value"] = qval;
+        base_link["orientation"] = orient;
+
+        if (tbl.geometries[0].has_value()) {
+            // base_link's frame is the world frame (parent=world per SVA
+            // convention), and the parsed geometry is already in world frame,
+            // so no correction is needed.
+            base_link["geometry"] = geometry_to_json(*tbl.geometries[0]);
+        } else {
+            // Models with no usable base geometry (ur3e ships a box, which
+            // the parser intentionally drops) still need a frame present in
+            // RDK's frame system so any base mesh has somewhere to attach.
+            Json::Value geom(Json::objectValue);
+            geom["type"] = "sphere";
+            geom["r"] = 1.0;
+            base_link["geometry"] = geom;
+        }
+
+        links.append(base_link);
+    }
+
+    for (std::size_t i = 0; i < 6; ++i) {
+        const std::string joint_id = model_name + "_q_" + std::to_string(i);
+        const std::string& link_id = tbl.link_names[i + 1];
+        const std::string& joint_parent = tbl.link_names[i];
+
         Json::Value joint(Json::objectValue);
         joint["id"] = joint_id;
         joint["type"] = "revolute";
@@ -381,10 +269,11 @@ std::string build_dh_kinematics_json(const std::string& model_name, const DHPara
         // Composed:
         //   translation = Rz(theta) * (a, 0, d) = (a*cos(theta), a*sin(theta), d)
         //   rotation    = Rz(theta) * Rx(alpha)
+        // i=0 drops the d_0 z-translation; base_link absorbed it.
         const double theta_i = dh.theta[i];
         const double alpha_i = dh.alpha[i];
         const double a_mm = dh.a[i] * k_m_to_mm;
-        const double d_mm = dh.d[i] * k_m_to_mm;
+        const double d_mm = (i == 0) ? 0.0 : (dh.d[i] * k_m_to_mm);
 
         const double ct = std::cos(theta_i);
         const double st = std::sin(theta_i);
@@ -415,9 +304,12 @@ std::string build_dh_kinematics_json(const std::string& model_name, const DHPara
         link["parent"] = joint_id;
         link["translation"] = translation;
         link["orientation"] = orient;
-        if (tbl.geometries[i].has_value()) {
-            const Eigen::Matrix4d correction = W_cal_links[i].inverse() * W_nom_links[i];
-            const Geometry corrected = apply_correction_to_geometry(*tbl.geometries[i], correction);
+        if (tbl.geometries[i + 1].has_value()) {
+            // tbl.geometries[i+1] is in world frame at zero joints; pulling
+            // it back through inv(W_cal_i) yields the chain-link-local pose
+            // that RDK will re-compose with the calibrated chain at runtime.
+            const Eigen::Matrix4d correction = W_cal_links[i].inverse();
+            const Geometry corrected = apply_correction_to_geometry(*tbl.geometries[i + 1], correction);
             link["geometry"] = geometry_to_json(corrected);
         }
         links.append(link);

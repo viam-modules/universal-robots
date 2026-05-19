@@ -409,7 +409,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     });
 
     VIAM_SDK_LOG(debug) << "URArm starting up";
-    current_state_ = state_::create(configured_model_type, name(), cfg, ports_);
+    current_state_ = state_::create(configured_model_type, model_.model_name(), name(), cfg, ports_);
 
     // state_::create blocks until the state machine reaches a connected state
     // (its constructor loops on upgrade_downgrade_ until current_state_ is no
@@ -541,7 +541,7 @@ viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
         throw std::runtime_error(
             "get_kinematics: synthesized kinematics not available for ur20; calibrated DH was expected at configure time");
     }
-    VIAM_SDK_LOG(info) << "get_kinematics: no synthesized JSON for this model -- falling back to static kinematics/<model>.json";
+    VIAM_SDK_LOG(info) << "get_kinematics: synthesized JSON unavailable (calibrated DH not ready) -- falling back to static kinematics/<model>.json";
 
     // The `Model` class absurdly lacks accessors
     const std::string model_string = [&] {
@@ -596,6 +596,7 @@ std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
     for (const auto& part : parts_to_load) {
         const std::filesystem::path model_file_path =
             current_state_->resource_root() / str(boost::format(threeDModelFileTemplate) % model_name % part);
+            VIAM_SDK_LOG(info) << model_file_path;
 
         // Open the file in binary mode
         std::ifstream model_file(model_file_path, std::ios::binary);

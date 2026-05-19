@@ -24,6 +24,7 @@ class URArm::state_ {
    public:
     explicit state_(private_,
                     std::string configured_model_type,
+                    std::string sdk_model_name,
                     std::string resource_name,
                     std::string host,
                     std::filesystem::path resource_root,
@@ -47,6 +48,7 @@ class URArm::state_ {
     ~state_();
 
     static std::unique_ptr<state_> create(std::string configured_model_type,
+                                          std::string sdk_model_name,
                                           std::string resource_name,
                                           const ResourceConfig& config,
                                           const struct ports_& ports);
@@ -475,6 +477,12 @@ class URArm::state_ {
     std::atomic<bool> program_running_flag{false};
 
     const std::string configured_model_type_;
+    // SDK model name as declared in `URArm::create_model_registrations` (e.g.
+    // "ur5e", "ur7e"); distinct from `configured_model_type_` which is the
+    // coarser URCL category ("ur5" covers both ur5e and ur7e) used for the
+    // controller-side handshake. Drives kinematics-file lookups and the
+    // `"name"` field of the synthesized SVA JSON.
+    const std::string sdk_model_name_;
     const std::string resource_name_;
     const std::string host_;
     const std::filesystem::path resource_root_;

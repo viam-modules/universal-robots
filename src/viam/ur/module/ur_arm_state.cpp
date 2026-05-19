@@ -26,6 +26,7 @@
 
 URArm::state_::state_(private_,
                       std::string configured_model_type,
+                      std::string sdk_model_name,
                       std::string resource_name,
                       std::string host,
                       std::filesystem::path resource_root,
@@ -47,6 +48,7 @@ URArm::state_::state_(private_,
                       std::string telemetry_output_path_append_traceid_template,
                       const struct ports_& ports)
     : configured_model_type_{std::move(configured_model_type)},
+      sdk_model_name_{std::move(sdk_model_name)},
       resource_name_{std::move(resource_name)},
       host_{std::move(host)},
       resource_root_{std::move(resource_root)},
@@ -82,6 +84,7 @@ URArm::state_::~state_() {
 }
 
 std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_model_type,
+                                                     std::string sdk_model_name,
                                                      std::string resource_name,
                                                      const ResourceConfig& config,
                                                      const struct ports_& ports) {
@@ -181,6 +184,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
 
     auto state = std::make_unique<state_>(private_{},
                                           std::move(configured_model_type),
+                                          std::move(sdk_model_name),
                                           std::move(resource_name),
                                           std::move(host),
                                           std::move(resource_root),
@@ -813,37 +817,40 @@ urcl::primary_interface::KinematicsInfo URArm::state_::get_calibrated_kinematics
 }
 
 std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration) {
-    // Only UR20 currently has a per-model table entry in `model_tables()`
-    // for synthesizing SVA kinematics from calibrated DH; other models ship
-    // static `kinematics/<model>.json` files. Gating *before* the wait means
-    // non-UR20 callers neither stall on nor throw from the kinematics
-    // future. `configured_model_type_` is `const` and set at construction,
-    // so reading it without the mutex is safe. This early-gate keeps the
-    // non-UR20 fallback minimal and sound; when other models gain
-    // `model_tables()` entries the gate widens accordingly.
-    if (configured_model_type_ != "ur20") {
-        return {};
-    }
-
+    // All four UR models flow through the synthesized path. When calibrated
+    // DH is not yet available (timeout) or the producer failed
+    // (set_exception), return empty -- the caller decides whether to error or
+    // fall back to the shipped static `kinematics/<model>.json`.
     std::shared_future<cached_kinematics_payload> fut;
     {
         const std::lock_guard lock{mutex_};
         fut = kinematics_future_;
     }
     if (fut.wait_for(wait_duration) != std::future_status::ready) {
-        throw std::runtime_error{"kinematics info not available within deadline"};
+        return {};
     }
-    const auto& payload = fut.get();
+    const cached_kinematics_payload* payload_ptr = nullptr;
+    try {
+        payload_ptr = &fut.get();
+    } catch (const std::exception& e) {
+        VIAM_SDK_LOG(warn) << "get_dh_kinematics_json: calibrated DH unavailable: " << e.what();
+        return {};
+    }
+    const auto& payload = *payload_ptr;
 
-    // The first JSON-wanting caller builds the string under `call_once`;
-    // subsequent callers reuse the memoized value. `json_once`/`json` are
-    // `mutable` on `cached_kinematics_payload` precisely so this lazy build
-    // is legal through the `const&` returned by `shared_future::get()`;
+    // The first JSON-wanting caller parses the shipped kinematics JSON and
+    // builds the synthesized output under `call_once`; subsequent callers
+    // reuse the memoized value. A parse failure here is a configuration bug
+    // (broken shipped file) and is allowed to propagate. `json_once`/`json`
+    // are `mutable` on `cached_kinematics_payload` precisely so this lazy
+    // build is legal through the `const&` returned by `shared_future::get()`;
     // `json_once` is a `unique_ptr<once_flag>` (dereferenced here) because
     // `std::once_flag` is neither copyable nor movable.
     std::call_once(*payload.json_once, [&] {
+        const auto sva_path = resource_root_ / "kinematics" / (payload.model_name + ".json");
+        const ModelTables tbl = parse_kinematics(sva_path);
         const DHParams dh{payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_};
-        payload.json = build_dh_kinematics_json(payload.model_name, dh);
+        payload.json = build_dh_kinematics_json(payload.model_name, dh, tbl);
     });
     return payload.json;
 }
