@@ -1106,15 +1106,11 @@ namespace {
 
 std::filesystem::path test_kinematics_path(const std::string& model) {
     // src/viam/ur/module/test.cpp -> src/kinematics/<model>.json
-    return std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path().parent_path() / "kinematics" /
-           (model + ".json");
+    return std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path().parent_path() / "kinematics" / (model + ".json");
 }
 
-void check_capsule_world_center(const std::optional<Geometry>& g,
-                                double expected_x_mm,
-                                double expected_y_mm,
-                                double expected_z_mm,
-                                double tol_mm = 1e-3) {
+void check_capsule_world_center(
+    const std::optional<Geometry>& g, double expected_x_mm, double expected_y_mm, double expected_z_mm, double tol_mm = 1e-3) {
     BOOST_REQUIRE(g.has_value());
     BOOST_REQUIRE(std::holds_alternative<viam::sdk::capsule>(g->shape));
     BOOST_CHECK_SMALL(g->pose.coordinates.x - expected_x_mm, tol_mm);
