@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <fstream>
 #include <initializer_list>
+#include <memory>
 #include <numbers>
 #include <stdexcept>
 #include <string>
@@ -15,6 +16,17 @@
 #include <Eigen/Geometry>
 
 #include <json/json.h>
+
+// rust-utils FFI: lets us delegate the `ov_degrees` -> quaternion conversion
+// (RDK's canonical orientation-vector algorithm) to the same Rust
+// implementation already used by `ur_arm.cpp`, rather than reimplementing it
+// here in Eigen. Matches the unprefixed deprecated names ur_arm.cpp uses.
+extern "C" void* new_orientation_vector(double ox, double oy, double oz, double theta);
+extern "C" void free_orientation_vector_memory(void* ov);
+extern "C" void* quaternion_from_orientation_vector(void* ov);
+extern "C" void free_quaternion_memory(void* q);
+extern "C" double* quaternion_get_components(void* q);
+extern "C" void free_quaternion_components(double* ptr);
 
 namespace {
 
@@ -54,26 +66,18 @@ Eigen::Vector3d parse_translation(const Json::Value& parent) {
     };
 }
 
-// RDK's `OrientationVectorDegrees` algorithm: (x,y,z) is a point on the unit
-// sphere giving the rotated z-axis, and `th` (degrees) is the roll about that
-// axis. See
+// Delegate the `ov_degrees` -> quaternion conversion to rust-utils, which is
+// RDK's canonical implementation; see
 // https://github.com/viamrobotics/rdk/blob/main/spatialmath/orientationVector.go
 Eigen::Quaterniond ov_degrees_to_quaternion(double x, double y, double z, double th_deg) {
-    Eigen::Vector3d v{x, y, z};
-    const double n = v.norm();
-    if (n < 1e-12) {
-        v = Eigen::Vector3d::UnitZ();
-    } else {
-        v /= n;
-    }
     const double theta_rad = th_deg * std::numbers::pi / 180.0;
-    const double lat = std::acos(std::clamp(v.z(), -1.0, 1.0));
-    const double lon = ((1.0 - std::abs(v.z())) > 1e-4) ? std::atan2(v.y(), v.x()) : 0.0;
-    const Eigen::Quaterniond q =                                       //
-        Eigen::AngleAxisd(lon, Eigen::Vector3d::UnitZ()) *             //
-        Eigen::AngleAxisd(lat, Eigen::Vector3d::UnitY()) *             //
-        Eigen::AngleAxisd(theta_rad, Eigen::Vector3d::UnitZ());        //
-    return q.normalized();
+    const std::unique_ptr<void, decltype(&free_orientation_vector_memory)> ov{
+        new_orientation_vector(x, y, z, theta_rad), &free_orientation_vector_memory};
+    const std::unique_ptr<void, decltype(&free_quaternion_memory)> q{quaternion_from_orientation_vector(ov.get()),
+                                                                     &free_quaternion_memory};
+    const std::unique_ptr<double[], decltype(&free_quaternion_components)> comps{quaternion_get_components(q.get()),
+                                                                                 &free_quaternion_components};
+    return Eigen::Quaterniond{comps[0], comps[1], comps[2], comps[3]};
 }
 
 // Read an `orientation` sub-object, handling the three types the shipped
