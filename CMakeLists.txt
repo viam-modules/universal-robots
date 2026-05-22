@@ -31,7 +31,7 @@ endif()
 option(VIAM_UR_USE_WALL_WERROR "Build with -Wall and -Werror flags" ON)
 
 # Function to apply strict warning flags to a target
-function(apply_wall_werror target_name)
+function(viam_ur_apply_wall_werror target_name)
   if (NOT VIAM_UR_USE_WALL_WERROR)
     return()
   endif()
@@ -249,7 +249,7 @@ target_link_libraries(viam-ur
     jsoncpp_lib
 )
 
-apply_wall_werror(viam-ur)
+viam_ur_apply_wall_werror(viam-ur)
 
 install(
   TARGETS
@@ -269,7 +269,7 @@ target_link_libraries(universal-robots
     viam-ur
 )
 
-apply_wall_werror(universal-robots)
+viam_ur_apply_wall_werror(universal-robots)
 
 install(
   TARGETS
@@ -289,7 +289,7 @@ target_link_libraries(universal-robots-test
     viam-ur
 )
 
-apply_wall_werror(universal-robots-test)
+viam_ur_apply_wall_werror(universal-robots-test)
 
 add_test(
   NAME universal-robots
