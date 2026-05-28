@@ -13,7 +13,6 @@
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/registry/registry.hpp>
-#include <viam/sdk/resource/reconfigurable.hpp>
 
 #if __has_include(<xtensor/containers/xarray.hpp>)
 #include <xtensor/containers/xarray.hpp>
@@ -69,7 +68,7 @@ struct ephemeral_data {
 std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
 std::string unix_time_iso8601();
 
-class URArm final : public Arm, public Reconfigurable {
+class URArm final : public Arm {
    public:
     ///
     /// Default robot control frequency in Hz.
@@ -113,8 +112,6 @@ class URArm final : public Arm, public Reconfigurable {
     URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg);
     ~URArm() override;
 
-    void reconfigure(const Dependencies& deps, const ResourceConfig& cfg) override;
-
     /// @brief Get the joint positions of the arm (in degrees)
     /// @param extra Any additional arguments to the method.
     /// @return a vector of joint positions of the arm in degrees
@@ -145,6 +142,9 @@ class URArm final : public Arm, public Reconfigurable {
 
     /// @brief Reports if the arm is in motion.
     bool is_moving() override;
+
+    /// @brief Get the status of the arm.
+    ProtoStruct get_status() override;
 
     /// @brief Get the kinematics data associated with the arm.
     /// @param extra Any additional arguments to the method.

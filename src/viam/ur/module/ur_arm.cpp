@@ -450,15 +450,6 @@ void URArm::check_configured_(const lock_type<std::shared_mutex>&) {
     }
 }
 
-void URArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
-    const std::unique_lock wlock{config_mutex_};
-    VIAM_SDK_LOG(warn) << "Reconfigure called: shutting down current state";
-    shutdown_(wlock);
-    VIAM_SDK_LOG(warn) << "Reconfigure called: configuring new state";
-    configure_(wlock, deps, cfg);
-    VIAM_SDK_LOG(info) << "Reconfigure completed OK";
-}
-
 std::vector<double> URArm::get_joint_positions(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
@@ -514,6 +505,10 @@ bool URArm::is_moving() {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
     return current_state_->is_moving();
+}
+
+ProtoStruct URArm::get_status() {
+    return {};
 }
 
 void URArm::move_to_position(const pose& p, const ProtoStruct&) {
