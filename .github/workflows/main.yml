@@ -39,15 +39,17 @@ jobs:
   build-test-lint:
     name: Build, Test, and Lint
     runs-on: ${{ matrix.runner }}
-    container: ghcr.io/viam-modules/universal-robots:${{ matrix.arch }}
+    container: ghcr.io/viam-modules/universal-robots@${{ matrix.digest }}
     strategy:
       fail-fast: false
       matrix:
         include:
         - arch: amd64
           runner: ubuntu-latest
+          digest: sha256:96794fb1354abff381c4a55819b1346beb6e8199184c550d1aced39dacaa0c42
         - arch: arm64
           runner: ubuntu-4cpu-arm
+          digest: sha256:1e08c79bcbf5b57b74e5ec74cc5830f8f36ebb1ae22925e3e8240a29a354fe7a
     steps:
       - name: Checkout
         uses: actions/checkout@v4

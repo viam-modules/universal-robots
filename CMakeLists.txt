@@ -31,7 +31,7 @@ endif()
 option(VIAM_UR_USE_WALL_WERROR "Build with -Wall and -Werror flags" ON)
 
 # Function to apply strict warning flags to a target
-function(apply_wall_werror target_name)
+function(viam_ur_apply_wall_werror target_name)
   if (NOT VIAM_UR_USE_WALL_WERROR)
     return()
   endif()
@@ -141,7 +141,7 @@ FetchContent_Declare(
   # in failed compilation due to the statically included protobuf gens
   # getting in the wrong order. Just delete them, we don't need them.
   PATCH_COMMAND find ./src/viam/api -name "*.pb.h" -type f -exec rm {} +
-  FIND_PACKAGE_ARGS
+  FIND_PACKAGE_ARGS 0.31.0 CONFIG COMPONENTS viamsdk
 )
 FetchContent_MakeAvailable(viam-cpp-sdk)
 
@@ -150,9 +150,7 @@ find_package(xtl CONFIG REQUIRED)
 find_package(xtensor CONFIG REQUIRED)
 
 find_package(jsoncpp CONFIG REQUIRED)
-
 find_package(Eigen3 CONFIG REQUIRED)
-find_package(viam-cpp-sdk 0.31 CONFIG REQUIRED viamsdk)
 
 # Everything needs threads, and prefer -pthread if available
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -167,9 +165,10 @@ find_package(Boost CONFIG REQUIRED
 FetchContent_Declare(
   trajex
   GIT_REPOSITORY https://github.com/viam-modules/trajex.git
-  GIT_TAG v0.100.0-rc6
+  GIT_TAG v0.100.0
   GIT_SHALLOW TRUE
 )
+set(VIAM_TRAJEX_ENABLE_TOOLS ON)
 FetchContent_MakeAvailable(trajex)
 
 enable_testing()
@@ -252,7 +251,7 @@ target_link_libraries(viam-ur
     jsoncpp_lib
 )
 
-apply_wall_werror(viam-ur)
+viam_ur_apply_wall_werror(viam-ur)
 
 install(
   TARGETS
@@ -272,7 +271,7 @@ target_link_libraries(universal-robots
     viam-ur
 )
 
-apply_wall_werror(universal-robots)
+viam_ur_apply_wall_werror(universal-robots)
 
 install(
   TARGETS
@@ -302,6 +301,7 @@ target_compile_definitions(universal-robots-test
 )
 
 apply_wall_werror(universal-robots-test)
+viam_ur_apply_wall_werror(universal-robots-test)
 
 add_test(
   NAME universal-robots
