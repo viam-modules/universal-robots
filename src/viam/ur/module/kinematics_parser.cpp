@@ -6,33 +6,20 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 
 #include <Eigen/Geometry>
 
 #include <json/json.h>
 
+#include "rust_utils.hpp"
 #include "utils.hpp"  // degrees_to_radians / radians_to_degrees
-
-// rust-utils FFI: lets us delegate the orientation -> quaternion conversions
-// (RDK's canonical algorithms) to the same Rust implementation already used
-// by `ur_arm.cpp`, rather than reimplementing them here. Matches the
-// unprefixed deprecated names ur_arm.cpp uses.
-extern "C" void* new_orientation_vector(double ox, double oy, double oz, double theta);
-extern "C" void free_orientation_vector_memory(void* ov);
-extern "C" double* orientation_vector_get_components(void* ov);
-extern "C" void free_orientation_vector_components(double* ptr);
-extern "C" void* orientation_vector_from_quaternion(void* q);
-extern "C" void* quaternion_from_orientation_vector(void* ov);
-extern "C" void* quaternion_from_euler_angles(double roll, double pitch, double yaw);
-extern "C" void* new_quaternion(double real, double i, double j, double k);
-extern "C" void free_quaternion_memory(void* q);
-extern "C" double* quaternion_get_components(void* q);
-extern "C" void free_quaternion_components(double* ptr);
 
 namespace {
 
 constexpr std::size_t k_num_dh_joints = 6;
+constexpr std::size_t k_num_emitted_links = k_num_dh_joints + 1;
 
 // Guards against a malformed chain creating a runaway walk (cycle, or a
 // pathologically long sequence of intermediate static links).
@@ -70,21 +57,18 @@ Eigen::Vector3d parse_translation(const Json::Value& parent) {
 
 // Read W/X/Y/Z out of a rust-utils Quaternion handle into Eigen.
 Eigen::Quaterniond eigen_from_rust_quaternion(void* q) {
-    const std::unique_ptr<double[], decltype(&free_quaternion_components)> comps{quaternion_get_components(q), &free_quaternion_components};
+    const auto comps = rust_utils::quaternion_components(q);
     return Eigen::Quaterniond{comps[0], comps[1], comps[2], comps[3]};
 }
 
 // Build a viam-cpp-sdk pose from an Eigen translation+quaternion pair by
-// converting the quaternion to an orientation-vector via rust-utils. The pose
-// stores its translation in mm (whatever unit the caller supplies) and its
-// `theta` field in degrees.
+// converting the quaternion to an orientation-vector via rust-utils. The
+// pose stores its translation in mm (whatever unit the caller supplies)
+// and its `theta` field in degrees.
 viam::sdk::pose pose_from_translation_quaternion(const Eigen::Vector3d& t, const Eigen::Quaterniond& q) {
-    const std::unique_ptr<void, decltype(&free_quaternion_memory)> rust_q{new_quaternion(q.w(), q.x(), q.y(), q.z()),
-                                                                          &free_quaternion_memory};
-    const std::unique_ptr<void, decltype(&free_orientation_vector_memory)> rust_ov{orientation_vector_from_quaternion(rust_q.get()),
-                                                                                   &free_orientation_vector_memory};
-    const std::unique_ptr<double[], decltype(&free_orientation_vector_components)> comps{orientation_vector_get_components(rust_ov.get()),
-                                                                                         &free_orientation_vector_components};
+    const auto rust_q = rust_utils::make_quaternion(q.w(), q.x(), q.y(), q.z());
+    const auto rust_ov = rust_utils::ov_from_quaternion(rust_q.get());
+    const auto comps = rust_utils::ov_components(rust_ov.get());
     return viam::sdk::pose{
         viam::sdk::coordinates{t.x(), t.y(), t.z()},
         viam::sdk::pose_orientation{comps[0], comps[1], comps[2]},
@@ -95,36 +79,30 @@ viam::sdk::pose pose_from_translation_quaternion(const Eigen::Vector3d& t, const
 // Inverse of `pose_from_translation_quaternion`: pull a viam-cpp-sdk pose
 // back into an Eigen translation + quaternion via rust-utils.
 std::pair<Eigen::Vector3d, Eigen::Quaterniond> translation_quaternion_from_pose(const viam::sdk::pose& p) {
-    const std::unique_ptr<void, decltype(&free_orientation_vector_memory)> rust_ov{
-        new_orientation_vector(p.orientation.o_x, p.orientation.o_y, p.orientation.o_z, degrees_to_radians(p.theta)),
-        &free_orientation_vector_memory};
-    const std::unique_ptr<void, decltype(&free_quaternion_memory)> rust_q{quaternion_from_orientation_vector(rust_ov.get()),
-                                                                          &free_quaternion_memory};
+    const auto rust_ov =
+        rust_utils::make_orientation_vector(p.orientation.o_x, p.orientation.o_y, p.orientation.o_z, degrees_to_radians(p.theta));
+    const auto rust_q = rust_utils::quaternion_from_ov(rust_ov.get());
     return {Eigen::Vector3d{p.coordinates.x, p.coordinates.y, p.coordinates.z}, eigen_from_rust_quaternion(rust_q.get())};
 }
 
-// Delegate the `ov_degrees` -> quaternion conversion to rust-utils, which is
-// RDK's canonical implementation; see
+// Delegate the `ov_degrees` -> quaternion conversion to rust-utils, which
+// is RDK's canonical implementation; see
 // https://github.com/viamrobotics/rdk/blob/main/spatialmath/orientationVector.go
 Eigen::Quaterniond ov_degrees_to_quaternion(double x, double y, double z, double th_deg) {
-    const double theta_rad = degrees_to_radians(th_deg);
-    const std::unique_ptr<void, decltype(&free_orientation_vector_memory)> ov{new_orientation_vector(x, y, z, theta_rad),
-                                                                              &free_orientation_vector_memory};
-    const std::unique_ptr<void, decltype(&free_quaternion_memory)> q{quaternion_from_orientation_vector(ov.get()), &free_quaternion_memory};
+    const auto ov = rust_utils::make_orientation_vector(x, y, z, degrees_to_radians(th_deg));
+    const auto q = rust_utils::quaternion_from_ov(ov.get());
     return eigen_from_rust_quaternion(q.get());
 }
 
 // Delegate the `euler_angles` -> quaternion conversion to rust-utils
 // (Z-Y'-X" intrinsic Tait-Bryan; Z=yaw, Y=pitch, X=roll).
 Eigen::Quaterniond euler_angles_to_quaternion(double roll, double pitch, double yaw) {
-    const std::unique_ptr<void, decltype(&free_quaternion_memory)> q{quaternion_from_euler_angles(roll, pitch, yaw),
-                                                                     &free_quaternion_memory};
+    const auto q = rust_utils::quaternion_from_euler(roll, pitch, yaw);
     return eigen_from_rust_quaternion(q.get());
 }
 
 // Read an `orientation` sub-object, handling the three types the shipped
-// JSONs use. Missing or null block -> identity. (ur3e ships explicit
-// `"orientation": null` on wrist_3_link and base_link.)
+// JSONs use. Missing or null block -> identity.
 Eigen::Quaterniond parse_orientation(const std::filesystem::path& path, const Json::Value& parent) {
     if (!parent.isMember("orientation") || parent["orientation"].isNull()) {
         return Eigen::Quaterniond::Identity();
@@ -172,12 +150,12 @@ Eigen::Matrix4d local_transform(const std::filesystem::path& path, const Json::V
     return to_homogeneous(parse_orientation(path, node), parse_translation(node));
 }
 
-// Compose `geom`'s local pose with the containing frame's world pose and
-// return a world-frame Geometry. Returns nullopt for "intentionally absent"
-// geometries (no `geometry` block, or a box -- ur3e's base_link placeholder).
-std::optional<Geometry> parse_geometry_world(const std::filesystem::path& path,
-                                             const Json::Value& link_entry,
-                                             const Eigen::Matrix4d& parent_pose) {
+// `intermediate_to_emitted_parent` folds in any static-only links
+// collapsed between this entry and the previous emitted slot (identity
+// otherwise). Returns nullopt for absent geometry blocks or `box`.
+std::optional<Geometry> parse_geometry_in_emitted_parent_frame(const std::filesystem::path& path,
+                                                               const Json::Value& link_entry,
+                                                               const Eigen::Matrix4d& intermediate_to_emitted_parent) {
     if (!link_entry.isMember("geometry")) {
         return std::nullopt;
     }
@@ -203,16 +181,18 @@ std::optional<Geometry> parse_geometry_world(const std::filesystem::path& path,
     }
     const double r = g["r"].asDouble();
 
-    const Eigen::Matrix4d world_pose = parent_pose * local_transform(path, g);
-    const Eigen::Vector3d t = world_pose.block<3, 1>(0, 3);
-    const Eigen::Quaterniond q = Eigen::Quaterniond{world_pose.block<3, 3>(0, 0)}.normalized();
+    // g's local pose is in the static-file link's parent frame. To express
+    // it in the emitted link's parent frame, pre-multiply by the cumulative
+    // transform from the emitted parent to the static parent.
+    const Eigen::Matrix4d emitted_local = intermediate_to_emitted_parent * local_transform(path, g);
+    const Eigen::Vector3d t = emitted_local.block<3, 1>(0, 3);
+    const Eigen::Quaterniond q = Eigen::Quaterniond{emitted_local.block<3, 3>(0, 0)}.normalized();
     const viam::sdk::pose pose = pose_from_translation_quaternion(t, q);
 
     if (type == "sphere") {
         return Geometry{pose, viam::sdk::sphere{r}};
     }
 
-    // capsule
     if (!g.isMember("l") || !g["l"].isNumeric()) {
         throw_parse_error(path, "capsule geometry missing required `l` (length)");
     }
@@ -229,9 +209,88 @@ JointLimits parse_joint_limits(const std::filesystem::path& path, const Json::Va
     return JointLimits{joint["min"].asDouble(), joint["max"].asDouble()};
 }
 
+Json::Value translation_json(const Eigen::Vector3d& t) {
+    Json::Value out(Json::objectValue);
+    out["x"] = t.x();
+    out["y"] = t.y();
+    out["z"] = t.z();
+    return out;
+}
+
+Json::Value quaternion_json(const Eigen::Quaterniond& q) {
+    Json::Value out(Json::objectValue);
+    out["type"] = "quaternion";
+    Json::Value val(Json::objectValue);
+    val["W"] = q.w();
+    val["X"] = q.x();
+    val["Y"] = q.y();
+    val["Z"] = q.z();
+    out["value"] = val;
+    return out;
+}
+
+Json::Value geometry_to_json(const Geometry& geom) {
+    Json::Value json(Json::objectValue);
+
+    json["translation"] = translation_json({geom.pose.coordinates.x, geom.pose.coordinates.y, geom.pose.coordinates.z});
+
+    std::visit(
+        [&](const auto& shape) {
+            using S = std::decay_t<decltype(shape)>;
+            json["r"] = shape.radius;
+            if constexpr (std::is_same_v<S, viam::sdk::capsule>) {
+                json["type"] = "capsule";
+                json["l"] = shape.length;
+                Json::Value orient(Json::objectValue);
+                orient["type"] = "ov_degrees";
+                Json::Value val(Json::objectValue);
+                val["x"] = geom.pose.orientation.o_x;
+                val["y"] = geom.pose.orientation.o_y;
+                val["z"] = geom.pose.orientation.o_z;
+                val["th"] = geom.pose.theta;
+                orient["value"] = val;
+                json["orientation"] = orient;
+            } else {
+                // Spheres carry no orientation; emit dimensions only.
+                json["type"] = "sphere";
+            }
+        },
+        geom.shape);
+
+    return json;
+}
+
 }  // namespace
 
-ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
+ModelTable::ModelTable(UrArmModel m) : model(std::move(m)), limits{}, link_locals{}, geometries{}, link_names{} {
+    for (auto& mat : link_locals) {
+        mat = Eigen::Matrix4d::Identity();
+    }
+}
+
+Eigen::Matrix4d parent_pose_at(const ModelTable& tbl, std::size_t i) {
+    Eigen::Matrix4d acc = Eigen::Matrix4d::Identity();
+    for (std::size_t k = 0; k < i; ++k) {
+        acc = acc * tbl.link_locals[k];
+    }
+    return acc;
+}
+
+viam::sdk::pose apply_correction_to_pose(const viam::sdk::pose& p, const Eigen::Matrix4d& correction) {
+    const auto [t_in, q_in] = translation_quaternion_from_pose(p);
+
+    Eigen::Matrix4d input_pose = Eigen::Matrix4d::Identity();
+    input_pose.block<3, 3>(0, 0) = q_in.toRotationMatrix();
+    input_pose.block<3, 1>(0, 3) = t_in;
+
+    const Eigen::Matrix4d output_pose = correction * input_pose;
+    const Eigen::Vector3d t_out = output_pose.block<3, 1>(0, 3);
+    const Eigen::Quaterniond q_out = Eigen::Quaterniond{output_pose.block<3, 3>(0, 0)}.normalized();
+
+    return pose_from_translation_quaternion(t_out, q_out);
+}
+
+ModelTable parse_kinematics(const std::filesystem::path& sva_json_path, UrArmModel arm_model) {
     std::ifstream in(sva_json_path);
     if (!in) {
         throw_parse_error(sva_json_path, "unable to open file");
@@ -254,17 +313,16 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
         throw_parse_error(sva_json_path, "missing `joints` array");
     }
 
-    // Build `parent_id -> child_entity` so we can walk the chain forward from
-    // "world" without ever looking up entries by name. Per the shipped JSONs
-    // each parent has at most one child (no branching); we enforce that here.
+    // Build `parent_id -> child_entity` so we can walk the chain forward
+    // from "world" without ever looking up entries by name. Per the shipped
+    // JSONs each parent has at most one child (no branching); we enforce
+    // that here.
     std::unordered_map<std::string, const Json::Value*> child_of;
     auto index_entry = [&](const Json::Value& entry, const char* kind) {
         if (!entry.isMember("id") || !entry["id"].isString()) {
             throw_parse_error(sva_json_path, std::string{kind} + " entry missing string `id`");
         }
-        // A missing or null `parent` field is treated as "world": ur3e omits
-        // `parent` on `base_link` entirely, while ur5e/ur7e/ur20 spell it as
-        // an explicit `"parent": "world"`. Both forms denote the chain root.
+        // A missing or null `parent` field is treated as "world".
         const std::string parent =
             (entry.isMember("parent") && entry["parent"].isString()) ? entry["parent"].asString() : std::string{"world"};
         const auto [it, inserted] = child_of.emplace(parent, &entry);
@@ -279,7 +337,7 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
         index_entry(joint, "joint");
     }
 
-    // `axis` is on joints; links don't have it. Use it as the joint/link discriminator.
+    // `axis` is on joints; links don't have it. Used to tell joints and links apart.
     const auto is_joint = [](const Json::Value& entry) { return entry.isMember("axis"); };
 
     const auto next_in_chain = [&](const Json::Value& entry) -> const Json::Value* {
@@ -297,22 +355,22 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
         throw_parse_error(sva_json_path, "entity attached directly to `world` must be a link, got a joint");
     }
 
-    ModelTables out{};
+    ModelTable out{std::move(arm_model)};
+
+    // Slot 0: base_link. Its local is just its own static transform (no
+    // intermediates above it); its geometry's parent frame is world, so the intermediate transform is identity.
     out.link_names[0] = chain_root["id"].asString();
+    out.link_locals[0] = local_transform(sva_json_path, chain_root);
+    out.geometries[0] = parse_geometry_in_emitted_parent_frame(sva_json_path, chain_root, Eigen::Matrix4d::Identity());
 
-    // base_link's frame *is* the world frame (parent="world"), so its
-    // geometry's local pose is already world-frame. ur5e/ur7e ship a real
-    // base capsule here; ur20 ships a 1mm placeholder sphere; ur3e ships a
-    // box which `parse_geometry_world` intentionally drops.
-    out.geometries[0] = parse_geometry_world(sva_json_path, chain_root, Eigen::Matrix4d::Identity());
-
-    // Walk the chain forward, accumulating the cumulative world-frame pose as
-    // we go. Each link composes its own local transform into `chain_pose` (so
-    // `chain_pose` is the cumulative pose at the link's *next* slot in the
-    // chain -- which, by the SVA convention, is the frame in which the next
-    // link's geometry lives). Joints contribute identity at zero joint state
-    // and are not composed.
-    Eigen::Matrix4d chain_pose = local_transform(sva_json_path, chain_root);
+    // Walk forward, accumulating any intermediate static-link transforms
+    // into `pending_intermediate`. When we reach a DH joint, its child link
+    // becomes the next emitted slot: that slot's link_local absorbs the
+    // pending intermediates, and its geometry (which sits in the joint
+    // frame in static) is re-expressed in the previous emitted link's
+    // frame by pre-multiplication with `pending_intermediate` (joints
+    // contribute identity at zero state).
+    Eigen::Matrix4d pending_intermediate = Eigen::Matrix4d::Identity();
     const Json::Value* cursor = &chain_root;
     std::size_t dh_count = 0;
     std::size_t steps = 0;
@@ -327,18 +385,14 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
                 "chain terminated after " + std::to_string(dh_count) + " DH joints; expected " + std::to_string(k_num_dh_joints));
         }
         if (!is_joint(*next)) {
-            // Intermediate static link (e.g., ur3e's
-            // `base_link-base_link_inertia` and `base_link_inertia` between
-            // base_link and shoulder_pan_joint). Compose its transform and
-            // continue.
-            chain_pose = chain_pose * local_transform(sva_json_path, *next);
+            pending_intermediate = pending_intermediate * local_transform(sva_json_path, *next);
             cursor = next;
             continue;
         }
 
-        // `next` is a DH joint. Record its limits, then advance to its child
-        // link (the DH-frame-i link). The joint itself contributes identity
-        // to the chain pose.
+        // `next` is a DH joint. Record its limits, then advance to its
+        // child link (the DH-frame-i link). The joint itself contributes
+        // identity to the chain pose.
         out.limits[dh_count] = parse_joint_limits(sva_json_path, *next);
         const Json::Value* dh_link = next_in_chain(*next);
         if (dh_link == nullptr) {
@@ -348,12 +402,12 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
             throw_parse_error(sva_json_path, "DH joint `" + (*next)["id"].asString() + "` child must be a link, got a joint");
         }
 
-        // Geometry on `dh_link` sits in its parent (joint) frame, which at
-        // zero joints is the current `chain_pose`.
-        out.link_names[dh_count + 1] = (*dh_link)["id"].asString();
-        out.geometries[dh_count + 1] = parse_geometry_world(sva_json_path, *dh_link, chain_pose);
+        const std::size_t slot = dh_count + 1;
+        out.link_names[slot] = (*dh_link)["id"].asString();
+        out.link_locals[slot] = pending_intermediate * local_transform(sva_json_path, *dh_link);
+        out.geometries[slot] = parse_geometry_in_emitted_parent_frame(sva_json_path, *dh_link, pending_intermediate);
 
-        chain_pose = chain_pose * local_transform(sva_json_path, *dh_link);
+        pending_intermediate = Eigen::Matrix4d::Identity();
         cursor = dh_link;
         dh_count++;
     }
@@ -361,16 +415,51 @@ ModelTables parse_kinematics(const std::filesystem::path& sva_json_path) {
     return out;
 }
 
-viam::sdk::pose apply_correction_to_pose(const viam::sdk::pose& p, const Eigen::Matrix4d& correction) {
-    const auto [t_in, q_in] = translation_quaternion_from_pose(p);
+std::string to_sva_json(const ModelTable& tbl) {
+    const std::string& model_name = tbl.model.sdk_name();
 
-    Eigen::Matrix4d input_pose = Eigen::Matrix4d::Identity();
-    input_pose.block<3, 3>(0, 0) = q_in.toRotationMatrix();
-    input_pose.block<3, 1>(0, 3) = t_in;
+    Json::Value root(Json::objectValue);
+    root["name"] = model_name;
+    root["kinematic_param_type"] = "SVA";
 
-    const Eigen::Matrix4d output_pose = correction * input_pose;
-    const Eigen::Vector3d t_out = output_pose.block<3, 1>(0, 3);
-    const Eigen::Quaterniond q_out = Eigen::Quaterniond{output_pose.block<3, 3>(0, 0)}.normalized();
+    // Every DH joint rotates about its own local z-axis by definition of
+    // the Denavit-Hartenberg parameterization; the link transforms have
+    // already rotated the parent frame so its z points along the physical
+    // joint axis. Build the JSON axis value once and reuse it.
+    Json::Value dh_z_axis(Json::objectValue);
+    dh_z_axis["x"] = 0.0;
+    dh_z_axis["y"] = 0.0;
+    dh_z_axis["z"] = 1.0;
 
-    return pose_from_translation_quaternion(t_out, q_out);
+    Json::Value joints(Json::arrayValue);
+    Json::Value links(Json::arrayValue);
+
+    for (std::size_t i = 0; i < k_num_emitted_links; ++i) {
+        if (i > 0) {
+            Json::Value joint(Json::objectValue);
+            joint["id"] = model_name + "_q_" + std::to_string(i - 1);
+            joint["type"] = "revolute";
+            joint["parent"] = tbl.link_names[i - 1];
+            joint["axis"] = dh_z_axis;
+            joint["min"] = tbl.limits[i - 1].min_deg;
+            joint["max"] = tbl.limits[i - 1].max_deg;
+            joints.append(joint);
+        }
+
+        Json::Value link(Json::objectValue);
+        link["id"] = tbl.link_names[i];
+        link["parent"] = (i == 0) ? std::string{"world"} : (model_name + "_q_" + std::to_string(i - 1));
+        link["translation"] = translation_json(tbl.link_locals[i].block<3, 1>(0, 3));
+        link["orientation"] = quaternion_json(Eigen::Quaterniond{tbl.link_locals[i].block<3, 3>(0, 0)});
+        if (tbl.geometries[i].has_value()) {
+            link["geometry"] = geometry_to_json(*tbl.geometries[i]);
+        }
+        links.append(link);
+    }
+    root["joints"] = joints;
+    root["links"] = links;
+
+    Json::StreamWriterBuilder writer_builder;
+    writer_builder["indentation"] = "  ";
+    return Json::writeString(writer_builder, root);
 }

@@ -15,6 +15,8 @@
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/reconfigurable.hpp>
 
+#include "ur_models.hpp"
+
 #if __has_include(<xtensor/containers/xarray.hpp>)
 #include <xtensor/containers/xarray.hpp>
 #else
@@ -107,11 +109,6 @@ class URArm final : public Arm, public Reconfigurable {
     /// @brief Returns a Model in the correct family for the given model name.
     static Model model(std::string model_name);
 
-    /// @brief Maps an SDK model name (e.g. "ur5e") to the URCL category the
-    /// controller's dashboard reports (e.g. "ur5"). Throws std::invalid_argument
-    /// on an unrecognized name.
-    static std::string urcl_category(const std::string& sdk_model_name);
-
     /// @brief Returns a registration for each model of ARM supported by this class.
     static std::vector<std::shared_ptr<ModelRegistration>> create_model_registrations();
 
@@ -200,7 +197,7 @@ class URArm final : public Arm, public Reconfigurable {
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
 
-    const Model model_;
+    const UrArmModel arm_model_;
 
     const struct ports_ {
         ports_();
@@ -213,6 +210,4 @@ class URArm final : public Arm, public Reconfigurable {
 
     std::shared_mutex config_mutex_;
     std::unique_ptr<state_> current_state_;
-
-    std::unordered_map<std::string, std::vector<std::string>> arm_name_to_model_parts_;
 };

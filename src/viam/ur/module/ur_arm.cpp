@@ -19,7 +19,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 #include <json/json.h>
@@ -66,23 +65,10 @@
 #endif
 
 #include "dh_kinematics.hpp"
+#include "rust_utils.hpp"
 #include "ur_arm_state.hpp"
+#include "ur_models.hpp"
 #include "utils.hpp"
-
-// this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose or a pose to a UR vector
-extern "C" void* quaternion_from_orientation_vector(void* ov);
-extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
-extern "C" void free_quaternion_memory(void* q);
-
-extern "C" void* new_orientation_vector(double ox, double oy, double oz, double theta);
-extern "C" void* orientation_vector_from_quaternion(void* q);
-extern "C" void free_orientation_vector_memory(void* ov);
-
-extern "C" double* orientation_vector_get_components(void* ov);
-extern "C" void free_orientation_vector_components(double* ds);
-
-extern "C" double* axis_angle_from_quaternion(void* q);
-extern "C" void free_axis_angles_memory(void* aa);
 
 namespace {
 
@@ -93,23 +79,15 @@ constexpr double k_max_duration_secs = 3600.0;
 constexpr double k_min_sampling_freq_hz = 1.0;
 constexpr double k_max_sampling_freq_hz = 500.0;
 
-// Type aliases for smart pointers managing FFI memory
-using unique_orientation_vector = std::unique_ptr<void, decltype(&free_orientation_vector_memory)>;
-using unique_quaternion = std::unique_ptr<void, decltype(&free_quaternion_memory)>;
-using unique_axis_angles = std::unique_ptr<double[], decltype(&free_axis_angles_memory)>;
-using unique_orientation_components = std::unique_ptr<double[], decltype(&free_orientation_vector_components)>;
-
 pose ur_vector_to_pose(urcl::vector6d_t vec) {
     const double norm = std::hypot(vec[3], vec[4], vec[5]);
     if (std::isnan(norm) || (norm == 0)) {
         throw std::invalid_argument("Cannot normalize with NaN or zero norm");
     }
 
-    auto q = unique_quaternion(quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm), &free_quaternion_memory);
-
-    auto ov = unique_orientation_vector(orientation_vector_from_quaternion(q.get()), &free_orientation_vector_memory);
-
-    auto components = unique_orientation_components(orientation_vector_get_components(ov.get()), &free_orientation_vector_components);
+    const auto q = rust_utils::quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm);
+    const auto ov = rust_utils::ov_from_quaternion(q.get());
+    const auto components = rust_utils::ov_components(ov.get());
 
     auto position = coordinates{1000 * vec[0], 1000 * vec[1], 1000 * vec[2]};
     auto orientation = pose_orientation{components[0], components[1], components[2]};
@@ -141,21 +119,17 @@ urcl::vector6d_t pose_to_ur_vector(const pose& p) {
 
     // convert viam's orientation to axis angles which is what universal robots use
     // viam orientation vector -> quaternion -> axis angle -> universal robots orientation vector
-    // create an orientation vector to use
-    auto ov = unique_orientation_vector(new_orientation_vector(p.orientation.o_x, p.orientation.o_y, p.orientation.o_z, theta_rad),
-                                        &free_orientation_vector_memory);
+    const auto ov = rust_utils::make_orientation_vector(p.orientation.o_x, p.orientation.o_y, p.orientation.o_z, theta_rad);
     if (!ov) {
         throw std::runtime_error("pose_to_ur_vector: failed to create orientation vector");
     }
 
-    // create quaternion from the orientation vector
-    auto q = unique_quaternion(quaternion_from_orientation_vector(ov.get()), &free_quaternion_memory);
+    const auto q = rust_utils::quaternion_from_ov(ov.get());
     if (!q) {
         throw std::runtime_error("pose_to_ur_vector: failed to create quaternion");
     }
 
-    // convert the quaternion to axis angles
-    auto aa = unique_axis_angles(axis_angle_from_quaternion(q.get()), &free_axis_angles_memory);
+    const auto aa = rust_utils::axis_angle_from_quaternion(q.get());
     if (!aa) {
         throw std::runtime_error("pose_to_ur_vector: failed to compute axis-angle");
     }
@@ -337,32 +311,10 @@ Model URArm::model(std::string model_name) {
     return {model_family(), std::move(model_name)};
 }
 
-std::string URArm::urcl_category(const std::string& sdk_model_name) {
-    // Categories per
-    // https://github.com/UniversalRobots/Universal_Robots_Client_Library/blob/bff7bf2e2a85c17fa3f88adda241763040596ff1/include/ur_client_library/ur/datatypes.h#L204
-    if (sdk_model_name == "ur3e") {
-        return "ur3";
-    }
-    if (sdk_model_name == "ur5e" || sdk_model_name == "ur7e") {
-        return "ur5";
-    }
-    if (sdk_model_name == "ur20") {
-        return "ur20";
-    }
-    throw std::invalid_argument("URArm::urcl_category: unsupported sdk model name `" + sdk_model_name + "`");
-}
-
 std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registrations() {
-    const auto model_strings = {
-        "ur3e",  //
-        "ur5e",  //
-        "ur7e",  //
-        "ur20"   //
-    };
-
     const auto arm = API::get<Arm>();
-    const auto registration_factory = [&](auto m) {
-        const auto model = URArm::model(m);
+    const auto registration_factory = [&](const UrModelDescriptor& d) {
+        const auto model = URArm::model(d.sdk_name);
         return std::make_shared<ModelRegistration>(
             arm,
             model,
@@ -371,16 +323,12 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
             [](auto const& config) { return validate_config_(config); });
     };
 
-    auto registrations = model_strings | boost::adaptors::transformed(registration_factory);
+    auto registrations = ur_model_descriptors() | boost::adaptors::transformed(registration_factory);
     return {std::make_move_iterator(begin(registrations)), std::make_move_iterator(end(registrations))};
 }
 
-URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), model_(std::move(model)) {
-    VIAM_SDK_LOG(info) << "instantiating URArm driver for arm model: " << model_.to_string();
-    arm_name_to_model_parts_ = {
-        {"ur5e", {"base_link", "ee_link", "shoulder_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}},
-        {"ur20", {"base_link", "wrist_3_link", "shoulder_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}},
-    };
+URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), arm_model_(std::move(model)) {
+    VIAM_SDK_LOG(info) << "instantiating URArm driver for arm model: " << arm_model_.sdk_model().to_string();
     const std::unique_lock wlock(config_mutex_);
     // TODO: prevent multiple calls to configure_logger
     configure_logger(cfg);
@@ -392,12 +340,6 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
         throw std::logic_error("URArm::configure_ was called for a currently configured instance");
     }
 
-    // `state_::configured_model_type_` is the canonical SDK model name
-    // (e.g. "ur5e"); it identifies the arm for kinematics-file lookups and
-    // is translated to the URCL category at the dashboard handshake site
-    // via `URArm::urcl_category`.
-    const std::string configured_model_type = model_.model_name();
-
     // If we fail to make it through the startup sequence, execute the shutdown code. The
     // shutdown code must be prepared to be called from any intermediate state that this
     // function may have constructed due to partial execution.
@@ -407,7 +349,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     });
 
     VIAM_SDK_LOG(debug) << "URArm starting up";
-    current_state_ = state_::create(configured_model_type, name(), cfg, ports_);
+    current_state_ = state_::create(arm_model_, name(), cfg, ports_);
 
     // state_::create blocks until the state machine reaches a connected state
     // (its constructor loops on upgrade_downgrade_ until current_state_ is no
@@ -523,53 +465,13 @@ viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
-    // 100ms is sized to cover a transient reconnect-in-progress window
-    // without blocking RDK callers meaningfully; in steady state the future
-    // is already fulfilled and the wait returns immediately.
+    // Every supported arm goes through the calibrated-DH path: at configure
+    // time we fetch DH from the controller, and `get_dh_kinematics_json`
+    // synthesizes the SVA document on first call. There is no static-file
+    // fallback.
     auto dh_json = current_state_->get_dh_kinematics_json(std::chrono::milliseconds{100});
-    if (!dh_json.empty()) {
-        VIAM_SDK_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH (" << dh_json.size() << " bytes)";
-        return viam::sdk::KinematicsDataSVA(std::vector<unsigned char>(dh_json.begin(), dh_json.end()));
-    }
-    // For models that are supposed to ship synthesized kinematics, refuse to fall through
-    // to the static file -- empty json here indicates a configuration bug.
-    if (model_ == model("ur20")) {
-        throw std::runtime_error(
-            "get_kinematics: synthesized kinematics not available for ur20; calibrated DH was expected at configure time");
-    }
-    VIAM_SDK_LOG(info) << "get_kinematics: no synthesized JSON for this model -- falling back to static kinematics/<model>.json";
-
-    // The `Model` class absurdly lacks accessors
-    const std::string model_string = [&] {
-        if (model_ == model("ur3e")) {
-            return "ur3e";
-        } else if (model_ == model("ur5e")) {
-            return "ur5e";
-        } else if (model_ == model("ur7e")) {
-            return "ur7e";
-        } else if (model_ == model("ur20")) {
-            return "ur20";
-        }
-        throw std::runtime_error(str(boost::format("no kinematics file known for model '%1%'") % model_.to_string()));
-    }();
-
-    constexpr char kSvaFileTemplate[] = "kinematics/%1%.json";
-    const auto sva_file_path = current_state_->resource_root() / str(boost::format(kSvaFileTemplate) % model_string);
-
-    // Open the file in binary mode
-    std::ifstream sva_file(sva_file_path, std::ios::binary);
-    if (!sva_file) {
-        throw std::runtime_error(str(boost::format("unable to open kinematics file '%1%'") % sva_file_path));
-    }
-
-    // Read the entire file into a vector without computing size ahead of time
-    std::vector<char> temp_bytes(std::istreambuf_iterator<char>(sva_file), {});
-    if (sva_file.bad()) {
-        throw std::runtime_error(str(boost::format("error reading kinematics file '%1%'") % sva_file_path));
-    }
-
-    // Convert to unsigned char vector
-    return viam::sdk::KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
+    VIAM_SDK_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH (" << dh_json.size() << " bytes)";
+    return viam::sdk::KinematicsDataSVA(std::vector<unsigned char>(dh_json.begin(), dh_json.end()));
 }
 
 // Unknown arm models should return an empty map. Arm models that do not have all expected parts in the map should return as much as they
@@ -578,20 +480,14 @@ std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
-    const auto model_name = model_.model_name();
-
-    const auto where = arm_name_to_model_parts_.find(model_name);
-    if (where == arm_name_to_model_parts_.end()) {
-        return {};
-    }
-    const auto& parts_to_load = where->second;
+    const auto& parts_to_load = arm_model_.mesh_parts();
 
     std::map<std::string, mesh> result_model_parts;
     constexpr char threeDModelFileTemplate[] = "3d_models/%1%/%2%.glb";
 
     for (const auto& part : parts_to_load) {
         const std::filesystem::path model_file_path =
-            current_state_->resource_root() / str(boost::format(threeDModelFileTemplate) % model_name % part);
+            current_state_->resource_root() / str(boost::format(threeDModelFileTemplate) % arm_model_.sdk_name() % part);
 
         // Open the file in binary mode
         std::ifstream model_file(model_file_path, std::ios::binary);
@@ -715,9 +611,6 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             }
             resp.emplace(k_get_state_description, cached_controlled_info->description);
         } else if (kv.first == k_get_calibrated_dh_params) {
-            if (model_ != model("ur20")) {
-                throw std::runtime_error("calibrated DH parameters not available for this arm model");
-            }
             const auto kin_info = current_state_->get_calibrated_kinematics_info(std::chrono::seconds{5});
             ProtoStruct dh;
             dh.emplace("a", to_array(kin_info.dh_a_));
@@ -783,8 +676,8 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 
     const std::string& telemetry_path = current_state_->telemetry_output_path();
 
-    auto logger =
-        std::make_unique<RealtimeTrajectoryLogger>(telemetry_path, unix_time, model_.to_string(), current_state_->resource_name());
+    auto logger = std::make_unique<RealtimeTrajectoryLogger>(
+        telemetry_path, unix_time, arm_model_.sdk_model().to_string(), current_state_->resource_name());
     logger->set_velocity_limits(current_state_->get_velocity_limits());
     logger->set_acceleration_limits(current_state_->get_acceleration_limits());
 
@@ -1092,8 +985,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
     const std::string& telemetry_path = current_state_->telemetry_output_path();
 
-    auto logger =
-        std::make_unique<RealtimeTrajectoryLogger>(telemetry_path, unix_time, model_.to_string(), current_state_->resource_name());
+    auto logger = std::make_unique<RealtimeTrajectoryLogger>(
+        telemetry_path, unix_time, arm_model_.sdk_model().to_string(), current_state_->resource_name());
     logger->set_velocity_limits(current_state_->get_velocity_limits());
     logger->set_acceleration_limits(current_state_->get_acceleration_limits());
     if (captured_waypoints) {
@@ -1121,7 +1014,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
 // Define the destructor
 URArm::~URArm() {
-    VIAM_SDK_LOG(info) << "Shutting down URArm driver instance for arm model: " << model_.to_string();
+    VIAM_SDK_LOG(info) << "Shutting down URArm driver instance for arm model: " << arm_model_.sdk_model().to_string();
     const std::unique_lock wlock{config_mutex_};
     shutdown_(wlock);
 }

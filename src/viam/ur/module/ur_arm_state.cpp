@@ -21,11 +21,12 @@
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
 
 #include "dh_kinematics.hpp"
+#include "kinematics_parser.hpp"
 #include "ur_arm_config.hpp"
 #include "utils.hpp"
 
 URArm::state_::state_(private_,
-                      std::string configured_model_type,
+                      UrArmModel configured_model,
                       std::string resource_name,
                       std::string host,
                       std::filesystem::path resource_root,
@@ -46,7 +47,7 @@ URArm::state_::state_(private_,
                       double trajectory_sampling_freq_hz,
                       std::string telemetry_output_path_append_traceid_template,
                       const struct ports_& ports)
-    : configured_model_type_{std::move(configured_model_type)},
+    : configured_model_{std::move(configured_model)},
       resource_name_{std::move(resource_name)},
       host_{std::move(host)},
       resource_root_{std::move(resource_root)},
@@ -81,7 +82,7 @@ URArm::state_::~state_() {
     shutdown();
 }
 
-std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_model_type,
+std::unique_ptr<URArm::state_> URArm::state_::create(UrArmModel configured_model,
                                                      std::string resource_name,
                                                      const ResourceConfig& config,
                                                      const struct ports_& ports) {
@@ -180,7 +181,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     }
 
     auto state = std::make_unique<state_>(private_{},
-                                          std::move(configured_model_type),
+                                          std::move(configured_model),
                                           std::move(resource_name),
                                           std::move(host),
                                           std::move(resource_root),
@@ -830,10 +831,9 @@ std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::dur
     // `json_once` is a `unique_ptr<once_flag>` (dereferenced here) because
     // `std::once_flag` is neither copyable nor movable.
     std::call_once(*payload.json_once, [&] {
-        const auto sva_path = resource_root_ / "kinematics" / (payload.model_name + ".json");
-        const ModelTables tbl = parse_kinematics(sva_path);
-        const DHParams dh{payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_};
-        payload.json = build_dh_kinematics_json(payload.model_name, dh, tbl);
+        payload.json =
+            to_sva_json(parse_kinematics(resource_root_ / "kinematics" / (payload.arm_model.sdk_name() + ".json"), payload.arm_model)
+                            .with_calibrated_dh({payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_}));
     });
     return payload.json;
 }

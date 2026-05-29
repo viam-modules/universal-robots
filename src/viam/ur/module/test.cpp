@@ -1105,23 +1105,38 @@ BOOST_AUTO_TEST_SUITE(kinematics_parser_tests)
 namespace {
 
 std::filesystem::path test_kinematics_path(const std::string& model) {
-    // src/viam/ur/module/test.cpp -> src/kinematics/<model>.json
-    return std::filesystem::path{__FILE__}.parent_path().parent_path().parent_path().parent_path() / "kinematics" / (model + ".json");
+    // `VIAM_UR_TEST_KINEMATICS_DIR` is injected as an absolute path by
+    // the build system (see CMakeLists.txt), so tests run from any cwd.
+    return std::filesystem::path{VIAM_UR_TEST_KINEMATICS_DIR} / (model + ".json");
+}
+
+ModelTable load(const std::string& model) {
+    return parse_kinematics(test_kinematics_path(model), UrArmModel::from_sdk_name(model));
+}
+
+// Geometries are stored in their emitted link's parent (joint) frame.
+// World pose = parent_pose_at(tbl, i) * geometry's parent-frame translation.
+Eigen::Vector3d geometry_world_center(const ModelTable& tbl, std::size_t i) {
+    BOOST_REQUIRE(tbl.geometries[i].has_value());
+    const auto& g = *tbl.geometries[i];
+    const Eigen::Vector4d gt{g.pose.coordinates.x, g.pose.coordinates.y, g.pose.coordinates.z, 1.0};
+    return (parent_pose_at(tbl, i) * gt).head<3>();
 }
 
 void check_capsule_world_center(
-    const std::optional<Geometry>& g, double expected_x_mm, double expected_y_mm, double expected_z_mm, double tol_mm = 1e-3) {
-    BOOST_REQUIRE(g.has_value());
-    BOOST_REQUIRE(std::holds_alternative<viam::sdk::capsule>(g->shape));
-    BOOST_CHECK_SMALL(g->pose.coordinates.x - expected_x_mm, tol_mm);
-    BOOST_CHECK_SMALL(g->pose.coordinates.y - expected_y_mm, tol_mm);
-    BOOST_CHECK_SMALL(g->pose.coordinates.z - expected_z_mm, tol_mm);
+    const ModelTable& tbl, std::size_t i, double expected_x_mm, double expected_y_mm, double expected_z_mm, double tol_mm = 1e-3) {
+    BOOST_REQUIRE(tbl.geometries[i].has_value());
+    BOOST_REQUIRE(std::holds_alternative<viam::sdk::capsule>(tbl.geometries[i]->shape));
+    const Eigen::Vector3d world = geometry_world_center(tbl, i);
+    BOOST_CHECK_SMALL(world.x() - expected_x_mm, tol_mm);
+    BOOST_CHECK_SMALL(world.y() - expected_y_mm, tol_mm);
+    BOOST_CHECK_SMALL(world.z() - expected_z_mm, tol_mm);
 }
 
 }  // namespace
 
 BOOST_AUTO_TEST_CASE(test_parse_ur20_link_names_and_limits) {
-    const auto tbl = parse_kinematics(test_kinematics_path("ur20"));
+    const auto tbl = load("ur20");
 
     BOOST_CHECK_EQUAL(tbl.link_names[0], "base_link");
     BOOST_CHECK_EQUAL(tbl.link_names[1], "shoulder_link");
@@ -1140,22 +1155,24 @@ BOOST_AUTO_TEST_CASE(test_parse_ur20_link_names_and_limits) {
 }
 
 BOOST_AUTO_TEST_CASE(test_parse_ur20_geometry_world_centers) {
-    const auto tbl = parse_kinematics(test_kinematics_path("ur20"));
+    const auto tbl = load("ur20");
 
-    // base_link's placeholder sphere lives at world origin in the static file.
+    // base_link's placeholder sphere is at world origin: parent_pose[0] is
+    // identity and the static file places it at translation (0,0,0).
     BOOST_REQUIRE(tbl.geometries[0].has_value());
     BOOST_REQUIRE(std::holds_alternative<viam::sdk::sphere>(tbl.geometries[0]->shape));
     BOOST_CHECK_EQUAL(std::get<viam::sdk::sphere>(tbl.geometries[0]->shape).radius, 1.0);
-    BOOST_CHECK_EQUAL(tbl.geometries[0]->pose.coordinates.x, 0.0);
-    BOOST_CHECK_EQUAL(tbl.geometries[0]->pose.coordinates.y, 0.0);
-    BOOST_CHECK_EQUAL(tbl.geometries[0]->pose.coordinates.z, 0.0);
+    const Eigen::Vector3d base_world = geometry_world_center(tbl, 0);
+    BOOST_CHECK_EQUAL(base_world.x(), 0.0);
+    BOOST_CHECK_EQUAL(base_world.y(), 0.0);
+    BOOST_CHECK_EQUAL(base_world.z(), 0.0);
 
-    check_capsule_world_center(tbl.geometries[1], 0.0, 0.0, 136.3);
-    check_capsule_world_center(tbl.geometries[2], -421.6, -260.0, 236.3);
-    check_capsule_world_center(tbl.geometries[3], -1222.0, -43.0, 236.3);
-    check_capsule_world_center(tbl.geometries[4], -1590.7, -123.5, 236.3);
-    check_capsule_world_center(tbl.geometries[5], -1590.7, -201.0, 151.9);
-    check_capsule_world_center(tbl.geometries[6], -1590.7, -285.3, 77.0);
+    check_capsule_world_center(tbl, 1, 0.0, 0.0, 136.3);
+    check_capsule_world_center(tbl, 2, -421.6, -260.0, 236.3);
+    check_capsule_world_center(tbl, 3, -1222.0, -43.0, 236.3);
+    check_capsule_world_center(tbl, 4, -1590.7, -123.5, 236.3);
+    check_capsule_world_center(tbl, 5, -1590.7, -201.0, 151.9);
+    check_capsule_world_center(tbl, 6, -1590.7, -285.3, 77.0);
 
     // Spot-check capsule dimensions on the shoulder (r=122.5, l=333).
     BOOST_REQUIRE(tbl.geometries[1].has_value());
@@ -1170,7 +1187,7 @@ BOOST_AUTO_TEST_CASE(test_parse_ur3e_skips_base_link_box) {
     // must intentionally skip (and ur3e routes through an intermediate static
     // chain `base_link -> base_link-base_link_inertia -> base_link_inertia`,
     // so this also exercises the multi-link parent walk).
-    const auto tbl = parse_kinematics(test_kinematics_path("ur3e"));
+    const auto tbl = load("ur3e");
     BOOST_CHECK_EQUAL(tbl.link_names[0], "base_link");
     BOOST_CHECK_EQUAL(tbl.link_names[1], "shoulder_link");
     BOOST_CHECK_EQUAL(tbl.link_names[6], "wrist_3_link");
@@ -1182,7 +1199,7 @@ BOOST_AUTO_TEST_CASE(test_parse_ur5e_ee_link_and_ov_degrees) {
     // ur5e's final DH link is `ee_link` (not `wrist_3_link`) and its
     // geometries use `ov_degrees` orientations -- a different code path from
     // ur20's quaternions.
-    const auto tbl = parse_kinematics(test_kinematics_path("ur5e"));
+    const auto tbl = load("ur5e");
     BOOST_CHECK_EQUAL(tbl.link_names[0], "base_link");
     BOOST_CHECK_EQUAL(tbl.link_names[6], "ee_link");
     // shoulder_link
@@ -1195,13 +1212,14 @@ BOOST_AUTO_TEST_CASE(test_parse_ur5e_ee_link_and_ov_degrees) {
     const auto& base = std::get<viam::sdk::capsule>(tbl.geometries[0]->shape);
     BOOST_CHECK_EQUAL(base.radius, 60.0);
     BOOST_CHECK_EQUAL(base.length, 260.0);
-    BOOST_CHECK_SMALL(tbl.geometries[0]->pose.coordinates.x - 0.0, 1e-6);
-    BOOST_CHECK_SMALL(tbl.geometries[0]->pose.coordinates.y - 0.0, 1e-6);
-    BOOST_CHECK_SMALL(tbl.geometries[0]->pose.coordinates.z - 130.0, 1e-6);
+    const Eigen::Vector3d base_world = geometry_world_center(tbl, 0);
+    BOOST_CHECK_SMALL(base_world.x() - 0.0, 1e-6);
+    BOOST_CHECK_SMALL(base_world.y() - 0.0, 1e-6);
+    BOOST_CHECK_SMALL(base_world.z() - 130.0, 1e-6);
 }
 
 BOOST_AUTO_TEST_CASE(test_parse_ur7e_has_no_shoulder_geometry) {
-    const auto tbl = parse_kinematics(test_kinematics_path("ur7e"));
+    const auto tbl = load("ur7e");
     BOOST_CHECK_EQUAL(tbl.link_names[0], "base_link");
     BOOST_CHECK_EQUAL(tbl.link_names[6], "ee_link");
     // ur7e ships the same r=60/l=260 base capsule as ur5e.
@@ -1211,11 +1229,11 @@ BOOST_AUTO_TEST_CASE(test_parse_ur7e_has_no_shoulder_geometry) {
     BOOST_CHECK(!tbl.geometries[1].has_value());
 }
 
-BOOST_AUTO_TEST_CASE(test_build_dh_kinematics_json_collapses_to_world_geom_at_nominal_dh) {
-    // With calibrated DH equal to the static chain's nominal DH, the runtime
-    // correction inv(W_cal_i) composed with the emitted G_local must
-    // reproduce the stored world translation exactly. Use ur20's nominal DH.
-    const auto tbl = parse_kinematics(test_kinematics_path("ur20"));
+BOOST_AUTO_TEST_CASE(test_with_calibrated_dh_preserves_world_geometry_centers_at_nominal_dh) {
+    // With calibrated DH equal to the chain encoded in the static file,
+    // with_calibrated_dh's re-projection should be a no-op in world space:
+    // each geometry's world center should still match the spec.
+    const ModelTable tbl = load("ur20");
 
     DHParams dh{};
     dh.a = {0.0, -0.862, -0.7287, 0.0, 0.0, 0.0};
@@ -1223,18 +1241,48 @@ BOOST_AUTO_TEST_CASE(test_build_dh_kinematics_json_collapses_to_world_geom_at_no
     dh.alpha = {std::numbers::pi / 2.0, 0.0, 0.0, std::numbers::pi / 2.0, -std::numbers::pi / 2.0, 0.0};
     dh.theta = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
-    const std::string json_str = build_dh_kinematics_json("ur20", dh, tbl);
-    Json::Value parsed;
-    const Json::CharReaderBuilder rb;
-    std::istringstream is{json_str};
-    std::string errs;
-    BOOST_REQUIRE(Json::parseFromStream(rb, is, &parsed, &errs));
-    BOOST_REQUIRE(parsed["links"].isArray());
+    const ModelTable calibrated = tbl.with_calibrated_dh(dh);
 
-    // Emitted layout: base_link at index 0, then 6 DH-named links at 1..6.
-    // For each DH link, the local geometry pose composed back with the
-    // cumulative chain transform should land at the spec table's world
-    // center.
+    const std::array<std::array<double, 3>, 7> expected_world_centers = {{
+        {0.0, 0.0, 0.0},
+        {0.0, 0.0, 136.3},
+        {-421.6, -260.0, 236.3},
+        {-1222.0, -43.0, 236.3},
+        {-1590.7, -123.5, 236.3},
+        {-1590.7, -201.0, 151.9},
+        {-1590.7, -285.3, 77.0},
+    }};
+    for (std::size_t i = 0; i < 7; ++i) {
+        const auto& expect = expected_world_centers[i];
+        const Eigen::Vector3d world = geometry_world_center(calibrated, i);
+        BOOST_CHECK_SMALL(world.x() - expect[0], 1e-3);
+        BOOST_CHECK_SMALL(world.y() - expect[1], 1e-3);
+        BOOST_CHECK_SMALL(world.z() - expect[2], 1e-3);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
+    // parse -> with_calibrated_dh(nominal) -> to_sva_json -> re-parse
+    // should give back world-frame geometry positions that still match the
+    // spec. Exercises the writer (translation/orientation/geometry
+    // emission) and the parser's quaternion code path on the writer's
+    // output.
+    const ModelTable tbl = load("ur20");
+
+    DHParams dh{};
+    dh.a = {0.0, -0.862, -0.7287, 0.0, 0.0, 0.0};
+    dh.d = {0.2363, 0.0, 0.0, 0.201, 0.1593, 0.1543};
+    dh.alpha = {std::numbers::pi / 2.0, 0.0, 0.0, std::numbers::pi / 2.0, -std::numbers::pi / 2.0, 0.0};
+    dh.theta = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+
+    const std::string json_str = to_sva_json(tbl.with_calibrated_dh(dh));
+    const auto tmp = std::filesystem::temp_directory_path() / "ur20_round_trip.json";
+    {
+        std::ofstream out(tmp);
+        out << json_str;
+    }
+    const ModelTable reparsed = parse_kinematics(tmp, UrArmModel::from_sdk_name("ur20"));
+
     const std::array<std::array<double, 3>, 6> expected_world_centers = {{
         {0.0, 0.0, 136.3},
         {-421.6, -260.0, 236.3},
@@ -1243,47 +1291,12 @@ BOOST_AUTO_TEST_CASE(test_build_dh_kinematics_json_collapses_to_world_geom_at_no
         {-1590.7, -201.0, 151.9},
         {-1590.7, -285.3, 77.0},
     }};
-
-    // The runtime composes the chain link-by-link; for this regression check
-    // we walk the emitted JSON and reproduce that composition with Eigen.
-    Eigen::Matrix4d W = Eigen::Matrix4d::Identity();
-    // base_link
-    {
-        const auto& base = parsed["links"][0];
-        BOOST_CHECK_EQUAL(base["id"].asString(), "base_link");
-        Eigen::Matrix4d T = Eigen::Matrix4d::Identity();
-        T(0, 3) = base["translation"]["x"].asDouble();
-        T(1, 3) = base["translation"]["y"].asDouble();
-        T(2, 3) = base["translation"]["z"].asDouble();
-        W = W * T;
-    }
     for (std::size_t i = 0; i < 6; ++i) {
-        const auto& link = parsed["links"][static_cast<Json::ArrayIndex>(i + 1)];
-        const Eigen::Vector3d t{
-            link["translation"]["x"].asDouble(),
-            link["translation"]["y"].asDouble(),
-            link["translation"]["z"].asDouble(),
-        };
-        const auto& q = link["orientation"]["value"];
-        const Eigen::Quaterniond qq{q["W"].asDouble(), q["X"].asDouble(), q["Y"].asDouble(), q["Z"].asDouble()};
-        Eigen::Matrix4d L = Eigen::Matrix4d::Identity();
-        L.block<3, 3>(0, 0) = qq.toRotationMatrix();
-        L.block<3, 1>(0, 3) = t;
-        // Joint frame above this link (at zero joints) is just W; geometry is
-        // expressed in that frame in the emitted JSON.
-        BOOST_REQUIRE(link.isMember("geometry"));
-        const auto& g = link["geometry"];
-        const Eigen::Vector3d gt{
-            g["translation"]["x"].asDouble(),
-            g["translation"]["y"].asDouble(),
-            g["translation"]["z"].asDouble(),
-        };
-        const Eigen::Vector3d g_world = (W * gt.homogeneous()).head<3>();
         const auto& expect = expected_world_centers[i];
-        BOOST_CHECK_SMALL(g_world.x() - expect[0], 1e-3);
-        BOOST_CHECK_SMALL(g_world.y() - expect[1], 1e-3);
-        BOOST_CHECK_SMALL(g_world.z() - expect[2], 1e-3);
-        W = W * L;
+        const Eigen::Vector3d world = geometry_world_center(reparsed, i + 1);
+        BOOST_CHECK_SMALL(world.x() - expect[0], 1e-3);
+        BOOST_CHECK_SMALL(world.y() - expect[1], 1e-3);
+        BOOST_CHECK_SMALL(world.z() - expect[2], 1e-3);
     }
 }
 

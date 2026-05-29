@@ -3,14 +3,8 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
-#include <optional>
-#include <string>
-#include <type_traits>
-#include <variant>
 
 #include <Eigen/Geometry>
-
-#include <json/json.h>
 
 #include "kinematics_parser.hpp"
 
@@ -44,134 +38,40 @@ Eigen::Matrix4d dh_link_pose_matrix(double a_mm, double d_mm, double alpha_rad, 
     return M;
 }
 
-Json::Value translation_json(const Eigen::Vector3d& t) {
-    Json::Value out(Json::objectValue);
-    out["x"] = t.x();
-    out["y"] = t.y();
-    out["z"] = t.z();
-    return out;
-}
-
-Json::Value quaternion_json(const Eigen::Quaterniond& q) {
-    Json::Value out(Json::objectValue);
-    out["type"] = "quaternion";
-    Json::Value val(Json::objectValue);
-    val["W"] = q.w();
-    val["X"] = q.x();
-    val["Y"] = q.y();
-    val["Z"] = q.z();
-    out["value"] = val;
-    return out;
-}
-
-Json::Value geometry_to_json(const Geometry& geom) {
-    Json::Value json(Json::objectValue);
-
-    json["translation"] = translation_json({geom.pose.coordinates.x, geom.pose.coordinates.y, geom.pose.coordinates.z});
-
-    std::visit(
-        [&](const auto& shape) {
-            using S = std::decay_t<decltype(shape)>;
-            json["r"] = shape.radius;
-            if constexpr (std::is_same_v<S, viam::sdk::capsule>) {
-                json["type"] = "capsule";
-                json["l"] = shape.length;
-                Json::Value orient(Json::objectValue);
-                orient["type"] = "ov_degrees";
-                Json::Value val(Json::objectValue);
-                val["x"] = geom.pose.orientation.o_x;
-                val["y"] = geom.pose.orientation.o_y;
-                val["z"] = geom.pose.orientation.o_z;
-                val["th"] = geom.pose.theta;
-                orient["value"] = val;
-                json["orientation"] = orient;
-            } else {
-                // Spheres carry no orientation; emit dimensions only.
-                json["type"] = "sphere";
-            }
-        },
-        geom.shape);
-
-    return json;
-}
-
-// Returns a copy of `geom` with its pose transformed by `correction`.
-Geometry apply_correction_to_geometry(const Geometry& geom, const Eigen::Matrix4d& correction) {
-    return Geometry{apply_correction_to_pose(geom.pose, correction), geom.shape};
+Eigen::Matrix4d dh_local_for_slot(std::size_t i, const DHParams& dh) {
+    if (i == 0) {
+        return dh_link_pose_matrix(0.0, dh.d[0] * k_m_to_mm, 0.0, 0.0);
+    }
+    const std::size_t s = i - 1;
+    const double d_mm = (i == 1) ? 0.0 : (dh.d[s] * k_m_to_mm);
+    return dh_link_pose_matrix(dh.a[s] * k_m_to_mm, d_mm, dh.alpha[s], dh.theta[s]);
 }
 
 }  // namespace
 
-std::string build_dh_kinematics_json(const std::string& model_name, const DHParams& dh, const ModelTables& tbl) {
-    Json::Value root(Json::objectValue);
-    root["name"] = model_name;
-    root["kinematic_param_type"] = "SVA";
+ModelTable ModelTable::with_calibrated_dh(const DHParams& dh) const {
+    ModelTable out = *this;
 
-    // Emitted link names match the chain in `kinematics/<model>.json` so the
-    // meshes returned by `URArm::get_3d_models` attach to the right frames.
-    // The first DH segment is split across two emitted links since there are
-    // seven glbs.
-
-    const auto link_local_pose = [&](std::size_t i) -> Eigen::Matrix4d {
-        if (i == 0) {
-            return dh_link_pose_matrix(0.0, dh.d[0] * k_m_to_mm, 0.0, 0.0);
-        }
-        const std::size_t s = i - 1;
-        const double d_mm = (i == 1) ? 0.0 : (dh.d[s] * k_m_to_mm);
-        return dh_link_pose_matrix(dh.a[s] * k_m_to_mm, d_mm, dh.alpha[s], dh.theta[s]);
-    };
-
-    // Cumulative pose of each emitted link's parent frame at zero joints.
-    // Index 0 is the world frame (base_link's parent); for i >= 1 it is the
-    // running calibrated product.
-    std::array<Eigen::Matrix4d, 7> parent_pose;
-    parent_pose[0] = Eigen::Matrix4d::Identity();
-    for (std::size_t i = 1; i < 7; ++i) {
-        parent_pose[i] = parent_pose[i - 1] * link_local_pose(i - 1);
-    }
-
-    // Every DH joint rotates about its own local z-axis by definition of the
-    // Denavit-Hartenberg parameterization; the link transforms above have
-    // already rotated the parent frame so its z points along the physical
-    // joint axis. Build the JSON axis value once and reuse it.
-    Json::Value dh_z_axis(Json::objectValue);
-    dh_z_axis["x"] = 0.0;
-    dh_z_axis["y"] = 0.0;
-    dh_z_axis["z"] = 1.0;
-
-    Json::Value joints(Json::arrayValue);
-    Json::Value links(Json::arrayValue);
-
+    std::array<Eigen::Matrix4d, 7> new_link_locals;
     for (std::size_t i = 0; i < 7; ++i) {
-        if (i > 0) {
-            Json::Value joint(Json::objectValue);
-            joint["id"] = model_name + "_q_" + std::to_string(i - 1);
-            joint["type"] = "revolute";
-            joint["parent"] = tbl.link_names[i - 1];
-            joint["axis"] = dh_z_axis;
-            joint["min"] = tbl.limits[i - 1].min_deg;
-            joint["max"] = tbl.limits[i - 1].max_deg;
-            joints.append(joint);
-        }
-
-        const Eigen::Matrix4d local_pose = link_local_pose(i);
-
-        Json::Value link(Json::objectValue);
-        link["id"] = tbl.link_names[i];
-        link["parent"] = (i == 0) ? std::string{"world"} : (model_name + "_q_" + std::to_string(i - 1));
-        link["translation"] = translation_json(local_pose.block<3, 1>(0, 3));
-        link["orientation"] = quaternion_json(Eigen::Quaterniond{local_pose.block<3, 3>(0, 0)});
-        if (tbl.geometries[i].has_value()) {
-            const Geometry corrected = apply_correction_to_geometry(*tbl.geometries[i], parent_pose[i].inverse());
-            link["geometry"] = geometry_to_json(corrected);
-        }
-        links.append(link);
+        new_link_locals[i] = dh_local_for_slot(i, dh);
     }
 
-    root["joints"] = joints;
-    root["links"] = links;
+    // For each present geometry, re-express its pose in the new emitted
+    // parent frame: G_new = inv(W_new[i]) * W_old[i] * G_old. Walk both
+    // cumulative chains in lockstep so the correction at slot i uses the
+    // parent poses, i.e. the product of link_locals 0..i-1) on both sides.
+    Eigen::Matrix4d cum_old = Eigen::Matrix4d::Identity();
+    Eigen::Matrix4d cum_new = Eigen::Matrix4d::Identity();
+    for (std::size_t i = 0; i < 7; ++i) {
+        if (out.geometries[i].has_value()) {
+            const Eigen::Matrix4d correction = cum_new.inverse() * cum_old;
+            out.geometries[i] = Geometry{apply_correction_to_pose(out.geometries[i]->pose, correction), out.geometries[i]->shape};
+        }
+        cum_old = cum_old * link_locals[i];
+        cum_new = cum_new * new_link_locals[i];
+    }
 
-    Json::StreamWriterBuilder writer;
-    writer["indentation"] = "    ";
-    return Json::writeString(writer, root);
+    out.link_locals = new_link_locals;
+    return out;
 }
