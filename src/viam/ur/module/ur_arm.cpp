@@ -99,25 +99,6 @@ using unique_quaternion = std::unique_ptr<void, decltype(&free_quaternion_memory
 using unique_axis_angles = std::unique_ptr<double[], decltype(&free_axis_angles_memory)>;
 using unique_orientation_components = std::unique_ptr<double[], decltype(&free_orientation_vector_components)>;
 
-pose ur_vector_to_pose(urcl::vector6d_t vec) {
-    const double norm = std::hypot(vec[3], vec[4], vec[5]);
-    if (std::isnan(norm) || (norm == 0)) {
-        throw std::invalid_argument("Cannot normalize with NaN or zero norm");
-    }
-
-    auto q = unique_quaternion(quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm), &free_quaternion_memory);
-
-    auto ov = unique_orientation_vector(orientation_vector_from_quaternion(q.get()), &free_orientation_vector_memory);
-
-    auto components = unique_orientation_components(orientation_vector_get_components(ov.get()), &free_orientation_vector_components);
-
-    auto position = coordinates{1000 * vec[0], 1000 * vec[1], 1000 * vec[2]};
-    auto orientation = pose_orientation{components[0], components[1], components[2]};
-    auto theta = radians_to_degrees(components[3]);
-
-    return {position, orientation, theta};
-}
-
 urcl::vector6d_t pose_to_ur_vector(const pose& p) {
     if (!std::isfinite(p.theta)) {
         throw std::invalid_argument("pose_to_ur_vector: theta is infinite or NaN");

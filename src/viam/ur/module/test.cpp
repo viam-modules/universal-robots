@@ -1,7 +1,9 @@
 #define BOOST_TEST_MODULE test module test_ur5e
 
+#include "dh_kinematics.hpp"
 #include "trajectory_logger.hpp"
 #include "ur_arm.hpp"
+#include "ur_arm_simulated.hpp"
 #include "utils.hpp"
 
 #include <viam/trajex/totg/tools/planner.hpp>
@@ -26,6 +28,7 @@
 #include <third_party/trajectories/Path.h>
 #include <third_party/trajectories/Trajectory.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <numbers>
@@ -1093,6 +1096,105 @@ BOOST_AUTO_TEST_CASE(test_move_limit_vector_negative_element) {
     // Limits must be unchanged — validation happens before application
     for (const auto& v : limits) {
         BOOST_CHECK_EQUAL(v, 42.0);
+    }
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE(simulated_arm_tests)
+
+namespace {
+
+// Reference flange poses (x, y, z in meters; rx, ry, rz axis-angle) computed
+// independently from UR's published DH parameters. UR5e at zero config sits at its
+// full ~0.85m reach, validating the chain composition and DH constants.
+void check_fk_close(const urcl::vector6d_t& got, const urcl::vector6d_t& expected) {
+    for (size_t i = 0; i < got.size(); ++i) {
+        BOOST_CHECK_SMALL(got[i] - expected[i], 1e-4);
+    }
+}
+
+}  // namespace
+
+BOOST_AUTO_TEST_CASE(test_forward_kinematics_ur5e_zero_config) {
+    const urcl::vector6d_t zeros{0, 0, 0, 0, 0, 0};
+    const urcl::vector6d_t expected{-0.8172, -0.2329, 0.0628, 1.5708, 0.0, 0.0};
+    check_fk_close(forward_kinematics("ur5e", zeros), expected);
+}
+
+BOOST_AUTO_TEST_CASE(test_forward_kinematics_ur7e_matches_ur5e) {
+    // ur7e shares the UR5e kinematic chain.
+    const urcl::vector6d_t q{0.3, -0.7, 1.1, -0.2, 0.5, -1.0};
+    check_fk_close(forward_kinematics("ur7e", q), forward_kinematics("ur5e", q));
+}
+
+BOOST_AUTO_TEST_CASE(test_forward_kinematics_ur12e_zero_config) {
+    const urcl::vector6d_t zeros{0, 0, 0, 0, 0, 0};
+    const urcl::vector6d_t expected{-1.18425, -0.2907, 0.06085, 1.5708, 0.0, 0.0};
+    check_fk_close(forward_kinematics("ur12e", zeros), expected);
+}
+
+BOOST_AUTO_TEST_CASE(test_forward_kinematics_ur20_zero_config) {
+    const urcl::vector6d_t zeros{0, 0, 0, 0, 0, 0};
+    const urcl::vector6d_t expected{-1.5907, -0.3553, 0.077, 1.5708, 0.0, 0.0};
+    check_fk_close(forward_kinematics("ur20", zeros), expected);
+}
+
+BOOST_AUTO_TEST_CASE(test_forward_kinematics_unknown_model_throws) {
+    const urcl::vector6d_t zeros{0, 0, 0, 0, 0, 0};
+    BOOST_CHECK_THROW(forward_kinematics("ur42", zeros), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(test_simulated_arm_models_membership) {
+    const auto& models = simulated_arm_models();
+    for (const auto& name : {"ur3e", "ur5e", "ur7e", "ur12e", "ur20"}) {
+        BOOST_CHECK(std::find(models.begin(), models.end(), name) != models.end());
+    }
+    BOOST_CHECK(std::find(models.begin(), models.end(), "ur42") == models.end());
+}
+
+BOOST_AUTO_TEST_CASE(test_interpolate_step_partial_then_reaches) {
+    const urcl::vector6d_t current{0, 0, 0, 0, 0, 0};
+    const urcl::vector6d_t target{1.0, 0, 0, 0, 0, 0};
+    urcl::vector6d_t speed{};
+    speed.fill(0.5);  // 0.5 rad/s -> full 1.0 rad move takes 2 seconds
+
+    // Half a second in: should have advanced 0.25 rad and not be done.
+    bool reached = true;
+    const auto step1 = simulated_interpolate_step(current, target, speed, 0.5, &reached);
+    BOOST_CHECK_SMALL(step1[0] - 0.25, 1e-9);
+    BOOST_CHECK(!reached);
+
+    // A long enough step snaps to the target and reports completion.
+    const auto step2 = simulated_interpolate_step(step1, target, speed, 100.0, &reached);
+    BOOST_CHECK_SMALL(step2[0] - 1.0, 1e-9);
+    BOOST_CHECK(reached);
+}
+
+BOOST_AUTO_TEST_CASE(test_interpolate_step_joints_finish_together) {
+    const urcl::vector6d_t current{0, 0, 0, 0, 0, 0};
+    const urcl::vector6d_t target{1.0, 0.5, 0, 0, 0, 0};
+    urcl::vector6d_t speed{};
+    speed.fill(1.0);
+
+    // The longest joint travels 1.0 rad at 1.0 rad/s -> 1s total. At 0.5s, the longer
+    // joint is halfway (0.5) and the shorter is scaled to also be halfway (0.25).
+    bool reached = false;
+    const auto step = simulated_interpolate_step(current, target, speed, 0.5, &reached);
+    BOOST_CHECK_SMALL(step[0] - 0.5, 1e-9);
+    BOOST_CHECK_SMALL(step[1] - 0.25, 1e-9);
+    BOOST_CHECK(!reached);
+}
+
+BOOST_AUTO_TEST_CASE(test_interpolate_step_already_at_target) {
+    const urcl::vector6d_t current{0.1, 0.2, 0.3, 0.4, 0.5, 0.6};
+    urcl::vector6d_t speed{};
+    speed.fill(1.0);
+    bool reached = false;
+    const auto step = simulated_interpolate_step(current, current, speed, 0.5, &reached);
+    BOOST_CHECK(reached);
+    for (size_t i = 0; i < step.size(); ++i) {
+        BOOST_CHECK_SMALL(step[i] - current[i], 1e-12);
     }
 }
 

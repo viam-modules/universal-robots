@@ -31,3 +31,15 @@ struct DHParams {
 //
 // Throws std::invalid_argument if model_name has no per-model table registered.
 std::string build_dh_kinematics_json(const std::string& model_name, const DHParams& dh);
+
+// Computes forward kinematics for a UR arm model from nominal (published-spec) DH
+// parameters. Given joint positions in radians, returns the flange pose in the arm
+// base frame as a UR pose vector: {x, y, z} in meters followed by {rx, ry, rz} as an
+// axis-angle rotation vector -- the same representation the UR controller reports for
+// the TCP (with a zero TCP offset). Pair with `ur_vector_to_pose` to obtain a Viam pose.
+//
+// `model_name` is the simulated-arm variant ("ur3e", "ur5e", "ur7e", "ur12e", "ur20").
+// ur5e and ur7e share kinematics; ur12e shares the UR10e chain.
+//
+// Throws std::invalid_argument if model_name has no DH table registered.
+urcl::vector6d_t forward_kinematics(const std::string& model_name, const urcl::vector6d_t& joint_positions_rad);

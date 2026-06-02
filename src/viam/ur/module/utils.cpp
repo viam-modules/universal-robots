@@ -1,6 +1,9 @@
 #include "utils.hpp"
 
+#include <cmath>
+#include <memory>
 #include <ranges>
+#include <stdexcept>
 
 #include <ur_client_library/log.h>
 
@@ -8,11 +11,33 @@
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/split.hpp>
+#include <boost/dll/runtime_symbol_info.hpp>
 #include <boost/format.hpp>
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/resource/resource.hpp>
 
+#include "ur_arm_config.hpp"
+
 using urcl::vector6d_t;
+using viam::sdk::pose;
+
+// Spatialmath FFI used to convert UR axis-angle orientation into Viam's orientation
+// vector representation. These symbols are provided by the linked Viam SDK; the same
+// declarations appear in ur_arm.cpp for the hardware arm's pose conversions.
+extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
+extern "C" void free_quaternion_memory(void* q);
+extern "C" void* orientation_vector_from_quaternion(void* q);
+extern "C" void free_orientation_vector_memory(void* ov);
+extern "C" double* orientation_vector_get_components(void* ov);
+extern "C" void free_orientation_vector_components(double* ds);
+
+namespace {
+
+using unique_orientation_vector = std::unique_ptr<void, decltype(&free_orientation_vector_memory)>;
+using unique_quaternion = std::unique_ptr<void, decltype(&free_quaternion_memory)>;
+using unique_orientation_components = std::unique_ptr<double[], decltype(&free_orientation_vector_components)>;
+
+}  // namespace
 
 void configure_logger(const viam::sdk::ResourceConfig& cfg) {
     auto level_str = find_config_attribute<std::string>(cfg, "log_level").value_or("warn");
@@ -216,4 +241,29 @@ void apply_move_limit(vector6d_t& limits, const boost::variant<double, std::vect
         }
     };
     boost::apply_visitor(visitor{limits}, value);
+}
+
+std::filesystem::path module_resource_root() {
+    const auto module_executable_path = boost::dll::program_location();
+    const auto module_executable_directory = module_executable_path.parent_path();
+    return std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "universal-robots");
+}
+
+pose ur_vector_to_pose(const vector6d_t& vec) {
+    const double norm = std::hypot(vec[3], vec[4], vec[5]);
+    if (std::isnan(norm) || (norm == 0)) {
+        throw std::invalid_argument("Cannot normalize with NaN or zero norm");
+    }
+
+    auto q = unique_quaternion(quaternion_from_axis_angle(vec[3] / norm, vec[4] / norm, vec[5] / norm, norm), &free_quaternion_memory);
+
+    auto ov = unique_orientation_vector(orientation_vector_from_quaternion(q.get()), &free_orientation_vector_memory);
+
+    auto components = unique_orientation_components(orientation_vector_get_components(ov.get()), &free_orientation_vector_components);
+
+    auto position = viam::sdk::coordinates{1000 * vec[0], 1000 * vec[1], 1000 * vec[2]};
+    auto orientation = viam::sdk::pose_orientation{components[0], components[1], components[2]};
+    auto theta = radians_to_degrees(components[3]);
+
+    return {position, orientation, theta};
 }

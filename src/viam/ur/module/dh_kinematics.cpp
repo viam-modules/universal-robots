@@ -312,7 +312,48 @@ Geometry apply_correction_to_geometry(const Geometry& geom, const Eigen::Matrix4
         geom);
 }
 
+// Nominal (published-spec) DH parameters per simulated UR model, in meters/radians.
+// theta offsets are zero for all UR e-series and ur20 arms. Source: UR's published DH
+// table for kinematics & dynamics. ur5e/ur7e share a chain; ur12e shares the UR10e
+// chain (same 1300mm reach). Keep these in sync with src/kinematics/<model>.json.
+const std::unordered_map<std::string, NominalDH>& fk_dh_tables() {
+    const double pi_2 = M_PI / 2.0;
+    static const std::unordered_map<std::string, NominalDH> tables = {
+        {"ur3e",
+         {{0.0, -0.24355, -0.2132, 0.0, 0.0, 0.0}, {0.15185, 0.0, 0.0, 0.13105, 0.08535, 0.0921}, {pi_2, 0.0, 0.0, pi_2, -pi_2, 0.0}}},
+        {"ur5e", {{0.0, -0.425, -0.3922, 0.0, 0.0, 0.0}, {0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996}, {pi_2, 0.0, 0.0, pi_2, -pi_2, 0.0}}},
+        {"ur7e", {{0.0, -0.425, -0.3922, 0.0, 0.0, 0.0}, {0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996}, {pi_2, 0.0, 0.0, pi_2, -pi_2, 0.0}}},
+        {"ur12e",
+         {{0.0, -0.6127, -0.57155, 0.0, 0.0, 0.0}, {0.1807, 0.0, 0.0, 0.17415, 0.11985, 0.11655}, {pi_2, 0.0, 0.0, pi_2, -pi_2, 0.0}}},
+        {"ur20", {{0.0, -0.862, -0.7287, 0.0, 0.0, 0.0}, {0.2363, 0.0, 0.0, 0.201, 0.1593, 0.1543}, {pi_2, 0.0, 0.0, pi_2, -pi_2, 0.0}}},
+    };
+    return tables;
+}
+
 }  // namespace
+
+urcl::vector6d_t forward_kinematics(const std::string& model_name, const urcl::vector6d_t& joint_positions_rad) {
+    const auto& tables = fk_dh_tables();
+    const auto it = tables.find(model_name);
+    if (it == tables.end()) {
+        throw std::invalid_argument("forward_kinematics: no DH table for model `" + model_name + "`");
+    }
+    const NominalDH& dh = it->second;
+
+    // Compose the standard UR DH chain in meters. dh_link_pose_matrix(a, d, alpha, theta)
+    // yields Rz(theta) * Tz(d) * Tx(a) * Rx(alpha); the joint variable enters as
+    // theta_i = q_i (nominal theta offsets are zero for UR arms).
+    Eigen::Matrix4d transform = Eigen::Matrix4d::Identity();
+    for (size_t i = 0; i < 6; ++i) {
+        transform = transform * dh_link_pose_matrix(dh.a[i], dh.d[i], dh.alpha[i], joint_positions_rad[i]);
+    }
+
+    const Eigen::Matrix3d rotation = transform.block<3, 3>(0, 0);
+    const Eigen::AngleAxisd axis_angle(rotation);
+    const Eigen::Vector3d rotation_vector = axis_angle.axis() * axis_angle.angle();
+
+    return {transform(0, 3), transform(1, 3), transform(2, 3), rotation_vector.x(), rotation_vector.y(), rotation_vector.z()};
+}
 
 std::string build_dh_kinematics_json(const std::string& model_name, const DHParams& dh) {
     const auto& tables = model_tables();

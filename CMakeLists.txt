@@ -226,6 +226,7 @@ target_sources(viam-ur
     src/viam/ur/module/dh_kinematics.cpp
     src/viam/ur/module/trajectory_logger.cpp
     src/viam/ur/module/ur_arm.cpp
+    src/viam/ur/module/ur_arm_simulated.cpp
     src/viam/ur/module/ur_arm_state.cpp
     src/viam/ur/module/ur_arm_state_connected.cpp
     src/viam/ur/module/ur_arm_state_controlled.cpp

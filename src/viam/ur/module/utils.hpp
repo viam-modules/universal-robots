@@ -16,6 +16,7 @@
 #include <ur_client_library/log.h>
 #include <ur_client_library/types.h>
 
+#include <viam/sdk/common/pose.hpp>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
 
@@ -24,6 +25,29 @@
 inline constexpr auto k_ur_arm_dof = std::tuple_size_v<urcl::vector6d_t>;
 
 void configure_logger(const viam::sdk::ResourceConfig& cfg);
+
+///
+/// Resolve the module's data resource root (the installed `universal-robots` data
+/// directory containing `kinematics/`, `control/`, and `3d_models/`).
+///
+/// Computed relative to the running module executable, so it is correct regardless
+/// of where the module is installed. Shared by the hardware arm and the simulated arm.
+///
+/// @throws std::filesystem::filesystem_error if the directory cannot be resolved
+///
+std::filesystem::path module_resource_root();
+
+///
+/// Convert a UR pose vector (x, y, z in meters; rx, ry, rz axis-angle) into a Viam
+/// `pose` (translation in millimeters; orientation vector + theta in degrees).
+///
+/// This matches the representation the UR controller reports for the TCP, so the
+/// simulated arm's forward-kinematics output is expressed identically to the
+/// hardware arm's `get_end_position`.
+///
+/// @throws std::invalid_argument if the rotation vector has NaN or zero norm
+///
+viam::sdk::pose ur_vector_to_pose(const urcl::vector6d_t& vec);
 
 // helper function to extract an attribute value from its key within a ResourceConfig
 template <class T>

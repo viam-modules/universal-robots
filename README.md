@@ -7,6 +7,8 @@ This repo is a [module](https://docs.viam.com/registry/#modular-resources) that 
 - UR7e, as `viam:universal-robots:ur7e`
 - UR20, as `viam:universal-robots:ur20`
 
+In addition, a hardware-free **simulated** arm is available as `viam:universal-robots:simulated-arm`, which can emulate any of the above models as well as the UR12e. See [Simulated Arm](#simulated-arm) below.
+
 ## Configuration and Usage
 
 This model can be used to control a universal robots arm from a machine running a viam-server. We recommend that the machine running the viam-server is using a wired ethernet connection for the best performance of this module. The following attribute template can be used to configure this model:
@@ -193,6 +195,56 @@ First ensure that your machine is displaying as **Live** on the Viam App. Then y
 - To simply view data from and manipulate your arm, use the **CONTROL** tab of the Viam App.
 For more information, see [Control Machines](https://docs.viam.com/fleet/control/).
 - More advanced control of the arm can be achieved by using one of [Viam's client SDK libraries](https://docs.viam.com/components/arm/#control-your-arm-with-viams-client-sdk-libraries)
+
+## Simulated Arm
+
+The `viam:universal-robots:simulated-arm` model is a hardware-free Universal Robots arm. It requires no physical robot and no network connection to a controller, so it is useful for developing and testing configurations, motion plans, and the 3D scene viewer.
+
+The simulated arm emulates any supported UR variant, selected with the `arm_model` attribute:
+
+- `ur3e`
+- `ur5e`
+- `ur7e`
+- `ur12e`
+- `ur20`
+
+It reuses the same kinematics files as the hardware models (and ships a `ur12e` kinematics file derived from the UR12e/UR10e specification, since they share a 1300&nbsp;mm reach). Behavior mirrors rdk's builtin simulated arm and the hardware UR arm:
+
+- **Joint moves** (`MoveToJointPositions` / `MoveThroughJointPositions`) interpolate the joints toward each target over time at the configured speed; calls block until the arm arrives, so `IsMoving` and `Stop` are meaningful.
+- **`GetEndPosition`** is computed from forward kinematics, matching the pose the real arm reports for the same joint configuration.
+- **`MoveToPosition`** (Cartesian) is planned by the motion service (see the `motion` attribute). The arm declares the motion service as a dependency.
+- **`GetKinematics`** and **`Get3DModels`** serve the same data as the hardware model. As with the hardware models, only `ur5e` and `ur20` ship renderable 3D meshes; other variants render from kinematics geometry only.
+
+### Configuration
+
+```json
+{
+    "arm_model": "ur12e",
+    "speed_degs_per_sec": 60,
+    "motion": "builtin",
+    "simulate_time": true
+}
+```
+
+### Attributes
+
+| Name | Type | Inclusion | Description |
+| ---- | ---- | --------- | ----------- |
+| `arm_model` | string | **Required** | Which UR variant to emulate: `ur3e`, `ur5e`, `ur7e`, `ur12e`, or `ur20`. |
+| `speed_degs_per_sec` | float or array | Optional | Joint interpolation speed in degrees per second. A single value applies to all joints, or pass a 6-element array for per-joint speeds. **Default 60 deg/s.** |
+| `motion` | string | Optional | Name of the motion service used to plan `MoveToPosition` requests. **Default `"builtin"`.** |
+| `simulate_time` | bool | Optional | When `true`, a background loop advances the arm's joints in real time. When `false`, joint moves complete instantly. **Default `true`.** |
+
+### Example configuration
+
+A simulated UR12e that plans Cartesian moves with the builtin motion service:
+
+```json
+{
+    "arm_model": "ur12e",
+    "speed_degs_per_sec": 90
+}
+```
 
 ## Building and Running
 
