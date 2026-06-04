@@ -20,8 +20,7 @@
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
 
-#include "dh_kinematics.hpp"
-#include "kinematics_parser.hpp"
+#include "model_kinematics.hpp"
 #include "ur_arm_config.hpp"
 #include "utils.hpp"
 
@@ -832,8 +831,9 @@ std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::dur
     // `std::once_flag` is neither copyable nor movable.
     std::call_once(*payload.json_once, [&] {
         payload.json =
-            to_sva_json(parse_kinematics(resource_root_ / "kinematics" / (payload.arm_model.sdk_name() + ".json"), payload.arm_model)
-                            .with_calibrated_dh({payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_}));
+            ModelKinematics::from_sva_json(resource_root_ / "kinematics" / (payload.arm_model.sdk_name() + ".json"), payload.arm_model)
+                .apply_calibrated_dh({payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_})
+                .to_sva_json();
     });
     return payload.json;
 }

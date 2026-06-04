@@ -7,9 +7,7 @@
 
 #include "ur_arm.hpp"  // URArm::model_family()
 
-namespace {
-
-const std::vector<UrModelDescriptor>& descriptors() {
+const std::vector<UrModelDescriptor>& UrModelDescriptor::all() {
     static const std::vector<UrModelDescriptor> table = [] {
         std::vector<UrModelDescriptor> t;
         // ur3e/ur7e have no shipped meshes; `get_3d_models` returns an
@@ -26,19 +24,13 @@ const std::vector<UrModelDescriptor>& descriptors() {
     return table;
 }
 
-}  // namespace
-
-const UrModelDescriptor& ur_model_descriptor(const std::string& sdk_name) {
-    for (const auto& d : descriptors()) {
+const UrModelDescriptor& UrModelDescriptor::for_sdk_name(const std::string& sdk_name) {
+    for (const auto& d : all()) {
         if (d.sdk_name == sdk_name) {
             return d;
         }
     }
-    throw std::invalid_argument("ur_model_descriptor: unknown sdk model name `" + sdk_name + "`");
-}
-
-const std::vector<UrModelDescriptor>& ur_model_descriptors() {
-    return descriptors();
+    throw std::invalid_argument("UrModelDescriptor::for_sdk_name: unknown sdk model name `" + sdk_name + "`");
 }
 
 UrArmModel::UrArmModel(viam::sdk::Model sdk_model, const UrModelDescriptor& descriptor)
@@ -49,8 +41,8 @@ UrArmModel::UrArmModel(viam::sdk::Model sdk_model)
     // so reading the moved-into sdk_model_ for the descriptor lookup here
     // is well-defined (a delegating-constructor form risks reading from
     // the moved-from parameter, depending on argument evaluation order).
-    : sdk_model_(std::move(sdk_model)), descriptor_(&ur_model_descriptor(sdk_model_.model_name())) {}
+    : sdk_model_(std::move(sdk_model)), descriptor_(&UrModelDescriptor::for_sdk_name(sdk_model_.model_name())) {}
 
 UrArmModel UrArmModel::from_sdk_name(const std::string& sdk_name) {
-    return UrArmModel{URArm::model(sdk_name), ur_model_descriptor(sdk_name)};
+    return UrArmModel{URArm::model(sdk_name), UrModelDescriptor::for_sdk_name(sdk_name)};
 }

@@ -1,5 +1,7 @@
-#include "kinematics_parser.hpp"
+#include "model_kinematics.hpp"
 
+#include <array>
+#include <cmath>
 #include <cstddef>
 #include <fstream>
 #include <initializer_list>
@@ -20,13 +22,55 @@ namespace {
 
 constexpr std::size_t k_num_dh_joints = 6;
 constexpr std::size_t k_num_emitted_links = k_num_dh_joints + 1;
+constexpr double k_m_to_mm = 1000.0;
+
+// Build a 4x4 homogeneous transform for a link's static pose:
+//   Rz(theta) * T(a, 0, d) * Rx(alpha)
+// All inputs in millimeters/radians. Output is the matrix that takes a child-frame
+// point to its parent-frame coordinates.
+Eigen::Matrix4d dh_link_pose_matrix(double a_mm, double d_mm, double alpha_rad, double theta_rad) {
+    const double ca = std::cos(alpha_rad);
+    const double sa = std::sin(alpha_rad);
+    const double ct = std::cos(theta_rad);
+    const double st = std::sin(theta_rad);
+
+    Eigen::Matrix4d M = Eigen::Matrix4d::Identity();
+    M(0, 0) = ct;
+    M(0, 1) = -st * ca;
+    M(0, 2) = st * sa;
+    M(1, 0) = st;
+    M(1, 1) = ct * ca;
+    M(1, 2) = -ct * sa;
+    M(2, 0) = 0.0;
+    M(2, 1) = sa;
+    M(2, 2) = ca;
+    M(0, 3) = a_mm * ct;
+    M(1, 3) = a_mm * st;
+    M(2, 3) = d_mm;
+    return M;
+}
+
+// The emitted chain has 7 link-local slots (1 base + 6 articulated)
+// but DH only describes the 6 joints. Row 0's `d` is the
+// base->shoulder z-offset, which physically belongs to the base mount,
+// so we emit it alone at slot 0; slot 1 takes the rest of row 0 with
+// `d` zeroed so d[0] isn't applied twice. Slots 2..6 each consume one
+// full DH row.
+Eigen::Matrix4d dh_local_for_slot(const DHParams& dh, std::size_t i) {
+    if (i == 0) {
+        return dh_link_pose_matrix(0.0, dh.d[0] * k_m_to_mm, 0.0, 0.0);
+    }
+    const std::size_t s = i - 1;
+    const double d_mm = (s == 0) ? 0.0 : (dh.d[s] * k_m_to_mm);
+    return dh_link_pose_matrix(dh.a[s] * k_m_to_mm, d_mm, dh.alpha[s], dh.theta[s]);
+}
 
 // Guards against a malformed chain creating a runaway walk (cycle, or a
 // pathologically long sequence of intermediate static links).
 constexpr std::size_t k_max_chain_walk_steps = 64;
 
 [[noreturn]] void throw_parse_error(const std::filesystem::path& path, const std::string& msg) {
-    throw std::invalid_argument("parse_kinematics: " + path.string() + ": " + msg);
+    throw std::invalid_argument("ModelKinematics::from_sva_json: " + path.string() + ": " + msg);
 }
 
 // Returns the first numeric value among `keys` found in `obj`, or `fallback`
@@ -260,22 +304,9 @@ Json::Value geometry_to_json(const Geometry& geom) {
     return json;
 }
 
-}  // namespace
-
-ModelTable::ModelTable(UrArmModel m) : model(std::move(m)), limits{}, link_locals{}, geometries{}, link_names{} {
-    for (auto& mat : link_locals) {
-        mat = Eigen::Matrix4d::Identity();
-    }
-}
-
-Eigen::Matrix4d parent_pose_at(const ModelTable& tbl, std::size_t i) {
-    Eigen::Matrix4d acc = Eigen::Matrix4d::Identity();
-    for (std::size_t k = 0; k < i; ++k) {
-        acc = acc * tbl.link_locals[k];
-    }
-    return acc;
-}
-
+// Apply a 4x4 correction matrix to a viam-cpp-sdk pose, returning a new
+// pose. Internally round-trips through a quaternion (via rust-utils) to
+// compose with the matrix.
 viam::sdk::pose apply_correction_to_pose(const viam::sdk::pose& p, const Eigen::Matrix4d& correction) {
     const auto [t_in, q_in] = translation_quaternion_from_pose(p);
 
@@ -290,7 +321,50 @@ viam::sdk::pose apply_correction_to_pose(const viam::sdk::pose& p, const Eigen::
     return pose_from_translation_quaternion(t_out, q_out);
 }
 
-ModelTable parse_kinematics(const std::filesystem::path& sva_json_path, UrArmModel arm_model) {
+}  // namespace
+
+ModelKinematics::ModelKinematics(UrArmModel m) : model(std::move(m)), limits{}, link_locals{}, geometries{}, link_names{} {
+    for (auto& mat : link_locals) {
+        mat = Eigen::Matrix4d::Identity();
+    }
+}
+
+ModelKinematics ModelKinematics::apply_calibrated_dh(const DHParams& dh) const {
+    ModelKinematics out = *this;
+
+    std::array<Eigen::Matrix4d, 7> new_link_locals;
+    for (std::size_t i = 0; i < 7; ++i) {
+        new_link_locals[i] = dh_local_for_slot(dh, i);
+    }
+
+    // For each present geometry, re-express its pose in the new emitted
+    // parent frame: G_new = inv(W_new[i]) * W_old[i] * G_old. Walk both
+    // cumulative chains in lockstep so the correction at slot i uses the
+    // parent poses, i.e. the product of link_locals 0..i-1) on both sides.
+    Eigen::Matrix4d cum_old = Eigen::Matrix4d::Identity();
+    Eigen::Matrix4d cum_new = Eigen::Matrix4d::Identity();
+    for (std::size_t i = 0; i < 7; ++i) {
+        if (out.geometries[i].has_value()) {
+            const Eigen::Matrix4d correction = cum_new.inverse() * cum_old;
+            out.geometries[i] = Geometry{apply_correction_to_pose(out.geometries[i]->pose, correction), out.geometries[i]->shape};
+        }
+        cum_old = cum_old * link_locals[i];
+        cum_new = cum_new * new_link_locals[i];
+    }
+
+    out.link_locals = new_link_locals;
+    return out;
+}
+
+Eigen::Matrix4d ModelKinematics::parent_pose_at(std::size_t i) const {
+    Eigen::Matrix4d acc = Eigen::Matrix4d::Identity();
+    for (std::size_t k = 0; k < i; ++k) {
+        acc = acc * link_locals[k];
+    }
+    return acc;
+}
+
+ModelKinematics ModelKinematics::from_sva_json(const std::filesystem::path& sva_json_path, UrArmModel arm_model) {
     std::ifstream in(sva_json_path);
     if (!in) {
         throw_parse_error(sva_json_path, "unable to open file");
@@ -355,7 +429,7 @@ ModelTable parse_kinematics(const std::filesystem::path& sva_json_path, UrArmMod
         throw_parse_error(sva_json_path, "entity attached directly to `world` must be a link, got a joint");
     }
 
-    ModelTable out{std::move(arm_model)};
+    ModelKinematics out{std::move(arm_model)};
 
     // Slot 0: base_link. Its local is just its own static transform (no
     // intermediates above it); its geometry's parent frame is world, so the intermediate transform is identity.
@@ -415,8 +489,8 @@ ModelTable parse_kinematics(const std::filesystem::path& sva_json_path, UrArmMod
     return out;
 }
 
-std::string to_sva_json(const ModelTable& tbl) {
-    const std::string& model_name = tbl.model.sdk_name();
+std::string ModelKinematics::to_sva_json() const {
+    const std::string& model_name = model.sdk_name();
 
     Json::Value root(Json::objectValue);
     root["name"] = model_name;
@@ -439,20 +513,20 @@ std::string to_sva_json(const ModelTable& tbl) {
             Json::Value joint(Json::objectValue);
             joint["id"] = model_name + "_q_" + std::to_string(i - 1);
             joint["type"] = "revolute";
-            joint["parent"] = tbl.link_names[i - 1];
+            joint["parent"] = link_names[i - 1];
             joint["axis"] = dh_z_axis;
-            joint["min"] = tbl.limits[i - 1].min_deg;
-            joint["max"] = tbl.limits[i - 1].max_deg;
+            joint["min"] = limits[i - 1].min_deg;
+            joint["max"] = limits[i - 1].max_deg;
             joints.append(joint);
         }
 
         Json::Value link(Json::objectValue);
-        link["id"] = tbl.link_names[i];
+        link["id"] = link_names[i];
         link["parent"] = (i == 0) ? std::string{"world"} : (model_name + "_q_" + std::to_string(i - 1));
-        link["translation"] = translation_json(tbl.link_locals[i].block<3, 1>(0, 3));
-        link["orientation"] = quaternion_json(Eigen::Quaterniond{tbl.link_locals[i].block<3, 3>(0, 0)});
-        if (tbl.geometries[i].has_value()) {
-            link["geometry"] = geometry_to_json(*tbl.geometries[i]);
+        link["translation"] = translation_json(link_locals[i].block<3, 1>(0, 3));
+        link["orientation"] = quaternion_json(Eigen::Quaterniond{link_locals[i].block<3, 3>(0, 0)});
+        if (geometries[i].has_value()) {
+            link["geometry"] = geometry_to_json(*geometries[i]);
         }
         links.append(link);
     }

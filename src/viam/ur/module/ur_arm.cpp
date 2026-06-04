@@ -64,7 +64,6 @@
 #include <xtensor/xnorm.hpp>
 #endif
 
-#include "dh_kinematics.hpp"
 #include "rust_utils.hpp"
 #include "ur_arm_state.hpp"
 #include "ur_models.hpp"
@@ -323,7 +322,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
             [](auto const& config) { return validate_config_(config); });
     };
 
-    auto registrations = ur_model_descriptors() | boost::adaptors::transformed(registration_factory);
+    auto registrations = UrModelDescriptor::all() | boost::adaptors::transformed(registration_factory);
     return {std::make_move_iterator(begin(registrations)), std::make_move_iterator(end(registrations))};
 }
 
@@ -480,7 +479,7 @@ std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
-    const auto& parts_to_load = arm_model_.mesh_parts();
+    const auto& parts_to_load = arm_model_.descriptor().mesh_parts;
 
     std::map<std::string, mesh> result_model_parts;
     constexpr char threeDModelFileTemplate[] = "3d_models/%1%/%2%.glb";

@@ -94,7 +94,7 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     // the dashboard side and compare against the wrapper's urcl_category.
     boost::algorithm::to_lower(actual_model_type);
 
-    if (state.configured_model_.urcl_category() != actual_model_type) {
+    if (state.configured_model_.descriptor().urcl_category != actual_model_type) {
         std::ostringstream buffer;
         buffer << "configured model type `" << state.configured_model_.sdk_name() << "` does not match connected arm `" << actual_model_type
                << "`";

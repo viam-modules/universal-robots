@@ -9,16 +9,16 @@ struct UrModelDescriptor {
     std::string sdk_name;
     std::string urcl_category;
     std::vector<std::string> mesh_parts;
+
+    // Returns the descriptor for an SDK model name. Throws
+    // std::invalid_argument if the name is not registered.
+    static const UrModelDescriptor& for_sdk_name(const std::string& sdk_name);
+
+    // Returns all registered descriptors, in registration order. Used by
+    // `URArm::create_model_registrations` so adding a new arm is a
+    // single-site change here.
+    static const std::vector<UrModelDescriptor>& all();
 };
-
-// Returns the descriptor for an SDK model name. Throws
-// std::invalid_argument if the name is not registered.
-const UrModelDescriptor& ur_model_descriptor(const std::string& sdk_name);
-
-// Returns all registered descriptors, in registration order. Used by
-// `URArm::create_model_registrations` so adding a new arm is a single-site
-// change here.
-const std::vector<UrModelDescriptor>& ur_model_descriptors();
 
 // Value type pairing an SDK `Model` with its `UrModelDescriptor`. The
 // canonical "what UR variant am I" carrier inside the module -- replacing
@@ -43,15 +43,11 @@ class UrArmModel {
     const viam::sdk::Model& sdk_model() const& {
         return sdk_model_;
     }
+
     const std::string& sdk_name() const& {
         return descriptor_->sdk_name;
     }
-    const std::string& urcl_category() const& {
-        return descriptor_->urcl_category;
-    }
-    const std::vector<std::string>& mesh_parts() const& {
-        return descriptor_->mesh_parts;
-    }
+
     const UrModelDescriptor& descriptor() const& {
         return *descriptor_;
     }

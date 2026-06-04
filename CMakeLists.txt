@@ -222,8 +222,7 @@ target_include_directories(viam-ur
 
 target_sources(viam-ur
   PRIVATE
-    src/viam/ur/module/dh_kinematics.cpp
-    src/viam/ur/module/kinematics_parser.cpp
+    src/viam/ur/module/model_kinematics.cpp
     src/viam/ur/module/trajectory_logger.cpp
     src/viam/ur/module/ur_arm.cpp
     src/viam/ur/module/ur_arm_state.cpp
@@ -300,7 +299,6 @@ target_compile_definitions(universal-robots-test
     VIAM_UR_TEST_KINEMATICS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/kinematics"
 )
 
-apply_wall_werror(universal-robots-test)
 viam_ur_apply_wall_werror(universal-robots-test)
 
 add_test(
