@@ -1,4 +1,4 @@
-#include "model_kinematics.hpp"
+#include "ur_models.hpp"
 
 #include <array>
 #include <cmath>
@@ -70,7 +70,7 @@ Eigen::Matrix4d dh_local_for_slot(const DHParams& dh, std::size_t i) {
 constexpr std::size_t k_max_chain_walk_steps = 64;
 
 [[noreturn]] void throw_parse_error(const std::filesystem::path& path, const std::string& msg) {
-    throw std::invalid_argument("ModelKinematics::from_sva_json: " + path.string() + ": " + msg);
+    throw std::invalid_argument("UrArmModel::load_kinematics: " + path.string() + ": " + msg);
 }
 
 // Returns the first numeric value among `keys` found in `obj`, or `fallback`
@@ -323,14 +323,14 @@ viam::sdk::pose apply_correction_to_pose(const viam::sdk::pose& p, const Eigen::
 
 }  // namespace
 
-ModelKinematics::ModelKinematics(UrArmModel m) : model(std::move(m)), limits{}, link_locals{}, geometries{}, link_names{} {
+UrArmModel::Kinematics::Kinematics(UrArmModel m) : model(std::move(m)), limits{}, link_locals{}, geometries{}, link_names{} {
     for (auto& mat : link_locals) {
         mat = Eigen::Matrix4d::Identity();
     }
 }
 
-ModelKinematics ModelKinematics::apply_calibrated_dh(const DHParams& dh) const {
-    ModelKinematics out = *this;
+UrArmModel::Kinematics UrArmModel::Kinematics::apply_calibrated_dh(const DHParams& dh) const {
+    Kinematics out = *this;
 
     std::array<Eigen::Matrix4d, 7> new_link_locals;
     for (std::size_t i = 0; i < 7; ++i) {
@@ -356,7 +356,7 @@ ModelKinematics ModelKinematics::apply_calibrated_dh(const DHParams& dh) const {
     return out;
 }
 
-Eigen::Matrix4d ModelKinematics::parent_pose_at(std::size_t i) const {
+Eigen::Matrix4d UrArmModel::Kinematics::parent_pose_at(std::size_t i) const {
     Eigen::Matrix4d acc = Eigen::Matrix4d::Identity();
     for (std::size_t k = 0; k < i; ++k) {
         acc = acc * link_locals[k];
@@ -364,7 +364,7 @@ Eigen::Matrix4d ModelKinematics::parent_pose_at(std::size_t i) const {
     return acc;
 }
 
-ModelKinematics ModelKinematics::from_sva_json(const std::filesystem::path& sva_json_path, UrArmModel arm_model) {
+UrArmModel::Kinematics UrArmModel::load_kinematics(const std::filesystem::path& sva_json_path) const {
     std::ifstream in(sva_json_path);
     if (!in) {
         throw_parse_error(sva_json_path, "unable to open file");
@@ -429,7 +429,7 @@ ModelKinematics ModelKinematics::from_sva_json(const std::filesystem::path& sva_
         throw_parse_error(sva_json_path, "entity attached directly to `world` must be a link, got a joint");
     }
 
-    ModelKinematics out{std::move(arm_model)};
+    Kinematics out{*this};
 
     // Slot 0: base_link. Its local is just its own static transform (no
     // intermediates above it); its geometry's parent frame is world, so the intermediate transform is identity.
@@ -489,7 +489,7 @@ ModelKinematics ModelKinematics::from_sva_json(const std::filesystem::path& sva_
     return out;
 }
 
-std::string ModelKinematics::to_sva_json() const {
+std::string UrArmModel::Kinematics::to_sva_json() const {
     const std::string& model_name = model.sdk_name();
 
     Json::Value root(Json::objectValue);

@@ -222,7 +222,7 @@ target_include_directories(viam-ur
 
 target_sources(viam-ur
   PRIVATE
-    src/viam/ur/module/model_kinematics.cpp
+    src/viam/ur/module/ur_models_kinematics.cpp
     src/viam/ur/module/trajectory_logger.cpp
     src/viam/ur/module/ur_arm.cpp
     src/viam/ur/module/ur_arm_state.cpp

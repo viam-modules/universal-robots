@@ -1,6 +1,5 @@
 #define BOOST_TEST_MODULE test module test_ur5e
 
-#include "model_kinematics.hpp"
 #include "trajectory_logger.hpp"
 #include "ur_arm.hpp"
 #include "utils.hpp"
@@ -1109,21 +1108,25 @@ std::filesystem::path test_kinematics_path(const std::string& model) {
     return std::filesystem::path{VIAM_UR_TEST_KINEMATICS_DIR} / (model + ".json");
 }
 
-ModelKinematics load(const std::string& model) {
-    return ModelKinematics::from_sva_json(test_kinematics_path(model), UrArmModel::from_sdk_name(model));
+UrArmModel::Kinematics load(const std::string& model) {
+    return UrArmModel::from_sdk_name(model).load_kinematics(test_kinematics_path(model));
 }
 
 // Geometries are stored in their emitted link's parent (joint) frame.
 // World pose = tbl.parent_pose_at(i) * geometry's parent-frame translation.
-Eigen::Vector3d geometry_world_center(const ModelKinematics& tbl, std::size_t i) {
+Eigen::Vector3d geometry_world_center(const UrArmModel::Kinematics& tbl, std::size_t i) {
     BOOST_REQUIRE(tbl.geometries[i].has_value());
     const auto& g = *tbl.geometries[i];
     const Eigen::Vector4d gt{g.pose.coordinates.x, g.pose.coordinates.y, g.pose.coordinates.z, 1.0};
     return (tbl.parent_pose_at(i) * gt).head<3>();
 }
 
-void check_capsule_world_center(
-    const ModelKinematics& tbl, std::size_t i, double expected_x_mm, double expected_y_mm, double expected_z_mm, double tol_mm = 1e-3) {
+void check_capsule_world_center(const UrArmModel::Kinematics& tbl,
+                                std::size_t i,
+                                double expected_x_mm,
+                                double expected_y_mm,
+                                double expected_z_mm,
+                                double tol_mm = 1e-3) {
     BOOST_REQUIRE(tbl.geometries[i].has_value());
     BOOST_REQUIRE(std::holds_alternative<viam::sdk::capsule>(tbl.geometries[i]->shape));
     const Eigen::Vector3d world = geometry_world_center(tbl, i);
@@ -1232,7 +1235,7 @@ BOOST_AUTO_TEST_CASE(test_apply_calibrated_dh_preserves_world_geometry_centers_a
     // With calibrated DH equal to the chain encoded in the static file,
     // apply_calibrated_dh's re-projection should be a no-op in world space:
     // each geometry's world center should still match the spec.
-    const ModelKinematics tbl = load("ur20");
+    const UrArmModel::Kinematics tbl = load("ur20");
 
     DHParams dh{};
     dh.a = {0.0, -0.862, -0.7287, 0.0, 0.0, 0.0};
@@ -1240,7 +1243,7 @@ BOOST_AUTO_TEST_CASE(test_apply_calibrated_dh_preserves_world_geometry_centers_a
     dh.alpha = {std::numbers::pi / 2.0, 0.0, 0.0, std::numbers::pi / 2.0, -std::numbers::pi / 2.0, 0.0};
     dh.theta = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
-    const ModelKinematics calibrated = tbl.apply_calibrated_dh(dh);
+    const UrArmModel::Kinematics calibrated = tbl.apply_calibrated_dh(dh);
 
     const std::array<std::array<double, 3>, 7> expected_world_centers = {{
         {0.0, 0.0, 0.0},
@@ -1266,7 +1269,7 @@ BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
     // spec. Exercises the writer (translation/orientation/geometry
     // emission) and the parser's quaternion code path on the writer's
     // output.
-    const ModelKinematics tbl = load("ur20");
+    const UrArmModel::Kinematics tbl = load("ur20");
 
     DHParams dh{};
     dh.a = {0.0, -0.862, -0.7287, 0.0, 0.0, 0.0};
@@ -1280,7 +1283,7 @@ BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
         std::ofstream out(tmp);
         out << json_str;
     }
-    const ModelKinematics reparsed = ModelKinematics::from_sva_json(tmp, UrArmModel::from_sdk_name("ur20"));
+    const UrArmModel::Kinematics reparsed = UrArmModel::from_sdk_name("ur20").load_kinematics(tmp);
 
     const std::array<std::array<double, 3>, 6> expected_world_centers = {{
         {0.0, 0.0, 136.3},
