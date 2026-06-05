@@ -829,8 +829,8 @@ std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::dur
     // `json_once` is a `unique_ptr<once_flag>` (dereferenced here) because
     // `std::once_flag` is neither copyable nor movable.
     std::call_once(*payload.json_once, [&] {
-        payload.json = payload.arm_model.load_kinematics(resource_root_ / "kinematics" / (payload.arm_model.sdk_name() + ".json"))
-                           .apply_calibrated_dh({payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_})
+        payload.json = payload.arm_model.load_kinematics((resource_root_ / "kinematics" / payload.arm_model.sdk_name()).concat(".json"))
+                           .apply_calibration({payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_})
                            .to_sva_json();
     });
     return payload.json;

@@ -329,7 +329,7 @@ UrArmModel::Kinematics::Kinematics(UrArmModel m) : model(std::move(m)), limits{}
     }
 }
 
-UrArmModel::Kinematics UrArmModel::Kinematics::apply_calibrated_dh(const DHParams& dh) const {
+UrArmModel::Kinematics UrArmModel::Kinematics::apply_calibration(const DHParams& dh) const {
     Kinematics out = *this;
 
     std::array<Eigen::Matrix4d, 7> new_link_locals;

@@ -1231,9 +1231,9 @@ BOOST_AUTO_TEST_CASE(test_parse_ur7e_has_no_shoulder_geometry) {
     BOOST_CHECK(!tbl.geometries[1].has_value());
 }
 
-BOOST_AUTO_TEST_CASE(test_apply_calibrated_dh_preserves_world_geometry_centers_at_nominal_dh) {
+BOOST_AUTO_TEST_CASE(test_apply_calibration_preserves_world_geometry_centers_at_nominal_dh) {
     // With calibrated DH equal to the chain encoded in the static file,
-    // apply_calibrated_dh's re-projection should be a no-op in world space:
+    // apply_calibration's re-projection should be a no-op in world space:
     // each geometry's world center should still match the spec.
     const UrArmModel::Kinematics tbl = load("ur20");
 
@@ -1243,7 +1243,7 @@ BOOST_AUTO_TEST_CASE(test_apply_calibrated_dh_preserves_world_geometry_centers_a
     dh.alpha = {std::numbers::pi / 2.0, 0.0, 0.0, std::numbers::pi / 2.0, -std::numbers::pi / 2.0, 0.0};
     dh.theta = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
-    const UrArmModel::Kinematics calibrated = tbl.apply_calibrated_dh(dh);
+    const UrArmModel::Kinematics calibrated = tbl.apply_calibration(dh);
 
     const std::array<std::array<double, 3>, 7> expected_world_centers = {{
         {0.0, 0.0, 0.0},
@@ -1264,7 +1264,7 @@ BOOST_AUTO_TEST_CASE(test_apply_calibrated_dh_preserves_world_geometry_centers_a
 }
 
 BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
-    // parse -> apply_calibrated_dh(nominal) -> to_sva_json -> re-parse
+    // parse -> apply_calibration(nominal) -> to_sva_json -> re-parse
     // should give back world-frame geometry positions that still match the
     // spec. Exercises the writer (translation/orientation/geometry
     // emission) and the parser's quaternion code path on the writer's
@@ -1277,7 +1277,7 @@ BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
     dh.alpha = {std::numbers::pi / 2.0, 0.0, 0.0, std::numbers::pi / 2.0, -std::numbers::pi / 2.0, 0.0};
     dh.theta = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
-    const std::string json_str = tbl.apply_calibrated_dh(dh).to_sva_json();
+    const std::string json_str = tbl.apply_calibration(dh).to_sva_json();
     const auto tmp = std::filesystem::temp_directory_path() / "ur20_round_trip.json";
     {
         std::ofstream out(tmp);

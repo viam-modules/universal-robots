@@ -123,7 +123,7 @@ class UrArmModel::Kinematics {
     std::array<std::optional<Geometry>, 7> geometries;
     std::array<std::string, 7> link_names;
 
-    Kinematics apply_calibrated_dh(const DHParams& dh) const;
+    Kinematics apply_calibration(const DHParams& dh) const;
 
     // Serialize this kinematics to an RDK-compatible SVA kinematics JSON.
     std::string to_sva_json() const;

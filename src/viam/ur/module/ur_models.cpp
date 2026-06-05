@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-#include "ur_arm.hpp"  // URArm::model_family()
+#include "ur_arm.hpp"
 
 const std::vector<UrModelDescriptor>& UrModelDescriptor::all() {
     static const std::vector<UrModelDescriptor> table = [] {

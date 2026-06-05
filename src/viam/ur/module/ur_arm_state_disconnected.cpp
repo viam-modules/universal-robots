@@ -89,7 +89,7 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
         throw std::runtime_error("failed to get model info of connected arm");
     }
     // The dashboard reports the model in uppercase (e.g. "UR20") in the
-    // coarser URCL category form ("ur5" covers both ur5e and ur7e), while
+    // coarser URCL category form ("UR5" covers both ur5e and ur7e), while
     // our configured model carries the SDK name in lowercase. Lower-case
     // the dashboard side and compare against the wrapper's urcl_category.
     boost::algorithm::to_lower(actual_model_type);
