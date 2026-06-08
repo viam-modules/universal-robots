@@ -15,7 +15,7 @@
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/resource/reconfigurable.hpp>
 
-#include "ur_models.hpp"
+#include "ur_arm_model.hpp"
 
 #if __has_include(<xtensor/containers/xarray.hpp>)
 #include <xtensor/containers/xarray.hpp>

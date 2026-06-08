@@ -65,8 +65,8 @@
 #endif
 
 #include "rust_utils.hpp"
+#include "ur_arm_model.hpp"
 #include "ur_arm_state.hpp"
-#include "ur_models.hpp"
 #include "utils.hpp"
 
 namespace {

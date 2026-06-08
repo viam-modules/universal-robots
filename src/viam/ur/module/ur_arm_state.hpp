@@ -1,5 +1,5 @@
 #include "ur_arm.hpp"
-#include "ur_models.hpp"
+#include "ur_arm_model.hpp"
 
 #include <bitset>
 #include <chrono>
