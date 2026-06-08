@@ -14,6 +14,8 @@
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/registry/registry.hpp>
 
+#include "ur_arm_model.hpp"
+
 #if __has_include(<xtensor/containers/xarray.hpp>)
 #include <xtensor/containers/xarray.hpp>
 #else
@@ -195,7 +197,7 @@ class URArm final : public Arm {
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
 
-    const Model model_;
+    const UrArmModel arm_model_;
 
     const struct ports_ {
         ports_();
@@ -208,6 +210,4 @@ class URArm final : public Arm {
 
     std::shared_mutex config_mutex_;
     std::unique_ptr<state_> current_state_;
-
-    std::unordered_map<std::string, std::vector<std::string>> arm_name_to_model_parts_;
 };

@@ -1,4 +1,5 @@
 #include "ur_arm.hpp"
+#include "ur_arm_model.hpp"
 
 #include <bitset>
 #include <chrono>
@@ -23,7 +24,7 @@ class URArm::state_ {
 
    public:
     explicit state_(private_,
-                    std::string configured_model_type,
+                    UrArmModel configured_model,
                     std::string resource_name,
                     std::string host,
                     std::filesystem::path resource_root,
@@ -46,7 +47,7 @@ class URArm::state_ {
                     const struct ports_& ports);
     ~state_();
 
-    static std::unique_ptr<state_> create(std::string configured_model_type,
+    static std::unique_ptr<state_> create(UrArmModel configured_model,
                                           std::string resource_name,
                                           const ResourceConfig& config,
                                           const struct ports_& ports);
@@ -221,7 +222,7 @@ class URArm::state_ {
     //
     // `mutable` is intentional on `json_once`/`json`: the shared state is
     // accessed via `shared_future<T>::get()` returning `const T&`, and the
-    // JSON is a deterministic function of `info` and `model_name`. Every
+    // JSON is a deterministic function of `info` and `arm_model`. Every
     // caller observes the same logical value; `std::call_once` synchronizes
     // the first JSON-wanting caller's build with later reuses.
     //
@@ -235,7 +236,7 @@ class URArm::state_ {
     // can still construct it with designated initializers.
     struct cached_kinematics_payload {
         urcl::primary_interface::KinematicsInfo info;
-        std::string model_name;  // canonical lowercase, e.g. "ur20"
+        UrArmModel arm_model;
         mutable std::unique_ptr<std::once_flag> json_once{std::make_unique<std::once_flag>()};
         mutable std::string json{};  // NOLINT(readability-redundant-member-init)
     };
@@ -474,7 +475,7 @@ class URArm::state_ {
     // us know whether the program is running.
     std::atomic<bool> program_running_flag{false};
 
-    const std::string configured_model_type_;
+    const UrArmModel configured_model_;
     const std::string resource_name_;
     const std::string host_;
     const std::filesystem::path resource_root_;

@@ -20,12 +20,11 @@
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
 
-#include "dh_kinematics.hpp"
 #include "ur_arm_config.hpp"
 #include "utils.hpp"
 
 URArm::state_::state_(private_,
-                      std::string configured_model_type,
+                      UrArmModel configured_model,
                       std::string resource_name,
                       std::string host,
                       std::filesystem::path resource_root,
@@ -46,7 +45,7 @@ URArm::state_::state_(private_,
                       double trajectory_sampling_freq_hz,
                       std::string telemetry_output_path_append_traceid_template,
                       const struct ports_& ports)
-    : configured_model_type_{std::move(configured_model_type)},
+    : configured_model_{std::move(configured_model)},
       resource_name_{std::move(resource_name)},
       host_{std::move(host)},
       resource_root_{std::move(resource_root)},
@@ -81,7 +80,7 @@ URArm::state_::~state_() {
     shutdown();
 }
 
-std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_model_type,
+std::unique_ptr<URArm::state_> URArm::state_::create(UrArmModel configured_model,
                                                      std::string resource_name,
                                                      const ResourceConfig& config,
                                                      const struct ports_& ports) {
@@ -180,7 +179,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(std::string configured_mode
     }
 
     auto state = std::make_unique<state_>(private_{},
-                                          std::move(configured_model_type),
+                                          std::move(configured_model),
                                           std::move(resource_name),
                                           std::move(host),
                                           std::move(resource_root),
@@ -813,18 +812,6 @@ urcl::primary_interface::KinematicsInfo URArm::state_::get_calibrated_kinematics
 }
 
 std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration) {
-    // Only UR20 currently has a per-model table entry in `model_tables()`
-    // for synthesizing SVA kinematics from calibrated DH; other models ship
-    // static `kinematics/<model>.json` files. Gating *before* the wait means
-    // non-UR20 callers neither stall on nor throw from the kinematics
-    // future. `configured_model_type_` is `const` and set at construction,
-    // so reading it without the mutex is safe. This early-gate keeps the
-    // non-UR20 fallback minimal and sound; when other models gain
-    // `model_tables()` entries the gate widens accordingly.
-    if (configured_model_type_ != "ur20") {
-        return {};
-    }
-
     std::shared_future<cached_kinematics_payload> fut;
     {
         const std::lock_guard lock{mutex_};
@@ -842,8 +829,9 @@ std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::dur
     // `json_once` is a `unique_ptr<once_flag>` (dereferenced here) because
     // `std::once_flag` is neither copyable nor movable.
     std::call_once(*payload.json_once, [&] {
-        const DHParams dh{payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_};
-        payload.json = build_dh_kinematics_json(payload.model_name, dh);
+        payload.json = payload.arm_model.load_kinematics((resource_root_ / "kinematics" / payload.arm_model.sdk_name()).concat(".json"))
+                           .apply_calibration({payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_})
+                           .to_sva_json();
     });
     return payload.json;
 }
