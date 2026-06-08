@@ -413,12 +413,18 @@ UrArmModel::Kinematics UrArmModel::load_kinematics(const std::filesystem::path& 
         throw_parse_error(sva_json_path, "unable to open file");
     }
 
-    Json::Value root;
-    const Json::CharReaderBuilder reader_builder;
-    std::string errs;
-    if (!Json::parseFromStream(reader_builder, in, &root, &errs)) {
-        throw_parse_error(sva_json_path, "JSON parse failure: " + errs);
-    }
+    // IIFE so `root` can be `const` after parsing -- the rest of this
+    // function is read-only, and `child_of` below holds raw pointers into
+    // `root` whose validity depends on `root` not being mutated.
+    const auto root = [&]() {
+        Json::Value root;
+        const Json::CharReaderBuilder reader_builder;
+        std::string errs;
+        if (!Json::parseFromStream(reader_builder, in, &root, &errs)) {
+            throw_parse_error(sva_json_path, "JSON parse failure: " + errs);
+        }
+        return root;
+    }();
 
     if (!root.isMember("kinematic_param_type") || root["kinematic_param_type"].asString() != "SVA") {
         throw_parse_error(sva_json_path, "expected `kinematic_param_type: \"SVA\"`");
@@ -434,12 +440,6 @@ UrArmModel::Kinematics UrArmModel::load_kinematics(const std::filesystem::path& 
     // from "world" without ever looking up entries by name. Per the shipped
     // JSONs each parent has at most one child (no branching); we enforce
     // that here.
-    //
-    // Invariant: `child_of` stores raw pointers into `root`, so `root` must
-    // not be mutated while `child_of` is in scope or those pointers may
-    // dangle. The chain walk below honors this by only reading existing
-    // members (`entry["id"]`, `entry.isMember(...)`) -- never assigning into
-    // `root` or its children.
     std::unordered_map<std::string, const Json::Value*> child_of;
     auto index_entry = [&](const Json::Value& entry, const char* kind) {
         if (!entry.isMember("id") || !entry["id"].isString()) {
