@@ -271,6 +271,41 @@ auto make_scope_guard(Callable&& cleanup) {
     return guard{std::forward<Callable>(cleanup)};
 }
 
+// Decodes the `trajex_stream_points` do_command payload: an array of points, each a flat array of 19
+// numbers laid out as [p0..p5, v0..v5, a0..a5, dt]. Joint values are radians/rad·s⁻¹/rad·s⁻² and `dt`
+// is the per-segment goal time in seconds (the delta to the previous point, matching how the internal
+// sampler fills trajectory_sample_point_pva::timestep).
+std::vector<trajectory_sample_point_pva> parse_pva_points(const ProtoValue& value) {
+    const auto* points = value.get<std::vector<ProtoValue>>();
+    if (!points) {
+        throw std::invalid_argument("trajex_stream_points must be an array of points");
+    }
+    std::vector<trajectory_sample_point_pva> out;
+    out.reserve(points->size());
+    for (const auto& point : *points) {
+        const auto* fields = point.get<std::vector<ProtoValue>>();
+        if (!fields || fields->size() != 19) {
+            throw std::invalid_argument("trajex_stream_points: each point must be 19 numbers [p0..5, v0..5, a0..5, dt]");
+        }
+        const auto num = [&fields](size_t i) {
+            const auto* d = (*fields)[i].get<double>();
+            if (!d) {
+                throw std::invalid_argument("trajex_stream_points: point element is not a number");
+            }
+            return *d;
+        };
+        trajectory_sample_point_pva pt;
+        for (size_t j = 0; j < 6; ++j) {
+            pt.p[j] = num(j);
+            pt.v[j] = num(6 + j);
+            pt.a[j] = num(12 + j);
+        }
+        pt.timestep = boost::numeric_cast<float>(num(18));
+        out.push_back(pt);
+    }
+    return out;
+}
+
 }  // namespace
 
 std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
@@ -531,6 +566,14 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     constexpr char k_get_state_description[] = "get_state_description";
     constexpr char k_get_calibrated_dh_params[] = "get_calibrated_dh_params";
 
+    // PVAT streaming (Model B). `trajex_stream_open` grabs the move slot and opens one long-lived
+    // trajectory; `trajex_stream_points` feeds spline points into it incrementally; `trajex_stream_close`
+    // terminates it with a CANCEL. See open/push/close_pvat_stream on state_ and the streaming_trajectory
+    // branch in state_controlled_::handle_move_request.
+    constexpr char k_trajex_stream_open[] = "trajex_stream_open";
+    constexpr char k_trajex_stream_points[] = "trajex_stream_points";
+    constexpr char k_trajex_stream_close[] = "trajex_stream_close";
+
     // Cache TCP state to ensure atomic read of pose and forces from same timestamp
     std::optional<decltype(current_state_->read_tcp_state_snapshot())> cached_tcp_state;
 
@@ -612,6 +655,22 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             dh.emplace("alpha", to_array(kin_info.dh_alpha_));
             dh.emplace("theta", to_array(kin_info.dh_theta_));
             resp.emplace("calibrated_dh_params", std::move(dh));
+        } else if (kv.first == k_trajex_stream_open) {
+            // Optional numeric value overrides the declared point budget. Model B sets this large: the
+            // stream is terminated by close (CANCEL), not by reaching the count (the robot-side URScript
+            // stops and decelerates when points_left hits 0).
+            std::int32_t max_points = 1'000'000;
+            if (const auto* n = kv.second.get<double>()) {
+                max_points = boost::numeric_cast<std::int32_t>(*n);
+            }
+            current_state_->open_pvat_stream(max_points);
+            resp.emplace(k_trajex_stream_open, "opened");
+        } else if (kv.first == k_trajex_stream_points) {
+            const auto queued = current_state_->push_pvat_samples(parse_pva_points(kv.second));
+            resp.emplace(k_trajex_stream_points, static_cast<double>(queued));
+        } else if (kv.first == k_trajex_stream_close) {
+            current_state_->close_pvat_stream();
+            resp.emplace(k_trajex_stream_close, "closed");
         } else {
             throw std::runtime_error("unsupported do_command key: " + kv.first);
         }

@@ -4,6 +4,8 @@
 #include <bitset>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <future>
 #include <memory>
@@ -142,6 +144,14 @@ class URArm::state_ {
     std::string get_dh_kinematics_json(std::chrono::steady_clock::duration wait_duration);
 
     std::optional<std::shared_future<void>> cancel_move_request();
+
+    // PVAT streaming (Model B), driven by the do_command trajex_stream_* keys. `open` grabs the move slot
+    // with a streaming_trajectory command (throws if a move/stream is already in progress); `push` appends
+    // spline points to the active stream and returns the resulting queue depth; `close` requests the
+    // terminating CANCEL. push/close throw if there is no active stream.
+    void open_pvat_stream(std::int32_t max_points);
+    std::size_t push_pvat_samples(std::vector<trajectory_sample_point_pva> samples);
+    void close_pvat_stream();
 
    private:
     struct arm_connection_;
@@ -394,6 +404,24 @@ class URArm::state_ {
         std::string_view describe() const;
     };
 
+    // Model B PVAT streaming command: one long-lived TRAJECTORY_START(max_points) trajectory that we
+    // feed spline points into incrementally, terminated by a CANCEL. Driven by open/push/close_pvat_stream
+    // and consumed in state_controlled_::handle_move_request. `pending` is pushed by push_pvat_samples()
+    // (do_command thread) and drained by handle_move_request() (worker thread); both hold mutex_, so the
+    // deque needs no separate lock.
+    struct streaming_trajectory {
+        // Point budget declared at TRAJECTORY_START. Set large: the URScript trajectory thread stops and
+        // decelerates when points_left reaches 0, so the stream is ended by close (CANCEL), not by N.
+        std::int32_t max_points;
+        // TRAJECTORY_START is written once, on the first controlled-state tick after open.
+        bool started{false};
+        // Set by close_pvat_stream(); the first tick that has drained `pending` issues TRAJECTORY_CANCEL.
+        bool close_requested{false};
+        // Ensures CANCEL is written at most once.
+        bool cancel_issued{false};
+        std::deque<trajectory_sample_point_pva> pending{};
+    };
+
     // TODO: Arguably, this should be a class since it has some
     // non-trivial members. But the state_ class needs pretty deep
     // access. When I tried to turn it into a class, it ended up with a
@@ -403,7 +431,7 @@ class URArm::state_ {
     // URArm misusing it.
     struct move_request {
        public:
-        using move_command_data = std::variant<trajectory_samples, std::optional<pose_sample>>;
+        using move_command_data = std::variant<trajectory_samples, std::optional<pose_sample>, streaming_trajectory>;
 
         using async_cancellation_monitor = std::function<bool()>;
 

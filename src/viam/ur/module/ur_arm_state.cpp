@@ -472,6 +472,9 @@ bool URArm::state_::is_moving() const {
                 // If we have nullopt it means we have sent it to the arm
                 // so, as far as we are concerned, the arm is moving, though it may fail later.
                 return !cmd.has_value();
+            } else if constexpr (std::is_same_v<T, streaming_trajectory>) {
+                // An open stream means the arm is under streaming control.
+                return true;
             }
         },
         move_request_->move_command);
@@ -484,6 +487,46 @@ std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
     }
 
     return std::make_optional(move_request_->cancel());
+}
+
+void URArm::state_::open_pvat_stream(std::int32_t max_points) {
+    // Grab the move slot with a streaming command. enqueue_move_request bumps the move epoch and throws
+    // if a move or stream is already in progress. No telemetry logger (write_realtime_sample no-ops on a
+    // null logger) and a no-op async-cancel monitor: the stream is driven explicitly via push/close.
+    const auto epoch = get_move_epoch();
+    enqueue_move_request(epoch,
+                         std::unique_ptr<RealtimeTrajectoryLogger>{},
+                         move_request::async_cancellation_monitor{[] { return false; }},
+                         move_request::move_command_data{streaming_trajectory{max_points}});
+    // The completion future resolves on trajectory_done_callback_ (after the terminating CANCEL); the
+    // stream is fire-and-forget from the caller's side, so we deliberately drop it here.
+}
+
+std::size_t URArm::state_::push_pvat_samples(std::vector<trajectory_sample_point_pva> samples) {
+    const std::lock_guard lock{mutex_};
+    if (!move_request_) {
+        throw std::runtime_error("push_pvat_samples: no active pvat stream");
+    }
+    auto* stream = std::get_if<streaming_trajectory>(&move_request_->move_command);
+    if (!stream) {
+        throw std::runtime_error("push_pvat_samples: active move is not a pvat stream");
+    }
+    for (auto& sample : samples) {
+        stream->pending.push_back(std::move(sample));
+    }
+    return stream->pending.size();
+}
+
+void URArm::state_::close_pvat_stream() {
+    const std::lock_guard lock{mutex_};
+    if (!move_request_) {
+        throw std::runtime_error("close_pvat_stream: no active pvat stream");
+    }
+    auto* stream = std::get_if<streaming_trajectory>(&move_request_->move_command);
+    if (!stream) {
+        throw std::runtime_error("close_pvat_stream: active move is not a pvat stream");
+    }
+    stream->close_requested = true;
 }
 
 template <typename T>

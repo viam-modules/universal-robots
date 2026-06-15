@@ -205,6 +205,54 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                             : std::nullopt);
                     return std::nullopt;
                 }
+            } else if constexpr (std::is_same_v<T, streaming_trajectory>) {
+                // Model B PVAT streaming. Open one trajectory with a large declared point count, then feed
+                // spline points into it incrementally without ever re-issuing TRAJECTORY_START (a second
+                // start would kill and restart the robot-side trajectory thread). Terminated by CANCEL when
+                // close (or a Stop()) is requested.
+
+                // Open the trajectory exactly once.
+                if (!cmd.started) {
+                    if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
+                                                                          static_cast<int>(cmd.max_points),
+                                                                          RobotReceiveTimeout::off())) {
+                        VIAM_SDK_LOG(error) << "pvat stream: start failed; dropping connection";
+                        std::exchange(state.move_request_, {})->complete_error("failed to send pvat stream start");
+                        return event_connection_lost_::trajectory_control_failure();
+                    }
+                    cmd.started = true;
+                }
+
+                // Drain every point delivered since the last tick. Keeping the robot's socket buffer ahead
+                // of consumption is the caller's responsibility (committedRunway): an underrun aborts the
+                // trajectory on the robot with TRAJECTORY_RESULT_FAILURE.
+                while (!cmd.pending.empty()) {
+                    const auto& pt = cmd.pending.front();
+                    if (!arm_conn_->driver->writeTrajectorySplinePoint(pt.p, pt.v, pt.a, pt.timestep)) {
+                        VIAM_SDK_LOG(error) << "pvat stream: spline point failed; dropping connection";
+                        std::exchange(state.move_request_, {})->complete_error("failed to send pvat stream spline point");
+                        return event_connection_lost_::trajectory_control_failure();
+                    }
+                    cmd.pending.pop_front();
+                }
+
+                // Once everything queued has been flushed and a close (or a Stop()-driven cancellation) is
+                // pending, issue the terminating CANCEL once. The robot replies TRAJECTORY_RESULT_CANCELED,
+                // which trajectory_done_callback_ turns into completion of this move_request.
+                const bool cancel_wanted = cmd.close_requested || state.move_request_->cancellation_request.has_value();
+                if (cancel_wanted && !cmd.cancel_issued) {
+                    cmd.cancel_issued = true;
+                    if (state.move_request_->cancellation_request) {
+                        state.move_request_->cancellation_request->issued = true;
+                    }
+                    if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                            urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
+                        VIAM_SDK_LOG(error) << "pvat stream: cancel failed; dropping connection";
+                        std::exchange(state.move_request_, {})->complete_error("failed to send pvat stream cancel");
+                        return event_connection_lost_::trajectory_control_failure();
+                    }
+                }
+                return std::nullopt;
             }
 
             // Unreachable: all move_command_data variants should be handled above
