@@ -494,12 +494,11 @@ void URArm::state_::open_pvat_stream(std::int32_t max_points) {
     // if a move or stream is already in progress. No telemetry logger (write_realtime_sample no-ops on a
     // null logger) and a no-op async-cancel monitor: the stream is driven explicitly via push/close.
     const auto epoch = get_move_epoch();
-    enqueue_move_request(epoch,
-                         std::unique_ptr<RealtimeTrajectoryLogger>{},
-                         move_request::async_cancellation_monitor{[] { return false; }},
-                         move_request::move_command_data{streaming_trajectory{max_points}});
-    // The completion future resolves on trajectory_done_callback_ (after the terminating CANCEL); the
-    // stream is fire-and-forget from the caller's side, so we deliberately drop it here.
+    // Keep the completion future so close_pvat_stream can wait for the terminating CANCEL to free the slot.
+    pvat_stream_completion_ = enqueue_move_request(epoch,
+                                                   std::unique_ptr<RealtimeTrajectoryLogger>{},
+                                                   move_request::async_cancellation_monitor{[] { return false; }},
+                                                   move_request::move_command_data{streaming_trajectory{max_points}});
 }
 
 std::size_t URArm::state_::push_pvat_samples(std::vector<trajectory_sample_point_pva> samples) {
@@ -518,15 +517,34 @@ std::size_t URArm::state_::push_pvat_samples(std::vector<trajectory_sample_point
 }
 
 void URArm::state_::close_pvat_stream() {
-    const std::lock_guard lock{mutex_};
-    if (!move_request_) {
-        throw std::runtime_error("close_pvat_stream: no active pvat stream");
+    std::future<void> completion;
+    {
+        const std::lock_guard lock{mutex_};
+        if (!move_request_) {
+            throw std::runtime_error("close_pvat_stream: no active pvat stream");
+        }
+        auto* stream = std::get_if<streaming_trajectory>(&move_request_->move_command);
+        if (!stream) {
+            throw std::runtime_error("close_pvat_stream: active move is not a pvat stream");
+        }
+        stream->close_requested = true;
+        completion = std::move(pvat_stream_completion_);
     }
-    auto* stream = std::get_if<streaming_trajectory>(&move_request_->move_command);
-    if (!stream) {
-        throw std::runtime_error("close_pvat_stream: active move is not a pvat stream");
+    // Block (outside the lock, so the worker can issue the CANCEL and trajectory_done_callback_ can run)
+    // until the stream is actually cancelled and the move slot is freed. Without this the caller's next
+    // open or move races a still-in-progress actuation. The move completes with a cancellation exception,
+    // which we swallow.
+    if (completion.valid()) {
+        try {
+            if (completion.wait_for(std::chrono::milliseconds{1500}) != std::future_status::ready) {
+                VIAM_SDK_LOG(warn) << "close_pvat_stream: timed out waiting for the stream to cancel";
+                return;
+            }
+            completion.get();
+        } catch (const std::exception&) {
+            // Expected: a cancelled trajectory completes its promise with an exception.
+        }
     }
-    stream->close_requested = true;
 }
 
 template <typename T>

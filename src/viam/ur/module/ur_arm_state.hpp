@@ -544,6 +544,11 @@ class URArm::state_ {
     std::atomic<std::size_t> move_epoch_{0};
     std::optional<move_request> move_request_;
 
+    // Completion future of the in-progress PVAT stream's move request, so close_pvat_stream can block
+    // until the stream is actually cancelled and the move slot is freed (otherwise a reopen or a
+    // subsequent move races the still-in-progress actuation).
+    std::future<void> pvat_stream_completion_;
+
     std::optional<ephemeral_data> ephemeral_;
 
     // Cache slot for `get_calibrated_kinematics_info()` /
