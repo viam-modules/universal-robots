@@ -228,7 +228,13 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 // trajectory on the robot with TRAJECTORY_RESULT_FAILURE.
                 while (!cmd.pending.empty()) {
                     const auto& pt = cmd.pending.front();
-                    if (!arm_conn_->driver->writeTrajectorySplinePoint(pt.p, pt.v, pt.a, pt.timestep)) {
+                    // Cubic (position + velocity), NOT quintic (position + velocity + acceleration). trajex is
+                    // time-optimal (TOTG): its acceleration profile is bang-bang — it slams between +a_max and
+                    // -a_max and saturates — so feeding pt.a as a quintic boundary condition forces the robot to
+                    // realize a discontinuous acceleration at each segment boundary, which trips a joint-torque
+                    // jump fault (e.g. C174A1) mid-stream. Velocity is continuous, so cubic interpolation off
+                    // (p, v) alone tracks the path smoothly and lets the robot pick its own bounded acceleration.
+                    if (!arm_conn_->driver->writeTrajectorySplinePoint(pt.p, pt.v, pt.timestep)) {
                         VIAM_SDK_LOG(error) << "pvat stream: spline point failed; dropping connection";
                         std::exchange(state.move_request_, {})->complete_error("failed to send pvat stream spline point");
                         return event_connection_lost_::trajectory_control_failure();
