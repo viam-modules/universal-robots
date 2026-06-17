@@ -224,4 +224,15 @@ void URArm::state_::state_controlled_::clear_pstop() const {
     throw std::runtime_error("cannot clear the protective stop, arm is not currently pstopped");
 }
 
+void URArm::state_::state_controlled_::zero_ftsensor() const {
+    // The control script is live in this state, so urcl::UrDriver::zeroFTSensor() takes the
+    // fast in-band path. It returns false on a CB-series robot (e-Series only) or if the
+    // underlying script write fails.
+    if (!arm_conn_->driver->zeroFTSensor()) {
+        throw std::runtime_error(
+            "failed to zero the force-torque sensor "
+            "(requires an e-Series robot with the external control script running)");
+    }
+}
+
 // NOLINTEND(readability-convert-member-functions-to-static)

@@ -527,6 +527,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     constexpr char k_get_tcp_forces_base_key[] = "get_tcp_forces_base";
     constexpr char k_get_tcp_forces_tool_key[] = "get_tcp_forces_tool";
     constexpr char k_clear_pstop[] = "clear_pstop";
+    constexpr char k_zero_ftsensor[] = "zero_ftsensor";
     constexpr char k_is_controllable[] = "is_controllable_state";
     constexpr char k_get_state_description[] = "get_state_description";
     constexpr char k_get_calibrated_dh_params[] = "get_calibrated_dh_params";
@@ -592,6 +593,9 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
         } else if (kv.first == k_clear_pstop) {
             current_state_->clear_pstop();
             resp.emplace(k_clear_pstop, "protective stop cleared");
+        } else if (kv.first == k_zero_ftsensor) {
+            current_state_->zero_ftsensor();
+            resp.emplace(k_zero_ftsensor, "force-torque sensor zeroed");
         } else if (kv.first == k_is_controllable) {
             if (!cached_controlled_info) {
                 cached_controlled_info = controlled_info{};
