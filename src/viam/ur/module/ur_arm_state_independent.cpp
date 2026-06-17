@@ -355,8 +355,12 @@ void URArm::state_::state_independent_::clear_pstop() const {
 
 void URArm::state_::state_independent_::zero_ftsensor() const {
     // In this state the external control script is not running (the arm is stopped and/or in
-    // local mode), so urcl would fall back to a remote_control-mode script send that fails in
-    // local mode. Refuse rather than silently no-op; the caller must reach a controllable state.
+    // local mode), so urcl can't take its fast in-band path and falls back to a plain
+    // remote_control-mode script send. That fallback fails outright in local mode, and even
+    // where it could succeed (stopped but still in remote control) a tare here is semantically
+    // dubious: the FT sensor should be zeroed in a stable, gravity-loaded pose before work
+    // begins, which is the controlled state. So we refuse explicitly rather than silently
+    // no-op or tare a braked arm; the caller must reach a controllable state first.
     throw std::runtime_error(
         "cannot zero the force-torque sensor, arm is not in a controllable state "
         "(it is stopped or in local mode; the external control script must be running)");
