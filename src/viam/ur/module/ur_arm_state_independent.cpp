@@ -353,4 +353,10 @@ void URArm::state_::state_independent_::clear_pstop() const {
     throw std::runtime_error("failed to clear the protective stop");
 }
 
+void URArm::state_::state_independent_::zero_ftsensor() const {
+    throw std::runtime_error(
+        "cannot zero the force-torque sensor, arm is not in a controllable state "
+        "(it is stopped or in local mode; the external control script must be running)");
+}
+
 // NOLINTEND(readability-convert-member-functions-to-static)

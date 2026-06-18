@@ -96,6 +96,7 @@ class URArm::state_ {
     double get_trajectory_sampling_freq_hz() const;
 
     void clear_pstop() const;
+    void zero_ftsensor() const;
 
     size_t get_move_epoch() const;
 
@@ -195,6 +196,7 @@ class URArm::state_ {
         std::string describe() const;
         std::chrono::milliseconds get_timeout() const;
         void clear_pstop() const;
+        void zero_ftsensor() const;
 
         std::optional<event_variant_> recv_arm_data(state_&);
         std::optional<event_variant_> upgrade_downgrade(state_& state);
@@ -286,6 +288,7 @@ class URArm::state_ {
         std::string describe() const;
         using state_connected_::get_timeout;
         void clear_pstop() const;
+        void zero_ftsensor() const;
 
         using state_connected_::recv_arm_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
@@ -307,6 +310,7 @@ class URArm::state_ {
         std::string describe() const;
         using state_connected_::get_timeout;
         void clear_pstop() const;
+        void zero_ftsensor() const;
 
         using state_connected_::recv_arm_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);

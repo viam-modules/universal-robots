@@ -195,4 +195,8 @@ void URArm::state_::state_disconnected_::clear_pstop() const {
     throw std::runtime_error("cannot clear the protective stop, arm is currently disconnected");
 }
 
+void URArm::state_::state_disconnected_::zero_ftsensor() const {
+    throw std::runtime_error("cannot zero the force-torque sensor, arm is currently disconnected");
+}
+
 // NOLINTEND(readability-convert-member-functions-to-static)

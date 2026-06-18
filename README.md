@@ -168,6 +168,16 @@ example output:
 }
 ```
 
+#### zero_ftsensor DoCommand
+
+`zero_ftsensor` zeroes (tares) the wrist force/torque sensor at the controller, so subsequent `get_tcp_forces_base`/`get_tcp_forces_tool` readings are relative to the current load and pose. This is an **e-Series-only** command (UR5e/UR10e/etc.); it is not supported on CB-series robots. The arm must be in a controllable state, otherwise the command will not work. For an accurate tare, the robot must be **stationary and not in contact** with anything when the command is called.
+
+```json
+{
+  "zero_ftsensor": ""
+}
+```
+
 #### is_controllable_state DoCommand
 
 `is_controllable_state` returns a boolean that informs a user whether the arm is in a controllable state and ready to receive commands.
