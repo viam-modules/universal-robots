@@ -242,6 +242,18 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     cmd.pending.pop_front();
                 }
 
+                // Record the robot's actual-vs-target joint state each tick so streaming faults
+                // (e.g. C306A3 acceleration sanity) can be autopsied from the telemetry log. No-ops if
+                // no logger was attached (telemetry_output_path unset).
+                state.move_request_->write_realtime_sample(
+                    *state.ephemeral_,
+                    arm_conn_->robot_status_bits
+                        ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->robot_status_bits->to_ulong()))
+                        : std::nullopt,
+                    arm_conn_->safety_status_bits
+                        ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->safety_status_bits->to_ulong()))
+                        : std::nullopt);
+
                 // Once everything queued has been flushed and a close (or a Stop()-driven cancellation) is
                 // pending, issue the terminating CANCEL once. The robot replies TRAJECTORY_RESULT_CANCELED,
                 // which trajectory_done_callback_ turns into completion of this move_request.

@@ -149,7 +149,7 @@ class URArm::state_ {
     // with a streaming_trajectory command (throws if a move/stream is already in progress); `push` appends
     // spline points to the active stream and returns the resulting queue depth; `close` requests the
     // terminating CANCEL. push/close throw if there is no active stream.
-    void open_pvat_stream(std::int32_t max_points);
+    void open_pvat_stream(std::int32_t max_points, std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger);
     std::size_t push_pvat_samples(std::vector<trajectory_sample_point_pva> samples);
     void close_pvat_stream();
 

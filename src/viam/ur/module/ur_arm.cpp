@@ -663,7 +663,18 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             if (const auto* n = kv.second.get<double>()) {
                 max_points = boost::numeric_cast<std::int32_t>(*n);
             }
-            current_state_->open_pvat_stream(max_points);
+            // Attach a telemetry logger so the stream's realtime actual-vs-target samples are recorded
+            // (for autopsying streaming faults like C306A3). Only when telemetry_output_path is set;
+            // otherwise pass null and the realtime-sample hook no-ops. "_trajex" distinguishes the file
+            // from regular planned-move logs.
+            std::unique_ptr<RealtimeTrajectoryLogger> logger;
+            if (const auto telemetry_path = current_state_->telemetry_output_path(); !telemetry_path.empty()) {
+                logger = std::make_unique<RealtimeTrajectoryLogger>(
+                    telemetry_path, unix_time_iso8601(), arm_model_.sdk_model().to_string(), current_state_->resource_name() + "_trajex");
+                logger->set_velocity_limits(current_state_->get_velocity_limits());
+                logger->set_acceleration_limits(current_state_->get_acceleration_limits());
+            }
+            current_state_->open_pvat_stream(max_points, std::move(logger));
             resp.emplace(k_trajex_stream_open, "opened");
         } else if (kv.first == k_trajex_stream_points) {
             const auto queued = current_state_->push_pvat_samples(parse_pva_points(kv.second));

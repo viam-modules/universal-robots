@@ -489,14 +489,15 @@ std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
     return std::make_optional(move_request_->cancel());
 }
 
-void URArm::state_::open_pvat_stream(std::int32_t max_points) {
+void URArm::state_::open_pvat_stream(std::int32_t max_points, std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger) {
     // Grab the move slot with a streaming command. enqueue_move_request bumps the move epoch and throws
-    // if a move or stream is already in progress. No telemetry logger (write_realtime_sample no-ops on a
-    // null logger) and a no-op async-cancel monitor: the stream is driven explicitly via push/close.
+    // if a move or stream is already in progress. trajectory_logger may be null (telemetry disabled), in
+    // which case write_realtime_sample no-ops; a no-op async-cancel monitor: the stream is driven
+    // explicitly via push/close.
     const auto epoch = get_move_epoch();
     // Keep the completion future so close_pvat_stream can wait for the terminating CANCEL to free the slot.
     pvat_stream_completion_ = enqueue_move_request(epoch,
-                                                   std::unique_ptr<RealtimeTrajectoryLogger>{},
+                                                   std::move(trajectory_logger),
                                                    move_request::async_cancellation_monitor{[] { return false; }},
                                                    move_request::move_command_data{streaming_trajectory{max_points}});
 }
