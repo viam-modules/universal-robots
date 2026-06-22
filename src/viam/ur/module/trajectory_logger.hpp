@@ -36,6 +36,15 @@ class RealtimeTrajectoryLogger {
                                 std::optional<uint32_t> robot_status_bits,
                                 std::optional<uint32_t> safety_status_bits);
 
+    // Records one spline knot exactly as handed to writeTrajectorySplinePoint: the position/velocity
+    // boundary conditions, trajex's intended acceleration, and the segment duration. Lets the raw knot
+    // (p, v, dt) be compared against the robot's cubic-derived target_accelerations in realtime_samples.
+    void append_streamed_point(uint64_t timestamp_us,
+                               const vector6d_t& positions,
+                               const vector6d_t& velocities,
+                               const vector6d_t& accelerations,
+                               double timestep_sec);
+
     static std::string realtime_trajectory_filename(const std::string& path,
                                                     const std::string& resource_name,
                                                     const std::string& unix_time);

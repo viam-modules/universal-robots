@@ -654,6 +654,17 @@ void URArm::state_::move_request::write_realtime_sample(const ephemeral_data& da
     }
 }
 
+void URArm::state_::move_request::write_streamed_point(const vector6d_t& positions,
+                                                       const vector6d_t& velocities,
+                                                       const vector6d_t& accelerations,
+                                                       double timestep_sec) const {
+    if (trajectory_logger) {
+        const auto now_us = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+        trajectory_logger->append_streamed_point(now_us, positions, velocities, accelerations, timestep_sec);
+    }
+}
+
 URArm::state_::move_request::cancellation_request::cancellation_request() {}
 
 void URArm::state_::emit_event_(event_variant_&& event) {

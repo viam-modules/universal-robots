@@ -239,6 +239,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                         std::exchange(state.move_request_, {})->complete_error("failed to send pvat stream spline point");
                         return event_connection_lost_::trajectory_control_failure();
                     }
+                    // Log the raw knot exactly as sent (cubic uses p, v, timestep; a is trajex's intended
+                    // acceleration, kept for comparison against the robot's cubic-derived target_accel).
+                    state.move_request_->write_streamed_point(pt.p, pt.v, pt.a, pt.timestep);
                     cmd.pending.pop_front();
                 }
 

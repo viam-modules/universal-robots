@@ -459,6 +459,11 @@ class URArm::state_ {
                                    std::optional<uint32_t> robot_status_bits,
                                    std::optional<uint32_t> safety_status_bits) const;
 
+        void write_streamed_point(const vector6d_t& positions,
+                                  const vector6d_t& velocities,
+                                  const vector6d_t& accelerations,
+                                  double timestep_sec) const;
+
         std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger;
         async_cancellation_monitor async_cancel_monitor;
         move_command_data move_command;

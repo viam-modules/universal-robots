@@ -114,6 +114,20 @@ void RealtimeTrajectoryLogger::append_realtime_sample(uint64_t timestamp_us,
     root_["realtime_samples"].append(sample);
 }
 
+void RealtimeTrajectoryLogger::append_streamed_point(uint64_t timestamp_us,
+                                                     const vector6d_t& positions,
+                                                     const vector6d_t& velocities,
+                                                     const vector6d_t& accelerations,
+                                                     double timestep_sec) {
+    Json::Value point;
+    point["timestamp_us"] = static_cast<Json::UInt64>(timestamp_us);
+    point["positions_rad"] = vector6d_to_json(positions);
+    point["velocities_rad_per_sec"] = vector6d_to_json(velocities);
+    point["accelerations_rad_per_sec2"] = vector6d_to_json(accelerations);
+    point["timestep_sec"] = timestep_sec;
+    root_["streamed_points"].append(point);
+}
+
 void RealtimeTrajectoryLogger::write_and_flush() {
     Json::StreamWriterBuilder builder;
     builder["precision"] = 17;
