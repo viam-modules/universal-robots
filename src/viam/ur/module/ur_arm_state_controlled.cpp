@@ -228,19 +228,21 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 // trajectory on the robot with TRAJECTORY_RESULT_FAILURE.
                 while (!cmd.pending.empty()) {
                     const auto& pt = cmd.pending.front();
-                    // Cubic (position + velocity), NOT quintic (position + velocity + acceleration). trajex is
-                    // time-optimal (TOTG): its acceleration profile is bang-bang — it slams between +a_max and
-                    // -a_max and saturates — so feeding pt.a as a quintic boundary condition forces the robot to
-                    // realize a discontinuous acceleration at each segment boundary, which trips a joint-torque
-                    // jump fault (e.g. C174A1) mid-stream. Velocity is continuous, so cubic interpolation off
-                    // (p, v) alone tracks the path smoothly and lets the robot pick its own bounded acceleration.
-                    if (!arm_conn_->driver->writeTrajectorySplinePoint(pt.p, pt.v, pt.timestep)) {
+                    // Quintic (position + velocity + acceleration): pass trajex's intended acceleration through
+                    // to the robot rather than letting it derive its own from a cubic (p, v) fit.
+                    // CAUTION: trajex is time-optimal (TOTG) with a bang-bang acceleration profile — it slams
+                    // between +a_max and -a_max — so feeding pt.a as a quintic boundary condition makes the
+                    // robot realize a discontinuous acceleration at each segment join, which previously tripped
+                    // a joint-torque-jump fault (e.g. C174A1) mid-stream. This is only safe if trajex's
+                    // acceleration is smoothed/jerk-limited enough to be realizable; revert to the cubic
+                    // (pt.p, pt.v, pt.timestep) overload if C174A1 returns.
+                    if (!arm_conn_->driver->writeTrajectorySplinePoint(pt.p, pt.v, pt.a, pt.timestep)) {
                         VIAM_SDK_LOG(error) << "pvat stream: spline point failed; dropping connection";
                         std::exchange(state.move_request_, {})->complete_error("failed to send pvat stream spline point");
                         return event_connection_lost_::trajectory_control_failure();
                     }
-                    // Log the raw knot exactly as sent (cubic uses p, v, timestep; a is trajex's intended
-                    // acceleration, kept for comparison against the robot's cubic-derived target_accel).
+                    // Log the raw knot exactly as sent (p, v, a, timestep) for comparison against the robot's
+                    // realized target_accel.
                     state.move_request_->write_streamed_point(pt.p, pt.v, pt.a, pt.timestep);
                     cmd.pending.pop_front();
                 }
