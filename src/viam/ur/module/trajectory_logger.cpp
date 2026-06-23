@@ -1,22 +1,53 @@
 #include "trajectory_logger.hpp"
 
+#include <chrono>
+#include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
+#include <stdexcept>
 
 #include <boost/format.hpp>
+#include <boost/uuid/uuid_io.hpp>
 
 #include <viam/sdk/log/logging.hpp>
 
+namespace {
+
+// Format the current wall-clock time as an ISO 8601 timestamp with microsecond precision.
+// Captured at logger construction so the on-disk JSON carries a real timestamp regardless
+// of when the move actually executes.
+std::string make_iso8601_now() {
+    namespace chrono = std::chrono;
+    const auto now = chrono::system_clock::now();
+    const auto seconds_part = chrono::duration_cast<chrono::seconds>(now.time_since_epoch());
+    const auto tt = chrono::system_clock::to_time_t(chrono::system_clock::time_point{seconds_part});
+    const auto delta_us = chrono::duration_cast<chrono::microseconds>(now.time_since_epoch() - seconds_part);
+
+    struct tm buf;
+    if (gmtime_r(&tt, &buf) == nullptr) {
+        throw std::runtime_error("failed to convert time to iso8601");
+    }
+    std::stringstream stream;
+    stream << std::put_time(&buf, "%FT%T") << '.' << std::setw(6) << std::setfill('0') << delta_us.count() << 'Z';
+    return stream.str();
+}
+
+}  // namespace
+
 RealtimeTrajectoryLogger::RealtimeTrajectoryLogger(const std::filesystem::path& telemetry_path,
-                                                   const std::string& timestamp,
+                                                   const boost::uuids::uuid& move_id,
                                                    const std::string& robot_model,
                                                    const std::string& resource_name) {
-    root_["timestamp"] = timestamp;
+    const auto move_id_str = boost::uuids::to_string(move_id);
+    root_["move_id"] = move_id_str;
+    root_["timestamp"] = make_iso8601_now();
     root_["robot_model"] = robot_model;
     root_["resource_name"] = resource_name;
     root_["realtime_samples"] = Json::Value(Json::arrayValue);
 
-    output_path_ = telemetry_path / (timestamp + "_" + resource_name + "_realtime_trajectory.json");
+    output_path_ = telemetry_path / (move_id_str + "_" + resource_name + "_realtime_trajectory.json");
 }
 
 RealtimeTrajectoryLogger::~RealtimeTrajectoryLogger() {
@@ -130,8 +161,8 @@ void RealtimeTrajectoryLogger::write_and_flush() {
 
 std::string RealtimeTrajectoryLogger::realtime_trajectory_filename(const std::string& path,
                                                                    const std::string& resource_name,
-                                                                   const std::string& unix_time) {
+                                                                   const boost::uuids::uuid& move_id) {
     constexpr char kTemplate[] = "/%1%_%2%_realtime_trajectory.json";
     auto fmt = boost::format(path + kTemplate);
-    return (fmt % unix_time % resource_name).str();
+    return (fmt % boost::uuids::to_string(move_id) % resource_name).str();
 }

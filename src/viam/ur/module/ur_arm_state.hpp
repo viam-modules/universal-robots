@@ -12,6 +12,8 @@
 #include <thread>
 #include <variant>
 
+#include <boost/uuid/uuid.hpp>
+
 #include "trajectory_logger.hpp"
 
 #include <ur_client_library/primary/robot_state/kinematics_info.h>
@@ -97,10 +99,16 @@ class URArm::state_ {
 
     void clear_pstop() const;
 
-    size_t get_move_epoch() const;
+    ///
+    /// Allocate a `move_id` (UUID + epoch snapshot) for a new move. The caller plumbs
+    /// the result through whatever planning happens before `start_move_request`, then
+    /// presents it as proof at start time. The generation snapshot is validated then;
+    /// see start_move_request for the semantics.
+    ///
+    URArm::move_id allocate_move_id() const;
 
     template <typename... Args>
-    std::future<void> enqueue_move_request(size_t current_move_epoch, Args&&... args);
+    std::future<void> start_move_request(URArm::move_id id, Args&&... args);
 
     bool is_moving() const;
     std::string describe() const;
@@ -407,15 +415,18 @@ class URArm::state_ {
 
         using async_cancellation_monitor = std::function<bool()>;
 
-        explicit move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+        explicit move_request(boost::uuids::uuid id,
+                              std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
                               move_command_data&& move_command);
 
-        explicit move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+        explicit move_request(boost::uuids::uuid id,
+                              std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
                               trajectory_samples&& ts);
 
-        explicit move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+        explicit move_request(boost::uuids::uuid id,
+                              std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
                               pose_sample ps);
 
@@ -431,6 +442,7 @@ class URArm::state_ {
                                    std::optional<uint32_t> robot_status_bits,
                                    std::optional<uint32_t> safety_status_bits) const;
 
+        boost::uuids::uuid id;
         std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger;
         async_cancellation_monitor async_cancel_monitor;
         move_command_data move_command;
@@ -535,14 +547,15 @@ class URArm::state_ {
 };
 
 template <typename... Args>
-std::future<void> URArm::state_::enqueue_move_request(size_t current_move_epoch, Args&&... args) {
-    // Use CAS to increment the epoch and detect if another move
-    // operation occurred between when we obtained a value with
-    // `get_move_epoch` and when `enqueue_move_request` was called
-    // (presumably, while we were planning). If so, we have to fail
-    // this operation, since our starting waypoint information is no
-    // longer valid.
-    if (!move_epoch_.compare_exchange_strong(current_move_epoch, current_move_epoch + 1, std::memory_order_acq_rel)) {
+std::future<void> URArm::state_::start_move_request(URArm::move_id id, Args&&... args) {
+    // CAS both validates the generation snapshot from `allocate_move_id` and claims the
+    // slot for this caller. If another move came through (successful or failed) between
+    // the snapshot and this call, the generation has advanced; the caller's plan started
+    // from arm state that may no longer be current, and we reject. On success the slot
+    // is ours regardless of whether the previous move had actually been emplaced — failed
+    // emplaces (slot-occupied) still bump the generation, which is acceptable.
+    auto expected_generation = id.generation;
+    if (!move_epoch_.compare_exchange_strong(expected_generation, expected_generation + 1, std::memory_order_acq_rel)) {
         throw std::runtime_error("move operation was superseded by a newer operation");
     }
 
@@ -550,5 +563,5 @@ std::future<void> URArm::state_::enqueue_move_request(size_t current_move_epoch,
     if (move_request_) {
         throw std::runtime_error("an actuation is already in progress");
     }
-    return move_request_.emplace(std::forward<Args>(args)...).completion.get_future();
+    return move_request_.emplace(std::move(id).uuid, std::forward<Args>(args)...).completion.get_future();
 }

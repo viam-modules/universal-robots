@@ -4,6 +4,8 @@
 #include <optional>
 #include <string>
 
+#include <boost/uuid/uuid.hpp>
+
 #include <json/json.h>
 #include <ur_client_library/types.h>
 
@@ -16,7 +18,7 @@ using namespace urcl;
 class RealtimeTrajectoryLogger {
    public:
     RealtimeTrajectoryLogger(const std::filesystem::path& telemetry_path,
-                             const std::string& timestamp,
+                             const boost::uuids::uuid& move_id,
                              const std::string& robot_model,
                              const std::string& resource_name);
     ~RealtimeTrajectoryLogger();
@@ -38,7 +40,7 @@ class RealtimeTrajectoryLogger {
 
     static std::string realtime_trajectory_filename(const std::string& path,
                                                     const std::string& resource_name,
-                                                    const std::string& unix_time);
+                                                    const boost::uuids::uuid& move_id);
 
    private:
     void write_and_flush();

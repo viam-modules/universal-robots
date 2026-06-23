@@ -31,6 +31,7 @@
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/algorithm.hpp>
 #include <boost/range/combine.hpp>
+#include <boost/uuid/uuid_io.hpp>
 
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/log/logging.hpp>
@@ -273,30 +274,10 @@ auto make_scope_guard(Callable&& cleanup) {
 
 }  // namespace
 
-std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
+std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const boost::uuids::uuid& move_id) {
     constexpr char kFailedTrajectoryJsonNameTemplate[] = "/%1%_%2%_failed_trajectory.json";
     auto fmt = boost::format(path + kFailedTrajectoryJsonNameTemplate);
-    return (fmt % unix_time % resource_name).str();
-}
-
-std::string unix_time_iso8601() {
-    namespace chrono = std::chrono;
-    std::stringstream stream;
-
-    const auto now = chrono::system_clock::now();
-    const auto seconds_part = chrono::duration_cast<chrono::seconds>(now.time_since_epoch());
-    const auto tt = chrono::system_clock::to_time_t(chrono::system_clock::time_point{seconds_part});
-    const auto delta_us = chrono::duration_cast<chrono::microseconds>(now.time_since_epoch() - seconds_part);
-
-    struct tm buf;
-    auto* ret = gmtime_r(&tt, &buf);
-    if (ret == nullptr) {
-        throw std::runtime_error("failed to convert time to iso8601");
-    }
-    stream << std::put_time(&buf, "%FT%T");
-    stream << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
-
-    return stream.str();
+    return (fmt % boost::uuids::to_string(move_id) % resource_name).str();
 }
 
 const ModelFamily& URArm::model_family() {
@@ -402,13 +383,13 @@ vector6d_t URArm::get_joint_positions_rad_(const std::shared_lock<std::shared_mu
 void URArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-    const auto unix_time = unix_time_iso8601();
+    const auto id = current_state_->allocate_move_id();
 
     const std::array<std::size_t, 2> shape = {1, positions.size()};
     const auto waypoint_deg = xt::adapt(positions.data(), positions.size(), xt::no_ownership(), shape);
     const xt::xarray<double> waypoint_rad = viam::trajex::degrees_to_radians(waypoint_deg);
 
-    move_joint_space_(std::move(rlock), waypoint_rad, MoveOptions{}, unix_time);
+    move_joint_space_(std::move(rlock), waypoint_rad, MoveOptions{}, id);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -416,7 +397,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
                                          const viam::sdk::ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-    const auto unix_time = unix_time_iso8601();
+    const auto id = current_state_->allocate_move_id();
 
     if (positions.empty()) {
         return;
@@ -429,7 +410,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         xt::view(waypoints_rad, i, xt::all()) = viam::trajex::degrees_to_radians(row_deg);
     }
 
-    move_joint_space_(std::move(rlock), waypoints_rad, options, unix_time);
+    move_joint_space_(std::move(rlock), waypoints_rad, options, id);
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {
@@ -451,8 +432,8 @@ ProtoStruct URArm::get_status() {
 void URArm::move_to_position(const pose& p, const ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-    const auto unix_time = unix_time_iso8601();
-    move_tool_space_(std::move(rlock), p, unix_time);
+    const auto id = current_state_->allocate_move_id();
+    move_tool_space_(std::move(rlock), p, id);
 }
 
 viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
@@ -620,7 +601,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     return resp;
 }
 
-void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time) {
+void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const URArm::move_id& id) {
     auto our_config_rlock = std::move(config_rlock);
 
     auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
@@ -631,12 +612,8 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
         return observer->context().IsCancelled();
     };
 
-    // Capture the current movement epoch, so we can later detect if another caller
-    // slipped in while we were planning.
-    auto current_move_epoch = current_state_->get_move_epoch();
-
-    VIAM_SDK_LOG(debug) << "move tool space: start unix_time_ms " << unix_time << " p: " << p;
-    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move tool space: end unix_time " << unix_time; });
+    VIAM_SDK_LOG(debug) << "move tool space: start id " << id.uuid << " p: " << p;
+    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move tool space: end id " << id.uuid; });
 
     // get current pose
     auto current_pose = current_state_->read_tcp_pose();
@@ -671,12 +648,12 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     const std::string& telemetry_path = current_state_->telemetry_output_path();
 
     auto logger = std::make_unique<RealtimeTrajectoryLogger>(
-        telemetry_path, unix_time, arm_model_.sdk_model().to_string(), current_state_->resource_name());
+        telemetry_path, id.uuid, arm_model_.sdk_model().to_string(), current_state_->resource_name());
     logger->set_velocity_limits(current_state_->get_velocity_limits());
     logger->set_acceleration_limits(current_state_->get_acceleration_limits());
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
-        return current_state_->enqueue_move_request(current_move_epoch, std::move(logger), std::move(async_cancellation_monitor), ps);
+        return current_state_->start_move_request(id, std::move(logger), std::move(async_cancellation_monitor), ps);
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
@@ -687,7 +664,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                               const xt::xarray<double>& waypoints,
                               const MoveOptions& options,
-                              const std::string& unix_time) {
+                              const URArm::move_id& id) {
     auto our_config_rlock = std::move(config_rlock);
 
     auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
@@ -699,12 +676,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         return result;
     };
 
-    // Capture the current movement epoch, so we can later detect if another caller
-    // slipped in while we were planning.
-    auto current_move_epoch = current_state_->get_move_epoch();
-
-    VIAM_SDK_LOG(debug) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.shape()[0];
-    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move: end unix_time " << unix_time; });
+    VIAM_SDK_LOG(debug) << "move: start id " << id.uuid << " waypoints size " << waypoints.shape()[0];
+    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move: end id " << id.uuid; });
 
     // Prepare velocity/acceleration limits, applying per-move overrides if provided
     auto velocity_limits_data = current_state_->get_velocity_limits();
@@ -728,7 +701,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         size_t segment_count = 0;
     };
 
-    VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
+    VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << id.uuid;
 
     auto planner = viam::trajex::totg::planner<segment_accumulator>({
         .velocity_limits = xt::adapt(velocity_limits_data),
@@ -841,7 +814,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                    << ", waypoints: " << acc.total_waypoints << ", exception: " << e.what();
                 const std::string json_content = planner.serialize_for_replay(seg, e.what());
                 const auto filename = failed_trajectory_filename(
-                    current_state_->telemetry_output_path(), current_state_->resource_name() + "_trajex", unix_time);
+                    current_state_->telemetry_output_path(), current_state_->resource_name() + "_trajex", id.uuid);
                 std::ofstream json_file(filename);
                 json_file << json_content;
             });
@@ -878,7 +851,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             VIAM_SDK_LOG(error) << "trajectory generation with legacy failed with an exception: " << e.what();
             const std::string json_content = planner.serialize_for_replay(seg, e.what());
             const auto filename =
-                failed_trajectory_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
+                failed_trajectory_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), id.uuid);
             std::ofstream json_file(filename);
             json_file << json_content;
         });
@@ -965,22 +938,22 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
 
     if (!result) {
-        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " (no result)";
+        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << id.uuid << " (no result)";
         return;
     } else if (result->total_duration > current_state_->get_max_trajectory_duration_secs()) {
         throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
     } else if (result->total_duration < k_min_timestep_sec) {
-        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " (duration too small)";
+        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << id.uuid << " (duration too small)";
         return;
     } else {
         const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *result->samples);
-        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " samples.size() " << sample_count;
+        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << id.uuid << " samples.size() " << sample_count;
     }
 
     const std::string& telemetry_path = current_state_->telemetry_output_path();
 
     auto logger = std::make_unique<RealtimeTrajectoryLogger>(
-        telemetry_path, unix_time, arm_model_.sdk_model().to_string(), current_state_->resource_name());
+        telemetry_path, id.uuid, arm_model_.sdk_model().to_string(), current_state_->resource_name());
     logger->set_velocity_limits(current_state_->get_velocity_limits());
     logger->set_acceleration_limits(current_state_->get_acceleration_limits());
     if (captured_waypoints) {
@@ -989,19 +962,19 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     logger->set_planned_trajectory(*result->samples);
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
-        return current_state_->enqueue_move_request(
-            current_move_epoch, std::move(logger), std::move(async_cancellation_monitor), std::move(*result->samples));
+        return current_state_->start_move_request(
+            id, std::move(logger), std::move(async_cancellation_monitor), std::move(*result->samples));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
     // with the current state other than to wait on the result of this future.
 
     try {
-        VIAM_SDK_LOG(debug) << "move: trajectory enqueued to arm: started " << unix_time << " issued " << unix_time_iso8601();
+        VIAM_SDK_LOG(debug) << "move: trajectory enqueued to arm: id " << id.uuid;
         trajectory_completion_future.get();
-        VIAM_SDK_LOG(debug) << "move: trajectory completed on arm: started " << unix_time << " completed (success) " << unix_time_iso8601();
+        VIAM_SDK_LOG(debug) << "move: trajectory completed on arm: id " << id.uuid << " (success)";
     } catch (...) {
-        VIAM_SDK_LOG(debug) << "move: trajectory failed on arm: started " << unix_time << " completed (failure)" << unix_time_iso8601();
+        VIAM_SDK_LOG(debug) << "move: trajectory failed on arm: id " << id.uuid << " (failure)";
         throw;
     }
 }

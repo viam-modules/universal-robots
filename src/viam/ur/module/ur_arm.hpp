@@ -7,6 +7,8 @@
 
 #include <Eigen/Core>
 
+#include <boost/uuid/uuid.hpp>
+
 #include <ur_client_library/types.h>
 
 #include <viam/sdk/common/mesh.hpp>
@@ -67,11 +69,18 @@ struct ephemeral_data {
     vector6d_t tcp_state;
 };
 
-std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
-std::string unix_time_iso8601();
+std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const boost::uuids::uuid& move_id);
 
 class URArm final : public Arm {
    public:
+    ///
+    /// Identity for an in-flight move request. See `state_::allocate_move_id`.
+    ///
+    struct move_id {
+        boost::uuids::uuid uuid;
+        std::size_t generation;
+    };
+
     ///
     /// Default robot control frequency in Hz.
     ///
@@ -190,9 +199,9 @@ class URArm final : public Arm {
     void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                            const xt::xarray<double>& waypoints,
                            const MoveOptions& options,
-                           const std::string& unix_time);
+                           const move_id& id);
 
-    void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time_ms);
+    void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const move_id& id);
 
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);

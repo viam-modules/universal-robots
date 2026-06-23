@@ -16,6 +16,7 @@
 #include <boost/io/ostream_joiner.hpp>
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/algorithm.hpp>
+#include <boost/uuid/random_generator.hpp>
 
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
@@ -452,8 +453,11 @@ double URArm::state_::get_trajectory_sampling_freq_hz() const {
     return trajectory_sampling_freq_hz_;
 }
 
-size_t URArm::state_::get_move_epoch() const {
-    return move_epoch_.load(std::memory_order_acquire);
+URArm::move_id URArm::state_::allocate_move_id() const {
+    // Generation is snapshotted now; the uuid is freshly generated so it carries no
+    // ordering relationship to other in-flight allocations.
+    static thread_local boost::uuids::random_generator generator;
+    return {generator(), move_epoch_.load(std::memory_order_acquire)};
 }
 
 bool URArm::state_::is_moving() const {
@@ -511,10 +515,14 @@ URArm::state_::arm_connection_::~arm_connection_() {
     dashboard.reset();
 }
 
-URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+URArm::state_::move_request::move_request(boost::uuids::uuid id,
+                                          std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           move_command_data&& move_command)
-    : trajectory_logger(std::move(trajectory_logger)), async_cancel_monitor(std::move(monitor)), move_command(std::move(move_command)) {
+    : id(std::move(id)),
+      trajectory_logger(std::move(trajectory_logger)),
+      async_cancel_monitor(std::move(monitor)),
+      move_command(std::move(move_command)) {
     // Validate the move command based on its type
     std::visit(
         [](const auto& cmd) {
@@ -532,15 +540,18 @@ URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogg
         this->move_command);
 }
 
-URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+URArm::state_::move_request::move_request(boost::uuids::uuid id,
+                                          std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           trajectory_samples&& ts)
-    : move_request(std::move(trajectory_logger), std::move(monitor), move_command_data{std::move(ts)}) {}
+    : move_request(std::move(id), std::move(trajectory_logger), std::move(monitor), move_command_data{std::move(ts)}) {}
 
-URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+URArm::state_::move_request::move_request(boost::uuids::uuid id,
+                                          std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           pose_sample ps)
-    : move_request(std::move(trajectory_logger), std::move(monitor), move_command_data{std::optional<pose_sample>{std::move(ps)}}) {}
+    : move_request(
+          std::move(id), std::move(trajectory_logger), std::move(monitor), move_command_data{std::optional<pose_sample>{std::move(ps)}}) {}
 
 std::shared_future<void> URArm::state_::move_request::cancel() {
     if (!cancellation_request) {
