@@ -413,6 +413,215 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
     move_joint_space_(std::move(rlock), waypoints_rad, options, id);
 }
 
+void URArm::move_through_joint_positions_streamed(std::function<boost::optional<std::vector<TrajectoryPoint>>()> batch_source,
+                                                  std::function<bool(Response)> response_sink,
+                                                  const viam::sdk::ProtoStruct&) {
+    std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
+
+    const auto id = current_state_->allocate_move_id();
+
+    // Capture the gRPC server context's cancellation status for the worker
+    // visitor's top-of-tick async-cancel check. Same idiom as
+    // move_joint_space_.
+    auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
+        if (!observer) {
+            return false;
+        }
+        return observer->context().IsCancelled();
+    };
+
+    VIAM_SDK_LOG(debug) << "move_streamed: start id " << id.uuid;
+    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move_streamed: end id " << id.uuid; });
+
+    // PoC posture: streaming runs without a RealtimeTrajectoryLogger. The
+    // logger's `set_planned_trajectory` model fits a unary, materialized
+    // trajectory; an open-ended stream has no analog. Diagnostics for the
+    // streamed path are a post-PoC concern.
+    auto trajectory_completion_future =
+        current_state_->start_move_request(id, /* trajectory_logger */ nullptr, std::move(async_cancellation_monitor));
+
+    // RAII safety net for any path between `start_move_request` and the
+    // explicit close: any throw before close would leave the worker
+    // without a forward signal. Cancel-on-unwind dismantles the slot
+    // through the same cancellation_request mechanism the response_sink
+    // and gRPC-cancel paths use.
+    auto cancel_guard = make_scope_guard([&] {
+        try {
+            current_state_->cancel_move_request(id.uuid);
+        } catch (...) {
+            // Slot already gone (worker completed / failed / cancelled
+            // independently); nothing left to dismantle.
+        }
+    });
+
+    const bool prefer_pva = current_state_->prefer_precomputed_accelerations();
+
+    // Pull-loop state. `decided` flips on the first non-empty batch's
+    // first point and locks PV-vs-PVA for the entire stream. The stream's
+    // time axis is global (monotone strictly increasing across batches
+    // with the first point exactly zero); we materialize per-segment
+    // `timestep` for URCL by differencing the SDK's cumulative time.
+    bool decided = false;
+    bool use_pva = false;
+    bool first_point_overall = true;
+    std::chrono::duration<double> cumulative_time{0.0};
+    bool cancelled_by_sink = false;
+
+    // XXX ACM debug-only: timing instrumentation. Each loop iteration logs
+    // the latency of (a) batch_source, (b) the per-point convert loop,
+    // (c) extend_move_request, and (d) response_sink. Strip before PR.
+    std::size_t batch_seq = 0;
+    using ms_d = std::chrono::duration<double, std::milli>;
+    const auto to_ms = [](auto d) { return std::chrono::duration_cast<ms_d>(d).count(); };
+
+    try {
+        while (true) {
+            const auto t_loop_top = std::chrono::steady_clock::now();
+            auto batch_opt = batch_source();
+            const auto t_after_source = std::chrono::steady_clock::now();
+            if (!batch_opt) {
+                // Producer EOS — no more batches will arrive.
+                VIAM_SDK_LOG(debug) << "XXX ACM move_streamed: producer EOS " << id.uuid << " source=" << to_ms(t_after_source - t_loop_top)
+                                    << "ms";
+                break;
+            }
+            if (batch_opt->empty()) {
+                // The dispatcher contract filters these out, but be defensive.
+                VIAM_SDK_LOG(debug) << "XXX ACM move_streamed: batch_opt is empty " << id.uuid
+                                    << " source=" << to_ms(t_after_source - t_loop_top) << "ms";
+                continue;
+            }
+
+            ++batch_seq;
+
+            if (!decided) {
+                const auto& p0 = batch_opt->front();
+                use_pva = p0.constraints && p0.constraints->accelerations.has_value() && prefer_pva;
+                decided = true;
+            }
+
+            trajectory_samples converted = use_pva ? trajectory_samples{std::vector<trajectory_sample_point_pva>{}}
+                                                   : trajectory_samples{std::vector<trajectory_sample_point_pv>{}};
+
+            for (const auto& p : *batch_opt) {
+                if (first_point_overall) {
+                    if (p.time.count() != 0.0) {
+                        throw std::runtime_error("first point of stream must have time == 0");
+                    }
+                    first_point_overall = false;
+                } else if (!(p.time > cumulative_time)) {
+                    throw std::runtime_error("trajectory point times must be strictly monotone increasing");
+                }
+                const float timestep = static_cast<float>((p.time - cumulative_time).count());
+                cumulative_time = p.time;
+
+                if (!p.constraints) {
+                    throw std::runtime_error("trajectory point missing constraints (velocities required)");
+                }
+                if (p.positions.size() != 6 || p.constraints->velocities.size() != 6) {
+                    throw std::runtime_error("trajectory point joint dimensionality mismatch");
+                }
+
+                std::visit(
+                    [&](auto& vec) {
+                        using V = std::decay_t<decltype(vec)>;
+                        using Point = typename V::value_type;
+                        Point pt;
+                        // The TrajectoryPoint contract carries joint positions /
+                        // velocities / accelerations in degrees, matching the
+                        // existing unary `move_through_joint_positions` API. URCL
+                        // expects radians on its trajectory socket, so we convert
+                        // per-component as we materialize each spline point.
+                        for (std::size_t i = 0; i < 6; ++i) {
+                            pt.p[i] = degrees_to_radians(p.positions[i]);
+                            pt.v[i] = degrees_to_radians(p.constraints->velocities[i]);
+                        }
+                        pt.timestep = timestep;
+                        if constexpr (requires { pt.a; }) {
+                            if (!p.constraints->accelerations) {
+                                throw std::runtime_error("PVA stream point missing accelerations");
+                            }
+                            if (p.constraints->accelerations->size() != 6) {
+                                throw std::runtime_error("PVA stream point acceleration joint dimensionality mismatch");
+                            }
+                            for (std::size_t i = 0; i < 6; ++i) {
+                                pt.a[i] = degrees_to_radians((*p.constraints->accelerations)[i]);
+                            }
+                        }
+                        vec.push_back(pt);
+                    },
+                    converted);
+            }
+
+            const auto extend_n = std::visit([](const auto& v) { return v.size(); }, converted);
+            const auto t_after_convert = std::chrono::steady_clock::now();
+            current_state_->extend_move_request(id.uuid, std::move(converted));
+            const auto t_after_extend = std::chrono::steady_clock::now();
+            const bool sink_ok = response_sink(Response{});
+            const auto t_after_sink = std::chrono::steady_clock::now();
+
+            VIAM_SDK_LOG(debug) << "XXX ACM move_streamed batch=" << batch_seq << " points=" << extend_n
+                                << " source=" << to_ms(t_after_source - t_loop_top) << "ms"
+                                << " convert=" << to_ms(t_after_convert - t_after_source) << "ms"
+                                << " extend=" << to_ms(t_after_extend - t_after_convert) << "ms"
+                                << " sink=" << to_ms(t_after_sink - t_after_extend) << "ms"
+                                << " sink_ok=" << sink_ok;
+
+            if (!sink_ok) {
+                // SDK framework asked us to stop. Dismantle the slot
+                // through the cancellation_request path; the worker
+                // observes it on its next tick and completes the future
+                // with the standard "trajectory cancelled" error which
+                // will surface to the SDK as a terminal status.
+                //
+                // TODO(am): the plan calls for `close_move_request` here
+                // (best-effort, tolerating a stale-id throw). I've chosen
+                // the cleaner option of just cancelling — the cancel
+                // alone is sufficient to dismantle the slot, and the
+                // close-after-cancel race window is awkward. Flagged
+                // explicitly for review before this leaves the PoC.
+                current_state_->cancel_move_request(id.uuid);
+                cancel_guard.deactivate();
+                cancelled_by_sink = true;
+                break;
+            }
+        }
+
+        if (!cancelled_by_sink) {
+            current_state_->close_move_request(id.uuid);
+            cancel_guard.deactivate();
+        }
+    } catch (...) {
+        // Protocol violation or other producer-side error. Capture the
+        // original error, dismantle the slot through cancellation, drop
+        // the rlock so the worker is free of config_mutex_ contention,
+        // wait for the worker to acknowledge the cancel so the next move
+        // attempt cannot race against an in-flight one, then rethrow.
+        auto original = std::current_exception();
+        cancel_guard.deactivate();
+        try {
+            current_state_->cancel_move_request(id.uuid);
+        } catch (...) {
+            // Slot already gone; nothing to dismantle.
+        }
+        rlock.unlock();
+        try {
+            trajectory_completion_future.get();
+        } catch (...) {
+            // Worker reported its own error. We prefer the original
+            // protocol-meaningful one.
+        }
+        std::rethrow_exception(original);
+    }
+
+    // Drop the rlock before waiting on the trajectory to complete so the
+    // worker is free of config_mutex_ contention. The slot is owned by
+    // state_; we will not touch current_state_ again.
+    rlock.unlock();
+    trajectory_completion_future.get();
+}
+
 pose URArm::get_end_position(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
@@ -961,9 +1170,31 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
     logger->set_planned_trajectory(*result->samples);
 
+    // Drive the new state_ producer API as `start, extend(full), close`.
+    // The worker observes the closed-before-tick race as `k_buffered` and
+    // sends STREAM_START + drain + STREAM_END in a single tick, so this
+    // path becomes one variant arm and one set of URCL primitives with the
+    // streamed RPC's pull-loop, modulo the framing change from
+    // TRAJECTORY_START to STREAM_START/STREAM_END.
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
-        return current_state_->start_move_request(
-            id, std::move(logger), std::move(async_cancellation_monitor), std::move(*result->samples));
+        auto future = current_state_->start_move_request(id, std::move(logger), std::move(async_cancellation_monitor));
+        // Once the slot is claimed, anything that throws before
+        // close_move_request would leave the worker with no forward signal
+        // and the future never completes. Cancel-on-unwind dismantles the
+        // slot through the standard cancellation path; the worker observes
+        // it on the next tick and completes the future with an error.
+        auto cancel_guard = make_scope_guard([&] {
+            try {
+                current_state_->cancel_move_request(id.uuid);
+            } catch (...) {
+                // Slot already gone (worker completed / failed / cancelled
+                // independently); nothing left to dismantle.
+            }
+        });
+        current_state_->extend_move_request(id.uuid, std::move(*result->samples));
+        current_state_->close_move_request(id.uuid);
+        cancel_guard.deactivate();
+        return future;
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact

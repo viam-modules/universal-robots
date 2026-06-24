@@ -141,6 +141,14 @@ class URArm final : public Arm {
                                       const MoveOptions& options,
                                       const viam::sdk::ProtoStruct& extra) override;
 
+    /// @brief Execute a stream of trajectory points in order.
+    /// @param batch_source Pull-source for the next batch of waypoints.
+    /// @param response_sink Sink for emitted acknowledgments.
+    /// @param extra Any additional arguments to the method.
+    void move_through_joint_positions_streamed(std::function<boost::optional<std::vector<TrajectoryPoint>>()> batch_source,
+                                               std::function<bool(Response)> response_sink,
+                                               const viam::sdk::ProtoStruct& extra) override;
+
     /// @brief Get the cartesian pose of the end effector
     /// @param extra Any additional arguments to the method.
     /// @return Pose of the end effector with respect to the arm base.

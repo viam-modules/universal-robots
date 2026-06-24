@@ -107,8 +107,44 @@ class URArm::state_ {
     ///
     URArm::move_id allocate_move_id() const;
 
+    ///
+    /// Claim the move slot for the move identified by `id` and emplace a fresh
+    /// `move_request` constructed from the forwarded `args`. Validates the
+    /// generation snapshot against `move_epoch_` (rejecting plans whose
+    /// starting arm state has been superseded), then takes `mutex_` and
+    /// requires the slot to be empty. Returns the completion future on
+    /// success; throws on supersession or on slot-busy. Notifies the worker.
+    ///
     template <typename... Args>
     std::future<void> start_move_request(URArm::move_id id, Args&&... args);
+
+    ///
+    /// Append a batch of trajectory samples to the open stream identified by
+    /// `id`. The batch's `trajectory_samples` variant arm must match the
+    /// arm already engaged in `sample_stream::pending` (or, on the first
+    /// extend, become the engaged arm). Throws if no in-flight request
+    /// matches `id`, or if the stream's phase forbids further extension
+    /// (anything past `k_streaming`), or on PV/PVA arm mismatch. Notifies
+    /// the worker.
+    ///
+    void extend_move_request(const boost::uuids::uuid& id, trajectory_samples batch);
+
+    ///
+    /// Signal end-of-stream for the move identified by `id`. Transitions
+    /// `k_open` to `k_buffered` or `k_streaming` to `k_draining`. Throws if
+    /// no in-flight request matches `id`, or if the stream has already been
+    /// closed (`k_buffered` / `k_draining` / `k_ended`). Notifies the worker.
+    ///
+    void close_move_request(const boost::uuids::uuid& id);
+
+    ///
+    /// Cancel the move identified by `id`. Identity-validated overload used
+    /// by the streaming override's response-sink-said-stop path. Throws if no
+    /// in-flight request matches `id`. Routes through the existing
+    /// cancellation_request slot on `move_request`; the worker observes the
+    /// cancellation at the top of the visitor. Notifies the worker.
+    ///
+    std::shared_future<void> cancel_move_request(const boost::uuids::uuid& id);
 
     bool is_moving() const;
     std::string describe() const;
@@ -402,6 +438,47 @@ class URArm::state_ {
         std::string_view describe() const;
     };
 
+    // Producer/worker-shared state describing the lifecycle of an
+    // open-ended trajectory stream. Default construction yields the
+    // freshly-opened state (k_open, no pending samples, zero points
+    // written); every other configuration is reached by mutators
+    // running under `state_::mutex_`. The phase enum is a forward-only
+    // state machine; see `state_controlled_::handle_move_request` for
+    // the transition rules and the corresponding URCL traffic.
+    struct sample_stream {
+        enum class phase {
+            // STREAM_START not sent; producer can still extend or close.
+            k_open,
+            // STREAM_START has been sent; producer can still extend or close.
+            k_streaming,
+            // Producer has closed; STREAM_START not yet sent. Covers the race
+            // where the producer hands us a complete trajectory before the
+            // worker has had a chance to tick (the unary path always hits this
+            // state; bidi can hit it on a single-batch-then-close stream).
+            k_buffered,
+            // Producer has closed and STREAM_START has been sent. Worker is
+            // draining `pending`; STREAM_END will be sent when it empties.
+            k_draining,
+            // STREAM_END has been sent. Awaiting trajectory_done_callback_.
+            k_ended,
+        };
+
+        phase current_phase = phase::k_open;
+
+        // PV-vs-PVA is decided by the producer at the first extend and locked:
+        // the engaged variant arm IS the decision. `nullopt` is the
+        // pre-decision state; engaged-but-inner-empty is the post-drain
+        // (mid-stream) state.
+        std::optional<trajectory_samples> pending;
+
+        // Spline points written to the URCL trajectory socket since the most
+        // recent STREAM_START. URCL requires the producer to report this total
+        // back on STREAM_END so URScript can drain the remaining unread tail
+        // out of its socket buffer (see resources/external_control.urscript in
+        // the local URCL fork). Reset to zero whenever STREAM_START is sent.
+        std::size_t points_written = 0;
+    };
+
     // TODO: Arguably, this should be a class since it has some
     // non-trivial members. But the state_ class needs pretty deep
     // access. When I tried to turn it into a class, it ended up with a
@@ -411,7 +488,7 @@ class URArm::state_ {
     // URArm misusing it.
     struct move_request {
        public:
-        using move_command_data = std::variant<trajectory_samples, std::optional<pose_sample>>;
+        using move_command_data = std::variant<sample_stream, std::optional<pose_sample>>;
 
         using async_cancellation_monitor = std::function<bool()>;
 
@@ -420,10 +497,13 @@ class URArm::state_ {
                               async_cancellation_monitor monitor,
                               move_command_data&& move_command);
 
+        // Construct a streaming move_request in the freshly-opened state:
+        // a default-constructed `sample_stream`, no batches yet. The producer
+        // subsequently drives the request via `state_::extend_move_request` /
+        // `close_move_request` / `cancel_move_request(uuid)`.
         explicit move_request(boost::uuids::uuid id,
                               std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
-                              async_cancellation_monitor monitor,
-                              trajectory_samples&& ts);
+                              async_cancellation_monitor monitor);
 
         explicit move_request(boost::uuids::uuid id,
                               std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
@@ -563,5 +643,9 @@ std::future<void> URArm::state_::start_move_request(URArm::move_id id, Args&&...
     if (move_request_) {
         throw std::runtime_error("an actuation is already in progress");
     }
-    return move_request_.emplace(std::move(id).uuid, std::forward<Args>(args)...).completion.get_future();
+    auto future = move_request_.emplace(std::move(id).uuid, std::forward<Args>(args)...).completion.get_future();
+    // Wake the worker so it picks up this request on its next iteration
+    // rather than waiting out the remainder of its current tick interval.
+    worker_wakeup_cv_.notify_one();
+    return future;
 }

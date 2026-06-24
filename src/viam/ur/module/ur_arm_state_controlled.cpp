@@ -67,73 +67,17 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         [this, &state](auto& cmd) -> std::optional<event_variant_> {
             using T = std::decay_t<decltype(cmd)>;
 
-            if constexpr (std::is_same_v<T, trajectory_samples>) {
-                // Operating in joint-space
+            if constexpr (std::is_same_v<T, sample_stream>) {
+                // Operating in joint-space, streaming. The 5-state phase enum
+                // drives URCL traffic; see `sample_stream`'s declaration for
+                // the meaning of each phase. Forward-only transitions:
+                //   k_open      ---STREAM_START--->  k_streaming
+                //   k_open      ---close--->         k_buffered
+                //   k_streaming ---close--->         k_draining
+                //   k_buffered  ---START+drain+END->  k_ended  (one tick)
+                //   k_draining  ---STREAM_END---->   k_ended
 
-                const auto cmd_empty = std::visit([](const auto& v) { return v.empty(); }, cmd);
-
-                if (!cmd_empty && !state.move_request_->cancellation_request) {
-                    // Have samples to send, no cancellation requested
-                    VIAM_SDK_LOG(debug) << "URArm sending trajectory";
-
-                    auto to_send = std::move(cmd);
-                    const auto num_samples = std::visit([](const auto& v) { return v.size(); }, to_send);
-
-                    if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
-                                                                          static_cast<int>(num_samples),
-                                                                          RobotReceiveTimeout::off())) {
-                        VIAM_SDK_LOG(error) << "send_trajectory: start failed; dropping connection";
-                        std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start");
-                        return event_connection_lost_::trajectory_control_failure();
-                    }
-
-                    if (auto err = std::visit(
-                            [this, &state](const auto& pts) -> std::optional<event_variant_> {
-                                const auto write_point = [&](const auto& pt) {
-                                    if constexpr (requires { pt.a; }) {
-                                        return arm_conn_->driver->writeTrajectorySplinePoint(pt.p, pt.v, pt.a, pt.timestep);
-                                    } else {
-                                        return arm_conn_->driver->writeTrajectorySplinePoint(pt.p, pt.v, pt.timestep);
-                                    }
-                                };
-                                for (const auto& pt : pts) {
-                                    if (!write_point(pt)) {
-                                        VIAM_SDK_LOG(error) << "send_trajectory: spline point failed; dropping connection";
-                                        std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point");
-                                        return event_connection_lost_::trajectory_control_failure();
-                                    }
-                                }
-                                return std::nullopt;
-                            },
-                            to_send)) {
-                        return err;
-                    }
-
-                    VIAM_SDK_LOG(debug) << "URArm trajectory sent";
-
-                    // Move-assign from a fresh empty vector to release the storage for the points.
-                    std::visit([](auto& v) { v = {}; }, cmd);
-                    return std::nullopt;
-
-                } else if (cmd_empty && state.move_request_->cancellation_request && !state.move_request_->cancellation_request->issued) {
-                    // We have a move request, the samples have been forwarded,
-                    // and cancellation is requested but has not yet been issued. Issue a cancel.
-                    state.move_request_->cancellation_request->issued = true;
-                    if (!arm_conn_->driver->writeTrajectoryControlMessage(
-                            urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
-                        state.move_request_->cancel_error("failed to send trajectory cancel");
-                        VIAM_SDK_LOG(error) << "cancel failed; dropping connection";
-                        return event_connection_lost_::trajectory_control_failure();
-                    }
-                    return std::nullopt;
-                } else if (!cmd_empty && state.move_request_->cancellation_request) {
-                    // We have a move request that we haven't issued but a
-                    // cancel is already pending. Don't issue it, just cancel it.
-                    std::exchange(state.move_request_, {})->complete_cancelled();
-                    return std::nullopt;
-
-                } else {
-                    // TODO: is it assured that we have positions/velocities here?
+                const auto emit_realtime_sample = [&] {
                     state.move_request_->write_realtime_sample(
                         *state.ephemeral_,
                         arm_conn_->robot_status_bits
@@ -142,8 +86,171 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                         arm_conn_->safety_status_bits
                             ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->safety_status_bits->to_ulong()))
                             : std::nullopt);
+                };
+
+                // Returns nullopt on success, or a connection-lost event on
+                // URCL write failure. On failure the move_request is
+                // completed with an error and the slot is cleared.
+                const auto drain_pending = [&]() -> std::optional<event_variant_> {
+                    if (!cmd.pending) {
+                        return std::nullopt;
+                    }
+                    return std::visit(
+                        [&](auto& pts) -> std::optional<event_variant_> {
+                            const auto write_point = [&](const auto& pt) {
+                                if constexpr (requires { pt.a; }) {
+                                    return arm_conn_->driver->writeTrajectorySplinePoint(pt.p, pt.v, pt.a, pt.timestep);
+                                } else {
+                                    return arm_conn_->driver->writeTrajectorySplinePoint(pt.p, pt.v, pt.timestep);
+                                }
+                            };
+                            for (const auto& pt : pts) {
+                                if (!write_point(pt)) {
+                                    VIAM_SDK_LOG(error) << "send_trajectory: spline point failed; dropping connection";
+                                    std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point");
+                                    return event_connection_lost_::trajectory_control_failure();
+                                }
+                                ++cmd.points_written;
+                            }
+                            // Drop the drained points, retain the engaged
+                            // variant arm so the PV/PVA decision remains
+                            // locked across subsequent extends.
+                            pts.clear();
+                            return std::nullopt;
+                        },
+                        *cmd.pending);
+                };
+
+                const bool cancel_pending = state.move_request_->cancellation_request.has_value();
+                const bool cancel_issued = cancel_pending && state.move_request_->cancellation_request->issued;
+
+                // Cancellation handling. Discriminate on phase so we know
+                // whether to send a TRAJECTORY_CANCEL (URCL has been told
+                // about this move) or to complete the request locally
+                // (STREAM_START was never sent).
+                if (cancel_pending && !cancel_issued &&
+                    (cmd.current_phase == sample_stream::phase::k_open || cmd.current_phase == sample_stream::phase::k_buffered)) {
+                    std::exchange(state.move_request_, {})->complete_cancelled();
                     return std::nullopt;
                 }
+                if (cancel_pending && !cancel_issued) {
+                    state.move_request_->cancellation_request->issued = true;
+                    if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                            urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
+                        state.move_request_->cancel_error("failed to send trajectory cancel");
+                        VIAM_SDK_LOG(error) << "cancel failed; dropping connection";
+                        return event_connection_lost_::trajectory_control_failure();
+                    }
+                    return std::nullopt;
+                }
+                if (cancel_pending) {
+                    // Cancel already issued; just heartbeat realtime samples
+                    // until URScript fires the trajectory_done_callback.
+                    emit_realtime_sample();
+                    return std::nullopt;
+                }
+
+                // No cancellation in flight. Drive the phase state machine.
+                const bool pending_empty = !cmd.pending || std::visit([](const auto& v) { return v.empty(); }, *cmd.pending);
+
+                switch (cmd.current_phase) {
+                    case sample_stream::phase::k_open: {
+                        if (pending_empty) {
+                            emit_realtime_sample();
+                            return std::nullopt;
+                        }
+                        // First non-empty drain; open the stream on URCL and
+                        // continue into the drain in this same tick.
+                        VIAM_SDK_LOG(debug) << "URArm sending stream start";
+                        if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                                urcl::control::TrajectoryControlMessage::TRAJECTORY_STREAM_START, 0, RobotReceiveTimeout::off())) {
+                            VIAM_SDK_LOG(error) << "send_trajectory: stream start failed; dropping connection";
+                            std::exchange(state.move_request_, {})->complete_error("failed to send trajectory stream start");
+                            return event_connection_lost_::trajectory_control_failure();
+                        }
+                        cmd.points_written = 0;
+                        cmd.current_phase = sample_stream::phase::k_streaming;
+                        if (auto err = drain_pending()) {
+                            return err;
+                        }
+                        return std::nullopt;
+                    }
+
+                    case sample_stream::phase::k_streaming: {
+                        if (pending_empty) {
+                            emit_realtime_sample();
+                            return std::nullopt;
+                        }
+                        if (auto err = drain_pending()) {
+                            return err;
+                        }
+                        return std::nullopt;
+                    }
+
+                    case sample_stream::phase::k_buffered: {
+                        // Producer closed before the worker started
+                        // streaming. The unary collapsed path always lands
+                        // here; bidi can hit it on a single-batch-then-close
+                        // stream. If pending is empty (producer closed with
+                        // zero batches), there is no URCL traffic to do.
+                        if (pending_empty) {
+                            std::exchange(state.move_request_, {})->complete_success();
+                            return std::nullopt;
+                        }
+                        VIAM_SDK_LOG(debug) << "URArm sending buffered stream (start + drain + end)";
+                        if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                                urcl::control::TrajectoryControlMessage::TRAJECTORY_STREAM_START, 0, RobotReceiveTimeout::off())) {
+                            VIAM_SDK_LOG(error) << "send_trajectory: stream start failed; dropping connection";
+                            std::exchange(state.move_request_, {})->complete_error("failed to send trajectory stream start");
+                            return event_connection_lost_::trajectory_control_failure();
+                        }
+                        cmd.points_written = 0;
+                        if (auto err = drain_pending()) {
+                            return err;
+                        }
+                        if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                                urcl::control::TrajectoryControlMessage::TRAJECTORY_STREAM_END,
+                                static_cast<int>(cmd.points_written),
+                                RobotReceiveTimeout::off())) {
+                            VIAM_SDK_LOG(error) << "send_trajectory: stream end failed; dropping connection";
+                            std::exchange(state.move_request_, {})->complete_error("failed to send trajectory stream end");
+                            return event_connection_lost_::trajectory_control_failure();
+                        }
+                        cmd.current_phase = sample_stream::phase::k_ended;
+                        return std::nullopt;
+                    }
+
+                    case sample_stream::phase::k_draining: {
+                        if (!pending_empty) {
+                            if (auto err = drain_pending()) {
+                                return err;
+                            }
+                            return std::nullopt;
+                        }
+                        VIAM_SDK_LOG(debug) << "URArm sending stream end";
+                        if (!arm_conn_->driver->writeTrajectoryControlMessage(
+                                urcl::control::TrajectoryControlMessage::TRAJECTORY_STREAM_END,
+                                static_cast<int>(cmd.points_written),
+                                RobotReceiveTimeout::off())) {
+                            VIAM_SDK_LOG(error) << "send_trajectory: stream end failed; dropping connection";
+                            std::exchange(state.move_request_, {})->complete_error("failed to send trajectory stream end");
+                            return event_connection_lost_::trajectory_control_failure();
+                        }
+                        cmd.current_phase = sample_stream::phase::k_ended;
+                        return std::nullopt;
+                    }
+
+                    case sample_stream::phase::k_ended: {
+                        // STREAM_END on the wire; URScript is finishing.
+                        // Emit realtime samples while we wait for the
+                        // trajectory_done_callback to fire.
+                        emit_realtime_sample();
+                        return std::nullopt;
+                    }
+                }
+
+                // Unreachable — switch covers every phase.
+                throw std::logic_error("handle_move_request: unhandled sample_stream::phase");
 
             } else if constexpr (std::is_same_v<T, std::optional<pose_sample>>) {
                 // Operating in pose-space
