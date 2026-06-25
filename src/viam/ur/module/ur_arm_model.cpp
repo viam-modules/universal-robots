@@ -338,6 +338,9 @@ const std::vector<UrModelDescriptor>& UrModelDescriptor::all() {
         t.push_back({"ur20",
                      "ur20",
                      {"base_link", "wrist_3_link", "shoulder_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}});
+        // URCL maps "ur12e" to RobotType::UR10 (per URCL helpers.h), so the
+        // urcl_category here is "ur10".
+        t.push_back({"ur12e", "ur10", {}});
         return t;
     }();
     return table;
