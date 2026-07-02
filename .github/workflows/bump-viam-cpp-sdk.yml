@@ -1,0 +1,121 @@
+name: Bump Viam C++ SDK
+
+# Opens (or updates) a PR bumping the viam-cpp-sdk version whenever a newer
+# viam-cpp-sdk release is published, polled daily. The SDK is pinned via conan
+# (which Dependabot can't track) AND duplicated as a git tag across several build
+# files, so this updates every location in one PR.
+#
+# SDK-version locations kept in sync (auto-discovered, so new ones are covered):
+#   - Dockerfile / bin/setup.sh / CMakeLists.txt : `releases/vX.Y.Z` git tag
+#   - conanfile.py                               : `viam-cpp-sdk/[>=X.Y.Z]` range
+#   - CMakeLists.txt (yaskawa only)              : `find_package(viam-cpp-sdk X.Y ...)`
+#
+# The PR is created with the org-level GIT_ACCESS_TOKEN bot secret (the same token
+# the viam-python-sdk update_protos workflow uses) rather than the default
+# GITHUB_TOKEN. This is deliberate: PRs opened by GITHUB_TOKEN do NOT trigger other
+# workflows, so the build/test wouldn't run on the bump; the bot token makes CI run.
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # daily at 06:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve latest and current viam-cpp-sdk versions
+        id: versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Latest published release of the SDK, tag format "releases/vX.Y.Z".
+          tag="$(gh release view --repo viamrobotics/viam-cpp-sdk --json tagName --jq .tagName)"
+          latest="${tag#releases/v}"
+          # Canonical current version: the git tag pinned in the Dockerfile.
+          current="$(grep -oE 'releases/v[0-9]+\.[0-9]+\.[0-9]+' Dockerfile | head -1 | sed 's#releases/v##')"
+          echo "latest=$latest"   >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          # Only bump forward (never downgrade).
+          if [ "$current" != "$latest" ] && \
+             [ "$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -n1)" = "$latest" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "viam-cpp-sdk: current=$current latest=$latest"
+
+      - name: Update all viam-cpp-sdk version locations
+        if: steps.versions.outputs.needed == 'true'
+        env:
+          CUR: ${{ steps.versions.outputs.current }}
+          NEW: ${{ steps.versions.outputs.latest }}
+        run: |
+          set -euo pipefail
+          # perl -i (not sed) so behaviour is identical everywhere. \Q..\E quotes
+          # the interpolated version so its dots are literal; /e lets the
+          # replacement reference capture groups + %ENV without shell interpolation.
+          cur_mm="${CUR%.*}"; new_mm="${NEW%.*}"
+          export CUR NEW cur_mm new_mm
+
+          # 1. `releases/vX.Y.Z` git tags, wherever they appear (Dockerfile,
+          #    bin/setup.sh, CMakeLists.txt GIT_TAG). Auto-discovered via git grep
+          #    so this stays correct if a new file references the SDK tag.
+          for f in $(git grep -lF "releases/v${CUR}"); do
+            perl -i -pe 's{\Qreleases/v$ENV{CUR}\E}{"releases/v".$ENV{NEW}}ge' "$f"
+          done
+          # 2. conan version range in conanfile.py: viam-cpp-sdk/[>=X.Y.Z]
+          perl -i -pe 's{(viam-cpp-sdk/\[>=)[0-9]+\.[0-9]+\.[0-9]+}{$1 . $ENV{NEW}}ge' conanfile.py
+          # 3. CMake FIND_PACKAGE_ARGS <full X.Y.Z> (universal-robots).
+          perl -i -pe 's{(FIND_PACKAGE_ARGS\s+)\Q$ENV{CUR}\E\b}{$1 . $ENV{NEW}}ge' CMakeLists.txt
+          # 4. CMake find_package(viam-cpp-sdk <ver>) — full X.Y.Z or major.minor X.Y
+          #    (yaskawa uses X.Y). Guards keep the two forms from clobbering each other.
+          perl -i -pe 's{(find_package\(viam-cpp-sdk\s+)\Q$ENV{CUR}\E(?=\D)}{$1 . $ENV{NEW}}ge' CMakeLists.txt
+          perl -i -pe 's{(find_package\(viam-cpp-sdk\s+)\Q$ENV{cur_mm}\E(?=[^0-9.])}{$1 . $ENV{new_mm}}ge' CMakeLists.txt
+
+          # Fail loudly if any old SDK reference survived (a form we don't handle),
+          # rather than opening a half-updated PR. Scoped to SDK contexts so an
+          # unrelated dep that happens to share the version can't trip it.
+          cur_re="${CUR//./\\.}"; cur_mm_re="${cur_mm//./\\.}"
+          leftover="$(
+            git grep -nF "releases/v${CUR}" || true
+            git grep -nF -- "[>=${CUR}]" conanfile.py || true
+            git grep -nE "FIND_PACKAGE_ARGS[[:space:]]+${cur_re}([^0-9]|\$)" -- CMakeLists.txt || true
+            git grep -nE "find_package\(viam-cpp-sdk[[:space:]]+${cur_re}([^0-9]|\$)" -- CMakeLists.txt || true
+            git grep -nE "find_package\(viam-cpp-sdk[[:space:]]+${cur_mm_re}([^0-9.]|\$)" -- CMakeLists.txt || true
+          )"
+          if [ -n "$leftover" ]; then
+            echo "ERROR: old viam-cpp-sdk references remain after bump:"; echo "$leftover"; exit 1
+          fi
+          echo "All viam-cpp-sdk references updated ${CUR} -> ${NEW}."
+
+      - name: Open / update pull request
+        if: steps.versions.outputs.needed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GIT_ACCESS_TOKEN }}
+          branch: deps/bump-viam-cpp-sdk
+          delete-branch: true
+          commit-message: "deps: bump viam-cpp-sdk to ${{ steps.versions.outputs.latest }}"
+          title: "deps: bump viam-cpp-sdk to ${{ steps.versions.outputs.latest }}"
+          labels: dependencies
+          body: |
+            Bumps `viam-cpp-sdk` from `${{ steps.versions.outputs.current }}` to
+            `${{ steps.versions.outputs.latest }}`
+            ([viam-cpp-sdk release](https://github.com/viamrobotics/viam-cpp-sdk/releases/tag/releases/v${{ steps.versions.outputs.latest }})).
+
+            Updates every location the version is pinned:
+            - `releases/vX.Y.Z` git tags in `Dockerfile`, `bin/setup.sh`, `CMakeLists.txt`
+            - the `viam-cpp-sdk/[>=X.Y.Z]` conan range in `conanfile.py`
+            - `find_package(viam-cpp-sdk X.Y ...)` in `CMakeLists.txt` (where present)
+
+            Opened automatically by the **Bump Viam C++ SDK** workflow. Please confirm CI
+            (the build/test) passes before merging.
