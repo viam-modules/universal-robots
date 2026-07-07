@@ -467,6 +467,7 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     bool use_pva = false;
     std::chrono::microseconds cumulative_time{0};
     bool halted_by_handler = false;
+    bool worker_finished_early = false;
 
     // XXX ACM debug-only: timing instrumentation. Each loop iteration logs
     // the latency of (a) batch_source, (b) the per-point convert loop,
@@ -491,6 +492,18 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                 VIAM_SDK_LOG(debug) << "XXX ACM move_streamed: batch_opt is empty " << id.uuid
                                     << " source=" << to_ms(t_after_source - t_loop_top) << "ms";
                 continue;
+            }
+
+            // Between reads: a worker-side fault completes the trajectory future
+            // ahead of end-of-stream. Poll it so the fault surfaces within one
+            // batch interval instead of only at EOS. Stop pulling and let the
+            // shared completion path below observe the outcome through the
+            // future's single get() -- we deliberately do not get() here, both
+            // to keep the future single-consumption and to avoid feeding the
+            // dead slot the batch we just pulled.
+            if (trajectory_completion_future.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
+                worker_finished_early = true;
+                break;
             }
 
             ++batch_seq;
@@ -593,7 +606,12 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
         }
 
         if (!halted_by_handler) {
-            current_state_->close_move_request(id.uuid);
+            // Skip close when the worker already finished on its own (observed
+            // by the between-reads poll): the slot is gone, so close would
+            // throw, and the tail get() will surface its outcome regardless.
+            if (!worker_finished_early) {
+                current_state_->close_move_request(id.uuid);
+            }
             cancel_guard.deactivate();
         }
     } catch (...) {
