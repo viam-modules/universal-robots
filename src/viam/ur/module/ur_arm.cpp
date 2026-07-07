@@ -413,9 +413,10 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
     move_joint_space_(std::move(rlock), waypoints_rad, options, id);
 }
 
-void URArm::move_through_joint_positions_streamed(std::function<boost::optional<std::vector<TrajectoryPoint>>()> batch_source,
-                                                  std::function<bool(Response)> response_sink,
-                                                  const viam::sdk::ProtoStruct&) {
+URArm::stream_outcome URArm::move_through_joint_positions_streamed(
+    const std::function<boost::optional<std::vector<trajectory_point>>()>& batch_source,
+    const std::function<bool(trajectory_update)>& update_handler,
+    const viam::sdk::ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
 
@@ -444,7 +445,7 @@ void URArm::move_through_joint_positions_streamed(std::function<boost::optional<
     // RAII safety net for any path between `start_move_request` and the
     // explicit close: any throw before close would leave the worker
     // without a forward signal. Cancel-on-unwind dismantles the slot
-    // through the same cancellation_request mechanism the response_sink
+    // through the same cancellation_request mechanism the update_handler
     // and gRPC-cancel paths use.
     auto cancel_guard = make_scope_guard([&] {
         try {
@@ -464,13 +465,12 @@ void URArm::move_through_joint_positions_streamed(std::function<boost::optional<
     // `timestep` for URCL by differencing the SDK's cumulative time.
     bool decided = false;
     bool use_pva = false;
-    bool first_point_overall = true;
-    std::chrono::duration<double> cumulative_time{0.0};
-    bool cancelled_by_sink = false;
+    std::chrono::microseconds cumulative_time{0};
+    bool halted_by_handler = false;
 
     // XXX ACM debug-only: timing instrumentation. Each loop iteration logs
     // the latency of (a) batch_source, (b) the per-point convert loop,
-    // (c) extend_move_request, and (d) response_sink. Strip before PR.
+    // (c) extend_move_request, and (d) update_handler. Strip before PR.
     std::size_t batch_seq = 0;
     using ms_d = std::chrono::duration<double, std::milli>;
     const auto to_ms = [](auto d) { return std::chrono::duration_cast<ms_d>(d).count(); };
@@ -505,17 +505,10 @@ void URArm::move_through_joint_positions_streamed(std::function<boost::optional<
                                                    : trajectory_samples{std::vector<trajectory_sample_point_pv>{}};
 
             for (const auto& p : *batch_opt) {
-                if (first_point_overall) {
-                    if (p.time.count() != 0.0) {
-                        throw std::runtime_error("first point of stream must have time == 0");
-                    }
-                    first_point_overall = false;
-                } else if (!(p.time > cumulative_time)) {
-                    throw std::runtime_error("trajectory point times must be strictly monotone increasing");
-                }
-                const float timestep = static_cast<float>((p.time - cumulative_time).count());
-                cumulative_time = p.time;
-
+                // The SDK stub already validated time-zero-first, strict monotonicity,
+                // non-empty positions, and internal velocity/acceleration arity. It does
+                // not check against this arm's six DOF nor require constraints, and the
+                // loop below indexes [0, 6) directly, so we still guard those two.
                 if (!p.constraints) {
                     throw std::runtime_error("trajectory point missing constraints (velocities required)");
                 }
@@ -523,12 +516,23 @@ void URArm::move_through_joint_positions_streamed(std::function<boost::optional<
                     throw std::runtime_error("trajectory point joint dimensionality mismatch");
                 }
 
+                // trajectory_point::time is a stream-global microsecond offset; URCL wants
+                // a per-point timestep in seconds. Difference against the running cumulative
+                // and convert to a floating-point second count.
+                //
+                // TODO(acm): the interface mandates the first point at time zero, so it yields a
+                // zero-duration leading timestep here. The offline/unary path instead drops the
+                // t=0 sample (the trajex sampler `drop(1)` below). Reconcile this divergence, and
+                // confirm what URCL wants for a leading spline point, before streaming ships.
+                const float timestep = std::chrono::duration<float>(p.time - cumulative_time).count();
+                cumulative_time = p.time;
+
                 std::visit(
                     [&](auto& vec) {
                         using V = std::decay_t<decltype(vec)>;
                         using Point = typename V::value_type;
                         Point pt;
-                        // The TrajectoryPoint contract carries joint positions /
+                        // The trajectory_point contract carries joint positions /
                         // velocities / accelerations in degrees, matching the
                         // existing unary `move_through_joint_positions` API. URCL
                         // expects radians on its trajectory socket, so we convert
@@ -558,17 +562,17 @@ void URArm::move_through_joint_positions_streamed(std::function<boost::optional<
             const auto t_after_convert = std::chrono::steady_clock::now();
             current_state_->extend_move_request(id.uuid, std::move(converted));
             const auto t_after_extend = std::chrono::steady_clock::now();
-            const bool sink_ok = response_sink(Response{});
+            const bool handler_ok = update_handler(trajectory_update{});
             const auto t_after_sink = std::chrono::steady_clock::now();
 
-            VIAM_SDK_LOG(debug) << "XXX ACM move_streamed batch=" << batch_seq << " points=" << extend_n
+            VIAM_SDK_LOG(debug) << "XXX ACM move_streamed 2 batch=" << batch_seq << " points=" << extend_n
                                 << " source=" << to_ms(t_after_source - t_loop_top) << "ms"
                                 << " convert=" << to_ms(t_after_convert - t_after_source) << "ms"
                                 << " extend=" << to_ms(t_after_extend - t_after_convert) << "ms"
                                 << " sink=" << to_ms(t_after_sink - t_after_extend) << "ms"
-                                << " sink_ok=" << sink_ok;
+                                << " handler_ok=" << handler_ok;
 
-            if (!sink_ok) {
+            if (!handler_ok) {
                 // SDK framework asked us to stop. Dismantle the slot
                 // through the cancellation_request path; the worker
                 // observes it on its next tick and completes the future
@@ -583,12 +587,12 @@ void URArm::move_through_joint_positions_streamed(std::function<boost::optional<
                 // explicitly for review before this leaves the PoC.
                 current_state_->cancel_move_request(id.uuid);
                 cancel_guard.deactivate();
-                cancelled_by_sink = true;
+                halted_by_handler = true;
                 break;
             }
         }
 
-        if (!cancelled_by_sink) {
+        if (!halted_by_handler) {
             current_state_->close_move_request(id.uuid);
             cancel_guard.deactivate();
         }
@@ -620,6 +624,8 @@ void URArm::move_through_joint_positions_streamed(std::function<boost::optional<
     // state_; we will not touch current_state_ again.
     rlock.unlock();
     trajectory_completion_future.get();
+
+    return halted_by_handler ? stream_outcome::k_halted_by_update_handler : stream_outcome::k_completed;
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {
