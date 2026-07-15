@@ -498,9 +498,9 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                 // move validator. The stream's first point is the trajectory's
                 // starting state at t=0; if the arm is not actually there, the
                 // leading near-zero-duration segment would command a discontinuous
-                // jump. Reject when the arm is farther from the first point than
-                // reject_move_request_threshold_rad, using the same knob and
-                // semantics as the unary path.
+                // jump. The unary path is intrinsically safe because it seeds
+                // planning with the measured position; streaming is not, so we
+                // require the threshold rather than skip the check when it is unset.
                 if (const auto& threshold = current_state_->get_reject_move_request_threshold_rad()) {
                     if (p0.positions.size() != 6) {
                         throw std::invalid_argument("trajectory point joint dimensionality mismatch");
@@ -522,6 +522,8 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                         VIAM_SDK_LOG(error) << err_string.str();
                         throw std::invalid_argument(err_string.str());
                     }
+                } else {
+                    throw std::invalid_argument("streamed moves require reject_move_request_threshold_deg to be configured");
                 }
 
                 // TODO: passing this check admits up to `threshold` of slop between
@@ -618,9 +620,7 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
         }
     } catch (...) {
         // A protocol violation or some other error on our side. Hold onto the
-        // original error, cancel the request, and drop the rlock so the worker
-        // isn't blocked on config_mutex_. Wait for the worker to acknowledge the
-        // cancel so the next move can't race an in-flight one, then rethrow.
+        // original error, cancel the request, and drop the rlock, then rethrow.
         auto original = std::current_exception();
         cancel_guard.deactivate();
         try {
@@ -637,9 +637,8 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
         std::rethrow_exception(original);
     }
 
-    // Drop the rlock before waiting on the trajectory to complete so the
-    // worker is free of config_mutex_ contention. The slot is owned by
-    // state_; we will not touch current_state_ again.
+    // Drop the rlock before waiting on the trajectory to complete. The slot is
+    // owned by state_; we will not touch current_state_ again.
     rlock.unlock();
 
     if (halted_by_handler) {

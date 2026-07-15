@@ -208,6 +208,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                         if (auto err = drain_pending()) {
                             return err;
                         }
+                        // TODO: points_written can exceed int on a long stream; this narrowing is silent.
                         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                                 urcl::control::TrajectoryControlMessage::TRAJECTORY_STREAM_END,
                                 static_cast<int>(cmd.points_written),
@@ -228,6 +229,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                             return std::nullopt;
                         }
                         VIAM_SDK_LOG(debug) << "URArm sending stream end";
+                        // TODO: points_written can exceed int on a long stream; this narrowing is silent.
                         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                                 urcl::control::TrajectoryControlMessage::TRAJECTORY_STREAM_END,
                                 static_cast<int>(cmd.points_written),

@@ -795,7 +795,13 @@ void URArm::state_::run_() {
         std::unique_lock lock(mutex_);
 
         const auto wait_start = std::chrono::steady_clock::now();
-        if (worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] { return shutdown_requested_; })) {
+        if (worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] {
+                // TODO: this predicate is only true on shutdown, so the notify_one()
+                // calls in the move mutators don't wake the worker early; it still
+                // ticks at the timeout. Track new work here or drop those notifies.
+                // The shutdown notify must stay.
+                return shutdown_requested_;
+            })) {
             VIAM_SDK_LOG(debug) << "worker thread signaled to terminate";
             break;
         }
