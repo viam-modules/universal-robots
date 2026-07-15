@@ -510,6 +510,36 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                 const auto& p0 = batch_opt->front();
                 use_pva = p0.constraints && p0.constraints->accelerations.has_value() && prefer_pva;
                 decided = true;
+
+                // Start-pose safety check, the streamed analog of the unary path's
+                // move validator. The stream's first point is the trajectory's
+                // starting state at t=0; if the arm is not actually there, the
+                // leading near-zero-duration segment would command a discontinuous
+                // jump. Reject when the arm is farther from the first point than
+                // reject_move_request_threshold_rad, using the same knob and
+                // semantics as the unary path.
+                if (const auto& threshold = current_state_->get_reject_move_request_threshold_rad()) {
+                    if (p0.positions.size() != 6) {
+                        throw std::invalid_argument("trajectory point joint dimensionality mismatch");
+                    }
+                    const auto current = get_joint_positions_rad_(rlock);
+                    double max_diff = 0.0;
+                    for (std::size_t i = 0; i < 6; ++i) {
+                        max_diff = std::max(max_diff, std::abs(degrees_to_radians(p0.positions[i]) - current[i]));
+                    }
+                    if (max_diff > *threshold) {
+                        std::stringstream err_string;
+                        err_string << "rejecting streamed move: first trajectory position [(";
+                        boost::copy(p0.positions, boost::io::make_ostream_joiner(err_string, ", "));
+                        err_string << ")] and current joint position [(";
+                        boost::copy(boost::adaptors::transform(current, radians_to_degrees<const double&>),
+                                    boost::io::make_ostream_joiner(err_string, ", "));
+                        err_string << ")] differ by " << viam::trajex::radians_to_degrees(max_diff) << " > "
+                                   << viam::trajex::radians_to_degrees(*threshold) << " degrees";
+                        VIAM_SDK_LOG(error) << err_string.str();
+                        throw std::invalid_argument(err_string.str());
+                    }
+                }
             }
 
             trajectory_samples converted = use_pva ? trajectory_samples{std::vector<trajectory_sample_point_pva>{}}
