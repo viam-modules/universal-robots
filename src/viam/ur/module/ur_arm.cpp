@@ -521,10 +521,10 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                 // not check against this arm's six DOF nor require constraints, and the
                 // loop below indexes [0, 6) directly, so we still guard those two.
                 if (!p.constraints) {
-                    throw std::runtime_error("trajectory point missing constraints (velocities required)");
+                    throw std::invalid_argument("trajectory point missing constraints (velocities required)");
                 }
                 if (p.positions.size() != 6 || p.constraints->velocities.size() != 6) {
-                    throw std::runtime_error("trajectory point joint dimensionality mismatch");
+                    throw std::invalid_argument("trajectory point joint dimensionality mismatch");
                 }
 
                 // trajectory_point::time is a stream-global microsecond offset; URCL wants
@@ -555,10 +555,10 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                         pt.timestep = timestep;
                         if constexpr (requires { pt.a; }) {
                             if (!p.constraints->accelerations) {
-                                throw std::runtime_error("PVA stream point missing accelerations");
+                                throw std::invalid_argument("PVA stream point missing accelerations");
                             }
                             if (p.constraints->accelerations->size() != 6) {
-                                throw std::runtime_error("PVA stream point acceleration joint dimensionality mismatch");
+                                throw std::invalid_argument("PVA stream point acceleration joint dimensionality mismatch");
                             }
                             for (std::size_t i = 0; i < 6; ++i) {
                                 pt.a[i] = degrees_to_radians((*p.constraints->accelerations)[i]);
