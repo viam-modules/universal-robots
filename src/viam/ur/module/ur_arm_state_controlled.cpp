@@ -68,14 +68,14 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
             using T = std::decay_t<decltype(cmd)>;
 
             if constexpr (std::is_same_v<T, sample_stream>) {
-                // Operating in joint-space, streaming. The 5-state phase enum
-                // drives URCL traffic; see `sample_stream`'s declaration for
-                // the meaning of each phase. Forward-only transitions:
-                //   k_open      ---STREAM_START--->  k_streaming
-                //   k_open      ---close--->         k_buffered
-                //   k_streaming ---close--->         k_draining
-                //   k_buffered  ---START+drain+END->  k_ended  (one tick)
-                //   k_draining  ---STREAM_END---->   k_ended
+                // Joint-space streaming. The phase drives what we send to URCL;
+                // see `sample_stream` for what each phase means. The phase only
+                // moves forward:
+                //   from k_open, first points pending: send STREAM_START, go to k_streaming.
+                //   from k_open, on close: go to k_buffered.
+                //   from k_streaming, on close: go to k_draining.
+                //   from k_buffered: send START, drain, and END in one tick, go to k_ended.
+                //   from k_draining, once drained: send STREAM_END, go to k_ended.
 
                 const auto emit_realtime_sample = [&] {
                     state.move_request_->write_realtime_sample(
@@ -112,9 +112,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                                 }
                                 ++cmd.points_written;
                             }
-                            // Drop the drained points, retain the engaged
-                            // variant arm so the PV/PVA decision remains
-                            // locked across subsequent extends.
+                            // Drop the points we just sent but keep the variant
+                            // itself, so the PV or PVA choice holds for later
+                            // extends.
                             pts.clear();
                             return std::nullopt;
                         },
@@ -249,7 +249,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     }
                 }
 
-                // Unreachable — switch covers every phase.
+                // Unreachable: the switch covers every phase.
                 throw std::logic_error("handle_move_request: unhandled sample_stream::phase");
 
             } else if constexpr (std::is_same_v<T, std::optional<pose_sample>>) {

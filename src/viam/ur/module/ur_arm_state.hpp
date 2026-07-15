@@ -120,12 +120,11 @@ class URArm::state_ {
 
     ///
     /// Append a batch of trajectory samples to the open stream identified by
-    /// `id`. The batch's `trajectory_samples` variant arm must match the
-    /// arm already engaged in `sample_stream::pending` (or, on the first
-    /// extend, become the engaged arm). Throws if no in-flight request
-    /// matches `id`, or if the stream's phase forbids further extension
-    /// (anything past `k_streaming`), or on PV/PVA arm mismatch. Notifies
-    /// the worker.
+    /// `id`. The batch must be the same kind (PV or PVA) as the samples already
+    /// pending, or, on the first extend, it sets which kind the stream uses.
+    /// Throws if no in-flight request matches `id`, if the stream has moved past
+    /// `k_streaming` and can no longer be extended, or if the batch kind does not
+    /// match. Notifies the worker.
     ///
     void extend_move_request(const boost::uuids::uuid& id, trajectory_samples batch);
 
@@ -138,11 +137,11 @@ class URArm::state_ {
     void close_move_request(const boost::uuids::uuid& id);
 
     ///
-    /// Cancel the move identified by `id`. Identity-validated overload used
-    /// by the streaming override's response-sink-said-stop path. Throws if no
-    /// in-flight request matches `id`. Routes through the existing
-    /// cancellation_request slot on `move_request`; the worker observes the
-    /// cancellation at the top of the visitor. Notifies the worker.
+    /// Cancel the move identified by `id`. This is the overload the streaming
+    /// override uses when its update handler asks to stop. Throws if no in-flight
+    /// request matches `id`. Routes through the existing cancellation_request on
+    /// `move_request`; the worker picks it up at the top of the visitor. Notifies
+    /// the worker.
     ///
     std::shared_future<void> cancel_move_request(const boost::uuids::uuid& id);
 
@@ -438,13 +437,12 @@ class URArm::state_ {
         std::string_view describe() const;
     };
 
-    // Producer/worker-shared state describing the lifecycle of an
-    // open-ended trajectory stream. Default construction yields the
-    // freshly-opened state (k_open, no pending samples, zero points
-    // written); every other configuration is reached by mutators
-    // running under `state_::mutex_`. The phase enum is a forward-only
-    // state machine; see `state_controlled_::handle_move_request` for
-    // the transition rules and the corresponding URCL traffic.
+    // Shared between the producer and the worker to track an open-ended
+    // trajectory stream. A default-constructed one is freshly opened: k_open,
+    // nothing pending, no points written. It only changes through the mutators on
+    // state_, all of which run under `state_::mutex_`. The phase only ever moves
+    // forward; see `state_controlled_::handle_move_request` for the transitions
+    // and the URCL traffic each one drives.
     struct sample_stream {
         enum class phase {
             // STREAM_START not sent; producer can still extend or close.
@@ -465,10 +463,10 @@ class URArm::state_ {
 
         phase current_phase = phase::k_open;
 
-        // PV-vs-PVA is decided by the producer at the first extend and locked:
-        // the engaged variant arm IS the decision. `nullopt` is the
-        // pre-decision state; engaged-but-inner-empty is the post-drain
-        // (mid-stream) state.
+        // The producer picks PV or PVA on the first extend, and it stays fixed
+        // for the rest of the stream: whichever variant is held here is the
+        // choice. `nullopt` means no batch has arrived yet; a held-but-empty
+        // variant means the worker has drained everything so far.
         std::optional<trajectory_samples> pending;
 
         // Spline points written to the URCL trajectory socket since the most
@@ -628,12 +626,11 @@ class URArm::state_ {
 
 template <typename... Args>
 std::future<void> URArm::state_::start_move_request(URArm::move_id id, Args&&... args) {
-    // CAS both validates the generation snapshot from `allocate_move_id` and claims the
-    // slot for this caller. If another move came through (successful or failed) between
-    // the snapshot and this call, the generation has advanced; the caller's plan started
-    // from arm state that may no longer be current, and we reject. On success the slot
-    // is ours regardless of whether the previous move had actually been emplaced — failed
-    // emplaces (slot-occupied) still bump the generation, which is acceptable.
+    // The compare-and-swap does double duty: it checks the generation snapshot
+    // from `allocate_move_id` and claims the slot for this caller. If another move
+    // came through (successful or failed) since the snapshot, the generation has
+    // advanced, the caller planned against arm state that may be stale, and we
+    // reject. A failed emplace still bumps the generation, which is fine.
     auto expected_generation = id.generation;
     if (!move_epoch_.compare_exchange_strong(expected_generation, expected_generation + 1, std::memory_order_acq_rel)) {
         throw std::runtime_error("move operation was superseded by a newer operation");

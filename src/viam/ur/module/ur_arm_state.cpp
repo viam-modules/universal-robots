@@ -454,8 +454,8 @@ double URArm::state_::get_trajectory_sampling_freq_hz() const {
 }
 
 URArm::move_id URArm::state_::allocate_move_id() const {
-    // Generation is snapshotted now; the uuid is freshly generated so it carries no
-    // ordering relationship to other in-flight allocations.
+    // We snapshot the generation now. The uuid is freshly generated and has no
+    // ordering relationship to any other allocation.
     static thread_local boost::uuids::random_generator generator;
     return {generator(), move_epoch_.load(std::memory_order_acquire)};
 }
@@ -469,10 +469,10 @@ bool URArm::state_::is_moving() const {
         [](const auto& cmd) -> bool {
             using T = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<T, sample_stream>) {
-                // "Moving" means URCL has been told to start executing — i.e.
-                // STREAM_START has been sent. While the slot is sitting in
-                // k_open or k_buffered the data has not yet reached the
-                // controller, so we don't claim motion.
+                // We only count as moving once URCL has been told to start,
+                // meaning STREAM_START has been sent. In k_open or k_buffered the
+                // points have not reached the controller yet, so we don't claim
+                // the arm is moving.
                 return cmd.current_phase != sample_stream::phase::k_open && cmd.current_phase != sample_stream::phase::k_buffered;
             } else if constexpr (std::is_same_v<T, std::optional<pose_sample>>) {
                 // Disengaged optional means we have already sent the pose to
@@ -511,11 +511,10 @@ void URArm::state_::extend_move_request(const boost::uuids::uuid& id, trajectory
         throw std::runtime_error("extend_move_request: stream has been closed and cannot be extended");
     }
 
-    // Splice the incoming batch into pending. The PV-vs-PVA decision is the
-    // engaged variant arm; first extend installs it, subsequent extends must
-    // match. The producer is responsible for surfacing a mismatch to the
-    // client as a protocol error; here, a mismatch indicates a producer bug
-    // and we treat it as such.
+    // Append the incoming batch to pending. The first extend picks PV or PVA by
+    // which variant it holds, and later extends must match. The producer already
+    // rejects a client mismatch as a protocol error, so a mismatch here would be
+    // a bug on our side, and we treat it as one.
     if (!stream->pending) {
         stream->pending = std::move(batch);
     } else {
@@ -609,10 +608,10 @@ URArm::state_::move_request::move_request(boost::uuids::uuid id,
         [](const auto& cmd) {
             using T = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<T, sample_stream>) {
-                // A move_request must own a `sample_stream` only in its
-                // freshly-opened configuration: phase k_open, no batches
-                // received, no points written. Producers extend it via
-                // `state_::extend_move_request` once the slot is claimed.
+                // A streaming move_request must start out freshly opened: phase
+                // k_open, nothing pending, no points written. The producer adds
+                // points later with state_::extend_move_request once it owns the
+                // slot.
                 if (cmd.current_phase != sample_stream::phase::k_open || cmd.pending.has_value() || cmd.points_written != 0) {
                     throw std::invalid_argument("sample_stream must be freshly opened when handed to move_request");
                 }

@@ -440,27 +440,26 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     auto trajectory_completion_future =
         current_state_->start_move_request(id, /* trajectory_logger */ nullptr, std::move(async_cancellation_monitor));
 
-    // RAII safety net for any path between `start_move_request` and the
-    // explicit close: any throw before close would leave the worker
-    // without a forward signal. Cancel-on-unwind dismantles the slot
-    // through the same cancellation_request mechanism the update_handler
-    // and gRPC-cancel paths use.
+    // If anything throws after we claim the slot but before we close it, the
+    // worker would wait for data that never arrives. Cancel the request on the
+    // way out so the worker completes and the future doesn't hang. On the normal
+    // path we disarm this below.
     auto cancel_guard = make_scope_guard([&] {
         try {
             current_state_->cancel_move_request(id.uuid);
         } catch (...) {
-            // Slot already gone (worker completed / failed / cancelled
-            // independently); nothing left to dismantle.
+            // The worker already finished, failed, or was cancelled on its own,
+            // so there is nothing to cancel.
         }
     });
 
     const bool prefer_pva = current_state_->prefer_precomputed_accelerations();
 
-    // Pull-loop state. `decided` flips on the first non-empty batch's
-    // first point and locks PV-vs-PVA for the entire stream. The stream's
-    // time axis is global (monotone strictly increasing across batches
-    // with the first point exactly zero); we materialize per-segment
-    // `timestep` for URCL by differencing the SDK's cumulative time.
+    // Loop state. We choose PV or PVA from the first point of the first
+    // non-empty batch and hold that choice for the whole stream. Point times are
+    // measured from the start of the stream and strictly increase, with the
+    // first point at zero. URCL wants a per-point duration instead, so we
+    // subtract the previous time as we go.
     bool decided = false;
     bool use_pva = false;
     std::chrono::microseconds cumulative_time{0};
@@ -480,7 +479,7 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
             auto batch_opt = batch_source();
             const auto t_after_source = std::chrono::steady_clock::now();
             if (!batch_opt) {
-                // Producer EOS — no more batches will arrive.
+                // The producer signalled end of stream; no more batches are coming.
                 VIAM_SDK_LOG(debug) << "XXX ACM move_streamed: producer EOS " << id.uuid << " source=" << to_ms(t_after_source - t_loop_top)
                                     << "ms";
                 break;
@@ -492,13 +491,12 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                 continue;
             }
 
-            // Between reads: a worker-side fault completes the trajectory future
-            // ahead of end-of-stream. Poll it so the fault surfaces within one
-            // batch interval instead of only at EOS. Stop pulling and let the
-            // shared completion path below observe the outcome through the
-            // future's single get() -- we deliberately do not get() here, both
-            // to keep the future single-consumption and to avoid feeding the
-            // dead slot the batch we just pulled.
+            // If the worker faults, it completes the future before we reach the
+            // end of the stream. Check for that here so we notice within a batch
+            // instead of waiting for the client to finish sending. We don't call
+            // get() yet; the completion path at the end does that once, and there
+            // is no point handing the batch we just pulled to a request that is
+            // already gone.
             if (trajectory_completion_future.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
                 worker_finished_early = true;
                 break;
@@ -616,19 +614,18 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                                 << " handler_ok=" << handler_ok;
 
             if (!handler_ok) {
-                // The update handler asked us to stop. On the server side this
-                // is the only way it can say so: bidi gRPC has no half-close of
-                // the receive direction, so the SDK's handler reports false only
-                // when the RPC is being torn down (client cancel or transport
-                // death). That is the same condition as async cancellation, so
-                // we treat it the same way -- route through the cancellation
-                // path, which stops the arm on the worker's next tick and
-                // completes the future with a cancellation error.
+                // The update handler asked us to stop. On the server side this is
+                // the only way it can say so: bidi gRPC has no way to half-close
+                // just the receive direction, so the SDK's handler returns false
+                // only when the whole call is going away (client cancel or a dead
+                // transport). That is the same situation as an async cancel, so we
+                // handle it the same way and cancel the request, which stops the
+                // arm on the worker's next tick and completes the future with a
+                // cancellation error.
                 //
-                // The halt is still reported honestly through the return value
-                // (see the tail) rather than relying on the server stub
-                // discarding it, in case the outcome ever becomes meaningful at
-                // the server layer.
+                // We still report the halt through the return value rather than
+                // relying on the server stub to discard it, in case the outcome
+                // ever matters at the server layer.
                 current_state_->cancel_move_request(id.uuid);
                 cancel_guard.deactivate();
                 halted_by_handler = true;
@@ -637,33 +634,31 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
         }
 
         if (!halted_by_handler) {
-            // Skip close when the worker already finished on its own (observed
-            // by the between-reads poll): the slot is gone, so close would
-            // throw, and the tail get() will surface its outcome regardless.
+            // If the worker already finished on its own (caught by the check
+            // above), the request is gone and close would throw. Skip it; the
+            // get() at the end reports the outcome either way.
             if (!worker_finished_early) {
                 current_state_->close_move_request(id.uuid);
             }
             cancel_guard.deactivate();
         }
     } catch (...) {
-        // Protocol violation or other producer-side error. Capture the
-        // original error, dismantle the slot through cancellation, drop
-        // the rlock so the worker is free of config_mutex_ contention,
-        // wait for the worker to acknowledge the cancel so the next move
-        // attempt cannot race against an in-flight one, then rethrow.
+        // A protocol violation or some other error on our side. Hold onto the
+        // original error, cancel the request, and drop the rlock so the worker
+        // isn't blocked on config_mutex_. Wait for the worker to acknowledge the
+        // cancel so the next move can't race an in-flight one, then rethrow.
         auto original = std::current_exception();
         cancel_guard.deactivate();
         try {
             current_state_->cancel_move_request(id.uuid);
         } catch (...) {
-            // Slot already gone; nothing to dismantle.
+            // The request is already gone; nothing to cancel.
         }
         rlock.unlock();
         try {
             trajectory_completion_future.get();
         } catch (...) {
-            // Worker reported its own error. We prefer the original
-            // protocol-meaningful one.
+            // The worker reported its own error, but the original one is more useful.
         }
         std::rethrow_exception(original);
     }
@@ -674,9 +669,9 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     rlock.unlock();
 
     if (halted_by_handler) {
-        // We cancelled at the handler's request; the future completing with a
-        // cancellation error is the expected consequence of our own cancel, not
-        // a fault to surface. Swallow it and report the honest outcome.
+        // We cancelled at the handler's request, so the future completing with a
+        // cancellation error is expected, not a real fault. Swallow it and report
+        // the outcome.
         try {
             trajectory_completion_future.get();
         } catch (...) {
@@ -685,12 +680,12 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     }
 
     if (worker_finished_early) {
-        // The worker completed before we signaled end-of-stream. In practice
-        // this only happens via a fault (connection loss, arm fault, URScript
-        // failure), which get() rethrows here and we propagate. A successful
-        // early completion would mean the arm finished a motion we never told it
-        // was done with -- our model of the arm state is wrong and the client's
-        // trajectory did not fully execute. Surface that, don't claim success.
+        // The worker completed before we signaled end of stream. In practice that
+        // only happens on a fault (connection loss, arm fault, URScript failure),
+        // which get() rethrows and we propagate. A clean early completion would
+        // mean the arm finished a motion we never told it was done with: our
+        // picture of the arm state is wrong and the client's trajectory did not
+        // fully execute. Surface that rather than claim success.
         trajectory_completion_future.get();  // rethrows the expected fault
         throw std::runtime_error("arm reported trajectory completion before end-of-stream");
     }
@@ -1251,25 +1246,24 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
     logger->set_planned_trajectory(*result->samples);
 
-    // Drive the new state_ producer API as `start, extend(full), close`.
-    // The worker observes the closed-before-tick race as `k_buffered` and
-    // sends STREAM_START + drain + STREAM_END in a single tick, so this
-    // path becomes one variant arm and one set of URCL primitives with the
-    // streamed RPC's pull-loop, modulo the framing change from
-    // TRAJECTORY_START to STREAM_START/STREAM_END.
+    // Drive the same producer API the streamed path uses: start, extend with the
+    // whole trajectory, then close. The worker sees the close before it has
+    // ticked, lands in k_buffered, and sends STREAM_START, the points, and
+    // STREAM_END in one tick. So both paths share one code path and one set of
+    // URCL calls, differing only in that this one frames the move with
+    // STREAM_START/STREAM_END instead of the old TRAJECTORY_START.
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
         auto future = current_state_->start_move_request(id, std::move(logger), std::move(async_cancellation_monitor));
-        // Once the slot is claimed, anything that throws before
-        // close_move_request would leave the worker with no forward signal
-        // and the future never completes. Cancel-on-unwind dismantles the
-        // slot through the standard cancellation path; the worker observes
-        // it on the next tick and completes the future with an error.
+        // Once we claim the slot, anything that throws before close would leave
+        // the worker waiting for data that never comes and the future would never
+        // complete. Cancel the request on the way out; the worker sees it on the
+        // next tick and completes the future with an error.
         auto cancel_guard = make_scope_guard([&] {
             try {
                 current_state_->cancel_move_request(id.uuid);
             } catch (...) {
-                // Slot already gone (worker completed / failed / cancelled
-                // independently); nothing left to dismantle.
+                // The worker already finished, failed, or was cancelled on its
+                // own, so there is nothing to cancel.
             }
         });
         current_state_->extend_move_request(id.uuid, std::move(*result->samples));
