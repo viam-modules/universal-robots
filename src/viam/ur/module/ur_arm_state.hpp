@@ -122,22 +122,26 @@ class URArm::state_ {
     std::future<void> start_move_request(URArm::move_id id, Args&&... args);
 
     ///
-    /// Append a batch of trajectory samples to the open stream identified by
-    /// `id`. The batch must be the same kind (PV or PVA) as the samples already
-    /// pending, or, on the first extend, it sets which kind the stream uses.
-    /// Throws if no in-flight request matches `id`, if the stream has moved past
-    /// `k_streaming` and can no longer be extended, or if the batch kind does not
-    /// match. Notifies the worker.
+    /// Append a batch of trajectory samples to the open stream identified by `id`,
+    /// returning whether the move is still live. Returns false when the move named
+    /// by `id` is no longer active (the worker finished it, or a newer move has
+    /// claimed the slot); this is the same "not my move" case cancel treats as a
+    /// no-op. The batch must be the same kind (PV or PVA) as the samples already
+    /// pending, or, on the first extend, it sets which kind the stream uses. Throws
+    /// only on genuine misuse of a live move: extending past `k_streaming`, or a
+    /// PV/PVA mismatch. Notifies the worker.
     ///
-    void extend_move_request(const boost::uuids::uuid& id, trajectory_samples batch);
+    bool extend_move_request(const boost::uuids::uuid& id, trajectory_samples batch);
 
     ///
-    /// Signal end-of-stream for the move identified by `id`. Transitions
-    /// `k_open` to `k_buffered` or `k_streaming` to `k_draining`. Throws if
-    /// no in-flight request matches `id`, or if the stream has already been
-    /// closed (`k_buffered` / `k_draining` / `k_ended`). Notifies the worker.
+    /// Signal end-of-stream for the move identified by `id`, returning whether the
+    /// move is still live. Returns false when the move named by `id` is no longer
+    /// active, like extend_move_request. Otherwise transitions `k_open` to
+    /// `k_buffered` or `k_streaming` to `k_draining`, and throws only if the stream
+    /// was already closed (`k_buffered` / `k_draining` / `k_ended`). Notifies the
+    /// worker.
     ///
-    void close_move_request(const boost::uuids::uuid& id);
+    bool close_move_request(const boost::uuids::uuid& id);
 
     ///
     /// Cancel the in-flight move if it is the one identified by `id`. A producer
@@ -518,7 +522,6 @@ class URArm::state_ {
                               std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
                               trajectory_samples samples);
-
 
         std::shared_future<void> cancel();
 

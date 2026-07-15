@@ -213,6 +213,10 @@ class URArm final : public Arm {
 
     void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const move_id& id);
 
+    // Rejects a streamed move whose first point is not where the arm actually is.
+    // The streamed analog of the unary move validator; see the definition.
+    void check_streamed_start_pose_(const trajectory_point& first, const std::shared_lock<std::shared_mutex>& config_rlock);
+
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
 

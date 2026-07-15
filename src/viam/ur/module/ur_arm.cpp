@@ -21,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 
 #include <json/json.h>
 
@@ -476,196 +477,172 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
     move_joint_space_(std::move(rlock), waypoints_rad, options, id);
 }
 
+void URArm::check_streamed_start_pose_(const trajectory_point& first, const std::shared_lock<std::shared_mutex>& config_rlock) {
+    // The streamed analog of the unary path's move validator. The stream's first
+    // point is the trajectory's starting state at t=0; if the arm is not actually
+    // there, the leading near-zero-duration segment would command a discontinuous
+    // jump. The unary path is intrinsically safe because it seeds planning with
+    // the measured position; streaming is not, so we require the threshold rather
+    // than skip the check when it is unset.
+    const auto& threshold = current_state_->get_reject_move_request_threshold_rad();
+    if (!threshold) {
+        throw std::invalid_argument("streamed moves require reject_move_request_threshold_deg to be configured");
+    }
+    const auto current = get_joint_positions_rad_(config_rlock);
+    if (first.positions.size() != current.size()) {
+        throw std::invalid_argument("trajectory point joint dimensionality mismatch");
+    }
+    const auto max_diff = std::transform_reduce(
+        first.positions.begin(),
+        first.positions.end(),
+        current.begin(),
+        0.0,
+        [](auto a, auto b) { return std::max(a, b); },
+        [](auto commanded_deg, auto actual_rad) { return std::abs(degrees_to_radians(commanded_deg) - actual_rad); });
+    if (max_diff > *threshold) {
+        std::stringstream err_string;
+        err_string << "rejecting streamed move: first trajectory position [(";
+        boost::copy(first.positions, boost::io::make_ostream_joiner(err_string, ", "));
+        err_string << ")] and current joint position [(";
+        boost::copy(boost::adaptors::transform(current, radians_to_degrees<const double&>),
+                    boost::io::make_ostream_joiner(err_string, ", "));
+        err_string << ")] differ by " << viam::trajex::radians_to_degrees(max_diff) << " > " << viam::trajex::radians_to_degrees(*threshold)
+                   << " degrees";
+        VIAM_SDK_LOG(error) << err_string.str();
+        throw std::invalid_argument(err_string.str());
+    }
+
+    // TODO: passing this check admits up to `threshold` of slop between the
+    // commanded first position and the arm's actual position, which the unary path
+    // avoids by seeding the trajectory with the measured position. Determine
+    // whether that slop needs handling (e.g. substituting the measured position for
+    // the first point) once URScript's spline-start behavior is characterized.
+}
+
 URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     const std::function<boost::optional<std::vector<trajectory_point>>()>& batch_source,
     const std::function<bool(trajectory_update)>& update_handler,
     const viam::sdk::ProtoStruct&) {
+    // How the producer side of the stream ended: one of three clean exits, or a
+    // producer-side error carried as an exception to rethrow. The unlocked teardown
+    // below turns each into a return or a throw.
+    enum class exit_reason { k_completed, k_halted_by_update_handler, k_worker_finished_early };
+    struct loop_result {
+        std::future<void> future;
+        std::variant<exit_reason, std::exception_ptr> outcome;
+    };
+
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-
     const auto id = current_state_->allocate_move_id();
-
-    // Capture the gRPC server context's cancellation status for the worker
-    // visitor's top-of-tick async-cancel check. Same idiom as
-    // move_joint_space_.
-    auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
-        if (!observer) {
-            return false;
-        }
-        return observer->context().IsCancelled();
-    };
 
     VIAM_SDK_LOG(debug) << "move_streamed: start id " << id.uuid;
     const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move_streamed: end id " << id.uuid; });
 
-    // TODO(RSDK-14267): realtime telemetry is not yet implemented for streamed
-    // trajectories, so streaming runs without a RealtimeTrajectoryLogger.
-    auto trajectory_completion_future =
-        current_state_->start_move_request(id, nullptr, std::move(async_cancellation_monitor));
-
-    // If anything throws after we claim the slot but before we close it, the
-    // worker would wait for data that never arrives. Cancel the request on the
-    // way out so the worker completes and the future doesn't hang. On the normal
-    // path we disarm this below.
-    auto cancel_guard = make_scope_guard([&] { current_state_->cancel_move_request(id.uuid); });
-
-    const bool prefer_pva = current_state_->prefer_precomputed_accelerations();
-
-    // The converter is created from the first non-empty batch's first point; it
-    // fixes the PV-vs-PVA choice and carries cumulative time for the whole stream.
-    std::optional<trajectory_point_converter> converter;
-    bool halted_by_handler = false;
-    bool trajectory_completed_early = false;
-
-    try {
-        while (const auto batch = batch_source()) {
-            if (batch->empty()) {
-                // The dispatcher contract filters these out, but be defensive.
-                continue;
+    // Locked phase: claim the slot and drive the stream. The read lock is moved in
+    // here so it releases when this returns, before we wait on completion.
+    auto result = [&, rlock = std::move(rlock)]() -> loop_result {
+        // Capture the gRPC server context's cancellation status for the worker
+        // visitor's top-of-tick async-cancel check. Same idiom as move_joint_space_.
+        auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
+            if (!observer) {
+                return false;
             }
+            return observer->context().IsCancelled();
+        };
 
-            // If the worker faults, it completes the future before we reach the
-            // end of the stream. Check for that here so we notice within a batch
-            // instead of waiting for the client to finish sending. We don't call
-            // get() yet; the completion path at the end does that once, and there
-            // is no point handing the batch we just pulled to a request that is
-            // already gone.
-            if (trajectory_completion_future.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
-                trajectory_completed_early = true;
-                break;
-            }
+        // TODO(RSDK-14267): realtime telemetry is not yet implemented for streamed
+        // trajectories, so streaming runs without a RealtimeTrajectoryLogger.
+        auto future = current_state_->start_move_request(id, nullptr, std::move(async_cancellation_monitor));
 
-            if (!converter) {
-                // First non-empty batch: run the start-pose safety gate, then fix
-                // the PV-vs-PVA choice by constructing the converter.
-                const auto& p0 = batch->front();
-
-                // Start-pose safety check, the streamed analog of the unary path's
-                // move validator. The stream's first point is the trajectory's
-                // starting state at t=0; if the arm is not actually there, the
-                // leading near-zero-duration segment would command a discontinuous
-                // jump. The unary path is intrinsically safe because it seeds
-                // planning with the measured position; streaming is not, so we
-                // require the threshold rather than skip the check when it is unset.
-                if (const auto& threshold = current_state_->get_reject_move_request_threshold_rad()) {
-                    const auto current = get_joint_positions_rad_(rlock);
-                    if (p0.positions.size() != current.size()) {
-                        throw std::invalid_argument("trajectory point joint dimensionality mismatch");
+        try {
+            const auto reason = [&]() {
+                // The converter is created from the first non-empty batch's first
+                // point; it fixes the PV-vs-PVA choice and carries cumulative time.
+                std::optional<trajectory_point_converter> converter;
+                while (const auto batch = batch_source()) {
+                    if (batch->empty()) {
+                        // The dispatcher contract filters these out, but be defensive.
+                        continue;
                     }
-                    const auto max_diff = std::transform_reduce(
-                        p0.positions.begin(),
-                        p0.positions.end(),
-                        current.begin(),
-                        0.0,
-                        [](auto a, auto b) { return std::max(a, b); },
-                        [](auto commanded_deg, auto actual_rad) { return std::abs(degrees_to_radians(commanded_deg) - actual_rad); });
-                    if (max_diff > *threshold) {
-                        std::stringstream err_string;
-                        err_string << "rejecting streamed move: first trajectory position [(";
-                        boost::copy(p0.positions, boost::io::make_ostream_joiner(err_string, ", "));
-                        err_string << ")] and current joint position [(";
-                        boost::copy(boost::adaptors::transform(current, radians_to_degrees<const double&>),
-                                    boost::io::make_ostream_joiner(err_string, ", "));
-                        err_string << ")] differ by " << viam::trajex::radians_to_degrees(max_diff) << " > "
-                                   << viam::trajex::radians_to_degrees(*threshold) << " degrees";
-                        VIAM_SDK_LOG(error) << err_string.str();
-                        throw std::invalid_argument(err_string.str());
+
+                    // A worker-side fault completes the future ahead of end-of-stream.
+                    // Notice it here so we stop within a batch rather than feed a slot
+                    // that is already gone; the completion path reports the outcome.
+                    if (future.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
+                        return exit_reason::k_worker_finished_early;
                     }
-                } else {
-                    throw std::invalid_argument("streamed moves require reject_move_request_threshold_deg to be configured");
+
+                    if (!converter) {
+                        check_streamed_start_pose_(batch->front(), rlock);
+                        converter.emplace(batch->front(), current_state_->prefer_precomputed_accelerations());
+                    }
+
+                    // extend/close return false when our move is no longer the active
+                    // one -- the worker finished it out from under us.
+                    if (!current_state_->extend_move_request(id.uuid, converter->convert(*batch))) {
+                        return exit_reason::k_worker_finished_early;
+                    }
+
+                    if (!update_handler({})) {
+                        // The update handler asked us to stop. On the server side that
+                        // only happens when the gRPC call is being torn down (client
+                        // cancel or dead transport), which is the same as an async
+                        // cancel, so we cancel the move.
+                        current_state_->cancel_move_request(id.uuid);
+                        return exit_reason::k_halted_by_update_handler;
+                    }
                 }
 
-                // TODO: passing this check admits up to `threshold` of slop between
-                // the commanded first position and the arm's actual position, which
-                // the unary path avoids by seeding the trajectory with the measured
-                // position. Determine whether that slop needs handling (e.g.
-                // substituting the measured position for the first point) once
-                // URScript's spline-start behavior is characterized.
-
-                converter.emplace(p0, prefer_pva);
-            }
-
-            current_state_->extend_move_request(id.uuid, converter->convert(*batch));
-
-            if (!update_handler({})) {
-                // The update handler asked us to stop. On the server side this is
-                // the only way it can say so: bidi gRPC has no way to half-close
-                // just the receive direction, so the SDK's handler returns false
-                // only when the whole call is going away (client cancel or a dead
-                // transport). That is the same situation as an async cancel, so we
-                // handle it the same way and cancel the request, which stops the
-                // arm on the worker's next tick and completes the future with a
-                // cancellation error.
-                //
-                // We still report the halt through the return value rather than
-                // relying on the server stub to discard it, in case the outcome
-                // ever matters at the server layer.
-                current_state_->cancel_move_request(id.uuid);
-                cancel_guard.deactivate();
-                halted_by_handler = true;
-                break;
-            }
-        }
-
-        if (!halted_by_handler) {
-            // If the worker already finished on its own (caught by the check
-            // above), the request is gone and close would throw. Skip it; the
-            // get() at the end reports the outcome either way.
-            if (!trajectory_completed_early) {
-                current_state_->close_move_request(id.uuid);
-            }
-            cancel_guard.deactivate();
-        }
-    } catch (...) {
-        // A protocol violation or some other error on our side. Hold onto the
-        // original error, cancel the request, and drop the rlock, then rethrow.
-        auto original = std::current_exception();
-        cancel_guard.deactivate();
-        current_state_->cancel_move_request(id.uuid);
-        rlock.unlock();
-        // If the worker completed the request out from under us (fault or async
-        // cancel) between the future-ready check and the call that threw, its
-        // outcome is the real reason, not the slot-miss we caught.
-        if (trajectory_completion_future.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
-            trajectory_completion_future.get();  // rethrows the worker's error
-        }
-        // Otherwise a genuine producer-side error. Let the worker acknowledge the
-        // cancel so the next move can't race an in-flight one, then rethrow.
-        try {
-            trajectory_completion_future.get();
+                // End of stream. Close; a false return means the worker raced us to
+                // completion, handled the same as an early finish.
+                return current_state_->close_move_request(id.uuid) ? exit_reason::k_completed : exit_reason::k_worker_finished_early;
+            }();
+            return {std::move(future), reason};
         } catch (...) {
+            // A producer-side error (start-pose reject, malformed point). Cancel so
+            // the worker doesn't wait for data that will never arrive; the unlocked
+            // phase waits for the cancel to land before rethrowing.
+            current_state_->cancel_move_request(id.uuid);
+            return {std::move(future), std::current_exception()};
         }
-        std::rethrow_exception(original);
-    }
+    }();
 
-    // Drop the rlock before waiting on the trajectory to complete. The slot is
-    // owned by state_; we will not touch current_state_ again.
-    rlock.unlock();
+    // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
+    // with the current state other than to wait on the result of the returned future.
 
-    if (halted_by_handler) {
-        // We cancelled at the handler's request, so the future completing with a
-        // cancellation error is expected, not a real fault. Swallow it and report
-        // the outcome.
+    if (const auto* error = std::get_if<std::exception_ptr>(&result.outcome)) {
+        // A producer-side error. Wait for our cancel to take effect so a retry
+        // can't race the dying move, then rethrow the original error.
         try {
-            trajectory_completion_future.get();
-        } catch (...) {
+            result.future.get();
+        } catch (...) {  // NOLINT(bugprone-empty-catch): Intentional
         }
-        return stream_outcome::k_halted_by_update_handler;
+        std::rethrow_exception(*error);
     }
 
-    if (trajectory_completed_early) {
-        // The worker completed before we signaled end of stream. In practice that
-        // only happens on a fault (connection loss, arm fault, URScript failure),
-        // which get() rethrows and we propagate. A clean early completion would
-        // mean the arm finished a motion we never told it was done with: our
-        // picture of the arm state is wrong and the client's trajectory did not
-        // fully execute. Surface that rather than claim success.
-        trajectory_completion_future.get();  // rethrows the expected fault
-        throw std::runtime_error("arm reported trajectory completion before end-of-stream");
+    switch (std::get<exit_reason>(result.outcome)) {
+        case exit_reason::k_completed:
+            result.future.get();
+            return stream_outcome::k_completed;
+        case exit_reason::k_halted_by_update_handler:
+            // We cancelled at the handler's request, so the future completing with a
+            // cancellation error is expected, not a fault. Swallow it.
+            try {
+                result.future.get();
+            } catch (...) {  // NOLINT(bugprone-empty-catch): Intentional
+            }
+            return stream_outcome::k_halted_by_update_handler;
+        case exit_reason::k_worker_finished_early:
+            // The worker completed before end-of-stream. In practice a fault, which
+            // get() rethrows. A clean completion here would mean the arm finished a
+            // motion we never told it was done with; surface that, don't hide it.
+            result.future.get();
+            throw std::runtime_error("arm reported trajectory completion before end-of-stream");
     }
 
-    trajectory_completion_future.get();
-    return stream_outcome::k_completed;
+    // Unreachable: the switch covers every exit_reason.
+    throw std::logic_error("move_through_joint_positions_streamed: unhandled exit_reason");
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {

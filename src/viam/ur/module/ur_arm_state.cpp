@@ -496,10 +496,13 @@ std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
     return std::make_optional(std::move(future));
 }
 
-void URArm::state_::extend_move_request(const boost::uuids::uuid& id, trajectory_samples batch) {
+bool URArm::state_::extend_move_request(const boost::uuids::uuid& id, trajectory_samples batch) {
     const std::lock_guard lock{mutex_};
     if (!move_request_ || move_request_->id != id) {
-        throw std::runtime_error("extend_move_request: no in-flight move with the given id");
+        // Our move is no longer the active one: the worker finished it, or a newer
+        // move has claimed the slot. Report that rather than throw; the producer
+        // treats it as the worker finishing early.
+        return false;
     }
 
     // Streams can only be extended before the producer has closed.
@@ -531,12 +534,14 @@ void URArm::state_::extend_move_request(const boost::uuids::uuid& id, trajectory
     }
 
     worker_wakeup_cv_.notify_one();
+    return true;
 }
 
-void URArm::state_::close_move_request(const boost::uuids::uuid& id) {
+bool URArm::state_::close_move_request(const boost::uuids::uuid& id) {
     const std::lock_guard lock{mutex_};
     if (!move_request_ || move_request_->id != id) {
-        throw std::runtime_error("close_move_request: no in-flight move with the given id");
+        // See extend_move_request: our move is gone, so report it rather than throw.
+        return false;
     }
 
     auto* const stream = std::get_if<sample_stream>(&move_request_->move_command);
@@ -558,6 +563,7 @@ void URArm::state_::close_move_request(const boost::uuids::uuid& id) {
     }
 
     worker_wakeup_cv_.notify_one();
+    return true;
 }
 
 std::optional<std::shared_future<void>> URArm::state_::cancel_move_request(const boost::uuids::uuid& id) {
