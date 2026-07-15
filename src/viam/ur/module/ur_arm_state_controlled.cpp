@@ -188,35 +188,30 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     }
 
                     case sample_stream::phase::k_buffered: {
-                        // Producer closed before the worker started
-                        // streaming. The unary collapsed path always lands
-                        // here; bidi can hit it on a single-batch-then-close
-                        // stream. If pending is empty (producer closed with
-                        // zero batches), there is no URCL traffic to do.
+                        // The producer closed before we sent anything, so we have the whole
+                        // trajectory in hand. That is the finite case, so send it with the
+                        // plain TRAJECTORY_START path that the unary move has always used
+                        // rather than the streaming primitives: no dependency on the streaming
+                        // URScript, and the proven terminal-deceleration behavior. Empty
+                        // pending means the producer closed without any points, so there is
+                        // nothing to send.
                         if (pending_empty) {
                             std::exchange(state.move_request_, {})->complete_success();
                             return std::nullopt;
                         }
-                        VIAM_SDK_LOG(debug) << "URArm sending buffered stream (start + drain + end)";
-                        if (!arm_conn_->driver->writeTrajectoryControlMessage(
-                                urcl::control::TrajectoryControlMessage::TRAJECTORY_STREAM_START, 0, RobotReceiveTimeout::off())) {
-                            VIAM_SDK_LOG(error) << "send_trajectory: stream start failed; dropping connection";
-                            std::exchange(state.move_request_, {})->complete_error("failed to send trajectory stream start");
+                        const auto num_points = std::visit([](const auto& v) { return v.size(); }, *cmd.pending);
+                        VIAM_SDK_LOG(debug) << "URArm sending buffered trajectory (" << num_points << " points)";
+                        if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
+                                                                              static_cast<int>(num_points),
+                                                                              RobotReceiveTimeout::off())) {
+                            VIAM_SDK_LOG(error) << "send_trajectory: start failed; dropping connection";
+                            std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start");
                             return event_connection_lost_::trajectory_control_failure();
                         }
-                        cmd.points_written = 0;
                         if (auto err = drain_pending()) {
                             return err;
                         }
-                        // TODO: points_written can exceed int on a long stream; this narrowing is silent.
-                        if (!arm_conn_->driver->writeTrajectoryControlMessage(
-                                urcl::control::TrajectoryControlMessage::TRAJECTORY_STREAM_END,
-                                static_cast<int>(cmd.points_written),
-                                RobotReceiveTimeout::off())) {
-                            VIAM_SDK_LOG(error) << "send_trajectory: stream end failed; dropping connection";
-                            std::exchange(state.move_request_, {})->complete_error("failed to send trajectory stream end");
-                            return event_connection_lost_::trajectory_control_failure();
-                        }
+                        VIAM_SDK_LOG(debug) << "URArm trajectory sent";
                         cmd.current_phase = sample_stream::phase::k_ended;
                         return std::nullopt;
                     }

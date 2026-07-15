@@ -115,6 +115,9 @@ class URArm::state_ {
     /// requires the slot to be empty. Returns the completion future on
     /// success; throws on supersession or on slot-busy. Notifies the worker.
     ///
+    /// The semantics of the started move are determined by the provided arguments,
+    /// per the constructor overload set of `struct move_request`.
+    ///
     template <typename... Args>
     std::future<void> start_move_request(URArm::move_id id, Args&&... args);
 
@@ -137,13 +140,14 @@ class URArm::state_ {
     void close_move_request(const boost::uuids::uuid& id);
 
     ///
-    /// Cancel the move identified by `id`. This is the overload the streaming
-    /// override uses when its update handler asks to stop. Throws if no in-flight
-    /// request matches `id`. Routes through the existing cancellation_request on
-    /// `move_request`; the worker picks it up at the top of the visitor. Notifies
-    /// the worker.
+    /// Cancel the in-flight move if it is the one identified by `id`. A producer
+    /// cancelling its own move has no ambiguity to report: a mismatched or absent
+    /// move just means it is already gone, so this returns nullopt rather than
+    /// throwing (unlike `extend`/`close`, where a mismatch signals the worker
+    /// finished the move early). When it does cancel, returns the future that is
+    /// satisfied once the cancellation is acknowledged. Notifies the worker.
     ///
-    std::shared_future<void> cancel_move_request(const boost::uuids::uuid& id);
+    std::optional<std::shared_future<void>> cancel_move_request(const boost::uuids::uuid& id);
 
     bool is_moving() const;
     std::string describe() const;
@@ -503,10 +507,18 @@ class URArm::state_ {
                               std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor);
 
+        // Constructs a one-shot move_request to drive the arm to the given pose.
         explicit move_request(boost::uuids::uuid id,
                               std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
                               pose_sample ps);
+
+        // Constructs a one-shot move_request to drive the arm through the given trajectory sample points.
+        explicit move_request(boost::uuids::uuid id,
+                              std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+                              async_cancellation_monitor monitor,
+                              trajectory_samples samples);
+
 
         std::shared_future<void> cancel();
 

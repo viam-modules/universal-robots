@@ -444,14 +444,7 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     // worker would wait for data that never arrives. Cancel the request on the
     // way out so the worker completes and the future doesn't hang. On the normal
     // path we disarm this below.
-    auto cancel_guard = make_scope_guard([&] {
-        try {
-            current_state_->cancel_move_request(id.uuid);
-        } catch (...) {
-            // The worker already finished, failed, or was cancelled on its own,
-            // so there is nothing to cancel.
-        }
-    });
+    auto cancel_guard = make_scope_guard([&] { current_state_->cancel_move_request(id.uuid); });
 
     const bool prefer_pva = current_state_->prefer_precomputed_accelerations();
 
@@ -464,16 +457,16 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     bool use_pva = false;
     std::chrono::microseconds cumulative_time{0};
     bool halted_by_handler = false;
-    bool worker_finished_early = false;
+    bool trajectory_completed_early = false;
 
     try {
         while (true) {
-            auto batch_opt = batch_source();
-            if (!batch_opt) {
+            auto batch = batch_source();
+            if (!batch) {
                 // The producer signalled end of stream; no more batches are coming.
                 break;
             }
-            if (batch_opt->empty()) {
+            if (batch->empty()) {
                 // The dispatcher contract filters these out, but be defensive.
                 continue;
             }
@@ -485,12 +478,12 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
             // is no point handing the batch we just pulled to a request that is
             // already gone.
             if (trajectory_completion_future.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
-                worker_finished_early = true;
+                trajectory_completed_early = true;
                 break;
             }
 
             if (!decided) {
-                const auto& p0 = batch_opt->front();
+                const auto& p0 = batch->front();
                 use_pva = p0.constraints && p0.constraints->accelerations.has_value() && prefer_pva;
                 decided = true;
 
@@ -537,7 +530,7 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
             trajectory_samples converted = use_pva ? trajectory_samples{std::vector<trajectory_sample_point_pva>{}}
                                                    : trajectory_samples{std::vector<trajectory_sample_point_pv>{}};
 
-            for (const auto& p : *batch_opt) {
+            for (const auto& p : *batch) {
                 // The SDK stub already validated time-zero-first, strict monotonicity,
                 // non-empty positions, and internal velocity/acceleration arity. It does
                 // not check against this arm's six DOF nor require constraints, and the
@@ -613,7 +606,7 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
             // If the worker already finished on its own (caught by the check
             // above), the request is gone and close would throw. Skip it; the
             // get() at the end reports the outcome either way.
-            if (!worker_finished_early) {
+            if (!trajectory_completed_early) {
                 current_state_->close_move_request(id.uuid);
             }
             cancel_guard.deactivate();
@@ -623,16 +616,19 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
         // original error, cancel the request, and drop the rlock, then rethrow.
         auto original = std::current_exception();
         cancel_guard.deactivate();
-        try {
-            current_state_->cancel_move_request(id.uuid);
-        } catch (...) {
-            // The request is already gone; nothing to cancel.
-        }
+        current_state_->cancel_move_request(id.uuid);
         rlock.unlock();
+        // If the worker completed the request out from under us (fault or async
+        // cancel) between the future-ready check and the call that threw, its
+        // outcome is the real reason, not the slot-miss we caught.
+        if (trajectory_completion_future.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
+            trajectory_completion_future.get();  // rethrows the worker's error
+        }
+        // Otherwise a genuine producer-side error. Let the worker acknowledge the
+        // cancel so the next move can't race an in-flight one, then rethrow.
         try {
             trajectory_completion_future.get();
         } catch (...) {
-            // The worker reported its own error, but the original one is more useful.
         }
         std::rethrow_exception(original);
     }
@@ -652,7 +648,7 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
         return stream_outcome::k_halted_by_update_handler;
     }
 
-    if (worker_finished_early) {
+    if (trajectory_completed_early) {
         // The worker completed before we signaled end of stream. In practice that
         // only happens on a fault (connection loss, arm fault, URScript failure),
         // which get() rethrows and we propagate. A clean early completion would
@@ -896,9 +892,6 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
         return;
     }
 
-    // create a pose_sample for tool-space movement
-    const pose_sample ps{target_pose};
-
     const std::string& telemetry_path = current_state_->telemetry_output_path();
 
     auto logger = std::make_unique<RealtimeTrajectoryLogger>(
@@ -907,7 +900,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     logger->set_acceleration_limits(current_state_->get_acceleration_limits());
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
-        return current_state_->start_move_request(id, std::move(logger), std::move(async_cancellation_monitor), ps);
+        return current_state_->start_move_request(id, std::move(logger), std::move(async_cancellation_monitor), pose_sample{target_pose});
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
@@ -1219,30 +1212,9 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
     logger->set_planned_trajectory(*result->samples);
 
-    // Drive the same producer API the streamed path uses: start, extend with the
-    // whole trajectory, then close. The worker sees the close before it has
-    // ticked, lands in k_buffered, and sends STREAM_START, the points, and
-    // STREAM_END in one tick. So both paths share one code path and one set of
-    // URCL calls, differing only in that this one frames the move with
-    // STREAM_START/STREAM_END instead of the old TRAJECTORY_START.
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
-        auto future = current_state_->start_move_request(id, std::move(logger), std::move(async_cancellation_monitor));
-        // Once we claim the slot, anything that throws before close would leave
-        // the worker waiting for data that never comes and the future would never
-        // complete. Cancel the request on the way out; the worker sees it on the
-        // next tick and completes the future with an error.
-        auto cancel_guard = make_scope_guard([&] {
-            try {
-                current_state_->cancel_move_request(id.uuid);
-            } catch (...) {
-                // The worker already finished, failed, or was cancelled on its
-                // own, so there is nothing to cancel.
-            }
-        });
-        current_state_->extend_move_request(id.uuid, std::move(*result->samples));
-        current_state_->close_move_request(id.uuid);
-        cancel_guard.deactivate();
-        return future;
+        return current_state_->start_move_request(
+            id, std::move(logger), std::move(async_cancellation_monitor), std::move(*result->samples));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact

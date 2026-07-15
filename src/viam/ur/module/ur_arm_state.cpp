@@ -560,14 +560,14 @@ void URArm::state_::close_move_request(const boost::uuids::uuid& id) {
     worker_wakeup_cv_.notify_one();
 }
 
-std::shared_future<void> URArm::state_::cancel_move_request(const boost::uuids::uuid& id) {
+std::optional<std::shared_future<void>> URArm::state_::cancel_move_request(const boost::uuids::uuid& id) {
     const std::lock_guard lock{mutex_};
     if (!move_request_ || move_request_->id != id) {
-        throw std::runtime_error("cancel_move_request: no in-flight move with the given id");
+        return std::nullopt;
     }
     auto future = move_request_->cancel();
     worker_wakeup_cv_.notify_one();
-    return future;
+    return std::make_optional(std::move(future));
 }
 
 template <typename T>
@@ -608,12 +608,20 @@ URArm::state_::move_request::move_request(boost::uuids::uuid id,
         [](const auto& cmd) {
             using T = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<T, sample_stream>) {
-                // A streaming move_request must start out freshly opened: phase
-                // k_open, nothing pending, no points written. The producer adds
-                // points later with state_::extend_move_request once it owns the
-                // slot.
-                if (cmd.current_phase != sample_stream::phase::k_open || cmd.pending.has_value() || cmd.points_written != 0) {
-                    throw std::invalid_argument("sample_stream must be freshly opened when handed to move_request");
+                // A sample_stream must arrive in one of its two valid initial shapes,
+                // with nothing written yet: freshly opened for streaming (k_open,
+                // nothing pending; the producer adds points later via
+                // state_::extend_move_request), or a buffered one-shot (k_buffered
+                // with the whole trajectory already pending).
+                const bool freshly_open = (cmd.current_phase == sample_stream::phase::k_open) && !cmd.pending.has_value();
+                const bool buffered_one_shot = (cmd.current_phase == sample_stream::phase::k_buffered) && cmd.pending.has_value();
+                if (cmd.points_written != 0 || !(freshly_open || buffered_one_shot)) {
+                    throw std::invalid_argument("sample_stream must be freshly opened or a buffered one-shot when handed to move_request");
+                }
+
+                // A buffered one-shot must actually carry points; an empty trajectory is not a move.
+                if (buffered_one_shot && std::visit([](const auto& v) { return v.empty(); }, *cmd.pending)) {
+                    throw std::invalid_argument("no trajectory samples provided to move request");
                 }
             } else if constexpr (std::is_same_v<T, std::optional<pose_sample>>) {
                 if (!cmd.has_value()) {
@@ -635,6 +643,15 @@ URArm::state_::move_request::move_request(boost::uuids::uuid id,
                                           pose_sample ps)
     : move_request(
           std::move(id), std::move(trajectory_logger), std::move(monitor), move_command_data{std::optional<pose_sample>{std::move(ps)}}) {}
+
+URArm::state_::move_request::move_request(boost::uuids::uuid id,
+                                          std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+                                          async_cancellation_monitor monitor,
+                                          trajectory_samples samples)
+    : move_request(std::move(id),
+                   std::move(trajectory_logger),
+                   std::move(monitor),
+                   move_command_data{sample_stream{sample_stream::phase::k_buffered, std::move(samples)}}) {}
 
 std::shared_future<void> URArm::state_::move_request::cancel() {
     if (!cancellation_request) {
