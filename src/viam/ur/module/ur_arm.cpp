@@ -584,18 +584,19 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                                 << " handler_ok=" << handler_ok;
 
             if (!handler_ok) {
-                // SDK framework asked us to stop. Dismantle the slot
-                // through the cancellation_request path; the worker
-                // observes it on its next tick and completes the future
-                // with the standard "trajectory cancelled" error which
-                // will surface to the SDK as a terminal status.
+                // The update handler asked us to stop. On the server side this
+                // is the only way it can say so: bidi gRPC has no half-close of
+                // the receive direction, so the SDK's handler reports false only
+                // when the RPC is being torn down (client cancel or transport
+                // death). That is the same condition as async cancellation, so
+                // we treat it the same way -- route through the cancellation
+                // path, which stops the arm on the worker's next tick and
+                // completes the future with a cancellation error.
                 //
-                // TODO(am): the plan calls for `close_move_request` here
-                // (best-effort, tolerating a stale-id throw). I've chosen
-                // the cleaner option of just cancelling — the cancel
-                // alone is sufficient to dismantle the slot, and the
-                // close-after-cancel race window is awkward. Flagged
-                // explicitly for review before this leaves the PoC.
+                // The halt is still reported honestly through the return value
+                // (see the tail) rather than relying on the server stub
+                // discarding it, in case the outcome ever becomes meaningful at
+                // the server layer.
                 current_state_->cancel_move_request(id.uuid);
                 cancel_guard.deactivate();
                 halted_by_handler = true;
@@ -639,9 +640,31 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     // worker is free of config_mutex_ contention. The slot is owned by
     // state_; we will not touch current_state_ again.
     rlock.unlock();
-    trajectory_completion_future.get();
 
-    return halted_by_handler ? stream_outcome::k_halted_by_update_handler : stream_outcome::k_completed;
+    if (halted_by_handler) {
+        // We cancelled at the handler's request; the future completing with a
+        // cancellation error is the expected consequence of our own cancel, not
+        // a fault to surface. Swallow it and report the honest outcome.
+        try {
+            trajectory_completion_future.get();
+        } catch (...) {
+        }
+        return stream_outcome::k_halted_by_update_handler;
+    }
+
+    if (worker_finished_early) {
+        // The worker completed before we signaled end-of-stream. In practice
+        // this only happens via a fault (connection loss, arm fault, URScript
+        // failure), which get() rethrows here and we propagate. A successful
+        // early completion would mean the arm finished a motion we never told it
+        // was done with -- our model of the arm state is wrong and the client's
+        // trajectory did not fully execute. Surface that, don't claim success.
+        trajectory_completion_future.get();  // rethrows the expected fault
+        throw std::runtime_error("arm reported trajectory completion before end-of-stream");
+    }
+
+    trajectory_completion_future.get();
+    return stream_outcome::k_completed;
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {
