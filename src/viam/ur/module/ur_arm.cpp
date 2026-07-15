@@ -435,10 +435,8 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     VIAM_SDK_LOG(debug) << "move_streamed: start id " << id.uuid;
     const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move_streamed: end id " << id.uuid; });
 
-    // PoC posture: streaming runs without a RealtimeTrajectoryLogger. The
-    // logger's `set_planned_trajectory` model fits a unary, materialized
-    // trajectory; an open-ended stream has no analog. Diagnostics for the
-    // streamed path are a post-PoC concern.
+    // TODO(RSDK-14267): realtime telemetry is not yet implemented for streamed
+    // trajectories, so streaming runs without a RealtimeTrajectoryLogger.
     auto trajectory_completion_future =
         current_state_->start_move_request(id, /* trajectory_logger */ nullptr, std::move(async_cancellation_monitor));
 
