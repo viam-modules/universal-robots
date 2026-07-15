@@ -15,6 +15,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -272,6 +273,68 @@ auto make_scope_guard(Callable&& cleanup) {
     return guard{std::forward<Callable>(cleanup)};
 }
 
+// Converts a stream of SDK trajectory_point batches into URCL spline-point
+// batches. The PV-vs-PVA choice is fixed from the first point and held for the
+// life of the stream; per-point timesteps are differenced out of the
+// stream-global cumulative time as points are converted.
+class trajectory_point_converter {
+   public:
+    trajectory_point_converter(const URArm::trajectory_point& first, bool prefer_pva)
+        : use_pva_{first.constraints && first.constraints->accelerations.has_value() && prefer_pva} {}
+
+    trajectory_samples convert(const std::vector<URArm::trajectory_point>& batch) {
+        auto samples = use_pva_ ? trajectory_samples{std::vector<trajectory_sample_point_pva>{}}
+                                : trajectory_samples{std::vector<trajectory_sample_point_pv>{}};
+        std::visit(
+            [&](auto& points) {
+                using point_type = typename std::decay_t<decltype(points)>::value_type;
+                points.reserve(batch.size());
+                for (const auto& p : batch) {
+                    points.push_back(to_spline_point_<point_type>(p));
+                }
+            },
+            samples);
+        return samples;
+    }
+
+   private:
+    // Copies `src` into `dst`, converting each joint value from degrees to radians.
+    // `dst` fixes the expected joint count; a size mismatch is a client input error.
+    static void to_radians_into_(urcl::vector6d_t& dst, const std::vector<double>& src, const char* field) {
+        if (src.size() != dst.size()) {
+            throw std::invalid_argument(std::string("trajectory point ") + field + " has the wrong number of joints");
+        }
+        std::ranges::transform(src, dst.begin(), [](double deg) { return degrees_to_radians(deg); });
+    }
+
+    // The trajectory_point contract carries joint positions, velocities, and
+    // accelerations in degrees (matching the unary move_through_joint_positions
+    // API); URCL wants radians. The SDK stub already validated time ordering and
+    // per-point arity, so here we only guard DOF and the presence of the
+    // constraints this arm requires.
+    template <typename Point>
+    Point to_spline_point_(const URArm::trajectory_point& p) {
+        if (!p.constraints) {
+            throw std::invalid_argument("trajectory point missing constraints (velocities required)");
+        }
+        Point pt;
+        pt.timestep = std::chrono::duration<float>(p.time - cumulative_time_).count();
+        cumulative_time_ = p.time;
+        to_radians_into_(pt.p, p.positions, "positions");
+        to_radians_into_(pt.v, p.constraints->velocities, "velocities");
+        if constexpr (requires { pt.a; }) {
+            if (!p.constraints->accelerations) {
+                throw std::invalid_argument("PVA stream point missing accelerations");
+            }
+            to_radians_into_(pt.a, *p.constraints->accelerations, "accelerations");
+        }
+        return pt;
+    }
+
+    bool use_pva_;
+    std::chrono::microseconds cumulative_time_{0};
+};
+
 }  // namespace
 
 std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const boost::uuids::uuid& move_id) {
@@ -438,7 +501,7 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     // TODO(RSDK-14267): realtime telemetry is not yet implemented for streamed
     // trajectories, so streaming runs without a RealtimeTrajectoryLogger.
     auto trajectory_completion_future =
-        current_state_->start_move_request(id, /* trajectory_logger */ nullptr, std::move(async_cancellation_monitor));
+        current_state_->start_move_request(id, nullptr, std::move(async_cancellation_monitor));
 
     // If anything throws after we claim the slot but before we close it, the
     // worker would wait for data that never arrives. Cancel the request on the
@@ -448,24 +511,14 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
 
     const bool prefer_pva = current_state_->prefer_precomputed_accelerations();
 
-    // Loop state. We choose PV or PVA from the first point of the first
-    // non-empty batch and hold that choice for the whole stream. Point times are
-    // measured from the start of the stream and strictly increase, with the
-    // first point at zero. URCL wants a per-point duration instead, so we
-    // subtract the previous time as we go.
-    bool decided = false;
-    bool use_pva = false;
-    std::chrono::microseconds cumulative_time{0};
+    // The converter is created from the first non-empty batch's first point; it
+    // fixes the PV-vs-PVA choice and carries cumulative time for the whole stream.
+    std::optional<trajectory_point_converter> converter;
     bool halted_by_handler = false;
     bool trajectory_completed_early = false;
 
     try {
-        while (true) {
-            auto batch = batch_source();
-            if (!batch) {
-                // The producer signalled end of stream; no more batches are coming.
-                break;
-            }
+        while (const auto batch = batch_source()) {
             if (batch->empty()) {
                 // The dispatcher contract filters these out, but be defensive.
                 continue;
@@ -482,10 +535,10 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                 break;
             }
 
-            if (!decided) {
+            if (!converter) {
+                // First non-empty batch: run the start-pose safety gate, then fix
+                // the PV-vs-PVA choice by constructing the converter.
                 const auto& p0 = batch->front();
-                use_pva = p0.constraints && p0.constraints->accelerations.has_value() && prefer_pva;
-                decided = true;
 
                 // Start-pose safety check, the streamed analog of the unary path's
                 // move validator. The stream's first point is the trajectory's
@@ -495,14 +548,17 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                 // planning with the measured position; streaming is not, so we
                 // require the threshold rather than skip the check when it is unset.
                 if (const auto& threshold = current_state_->get_reject_move_request_threshold_rad()) {
-                    if (p0.positions.size() != 6) {
+                    const auto current = get_joint_positions_rad_(rlock);
+                    if (p0.positions.size() != current.size()) {
                         throw std::invalid_argument("trajectory point joint dimensionality mismatch");
                     }
-                    const auto current = get_joint_positions_rad_(rlock);
-                    double max_diff = 0.0;
-                    for (std::size_t i = 0; i < 6; ++i) {
-                        max_diff = std::max(max_diff, std::abs(degrees_to_radians(p0.positions[i]) - current[i]));
-                    }
+                    const auto max_diff = std::transform_reduce(
+                        p0.positions.begin(),
+                        p0.positions.end(),
+                        current.begin(),
+                        0.0,
+                        [](auto a, auto b) { return std::max(a, b); },
+                        [](auto commanded_deg, auto actual_rad) { return std::abs(degrees_to_radians(commanded_deg) - actual_rad); });
                     if (max_diff > *threshold) {
                         std::stringstream err_string;
                         err_string << "rejecting streamed move: first trajectory position [(";
@@ -525,64 +581,13 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                 // position. Determine whether that slop needs handling (e.g.
                 // substituting the measured position for the first point) once
                 // URScript's spline-start behavior is characterized.
+
+                converter.emplace(p0, prefer_pva);
             }
 
-            trajectory_samples converted = use_pva ? trajectory_samples{std::vector<trajectory_sample_point_pva>{}}
-                                                   : trajectory_samples{std::vector<trajectory_sample_point_pv>{}};
+            current_state_->extend_move_request(id.uuid, converter->convert(*batch));
 
-            for (const auto& p : *batch) {
-                // The SDK stub already validated time-zero-first, strict monotonicity,
-                // non-empty positions, and internal velocity/acceleration arity. It does
-                // not check against this arm's six DOF nor require constraints, and the
-                // loop below indexes [0, 6) directly, so we still guard those two.
-                if (!p.constraints) {
-                    throw std::invalid_argument("trajectory point missing constraints (velocities required)");
-                }
-                if (p.positions.size() != 6 || p.constraints->velocities.size() != 6) {
-                    throw std::invalid_argument("trajectory point joint dimensionality mismatch");
-                }
-
-                // trajectory_point::time is a stream-global microsecond offset; URCL wants
-                // a per-point timestep in seconds. Difference against the running cumulative
-                // and convert to a floating-point second count.
-                const float timestep = std::chrono::duration<float>(p.time - cumulative_time).count();
-                cumulative_time = p.time;
-
-                std::visit(
-                    [&](auto& vec) {
-                        using V = std::decay_t<decltype(vec)>;
-                        using Point = typename V::value_type;
-                        Point pt;
-                        // The trajectory_point contract carries joint positions /
-                        // velocities / accelerations in degrees, matching the
-                        // existing unary `move_through_joint_positions` API. URCL
-                        // expects radians on its trajectory socket, so we convert
-                        // per-component as we materialize each spline point.
-                        for (std::size_t i = 0; i < 6; ++i) {
-                            pt.p[i] = degrees_to_radians(p.positions[i]);
-                            pt.v[i] = degrees_to_radians(p.constraints->velocities[i]);
-                        }
-                        pt.timestep = timestep;
-                        if constexpr (requires { pt.a; }) {
-                            if (!p.constraints->accelerations) {
-                                throw std::invalid_argument("PVA stream point missing accelerations");
-                            }
-                            if (p.constraints->accelerations->size() != 6) {
-                                throw std::invalid_argument("PVA stream point acceleration joint dimensionality mismatch");
-                            }
-                            for (std::size_t i = 0; i < 6; ++i) {
-                                pt.a[i] = degrees_to_radians((*p.constraints->accelerations)[i]);
-                            }
-                        }
-                        vec.push_back(pt);
-                    },
-                    converted);
-            }
-
-            current_state_->extend_move_request(id.uuid, std::move(converted));
-            const bool handler_ok = update_handler(trajectory_update{});
-
-            if (!handler_ok) {
+            if (!update_handler({})) {
                 // The update handler asked us to stop. On the server side this is
                 // the only way it can say so: bidi gRPC has no way to half-close
                 // just the receive direction, so the SDK's handler returns false
