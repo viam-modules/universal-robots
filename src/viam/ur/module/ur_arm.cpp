@@ -540,6 +540,13 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                         throw std::invalid_argument(err_string.str());
                     }
                 }
+
+                // TODO: passing this check admits up to `threshold` of slop between
+                // the commanded first position and the arm's actual position, which
+                // the unary path avoids by seeding the trajectory with the measured
+                // position. Determine whether that slop needs handling (e.g.
+                // substituting the measured position for the first point) once
+                // URScript's spline-start behavior is characterized.
             }
 
             trajectory_samples converted = use_pva ? trajectory_samples{std::vector<trajectory_sample_point_pva>{}}
