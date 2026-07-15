@@ -466,28 +466,15 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     bool halted_by_handler = false;
     bool worker_finished_early = false;
 
-    // XXX ACM debug-only: timing instrumentation. Each loop iteration logs
-    // the latency of (a) batch_source, (b) the per-point convert loop,
-    // (c) extend_move_request, and (d) update_handler. Strip before PR.
-    std::size_t batch_seq = 0;
-    using ms_d = std::chrono::duration<double, std::milli>;
-    const auto to_ms = [](auto d) { return std::chrono::duration_cast<ms_d>(d).count(); };
-
     try {
         while (true) {
-            const auto t_loop_top = std::chrono::steady_clock::now();
             auto batch_opt = batch_source();
-            const auto t_after_source = std::chrono::steady_clock::now();
             if (!batch_opt) {
                 // The producer signalled end of stream; no more batches are coming.
-                VIAM_SDK_LOG(debug) << "XXX ACM move_streamed: producer EOS " << id.uuid << " source=" << to_ms(t_after_source - t_loop_top)
-                                    << "ms";
                 break;
             }
             if (batch_opt->empty()) {
                 // The dispatcher contract filters these out, but be defensive.
-                VIAM_SDK_LOG(debug) << "XXX ACM move_streamed: batch_opt is empty " << id.uuid
-                                    << " source=" << to_ms(t_after_source - t_loop_top) << "ms";
                 continue;
             }
 
@@ -501,8 +488,6 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                 worker_finished_early = true;
                 break;
             }
-
-            ++batch_seq;
 
             if (!decided) {
                 const auto& p0 = batch_opt->front();
@@ -599,19 +584,8 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                     converted);
             }
 
-            const auto extend_n = std::visit([](const auto& v) { return v.size(); }, converted);
-            const auto t_after_convert = std::chrono::steady_clock::now();
             current_state_->extend_move_request(id.uuid, std::move(converted));
-            const auto t_after_extend = std::chrono::steady_clock::now();
             const bool handler_ok = update_handler(trajectory_update{});
-            const auto t_after_sink = std::chrono::steady_clock::now();
-
-            VIAM_SDK_LOG(debug) << "XXX ACM move_streamed 2 batch=" << batch_seq << " points=" << extend_n
-                                << " source=" << to_ms(t_after_source - t_loop_top) << "ms"
-                                << " convert=" << to_ms(t_after_convert - t_after_source) << "ms"
-                                << " extend=" << to_ms(t_after_extend - t_after_convert) << "ms"
-                                << " sink=" << to_ms(t_after_sink - t_after_extend) << "ms"
-                                << " handler_ok=" << handler_ok;
 
             if (!handler_ok) {
                 // The update handler asked us to stop. On the server side this is
