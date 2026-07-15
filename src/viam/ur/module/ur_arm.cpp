@@ -567,11 +567,6 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                 // trajectory_point::time is a stream-global microsecond offset; URCL wants
                 // a per-point timestep in seconds. Difference against the running cumulative
                 // and convert to a floating-point second count.
-                //
-                // TODO(acm): the interface mandates the first point at time zero, so it yields a
-                // zero-duration leading timestep here. The offline/unary path instead drops the
-                // t=0 sample (the trajex sampler `drop(1)` below). Reconcile this divergence, and
-                // confirm what URCL wants for a leading spline point, before streaming ships.
                 const float timestep = std::chrono::duration<float>(p.time - cumulative_time).count();
                 cumulative_time = p.time;
 
@@ -1074,6 +1069,10 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 std::visit(
                     [&](auto& dest) {
                         using PointType = typename std::decay_t<decltype(dest)>::value_type;
+                        // TODO: investigate whether dropping the first sample is still correct
+                        // now that the trajectory is seeded with the arm's measured position.
+                        // It also predates PVA support, and dropping a t=0 point that carries a
+                        // departure acceleration is very likely wrong.
                         for (const auto& sample : traj.samples(sampler) | std::views::drop(1)) {
                             const double current_time = sample.time.count();
                             const float timestep = boost::numeric_cast<float>(current_time - previous_time);
