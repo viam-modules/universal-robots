@@ -576,7 +576,8 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                     }
 
                     if (!converter) {
-                        check_streamed_start_pose_(batch->front(), rlock);
+                        // TODO(RSDK-14274): Re-enable this check when it doesn't break move_to_joint_positions.
+                        // check_streamed_start_pose_(batch->front(), rlock);
                         converter.emplace(batch->front(), current_state_->prefer_precomputed_accelerations());
                     }
 
