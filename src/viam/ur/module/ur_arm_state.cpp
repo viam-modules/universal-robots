@@ -488,12 +488,7 @@ std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
     if (!move_request_) {
         return std::nullopt;
     }
-    auto future = move_request_->cancel();
-    // Wake the worker so it picks up the cancellation_request slot on its
-    // next iteration rather than waiting out the remainder of its current
-    // tick interval.
-    worker_wakeup_cv_.notify_one();
-    return std::make_optional(std::move(future));
+    return std::make_optional(move_request_->cancel());
 }
 
 bool URArm::state_::extend_move_request(const boost::uuids::uuid& id, trajectory_samples batch) {
@@ -533,7 +528,6 @@ bool URArm::state_::extend_move_request(const boost::uuids::uuid& id, trajectory
             *stream->pending);
     }
 
-    worker_wakeup_cv_.notify_one();
     return true;
 }
 
@@ -562,7 +556,6 @@ bool URArm::state_::close_move_request(const boost::uuids::uuid& id) {
             throw std::runtime_error("close_move_request: stream has already been closed");
     }
 
-    worker_wakeup_cv_.notify_one();
     return true;
 }
 
@@ -571,9 +564,7 @@ std::optional<std::shared_future<void>> URArm::state_::cancel_move_request(const
     if (!move_request_ || move_request_->id != id) {
         return std::nullopt;
     }
-    auto future = move_request_->cancel();
-    worker_wakeup_cv_.notify_one();
-    return std::make_optional(std::move(future));
+    return std::make_optional(move_request_->cancel());
 }
 
 template <typename T>
@@ -818,13 +809,7 @@ void URArm::state_::run_() {
         std::unique_lock lock(mutex_);
 
         const auto wait_start = std::chrono::steady_clock::now();
-        if (worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] {
-                // TODO: this predicate is only true on shutdown, so the notify_one()
-                // calls in the move mutators don't wake the worker early; it still
-                // ticks at the timeout. Track new work here or drop those notifies.
-                // The shutdown notify must stay.
-                return shutdown_requested_;
-            })) {
+        if (worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] { return shutdown_requested_; })) {
             VIAM_SDK_LOG(debug) << "worker thread signaled to terminate";
             break;
         }

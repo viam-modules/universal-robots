@@ -655,9 +655,5 @@ std::future<void> URArm::state_::start_move_request(URArm::move_id id, Args&&...
     if (move_request_) {
         throw std::runtime_error("an actuation is already in progress");
     }
-    auto future = move_request_.emplace(std::move(id).uuid, std::forward<Args>(args)...).completion.get_future();
-    // Wake the worker so it picks up this request on its next iteration
-    // rather than waiting out the remainder of its current tick interval.
-    worker_wakeup_cv_.notify_one();
-    return future;
+    return move_request_.emplace(std::move(id).uuid, std::forward<Args>(args)...).completion.get_future();
 }
