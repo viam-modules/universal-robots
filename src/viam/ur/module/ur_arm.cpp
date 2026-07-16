@@ -512,7 +512,7 @@ void URArm::check_streamed_start_pose_(const trajectory_point& first, const std:
         throw std::invalid_argument(err_string.str());
     }
 
-    // TODO: passing this check admits up to `threshold` of slop between the
+    // TODO(RSDK-14273): passing this check admits up to `threshold` of slop between the
     // commanded first position and the arm's actual position, which the unary path
     // avoids by seeding the trajectory with the measured position. Determine
     // whether that slop needs handling (e.g. substituting the measured position for
@@ -540,7 +540,9 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move_streamed: end id " << id.uuid; });
 
     // Locked phase: claim the slot and drive the stream. The read lock is moved in
-    // here so it releases when this returns, before we wait on completion.
+    // here so it releases when this returns, before we wait on completion. We hold
+    // it across the blocking batch_source() waits to keep current_state_ valid; a
+    // stalled client is broken out by gRPC context cancellation / RPC teardown.
     auto result = [&, rlock = std::move(rlock)]() -> loop_result {
         // Capture the gRPC server context's cancellation status for the worker
         // visitor's top-of-tick async-cancel check. Same idiom as move_joint_space_.
@@ -1012,7 +1014,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 std::visit(
                     [&](auto& dest) {
                         using PointType = typename std::decay_t<decltype(dest)>::value_type;
-                        // TODO: investigate whether dropping the first sample is still correct
+                        // TODO(RSDK-14268): investigate whether dropping the first sample is still correct
                         // now that the trajectory is seeded with the arm's measured position.
                         // It also predates PVA support, and dropping a t=0 point that carries a
                         // departure acceleration is very likely wrong.
