@@ -71,11 +71,11 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 // Joint-space streaming. The phase drives what we send to URCL;
                 // see `sample_stream` for what each phase means. The phase only
                 // moves forward:
-                //   from k_open, first points pending: send STREAM_START, go to k_streaming.
-                //   from k_open, on close: go to k_buffered.
-                //   from k_streaming, on close: go to k_draining.
-                //   from k_buffered: send START, drain, and END in one tick, go to k_ended.
-                //   from k_draining, once drained: send STREAM_END, go to k_ended.
+                //   from `k_open`, first points pending: send STREAM_START, go to `k_streaming`.
+                //   from `k_open`, on close: go to `k_buffered`.
+                //   from `k_streaming`, on close: go to `k_draining`.
+                //   from `k_buffered`: send START, drain, and END in one tick, go to `k_ended`.
+                //   from `k_draining`, once drained: send STREAM_END, go to `k_ended`.
 
                 const auto emit_realtime_sample = [&] {
                     state.move_request_->write_realtime_sample(
@@ -88,8 +88,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                             : std::nullopt);
                 };
 
-                // Returns nullopt on success, or a connection-lost event on
-                // URCL write failure. On failure the move_request is
+                // Returns `nullopt` on success, or a connection-lost event on
+                // URCL write failure. On failure the `move_request` is
                 // completed with an error and the slot is cleared.
                 const auto drain_pending = [&]() -> std::optional<event_variant_> {
                     if (!cmd.pending) {
@@ -145,7 +145,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 }
                 if (cancel_pending) {
                     // Cancel already issued; just heartbeat realtime samples
-                    // until URScript fires the trajectory_done_callback.
+                    // until URScript fires the `trajectory_done_callback`.
                     emit_realtime_sample();
                     return std::nullopt;
                 }
@@ -224,7 +224,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                             return std::nullopt;
                         }
                         VIAM_SDK_LOG(debug) << "URArm sending stream end";
-                        // TODO: points_written can exceed int on a long stream; this narrowing is silent.
+                        // TODO: `points_written` can exceed int on a long stream; this narrowing is silent.
                         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                                 urcl::control::TrajectoryControlMessage::TRAJECTORY_STREAM_END,
                                 static_cast<int>(cmd.points_written),
@@ -240,7 +240,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     case sample_stream::phase::k_ended: {
                         // STREAM_END on the wire; URScript is finishing.
                         // Emit realtime samples while we wait for the
-                        // trajectory_done_callback to fire.
+                        // `trajectory_done_callback` to fire.
                         emit_realtime_sample();
                         return std::nullopt;
                     }

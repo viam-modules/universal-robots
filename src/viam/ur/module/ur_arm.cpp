@@ -274,7 +274,7 @@ auto make_scope_guard(Callable&& cleanup) {
     return guard{std::forward<Callable>(cleanup)};
 }
 
-// Converts a stream of SDK trajectory_point batches into URCL spline-point
+// Converts a stream of SDK `trajectory_point` batches into URCL spline-point
 // batches. The PV-vs-PVA choice is fixed from the first point and held for the
 // life of the stream; per-point timesteps are differenced out of the
 // stream-global cumulative time as points are converted.
@@ -308,8 +308,8 @@ class trajectory_point_converter {
         std::ranges::transform(src, dst.begin(), [](double deg) { return degrees_to_radians(deg); });
     }
 
-    // The trajectory_point contract carries joint positions, velocities, and
-    // accelerations in degrees (matching the unary move_through_joint_positions
+    // The `trajectory_point` contract carries joint positions, velocities, and
+    // accelerations in degrees (matching the unary `move_through_joint_positions`
     // API); URCL wants radians. The SDK stub already validated time ordering and
     // per-point arity, so here we only guard DOF and the presence of the
     // constraints this arm requires.
@@ -541,11 +541,11 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
 
     // Locked phase: claim the slot and drive the stream. The read lock is moved in
     // here so it releases when this returns, before we wait on completion. We hold
-    // it across the blocking batch_source() waits to keep current_state_ valid; a
+    // it across the blocking `batch_source()` waits to keep `current_state_` valid; a
     // stalled client is broken out by gRPC context cancellation / RPC teardown.
     auto result = [&, rlock = std::move(rlock)]() -> loop_result {
         // Capture the gRPC server context's cancellation status for the worker
-        // visitor's top-of-tick async-cancel check. Same idiom as move_joint_space_.
+        // visitor's top-of-tick async-cancel check. Same idiom as `move_joint_space_`.
         auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
             if (!observer) {
                 return false;
@@ -554,7 +554,7 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
         };
 
         // TODO(RSDK-14267): realtime telemetry is not yet implemented for streamed
-        // trajectories, so streaming runs without a RealtimeTrajectoryLogger.
+        // trajectories, so streaming runs without a `RealtimeTrajectoryLogger`.
         auto future = current_state_->start_move_request(id, nullptr, std::move(async_cancellation_monitor));
 
         try {
@@ -581,7 +581,7 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                         converter.emplace(batch->front(), current_state_->prefer_precomputed_accelerations());
                     }
 
-                    // extend/close return false when our move is no longer the active
+                    // `extend`/`close` return false when our move is no longer the active
                     // one -- the worker finished it out from under us.
                     if (!current_state_->extend_move_request(id.uuid, converter->convert(*batch))) {
                         return exit_reason::k_worker_finished_early;
@@ -638,13 +638,13 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
             return stream_outcome::k_halted_by_update_handler;
         case exit_reason::k_worker_finished_early:
             // The worker completed before end-of-stream. In practice a fault, which
-            // get() rethrows. A clean completion here would mean the arm finished a
+            // `get()` rethrows. A clean completion here would mean the arm finished a
             // motion we never told it was done with; surface that, don't hide it.
             result.future.get();
             throw std::runtime_error("arm reported trajectory completion before end-of-stream");
     }
 
-    // Unreachable: the switch covers every exit_reason.
+    // Unreachable: the switch covers every `exit_reason`.
     throw std::logic_error("move_through_joint_positions_streamed: unhandled exit_reason");
 }
 

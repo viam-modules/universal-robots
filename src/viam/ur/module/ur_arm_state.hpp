@@ -103,7 +103,7 @@ class URArm::state_ {
     /// Allocate a `move_id` (UUID + epoch snapshot) for a new move. The caller plumbs
     /// the result through whatever planning happens before `start_move_request`, then
     /// presents it as proof at start time. The generation snapshot is validated then;
-    /// see start_move_request for the semantics.
+    /// see `start_move_request` for the semantics.
     ///
     URArm::move_id allocate_move_id() const;
 
@@ -125,7 +125,7 @@ class URArm::state_ {
     /// Append a batch of trajectory samples to the open stream identified by `id`,
     /// returning whether the move is still live. Returns false when the move named
     /// by `id` is no longer active (the worker finished it, or a newer move has
-    /// claimed the slot); this is the same "not my move" case cancel treats as a
+    /// claimed the slot); this is the same "not my move" case `cancel` treats as a
     /// no-op. The batch must be the same kind (PV or PVA) as the samples already
     /// pending, or, on the first extend, it sets which kind the stream uses. Throws
     /// only on genuine misuse of a live move: extending past `k_streaming`, or a
@@ -136,7 +136,7 @@ class URArm::state_ {
     ///
     /// Signal end-of-stream for the move identified by `id`, returning whether the
     /// move is still live. Returns false when the move named by `id` is no longer
-    /// active, like extend_move_request. Otherwise transitions `k_open` to
+    /// active, like `extend_move_request`. Otherwise transitions `k_open` to
     /// `k_buffered` or `k_streaming` to `k_draining`, and throws only if the stream
     /// was already closed (`k_buffered` / `k_draining` / `k_ended`). Notifies the
     /// worker.
@@ -146,7 +146,7 @@ class URArm::state_ {
     ///
     /// Cancel the in-flight move if it is the one identified by `id`. A producer
     /// cancelling its own move has no ambiguity to report: a mismatched or absent
-    /// move just means it is already gone, so this returns nullopt rather than
+    /// move just means it is already gone, so this returns `nullopt` rather than
     /// throwing (unlike `extend`/`close`, where a mismatch signals the worker
     /// finished the move early). When it does cancel, returns the future that is
     /// satisfied once the cancellation is acknowledged. Notifies the worker.
@@ -446,9 +446,9 @@ class URArm::state_ {
     };
 
     // Shared between the producer and the worker to track an open-ended
-    // trajectory stream. A default-constructed one is freshly opened: k_open,
+    // trajectory stream. A default-constructed one is freshly opened: `k_open`,
     // nothing pending, no points written. It only changes through the mutators on
-    // state_, all of which run under `state_::mutex_`. The phase only ever moves
+    // `state_`, all of which run under `state_::mutex_`. The phase only ever moves
     // forward; see `state_controlled_::handle_move_request` for the transitions
     // and the URCL traffic each one drives.
     struct sample_stream {
@@ -465,7 +465,7 @@ class URArm::state_ {
             // Producer has closed and STREAM_START has been sent. Worker is
             // draining `pending`; STREAM_END will be sent when it empties.
             k_draining,
-            // STREAM_END has been sent. Awaiting trajectory_done_callback_.
+            // STREAM_END has been sent. Awaiting `trajectory_done_callback_`.
             k_ended,
         };
 
@@ -503,7 +503,7 @@ class URArm::state_ {
                               async_cancellation_monitor monitor,
                               move_command_data&& move_command);
 
-        // Construct a streaming move_request in the freshly-opened state:
+        // Construct a streaming `move_request` in the freshly-opened state:
         // a default-constructed `sample_stream`, no batches yet. The producer
         // subsequently drives the request via `state_::extend_move_request` /
         // `close_move_request` / `cancel_move_request(uuid)`.
@@ -511,13 +511,13 @@ class URArm::state_ {
                               std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor);
 
-        // Constructs a one-shot move_request to drive the arm to the given pose.
+        // Constructs a one-shot `move_request` to drive the arm to the given pose.
         explicit move_request(boost::uuids::uuid id,
                               std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
                               pose_sample ps);
 
-        // Constructs a one-shot move_request to drive the arm through the given trajectory sample points.
+        // Constructs a one-shot `move_request` to drive the arm through the given trajectory sample points.
         explicit move_request(boost::uuids::uuid id,
                               std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,

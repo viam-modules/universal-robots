@@ -454,7 +454,7 @@ double URArm::state_::get_trajectory_sampling_freq_hz() const {
 }
 
 URArm::move_id URArm::state_::allocate_move_id() const {
-    // We snapshot the generation now. The uuid is freshly generated and has no
+    // We snapshot the `generation` now. The `uuid` is freshly generated and has no
     // ordering relationship to any other allocation.
     static thread_local boost::uuids::random_generator generator;
     return {generator(), move_epoch_.load(std::memory_order_acquire)};
@@ -470,7 +470,7 @@ bool URArm::state_::is_moving() const {
             using T = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<T, sample_stream>) {
                 // We only count as moving once URCL has been told to start,
-                // meaning STREAM_START has been sent. In k_open or k_buffered the
+                // meaning STREAM_START has been sent. In `k_open` or `k_buffered` the
                 // points have not reached the controller yet, so we don't claim
                 // the arm is moving.
                 return cmd.current_phase != sample_stream::phase::k_open && cmd.current_phase != sample_stream::phase::k_buffered;
@@ -509,7 +509,7 @@ bool URArm::state_::extend_move_request(const boost::uuids::uuid& id, trajectory
         throw std::runtime_error("extend_move_request: stream has been closed and cannot be extended");
     }
 
-    // Append the incoming batch to pending. The first extend picks PV or PVA by
+    // Append the incoming batch to `pending`. The first extend picks PV or PVA by
     // which variant it holds, and later extends must match. The producer already
     // rejects a client mismatch as a protocol error, so a mismatch here would be
     // a bug on our side, and we treat it as one.
@@ -534,7 +534,7 @@ bool URArm::state_::extend_move_request(const boost::uuids::uuid& id, trajectory
 bool URArm::state_::close_move_request(const boost::uuids::uuid& id) {
     const std::lock_guard lock{mutex_};
     if (!move_request_ || move_request_->id != id) {
-        // See extend_move_request: our move is gone, so report it rather than throw.
+        // See `extend_move_request`: our move is gone, so report it rather than throw.
         return false;
     }
 
@@ -605,10 +605,10 @@ URArm::state_::move_request::move_request(boost::uuids::uuid id,
         [](const auto& cmd) {
             using T = std::decay_t<decltype(cmd)>;
             if constexpr (std::is_same_v<T, sample_stream>) {
-                // A sample_stream must arrive in one of its two valid initial shapes,
-                // with nothing written yet: freshly opened for streaming (k_open,
+                // A `sample_stream` must arrive in one of its two valid initial shapes,
+                // with nothing written yet: freshly opened for streaming (`k_open`,
                 // nothing pending; the producer adds points later via
-                // state_::extend_move_request), or a buffered one-shot (k_buffered
+                // `state_::extend_move_request`), or a buffered one-shot (`k_buffered`
                 // with the whole trajectory already pending).
                 const bool freshly_open = (cmd.current_phase == sample_stream::phase::k_open) && !cmd.pending.has_value();
                 const bool buffered_one_shot = (cmd.current_phase == sample_stream::phase::k_buffered) && cmd.pending.has_value();
