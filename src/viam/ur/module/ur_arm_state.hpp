@@ -99,58 +99,48 @@ class URArm::state_ {
 
     void clear_pstop() const;
 
-    ///
-    /// Allocate a `move_id` (UUID + epoch snapshot) for a new move. The caller plumbs
-    /// the result through whatever planning happens before `start_move_request`, then
-    /// presents it as proof at start time. The generation snapshot is validated then;
-    /// see `start_move_request` for the semantics.
-    ///
+    // Allocate a `move_id` (UUID + epoch snapshot) for a new move. The caller plumbs
+    // the result through whatever planning happens before `start_move_request`, then
+    // presents it as proof at start time. The generation snapshot is validated then;
+    // see `start_move_request` for the semantics.
     URArm::move_id allocate_move_id() const;
 
-    ///
-    /// Claim the move slot for the move identified by `id` and emplace a fresh
-    /// `move_request` constructed from the forwarded `args`. Validates the
-    /// generation snapshot against `move_epoch_` (rejecting plans whose
-    /// starting arm state has been superseded), then takes `mutex_` and
-    /// requires the slot to be empty. Returns the completion future on
-    /// success; throws on supersession or on slot-busy. Notifies the worker.
-    ///
-    /// The semantics of the started move are determined by the provided arguments,
-    /// per the constructor overload set of `struct move_request`.
-    ///
+    // Claim the move slot for the move identified by `id` and emplace a fresh
+    // `move_request` constructed from the forwarded `args`. Validates the
+    // generation snapshot against `move_epoch_` (rejecting plans whose
+    // starting arm state has been superseded), then takes `mutex_` and
+    // requires the slot to be empty. Returns the completion future on
+    // success; throws on supersession or on slot-busy. Notifies the worker.
+    //
+    // The semantics of the started move are determined by the provided arguments,
+    // per the constructor overload set of `struct move_request`.
     template <typename... Args>
     std::future<void> start_move_request(URArm::move_id id, Args&&... args);
 
-    ///
-    /// Append a batch of trajectory samples to the open stream identified by `id`,
-    /// returning whether the move is still live. Returns false when the move named
-    /// by `id` is no longer active (the worker finished it, or a newer move has
-    /// claimed the slot); this is the same "not my move" case `cancel` treats as a
-    /// no-op. The batch must be the same kind (PV or PVA) as the samples already
-    /// pending, or, on the first extend, it sets which kind the stream uses. Throws
-    /// only on genuine misuse of a live move: extending past `k_streaming`, or a
-    /// PV/PVA mismatch. Notifies the worker.
-    ///
+    // Append a batch of trajectory samples to the open stream identified by `id`,
+    // returning whether the move is still live. Returns false when the move named
+    // by `id` is no longer active (the worker finished it, or a newer move has
+    // claimed the slot); this is the same "not my move" case `cancel` treats as a
+    // no-op. The batch must be the same kind (PV or PVA) as the samples already
+    // pending, or, on the first extend, it sets which kind the stream uses. Throws
+    // only on genuine misuse of a live move: extending past `k_streaming`, or a
+    // PV/PVA mismatch. Notifies the worker.
     bool extend_move_request(const boost::uuids::uuid& id, trajectory_samples batch);
 
-    ///
-    /// Signal end-of-stream for the move identified by `id`, returning whether the
-    /// move is still live. Returns false when the move named by `id` is no longer
-    /// active, like `extend_move_request`. Otherwise transitions `k_open` to
-    /// `k_buffered` or `k_streaming` to `k_draining`, and throws only if the stream
-    /// was already closed (`k_buffered` / `k_draining` / `k_ended`). Notifies the
-    /// worker.
-    ///
+    // Signal end-of-stream for the move identified by `id`, returning whether the
+    // move is still live. Returns false when the move named by `id` is no longer
+    // active, like `extend_move_request`. Otherwise transitions `k_open` to
+    // `k_buffered` or `k_streaming` to `k_draining`, and throws only if the stream
+    // was already closed (`k_buffered` / `k_draining` / `k_ended`). Notifies the
+    // worker.
     bool close_move_request(const boost::uuids::uuid& id);
 
-    ///
-    /// Cancel the in-flight move if it is the one identified by `id`. A producer
-    /// cancelling its own move has no ambiguity to report: a mismatched or absent
-    /// move just means it is already gone, so this returns `nullopt` rather than
-    /// throwing (unlike `extend`/`close`, where a mismatch signals the worker
-    /// finished the move early). When it does cancel, returns the future that is
-    /// satisfied once the cancellation is acknowledged. Notifies the worker.
-    ///
+    // Cancel the in-flight move if it is the one identified by `id`. A producer
+    // cancelling its own move has no ambiguity to report: a mismatched or absent
+    // move just means it is already gone, so this returns `nullopt` rather than
+    // throwing (unlike `extend`/`close`, where a mismatch signals the worker
+    // finished the move early). When it does cancel, returns the future that is
+    // satisfied once the cancellation is acknowledged. Notifies the worker.
     std::optional<std::shared_future<void>> cancel_move_request(const boost::uuids::uuid& id);
 
     bool is_moving() const;
