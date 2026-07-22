@@ -837,6 +837,8 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_serialize_for_replay) {
         .acceleration_limits = xt::adapt(k_max_acceleration),
         .path_blend_tolerance = k_tolerance,
         .colinearization_ratio = k_colinearization_ratio,
+        .min_blend_curvature = std::nullopt,
+        .max_blend_curvature = std::nullopt,
     });
 
     const std::string json_content = planner.serialize_for_replay(waypoint_acc, "synthetic error");

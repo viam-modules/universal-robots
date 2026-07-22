@@ -281,7 +281,7 @@ auto make_scope_guard(Callable&& cleanup) {
 class trajectory_point_converter {
    public:
     trajectory_point_converter(const URArm::trajectory_point& first, bool prefer_pva)
-        : use_pva_{first.constraints && first.constraints->accelerations.has_value() && prefer_pva} {}
+        : use_pva_{first.constraints && first.constraints->accelerations_degs_per_sec2.has_value() && prefer_pva} {}
 
     trajectory_samples convert(const std::vector<URArm::trajectory_point>& batch) {
         auto samples = use_pva_ ? trajectory_samples{std::vector<trajectory_sample_point_pva>{}}
@@ -322,12 +322,12 @@ class trajectory_point_converter {
         pt.timestep = std::chrono::duration<float>(p.time - cumulative_time_).count();
         cumulative_time_ = p.time;
         to_radians_into_(pt.p, p.positions, "positions");
-        to_radians_into_(pt.v, p.constraints->velocities, "velocities");
+        to_radians_into_(pt.v, p.constraints->velocities_degs_per_sec, "velocities");
         if constexpr (requires { pt.a; }) {
-            if (!p.constraints->accelerations) {
+            if (!p.constraints->accelerations_degs_per_sec2) {
                 throw std::invalid_argument("PVA stream point missing accelerations");
             }
-            to_radians_into_(pt.a, *p.constraints->accelerations, "accelerations");
+            to_radians_into_(pt.a, *p.constraints->accelerations_degs_per_sec2, "accelerations");
         }
         return pt;
     }
@@ -944,6 +944,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         .acceleration_limits = xt::adapt(acceleration_limits_data),
         .path_blend_tolerance = current_state_->get_path_tolerance_delta_rads(),
         .colinearization_ratio = current_state_->get_path_colinearization_ratio(),
+        .min_blend_curvature = std::nullopt,
+        .max_blend_curvature = std::nullopt,
         .segment_totg = current_state_->segment_for_trajex(),
     });
 
