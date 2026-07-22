@@ -711,6 +711,11 @@ void URArm::state_::clear_pstop() const {
     std::visit([](auto& state) { state.clear_pstop(); }, current_state_);
 }
 
+void URArm::state_::zero_ftsensor() const {
+    const std::lock_guard lock{mutex_};
+    std::visit([](auto& state) { state.zero_ftsensor(); }, current_state_);
+}
+
 template <typename T>
 void URArm::state_::emit_event_(T&& event) {
     auto new_state = std::visit(
