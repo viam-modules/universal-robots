@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <exception>
 #include <fstream>
 #include <future>
@@ -526,7 +527,7 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
     // How the producer side of the stream ended: one of three clean exits, or a
     // producer-side error carried as an exception to rethrow. The unlocked teardown
     // below turns each into a return or a throw.
-    enum class exit_reason { k_completed, k_halted_by_update_handler, k_worker_finished_early };
+    enum class exit_reason : std::uint8_t { k_completed, k_halted_by_update_handler, k_worker_finished_early };
     struct loop_result {
         std::future<void> future;
         std::variant<exit_reason, std::exception_ptr> outcome;

@@ -446,7 +446,7 @@ class URArm::state_ {
     // forward; see `state_controlled_::handle_move_request` for the transitions
     // and the URCL traffic each one drives.
     struct sample_stream {
-        enum class phase {
+        enum class phase : std::uint8_t {
             // STREAM_START not sent; producer can still extend or close.
             k_open,
             // STREAM_START has been sent; producer can still extend or close.
