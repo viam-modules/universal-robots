@@ -135,7 +135,7 @@ FetchContent_MakeAvailable(Universal_Robots_Client_Library)
 FetchContent_Declare(
   viam-cpp-sdk
   GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-  GIT_TAG main
+  GIT_TAG v0.39.0
   GIT_SHALLOW TRUE
   SYSTEM
   # Without this patch command, using this as a SYSTEM package results
@@ -166,7 +166,7 @@ find_package(Boost CONFIG REQUIRED
 FetchContent_Declare(
   trajex
   GIT_REPOSITORY https://github.com/viam-modules/trajex.git
-  GIT_TAG v0.100.2-rc2
+  GIT_TAG v0.100.2
   GIT_SHALLOW TRUE
 )
 set(VIAM_TRAJEX_ENABLE_TOOLS ON)
