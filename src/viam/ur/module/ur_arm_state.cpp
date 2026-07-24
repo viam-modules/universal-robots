@@ -45,6 +45,7 @@ URArm::state_::state_(private_,
                       std::optional<vector6d_t> max_acceleration_limits,
                       double trajectory_sampling_freq_hz,
                       std::string telemetry_output_path_append_traceid_template,
+                      std::string traceid_metadata_key,
                       const struct ports_& ports)
     : configured_model_{std::move(configured_model)},
       resource_name_{std::move(resource_name)},
@@ -66,7 +67,8 @@ URArm::state_::state_(private_,
       max_velocity_limits_(std::move(max_velocity_limits)),
       max_acceleration_limits_(std::move(max_acceleration_limits)),
       trajectory_sampling_freq_hz_(trajectory_sampling_freq_hz),
-      telemetry_output_path_append_traceid_template_(std::move(telemetry_output_path_append_traceid_template)) {
+      telemetry_output_path_append_traceid_template_(std::move(telemetry_output_path_append_traceid_template)),
+      traceid_metadata_key_(std::move(traceid_metadata_key)) {
     // Initialize the kinematics promise/future pair so that
     // `kinematics_future_.valid()` is unconditionally true for the rest of
     // `state_`'s lifetime. The producer side (see
@@ -165,6 +167,10 @@ std::unique_ptr<URArm::state_> URArm::state_::create(UrArmModel configured_model
         return {};
     }();
 
+    // Parse `traceid_metadata_key` — the request-metadata field the trace id is read from. When
+    // unset, the trace id is derived from the traceparent header (see telemetry_output_path).
+    const auto traceid_metadata_key = find_config_attribute<std::string>(config, "traceid_metadata_key").value_or("");
+
     // Look for the optional settings to place an upper bound on what velocity and acceleration limits may be
     // configured, or set via DoCommand or applied via MoveOptions. Note that the parse/validate function automatically
     // converts from degrees to radians.
@@ -200,6 +206,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(UrArmModel configured_model
                                           std::move(max_acceleration_limits),
                                           trajectory_sampling_freq_hz,
                                           telemetry_output_path_append_traceid_template,
+                                          traceid_metadata_key,
                                           ports);
 
     state->set_velocity_limits(parse_and_validate_joint_limits(config, "speed_degs_per_sec"));
@@ -316,15 +323,22 @@ std::filesystem::path URArm::state_::telemetry_output_path() const {
         return telemetry_output_path_;
     }
 
-    const auto traceparent_values = observer->get_client_metadata_field_values("traceparent");
-    if (traceparent_values.empty()) {
-        // No traceparent header, return base path
-        return telemetry_output_path_;
+    // Resolve the trace-id: read it directly from the configured request-metadata field if one is
+    // set, otherwise parse it from the traceparent header (the default).
+    std::optional<std::string> trace_id;
+    if (!traceid_metadata_key_.empty()) {
+        const auto values = observer->get_client_metadata_field_values(traceid_metadata_key_);
+        if (!values.empty()) {
+            trace_id = values[0];
+        }
+    } else {
+        const auto traceparent_values = observer->get_client_metadata_field_values("traceparent");
+        if (!traceparent_values.empty()) {
+            trace_id = extract_trace_id_from_traceparent(traceparent_values[0]);
+        }
     }
-
-    const auto trace_id = extract_trace_id_from_traceparent(traceparent_values[0]);
     if (!trace_id) {
-        // Failed to parse trace-id, return base path
+        // No trace-id available, return base path
         return telemetry_output_path_;
     }
 

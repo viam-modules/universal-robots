@@ -46,6 +46,7 @@ class URArm::state_ {
                     std::optional<vector6d_t> max_acceleration_limits,
                     double trajectory_sampling_freq_hz,
                     std::string telemetry_output_path_append_traceid_template,
+                    std::string traceid_metadata_key,
                     const struct ports_& ports);
     ~state_();
 
@@ -605,6 +606,7 @@ class URArm::state_ {
     const std::optional<vector6d_t> max_acceleration_limits_;
     const double trajectory_sampling_freq_hz_;
     const std::string telemetry_output_path_append_traceid_template_;
+    const std::string traceid_metadata_key_;
 
     mutable std::mutex mutex_;
     state_variant_ current_state_{state_disconnected_{}};

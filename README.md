@@ -37,6 +37,7 @@ The following attributes are available for `viam:universal-robots` arms:
 | `prefer_precomputed_accelerations` | bool | Optional | When true, trajectory points are sent to the robot with precomputed accelerations from the TOTG planner, enabling higher-order spline interpolation and continuous acceleration at waypoints. Only takes effect when `enable_new_trajectory_planner` is also true. **Default false** |
 | `telemetry_output_path` | string | Optional | Path for writing telemetry data files (waypoints, trajectories, joint positions, failure diagnostics). Files are written in CSV and JSON formats with ISO8601 timestamps. **Default: VIAM_MODULE_DATA environment variable** |
 | `telemetry_output_path_append_traceid` | bool or string | Optional | Controls whether and how the trace ID from the current span is appended to the telemetry output path. When set to `true`, appends the raw trace ID as a subdirectory. When set to a template string containing `{trace_id}`, the placeholder is replaced with the actual trace ID, giving full control over the subdirectory name (e.g. `"tag={trace_id}"`, `"{trace_id}-run"`, `"traces/{trace_id}/data"`). **Default: false** |
+| `traceid_metadata_key` | string | Optional | The request-metadata field to read the trace ID from. When set, the value of that field is used directly as the trace ID; keys for metadata propagated by RDK are prefixed with `viam-metadata-`. When unset (and `telemetry_output_path_append_traceid` is set), the trace ID is parsed from the `traceparent` header instead. |
 
 ### Example configurations:
 
