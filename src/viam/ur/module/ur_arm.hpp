@@ -7,6 +7,8 @@
 
 #include <Eigen/Core>
 
+#include <boost/uuid/uuid.hpp>
+
 #include <ur_client_library/types.h>
 
 #include <viam/sdk/common/mesh.hpp>
@@ -67,11 +69,18 @@ struct ephemeral_data {
     vector6d_t tcp_state;
 };
 
-std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time);
-std::string unix_time_iso8601();
+std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const boost::uuids::uuid& move_id);
 
 class URArm final : public Arm {
    public:
+    ///
+    /// Identity for an in-flight move request. See `state_::allocate_move_id`.
+    ///
+    struct move_id {
+        boost::uuids::uuid uuid;
+        std::size_t generation;
+    };
+
     ///
     /// Default robot control frequency in Hz.
     ///
@@ -132,6 +141,16 @@ class URArm final : public Arm {
                                       const MoveOptions& options,
                                       const viam::sdk::ProtoStruct& extra) override;
 
+    /// @brief Execute a stream of trajectory points in order.
+    /// @param batch_source Pull-source for the next batch of waypoints.
+    /// @param update_handler Handler invoked for each update the implementation emits.
+    /// @param extra Any additional arguments to the method.
+    /// @return How the stream ended.
+    stream_outcome move_through_joint_positions_streamed(
+        const std::function<boost::optional<std::vector<trajectory_point>>()>& batch_source,
+        const std::function<bool(trajectory_update)>& update_handler,
+        const viam::sdk::ProtoStruct& extra) override;
+
     /// @brief Get the cartesian pose of the end effector
     /// @param extra Any additional arguments to the method.
     /// @return Pose of the end effector with respect to the arm base.
@@ -190,9 +209,13 @@ class URArm final : public Arm {
     void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                            const xt::xarray<double>& waypoints,
                            const MoveOptions& options,
-                           const std::string& unix_time);
+                           const move_id& id);
 
-    void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time_ms);
+    void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const move_id& id);
+
+    // Rejects a streamed move whose first point is not where the arm actually is.
+    // The streamed analog of the unary move validator; see the definition.
+    void check_streamed_start_pose_(const trajectory_point& first, const std::shared_lock<std::shared_mutex>& config_rlock);
 
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);

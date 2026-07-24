@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <exception>
 #include <fstream>
 #include <future>
@@ -15,11 +16,13 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
 
 #include <json/json.h>
 
@@ -31,6 +34,7 @@
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/algorithm.hpp>
 #include <boost/range/combine.hpp>
+#include <boost/uuid/uuid_io.hpp>
 
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/log/logging.hpp>
@@ -271,32 +275,74 @@ auto make_scope_guard(Callable&& cleanup) {
     return guard{std::forward<Callable>(cleanup)};
 }
 
+// Converts a stream of SDK `trajectory_point` batches into URCL spline-point
+// batches. The PV-vs-PVA choice is fixed from the first point and held for the
+// life of the stream; per-point timesteps are differenced out of the
+// stream-global cumulative time as points are converted.
+class trajectory_point_converter {
+   public:
+    trajectory_point_converter(const URArm::trajectory_point& first, bool prefer_pva)
+        : use_pva_{first.constraints && first.constraints->accelerations_degs_per_sec2.has_value() && prefer_pva} {}
+
+    trajectory_samples convert(const std::vector<URArm::trajectory_point>& batch) {
+        auto samples = use_pva_ ? trajectory_samples{std::vector<trajectory_sample_point_pva>{}}
+                                : trajectory_samples{std::vector<trajectory_sample_point_pv>{}};
+        std::visit(
+            [&](auto& points) {
+                using point_type = typename std::decay_t<decltype(points)>::value_type;
+                points.reserve(batch.size());
+                for (const auto& p : batch) {
+                    points.push_back(to_spline_point_<point_type>(p));
+                }
+            },
+            samples);
+        return samples;
+    }
+
+   private:
+    // Copies `src` into `dst`, converting each joint value from degrees to radians.
+    // `dst` fixes the expected joint count; a size mismatch is a client input error.
+    static void to_radians_into_(urcl::vector6d_t& dst, const std::vector<double>& src, const char* field) {
+        if (src.size() != dst.size()) {
+            throw std::invalid_argument(std::string("trajectory point ") + field + " has the wrong number of joints");
+        }
+        std::ranges::transform(src, dst.begin(), [](double deg) { return degrees_to_radians(deg); });
+    }
+
+    // The `trajectory_point` contract carries joint positions, velocities, and
+    // accelerations in degrees (matching the unary `move_through_joint_positions`
+    // API); URCL wants radians. The SDK stub already validated time ordering and
+    // per-point arity, so here we only guard DOF and the presence of the
+    // constraints this arm requires.
+    template <typename Point>
+    Point to_spline_point_(const URArm::trajectory_point& p) {
+        if (!p.constraints) {
+            throw std::invalid_argument("trajectory point missing constraints (velocities required)");
+        }
+        Point pt;
+        pt.timestep = std::chrono::duration<float>(p.time - cumulative_time_).count();
+        cumulative_time_ = p.time;
+        to_radians_into_(pt.p, p.positions, "positions");
+        to_radians_into_(pt.v, p.constraints->velocities_degs_per_sec, "velocities");
+        if constexpr (requires { pt.a; }) {
+            if (!p.constraints->accelerations_degs_per_sec2) {
+                throw std::invalid_argument("PVA stream point missing accelerations");
+            }
+            to_radians_into_(pt.a, *p.constraints->accelerations_degs_per_sec2, "accelerations");
+        }
+        return pt;
+    }
+
+    bool use_pva_;
+    std::chrono::microseconds cumulative_time_{0};
+};
+
 }  // namespace
 
-std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const std::string& unix_time) {
+std::string failed_trajectory_filename(const std::string& path, const std::string& resource_name, const boost::uuids::uuid& move_id) {
     constexpr char kFailedTrajectoryJsonNameTemplate[] = "/%1%_%2%_failed_trajectory.json";
     auto fmt = boost::format(path + kFailedTrajectoryJsonNameTemplate);
-    return (fmt % unix_time % resource_name).str();
-}
-
-std::string unix_time_iso8601() {
-    namespace chrono = std::chrono;
-    std::stringstream stream;
-
-    const auto now = chrono::system_clock::now();
-    const auto seconds_part = chrono::duration_cast<chrono::seconds>(now.time_since_epoch());
-    const auto tt = chrono::system_clock::to_time_t(chrono::system_clock::time_point{seconds_part});
-    const auto delta_us = chrono::duration_cast<chrono::microseconds>(now.time_since_epoch() - seconds_part);
-
-    struct tm buf;
-    auto* ret = gmtime_r(&tt, &buf);
-    if (ret == nullptr) {
-        throw std::runtime_error("failed to convert time to iso8601");
-    }
-    stream << std::put_time(&buf, "%FT%T");
-    stream << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
-
-    return stream.str();
+    return (fmt % boost::uuids::to_string(move_id) % resource_name).str();
 }
 
 const ModelFamily& URArm::model_family() {
@@ -402,13 +448,13 @@ vector6d_t URArm::get_joint_positions_rad_(const std::shared_lock<std::shared_mu
 void URArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-    const auto unix_time = unix_time_iso8601();
+    const auto id = current_state_->allocate_move_id();
 
     const std::array<std::size_t, 2> shape = {1, positions.size()};
     const auto waypoint_deg = xt::adapt(positions.data(), positions.size(), xt::no_ownership(), shape);
     const xt::xarray<double> waypoint_rad = viam::trajex::degrees_to_radians(waypoint_deg);
 
-    move_joint_space_(std::move(rlock), waypoint_rad, MoveOptions{}, unix_time);
+    move_joint_space_(std::move(rlock), waypoint_rad, MoveOptions{}, id);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -416,7 +462,7 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
                                          const viam::sdk::ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-    const auto unix_time = unix_time_iso8601();
+    const auto id = current_state_->allocate_move_id();
 
     if (positions.empty()) {
         return;
@@ -429,7 +475,178 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         xt::view(waypoints_rad, i, xt::all()) = viam::trajex::degrees_to_radians(row_deg);
     }
 
-    move_joint_space_(std::move(rlock), waypoints_rad, options, unix_time);
+    move_joint_space_(std::move(rlock), waypoints_rad, options, id);
+}
+
+void URArm::check_streamed_start_pose_(const trajectory_point& first, const std::shared_lock<std::shared_mutex>& config_rlock) {
+    // The streamed analog of the unary path's move validator. The stream's first
+    // point is the trajectory's starting state at t=0; if the arm is not actually
+    // there, the leading near-zero-duration segment would command a discontinuous
+    // jump. The unary path is intrinsically safe because it seeds planning with
+    // the measured position; streaming is not, so we require the threshold rather
+    // than skip the check when it is unset.
+    const auto& threshold = current_state_->get_reject_move_request_threshold_rad();
+    if (!threshold) {
+        throw std::invalid_argument("streamed moves require reject_move_request_threshold_deg to be configured");
+    }
+    const auto current = get_joint_positions_rad_(config_rlock);
+    if (first.positions.size() != current.size()) {
+        throw std::invalid_argument("trajectory point joint dimensionality mismatch");
+    }
+    const auto max_diff = std::transform_reduce(
+        first.positions.begin(),
+        first.positions.end(),
+        current.begin(),
+        0.0,
+        [](auto a, auto b) { return std::max(a, b); },
+        [](auto commanded_deg, auto actual_rad) { return std::abs(degrees_to_radians(commanded_deg) - actual_rad); });
+    if (max_diff > *threshold) {
+        std::stringstream err_string;
+        err_string << "rejecting streamed move: first trajectory position [(";
+        boost::copy(first.positions, boost::io::make_ostream_joiner(err_string, ", "));
+        err_string << ")] and current joint position [(";
+        boost::copy(boost::adaptors::transform(current, radians_to_degrees<const double&>),
+                    boost::io::make_ostream_joiner(err_string, ", "));
+        err_string << ")] differ by " << viam::trajex::radians_to_degrees(max_diff) << " > " << viam::trajex::radians_to_degrees(*threshold)
+                   << " degrees";
+        VIAM_SDK_LOG(error) << err_string.str();
+        throw std::invalid_argument(err_string.str());
+    }
+
+    // TODO(RSDK-14273): passing this check admits up to `threshold` of slop between the
+    // commanded first position and the arm's actual position, which the unary path
+    // avoids by seeding the trajectory with the measured position. Determine
+    // whether that slop needs handling (e.g. substituting the measured position for
+    // the first point) once URScript's spline-start behavior is characterized.
+}
+
+URArm::stream_outcome URArm::move_through_joint_positions_streamed(
+    const std::function<boost::optional<std::vector<trajectory_point>>()>& batch_source,
+    const std::function<bool(trajectory_update)>& update_handler,
+    const viam::sdk::ProtoStruct&) {
+    // How the producer side of the stream ended: one of three clean exits, or a
+    // producer-side error carried as an exception to rethrow. The unlocked teardown
+    // below turns each into a return or a throw.
+    enum class exit_reason : std::uint8_t { k_completed, k_halted_by_update_handler, k_worker_finished_early };
+    struct loop_result {
+        std::future<void> future;
+        std::variant<exit_reason, std::exception_ptr> outcome;
+    };
+
+    std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
+    const auto id = current_state_->allocate_move_id();
+
+    VIAM_SDK_LOG(debug) << "move_streamed: start id " << id.uuid;
+    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move_streamed: end id " << id.uuid; });
+
+    // Locked phase: claim the slot and drive the stream. The read lock is moved in
+    // here so it releases when this returns, before we wait on completion. We hold
+    // it across the blocking `batch_source()` waits to keep `current_state_` valid; a
+    // stalled client is broken out by gRPC context cancellation / RPC teardown.
+    auto result = [&, rlock = std::move(rlock)]() -> loop_result {
+        // Capture the gRPC server context's cancellation status for the worker
+        // visitor's top-of-tick async-cancel check. Same idiom as `move_joint_space_`.
+        auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
+            if (!observer) {
+                return false;
+            }
+            return observer->context().IsCancelled();
+        };
+
+        // TODO(RSDK-14267): realtime telemetry is not yet implemented for streamed
+        // trajectories, so streaming runs without a `RealtimeTrajectoryLogger`.
+        auto future = current_state_->start_move_request(id, nullptr, std::move(async_cancellation_monitor));
+
+        try {
+            const auto reason = [&]() {
+                // The converter is created from the first non-empty batch's first
+                // point; it fixes the PV-vs-PVA choice and carries cumulative time.
+                std::optional<trajectory_point_converter> converter;
+                while (const auto batch = batch_source()) {
+                    if (batch->empty()) {
+                        // The dispatcher contract filters these out, but be defensive.
+                        continue;
+                    }
+
+                    // A worker-side fault completes the future ahead of end-of-stream.
+                    // Notice it here so we stop within a batch rather than feed a slot
+                    // that is already gone; the completion path reports the outcome.
+                    if (future.wait_for(std::chrono::seconds{0}) == std::future_status::ready) {
+                        return exit_reason::k_worker_finished_early;
+                    }
+
+                    if (!converter) {
+                        // TODO(RSDK-14274): Re-enable this check when it doesn't break move_to_joint_positions.
+                        // check_streamed_start_pose_(batch->front(), rlock);
+                        converter.emplace(batch->front(), current_state_->prefer_precomputed_accelerations());
+                    }
+
+                    // `extend`/`close` return false when our move is no longer the active
+                    // one -- the worker finished it out from under us.
+                    if (!current_state_->extend_move_request(id.uuid, converter->convert(*batch))) {
+                        return exit_reason::k_worker_finished_early;
+                    }
+
+                    if (!update_handler({})) {
+                        // The update handler asked us to stop. On the server side that
+                        // only happens when the gRPC call is being torn down (client
+                        // cancel or dead transport), which is the same as an async
+                        // cancel, so we cancel the move.
+                        current_state_->cancel_move_request(id.uuid);
+                        return exit_reason::k_halted_by_update_handler;
+                    }
+                }
+
+                // End of stream. Close; a false return means the worker raced us to
+                // completion, handled the same as an early finish.
+                return current_state_->close_move_request(id.uuid) ? exit_reason::k_completed : exit_reason::k_worker_finished_early;
+            }();
+            return {std::move(future), reason};
+        } catch (...) {
+            // A producer-side error (start-pose reject, malformed point). Cancel so
+            // the worker doesn't wait for data that will never arrive; the unlocked
+            // phase waits for the cancel to land before rethrowing.
+            current_state_->cancel_move_request(id.uuid);
+            return {std::move(future), std::current_exception()};
+        }
+    }();
+
+    // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
+    // with the current state other than to wait on the result of the returned future.
+
+    if (const auto* error = std::get_if<std::exception_ptr>(&result.outcome)) {
+        // A producer-side error. Wait for our cancel to take effect so a retry
+        // can't race the dying move, then rethrow the original error.
+        try {
+            result.future.get();
+        } catch (...) {  // NOLINT(bugprone-empty-catch): Intentional
+        }
+        std::rethrow_exception(*error);
+    }
+
+    switch (std::get<exit_reason>(result.outcome)) {
+        case exit_reason::k_completed:
+            result.future.get();
+            return stream_outcome::k_completed;
+        case exit_reason::k_halted_by_update_handler:
+            // We cancelled at the handler's request, so the future completing with a
+            // cancellation error is expected, not a fault. Swallow it.
+            try {
+                result.future.get();
+            } catch (...) {  // NOLINT(bugprone-empty-catch): Intentional
+            }
+            return stream_outcome::k_halted_by_update_handler;
+        case exit_reason::k_worker_finished_early:
+            // The worker completed before end-of-stream. In practice a fault, which
+            // `get()` rethrows. A clean completion here would mean the arm finished a
+            // motion we never told it was done with; surface that, don't hide it.
+            result.future.get();
+            throw std::runtime_error("arm reported trajectory completion before end-of-stream");
+    }
+
+    // Unreachable: the switch covers every `exit_reason`.
+    throw std::logic_error("move_through_joint_positions_streamed: unhandled exit_reason");
 }
 
 pose URArm::get_end_position(const ProtoStruct&) {
@@ -451,8 +668,8 @@ ProtoStruct URArm::get_status() {
 void URArm::move_to_position(const pose& p, const ProtoStruct&) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-    const auto unix_time = unix_time_iso8601();
-    move_tool_space_(std::move(rlock), p, unix_time);
+    const auto id = current_state_->allocate_move_id();
+    move_tool_space_(std::move(rlock), p, id);
 }
 
 viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
@@ -624,7 +841,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     return resp;
 }
 
-void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const std::string& unix_time) {
+void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const URArm::move_id& id) {
     auto our_config_rlock = std::move(config_rlock);
 
     auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
@@ -635,12 +852,8 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
         return observer->context().IsCancelled();
     };
 
-    // Capture the current movement epoch, so we can later detect if another caller
-    // slipped in while we were planning.
-    auto current_move_epoch = current_state_->get_move_epoch();
-
-    VIAM_SDK_LOG(debug) << "move tool space: start unix_time_ms " << unix_time << " p: " << p;
-    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move tool space: end unix_time " << unix_time; });
+    VIAM_SDK_LOG(debug) << "move tool space: start id " << id.uuid << " p: " << p;
+    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move tool space: end id " << id.uuid; });
 
     // get current pose
     auto current_pose = current_state_->read_tcp_pose();
@@ -669,18 +882,15 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
         return;
     }
 
-    // create a pose_sample for tool-space movement
-    const pose_sample ps{target_pose};
-
     const std::string& telemetry_path = current_state_->telemetry_output_path();
 
     auto logger = std::make_unique<RealtimeTrajectoryLogger>(
-        telemetry_path, unix_time, arm_model_.sdk_model().to_string(), current_state_->resource_name());
+        telemetry_path, id.uuid, arm_model_.sdk_model().to_string(), current_state_->resource_name());
     logger->set_velocity_limits(current_state_->get_velocity_limits());
     logger->set_acceleration_limits(current_state_->get_acceleration_limits());
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
-        return current_state_->enqueue_move_request(current_move_epoch, std::move(logger), std::move(async_cancellation_monitor), ps);
+        return current_state_->start_move_request(id, std::move(logger), std::move(async_cancellation_monitor), pose_sample{target_pose});
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
@@ -691,7 +901,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                               const xt::xarray<double>& waypoints,
                               const MoveOptions& options,
-                              const std::string& unix_time) {
+                              const URArm::move_id& id) {
     auto our_config_rlock = std::move(config_rlock);
 
     auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
@@ -703,12 +913,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         return result;
     };
 
-    // Capture the current movement epoch, so we can later detect if another caller
-    // slipped in while we were planning.
-    auto current_move_epoch = current_state_->get_move_epoch();
-
-    VIAM_SDK_LOG(debug) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.shape()[0];
-    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move: end unix_time " << unix_time; });
+    VIAM_SDK_LOG(debug) << "move: start id " << id.uuid << " waypoints size " << waypoints.shape()[0];
+    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move: end id " << id.uuid; });
 
     // Prepare velocity/acceleration limits, applying per-move overrides if provided
     auto velocity_limits_data = current_state_->get_velocity_limits();
@@ -732,13 +938,15 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         size_t segment_count = 0;
     };
 
-    VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << unix_time;
+    VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << id.uuid;
 
     auto planner = viam::trajex::totg::planner<segment_accumulator>({
         .velocity_limits = xt::adapt(velocity_limits_data),
         .acceleration_limits = xt::adapt(acceleration_limits_data),
         .path_blend_tolerance = current_state_->get_path_tolerance_delta_rads(),
         .colinearization_ratio = current_state_->get_path_colinearization_ratio(),
+        .min_blend_curvature = std::nullopt,
+        .max_blend_curvature = std::nullopt,
         .segment_totg = current_state_->segment_for_trajex(),
     });
 
@@ -814,6 +1022,10 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 std::visit(
                     [&](auto& dest) {
                         using PointType = typename std::decay_t<decltype(dest)>::value_type;
+                        // TODO(RSDK-14268): investigate whether dropping the first sample is still correct
+                        // now that the trajectory is seeded with the arm's measured position.
+                        // It also predates PVA support, and dropping a t=0 point that carries a
+                        // departure acceleration is very likely wrong.
                         for (const auto& sample : traj.samples(sampler) | std::views::drop(1)) {
                             const double current_time = sample.time.count();
                             const float timestep = boost::numeric_cast<float>(current_time - previous_time);
@@ -845,7 +1057,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                                    << ", waypoints: " << acc.total_waypoints << ", exception: " << e.what();
                 const std::string json_content = planner.serialize_for_replay(seg, e.what());
                 const auto filename = failed_trajectory_filename(
-                    current_state_->telemetry_output_path(), current_state_->resource_name() + "_trajex", unix_time);
+                    current_state_->telemetry_output_path(), current_state_->resource_name() + "_trajex", id.uuid);
                 std::ofstream json_file(filename);
                 json_file << json_content;
             });
@@ -882,7 +1094,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             VIAM_SDK_LOG(error) << "trajectory generation with legacy failed with an exception: " << e.what();
             const std::string json_content = planner.serialize_for_replay(seg, e.what());
             const auto filename =
-                failed_trajectory_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), unix_time);
+                failed_trajectory_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), id.uuid);
             std::ofstream json_file(filename);
             json_file << json_content;
         });
@@ -969,22 +1181,22 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     }
 
     if (!result) {
-        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " (no result)";
+        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << id.uuid << " (no result)";
         return;
     } else if (result->total_duration > current_state_->get_max_trajectory_duration_secs()) {
         throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
     } else if (result->total_duration < k_min_timestep_sec) {
-        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " (duration too small)";
+        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << id.uuid << " (duration too small)";
         return;
     } else {
         const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *result->samples);
-        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << unix_time << " samples.size() " << sample_count;
+        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << id.uuid << " samples.size() " << sample_count;
     }
 
     const std::string& telemetry_path = current_state_->telemetry_output_path();
 
     auto logger = std::make_unique<RealtimeTrajectoryLogger>(
-        telemetry_path, unix_time, arm_model_.sdk_model().to_string(), current_state_->resource_name());
+        telemetry_path, id.uuid, arm_model_.sdk_model().to_string(), current_state_->resource_name());
     logger->set_velocity_limits(current_state_->get_velocity_limits());
     logger->set_acceleration_limits(current_state_->get_acceleration_limits());
     if (captured_waypoints) {
@@ -993,19 +1205,19 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     logger->set_planned_trajectory(*result->samples);
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
-        return current_state_->enqueue_move_request(
-            current_move_epoch, std::move(logger), std::move(async_cancellation_monitor), std::move(*result->samples));
+        return current_state_->start_move_request(
+            id, std::move(logger), std::move(async_cancellation_monitor), std::move(*result->samples));
     }();
 
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
     // with the current state other than to wait on the result of this future.
 
     try {
-        VIAM_SDK_LOG(debug) << "move: trajectory enqueued to arm: started " << unix_time << " issued " << unix_time_iso8601();
+        VIAM_SDK_LOG(debug) << "move: trajectory enqueued to arm: id " << id.uuid;
         trajectory_completion_future.get();
-        VIAM_SDK_LOG(debug) << "move: trajectory completed on arm: started " << unix_time << " completed (success) " << unix_time_iso8601();
+        VIAM_SDK_LOG(debug) << "move: trajectory completed on arm: id " << id.uuid << " (success)";
     } catch (...) {
-        VIAM_SDK_LOG(debug) << "move: trajectory failed on arm: started " << unix_time << " completed (failure)" << unix_time_iso8601();
+        VIAM_SDK_LOG(debug) << "move: trajectory failed on arm: id " << id.uuid << " (failure)";
         throw;
     }
 }

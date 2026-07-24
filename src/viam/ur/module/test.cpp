@@ -7,6 +7,9 @@
 #include <viam/trajex/totg/tools/planner.hpp>
 
 #include <boost/numeric/conversion/cast.hpp>
+#include <boost/uuid/string_generator.hpp>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_io.hpp>
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnull-dereference"
@@ -46,10 +49,10 @@ using namespace std::chrono_literals;
 BOOST_AUTO_TEST_CASE(test_realtime_trajectory_filename) {
     const std::string k_path = "/home/user";
     const std::string k_resource_name = "test_arm";
-    const auto timestamp = unix_time_iso8601();
-    const auto expected = k_path + "/" + timestamp + "_" + k_resource_name + "_realtime_trajectory.json";
+    const auto move_id = boost::uuids::string_generator()("12345678-1234-5678-1234-567812345678");
+    const auto expected = k_path + "/" + boost::uuids::to_string(move_id) + "_" + k_resource_name + "_realtime_trajectory.json";
 
-    auto x = RealtimeTrajectoryLogger::realtime_trajectory_filename(k_path, k_resource_name, timestamp);
+    auto x = RealtimeTrajectoryLogger::realtime_trajectory_filename(k_path, k_resource_name, move_id);
     BOOST_CHECK_EQUAL(x, expected);
 }
 
@@ -57,13 +60,14 @@ BOOST_AUTO_TEST_CASE(test_logger_construction_destruction_writes_json) {
     const std::string test_dir = "./test_logger_output";
     std::filesystem::create_directories(test_dir);
 
-    const std::string timestamp = "2026-04-21T00:00:00.000000Z";
+    const auto move_id = boost::uuids::string_generator()("12345678-1234-5678-1234-567812345678");
+    const auto move_id_str = boost::uuids::to_string(move_id);
     const std::string model = "ur5e";
     const std::string resource = "test_arm";
-    const std::string expected_file = test_dir + "/" + timestamp + "_" + resource + "_realtime_trajectory.json";
+    const std::string expected_file = test_dir + "/" + move_id_str + "_" + resource + "_realtime_trajectory.json";
 
     {
-        const RealtimeTrajectoryLogger logger(test_dir, timestamp, model, resource);
+        const RealtimeTrajectoryLogger logger(test_dir, move_id, model, resource);
     }  // destructor writes JSON
 
     const std::ifstream in(expected_file);
@@ -76,7 +80,8 @@ BOOST_AUTO_TEST_CASE(test_logger_construction_destruction_writes_json) {
     std::istringstream iss(buf.str());
     BOOST_REQUIRE(Json::parseFromStream(reader, iss, &parsed, nullptr));
 
-    BOOST_CHECK_EQUAL(parsed["timestamp"].asString(), timestamp);
+    BOOST_CHECK_EQUAL(parsed["move_id"].asString(), move_id_str);
+    BOOST_CHECK(!parsed["timestamp"].asString().empty());  // generated internally by the logger
     BOOST_CHECK_EQUAL(parsed["robot_model"].asString(), model);
     BOOST_CHECK_EQUAL(parsed["resource_name"].asString(), resource);
     BOOST_CHECK(parsed["realtime_samples"].isArray());
@@ -89,10 +94,11 @@ BOOST_AUTO_TEST_CASE(test_logger_construction_destruction_writes_json) {
 BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pv) {
     const std::string test_dir = "./test_logger_pv";
     std::filesystem::create_directories(test_dir);
-    const std::string expected_file = test_dir + "/ts_arm_realtime_trajectory.json";
+    const auto move_id = boost::uuids::string_generator()("12345678-1234-5678-1234-567812345678");
+    const std::string expected_file = test_dir + "/" + boost::uuids::to_string(move_id) + "_arm_realtime_trajectory.json";
 
     {
-        RealtimeTrajectoryLogger logger(test_dir, "ts", "ur5e", "arm");
+        RealtimeTrajectoryLogger logger(test_dir, move_id, "ur5e", "arm");
 
         const trajectory_samples samples = std::vector<trajectory_sample_point_pv>{
             {{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {0.1, 0.2, 0.3, 0.4, 0.5, 0.6}, 0.5F},
@@ -130,10 +136,11 @@ BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pv) {
 BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pva) {
     const std::string test_dir = "./test_logger_pva";
     std::filesystem::create_directories(test_dir);
-    const std::string expected_file = test_dir + "/ts_arm_realtime_trajectory.json";
+    const auto move_id = boost::uuids::string_generator()("12345678-1234-5678-1234-567812345678");
+    const std::string expected_file = test_dir + "/" + boost::uuids::to_string(move_id) + "_arm_realtime_trajectory.json";
 
     {
-        RealtimeTrajectoryLogger logger(test_dir, "ts", "ur5e", "arm");
+        RealtimeTrajectoryLogger logger(test_dir, move_id, "ur5e", "arm");
 
         const trajectory_samples samples = std::vector<trajectory_sample_point_pva>{
             {{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {0.1, 0.2, 0.3, 0.4, 0.5, 0.6}, {0.01, 0.02, 0.03, 0.04, 0.05, 0.06}, 1.0F},
@@ -162,10 +169,11 @@ BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pva) {
 BOOST_AUTO_TEST_CASE(test_logger_append_realtime_sample) {
     const std::string test_dir = "./test_logger_samples";
     std::filesystem::create_directories(test_dir);
-    const std::string expected_file = test_dir + "/ts_arm_realtime_trajectory.json";
+    const auto move_id = boost::uuids::string_generator()("12345678-1234-5678-1234-567812345678");
+    const std::string expected_file = test_dir + "/" + boost::uuids::to_string(move_id) + "_arm_realtime_trajectory.json";
 
     {
-        RealtimeTrajectoryLogger logger(test_dir, "ts", "ur5e", "arm");
+        RealtimeTrajectoryLogger logger(test_dir, move_id, "ur5e", "arm");
 
         ephemeral_data data{};
         data.joint_positions = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0};
@@ -829,6 +837,8 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_serialize_for_replay) {
         .acceleration_limits = xt::adapt(k_max_acceleration),
         .path_blend_tolerance = k_tolerance,
         .colinearization_ratio = k_colinearization_ratio,
+        .min_blend_curvature = std::nullopt,
+        .max_blend_curvature = std::nullopt,
     });
 
     const std::string json_content = planner.serialize_for_replay(waypoint_acc, "synthetic error");

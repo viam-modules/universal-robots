@@ -16,6 +16,7 @@
 #include <boost/io/ostream_joiner.hpp>
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/algorithm.hpp>
+#include <boost/uuid/random_generator.hpp>
 
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
@@ -466,8 +467,11 @@ double URArm::state_::get_trajectory_sampling_freq_hz() const {
     return trajectory_sampling_freq_hz_;
 }
 
-size_t URArm::state_::get_move_epoch() const {
-    return move_epoch_.load(std::memory_order_acquire);
+URArm::move_id URArm::state_::allocate_move_id() const {
+    // We snapshot the `generation` now. The `uuid` is freshly generated and has no
+    // ordering relationship to any other allocation.
+    static thread_local boost::uuids::random_generator generator;
+    return {generator(), move_epoch_.load(std::memory_order_acquire)};
 }
 
 bool URArm::state_::is_moving() const {
@@ -478,13 +482,15 @@ bool URArm::state_::is_moving() const {
     return std::visit(
         [](const auto& cmd) -> bool {
             using T = std::decay_t<decltype(cmd)>;
-            if constexpr (std::is_same_v<T, trajectory_samples>) {
-                // If we have an empty trajectory_samples it means we have sent them to the arm
-                // so, as far as we are concerned, the arm is moving, though it may fail later.
-                return std::visit([](const auto& v) { return v.empty(); }, cmd);
+            if constexpr (std::is_same_v<T, sample_stream>) {
+                // We only count as moving once URCL has been told to start,
+                // meaning STREAM_START has been sent. In `k_open` or `k_buffered` the
+                // points have not reached the controller yet, so we don't claim
+                // the arm is moving.
+                return cmd.current_phase != sample_stream::phase::k_open && cmd.current_phase != sample_stream::phase::k_buffered;
             } else if constexpr (std::is_same_v<T, std::optional<pose_sample>>) {
-                // If we have nullopt it means we have sent it to the arm
-                // so, as far as we are concerned, the arm is moving, though it may fail later.
+                // Disengaged optional means we have already sent the pose to
+                // the arm; we are moving (or about to be).
                 return !cmd.has_value();
             }
         },
@@ -496,7 +502,82 @@ std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
     if (!move_request_) {
         return std::nullopt;
     }
+    return std::make_optional(move_request_->cancel());
+}
 
+bool URArm::state_::extend_move_request(const boost::uuids::uuid& id, trajectory_samples batch) {
+    const std::lock_guard lock{mutex_};
+    if (!move_request_ || move_request_->id != id) {
+        // Our move is no longer the active one: the worker finished it, or a newer
+        // move has claimed the slot. Report that rather than throw; the producer
+        // treats it as the worker finishing early.
+        return false;
+    }
+
+    // Streams can only be extended before the producer has closed.
+    auto* const stream = std::get_if<sample_stream>(&move_request_->move_command);
+    if (!stream) {
+        throw std::runtime_error("extend_move_request: the in-flight move is not a stream");
+    }
+    if (stream->current_phase != sample_stream::phase::k_open && stream->current_phase != sample_stream::phase::k_streaming) {
+        throw std::runtime_error("extend_move_request: stream has been closed and cannot be extended");
+    }
+
+    // Append the incoming batch to `pending`. The first extend picks PV or PVA by
+    // which variant it holds, and later extends must match. The producer already
+    // rejects a client mismatch as a protocol error, so a mismatch here would be
+    // a bug on our side, and we treat it as one.
+    if (!stream->pending) {
+        stream->pending = std::move(batch);
+    } else {
+        std::visit(
+            [&](auto& dest_vec) {
+                using DestVec = std::decay_t<decltype(dest_vec)>;
+                auto* src_vec = std::get_if<DestVec>(&batch);
+                if (!src_vec) {
+                    throw std::logic_error("extend_move_request: PV/PVA arm mismatch within a stream");
+                }
+                dest_vec.insert(dest_vec.end(), std::make_move_iterator(src_vec->begin()), std::make_move_iterator(src_vec->end()));
+            },
+            *stream->pending);
+    }
+
+    return true;
+}
+
+bool URArm::state_::close_move_request(const boost::uuids::uuid& id) {
+    const std::lock_guard lock{mutex_};
+    if (!move_request_ || move_request_->id != id) {
+        // See `extend_move_request`: our move is gone, so report it rather than throw.
+        return false;
+    }
+
+    auto* const stream = std::get_if<sample_stream>(&move_request_->move_command);
+    if (!stream) {
+        throw std::runtime_error("close_move_request: the in-flight move is not a stream");
+    }
+
+    switch (stream->current_phase) {
+        case sample_stream::phase::k_open:
+            stream->current_phase = sample_stream::phase::k_buffered;
+            break;
+        case sample_stream::phase::k_streaming:
+            stream->current_phase = sample_stream::phase::k_draining;
+            break;
+        case sample_stream::phase::k_buffered:
+        case sample_stream::phase::k_draining:
+        case sample_stream::phase::k_ended:
+            throw std::runtime_error("close_move_request: stream has already been closed");
+    }
+
+    return true;
+}
+
+std::optional<std::shared_future<void>> URArm::state_::cancel_move_request(const boost::uuids::uuid& id) {
+    const std::lock_guard lock{mutex_};
+    if (!move_request_ || move_request_->id != id) {
+        return std::nullopt;
+    }
     return std::make_optional(move_request_->cancel());
 }
 
@@ -525,16 +606,32 @@ URArm::state_::arm_connection_::~arm_connection_() {
     dashboard.reset();
 }
 
-URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+URArm::state_::move_request::move_request(boost::uuids::uuid id,
+                                          std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           move_command_data&& move_command)
-    : trajectory_logger(std::move(trajectory_logger)), async_cancel_monitor(std::move(monitor)), move_command(std::move(move_command)) {
-    // Validate the move command based on its type
+    : id(std::move(id)),
+      trajectory_logger(std::move(trajectory_logger)),
+      async_cancel_monitor(std::move(monitor)),
+      move_command(std::move(move_command)) {
+    // Validate the move command based on its type.
     std::visit(
         [](const auto& cmd) {
             using T = std::decay_t<decltype(cmd)>;
-            if constexpr (std::is_same_v<T, trajectory_samples>) {
-                if (std::visit([](const auto& v) { return v.empty(); }, cmd)) {
+            if constexpr (std::is_same_v<T, sample_stream>) {
+                // A `sample_stream` must arrive in one of its two valid initial shapes,
+                // with nothing written yet: freshly opened for streaming (`k_open`,
+                // nothing pending; the producer adds points later via
+                // `state_::extend_move_request`), or a buffered one-shot (`k_buffered`
+                // with the whole trajectory already pending).
+                const bool freshly_open = (cmd.current_phase == sample_stream::phase::k_open) && !cmd.pending.has_value();
+                const bool buffered_one_shot = (cmd.current_phase == sample_stream::phase::k_buffered) && cmd.pending.has_value();
+                if (cmd.points_written != 0 || !(freshly_open || buffered_one_shot)) {
+                    throw std::invalid_argument("sample_stream must be freshly opened or a buffered one-shot when handed to move_request");
+                }
+
+                // A buffered one-shot must actually carry points; an empty trajectory is not a move.
+                if (buffered_one_shot && std::visit([](const auto& v) { return v.empty(); }, *cmd.pending)) {
                     throw std::invalid_argument("no trajectory samples provided to move request");
                 }
             } else if constexpr (std::is_same_v<T, std::optional<pose_sample>>) {
@@ -546,15 +643,26 @@ URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogg
         this->move_command);
 }
 
-URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
-                                          async_cancellation_monitor monitor,
-                                          trajectory_samples&& ts)
-    : move_request(std::move(trajectory_logger), std::move(monitor), move_command_data{std::move(ts)}) {}
+URArm::state_::move_request::move_request(boost::uuids::uuid id,
+                                          std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+                                          async_cancellation_monitor monitor)
+    : move_request(std::move(id), std::move(trajectory_logger), std::move(monitor), move_command_data{sample_stream{}}) {}
 
-URArm::state_::move_request::move_request(std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+URArm::state_::move_request::move_request(boost::uuids::uuid id,
+                                          std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           pose_sample ps)
-    : move_request(std::move(trajectory_logger), std::move(monitor), move_command_data{std::optional<pose_sample>{std::move(ps)}}) {}
+    : move_request(
+          std::move(id), std::move(trajectory_logger), std::move(monitor), move_command_data{std::optional<pose_sample>{std::move(ps)}}) {}
+
+URArm::state_::move_request::move_request(boost::uuids::uuid id,
+                                          std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
+                                          async_cancellation_monitor monitor,
+                                          trajectory_samples samples)
+    : move_request(std::move(id),
+                   std::move(trajectory_logger),
+                   std::move(monitor),
+                   move_command_data{sample_stream{sample_stream::phase::k_buffered, std::move(samples)}}) {}
 
 std::shared_future<void> URArm::state_::move_request::cancel() {
     if (!cancellation_request) {

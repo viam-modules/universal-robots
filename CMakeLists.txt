@@ -126,7 +126,7 @@ include(FetchContent)
 FetchContent_Declare(
   Universal_Robots_Client_Library
   GIT_REPOSITORY https://github.com/UniversalRobots/Universal_Robots_Client_Library
-  GIT_TAG        2.11.0
+  GIT_TAG        2.14.0
   GIT_SHALLOW TRUE
   SYSTEM
 )
@@ -135,14 +135,14 @@ FetchContent_MakeAvailable(Universal_Robots_Client_Library)
 FetchContent_Declare(
   viam-cpp-sdk
   GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-  GIT_TAG releases/v0.38.0 # Keep in sync with Dockerfile
+  GIT_TAG v0.39.0
   GIT_SHALLOW TRUE
   SYSTEM
   # Without this patch command, using this as a SYSTEM package results
   # in failed compilation due to the statically included protobuf gens
   # getting in the wrong order. Just delete them, we don't need them.
   PATCH_COMMAND find ./src/viam/api -name "*.pb.h" -type f -exec rm {} +
-  FIND_PACKAGE_ARGS 0.38.0 CONFIG COMPONENTS viamsdk
+  FIND_PACKAGE_ARGS 0.39.0 CONFIG COMPONENTS viamsdk
 )
 FetchContent_MakeAvailable(viam-cpp-sdk)
 
@@ -166,7 +166,7 @@ find_package(Boost CONFIG REQUIRED
 FetchContent_Declare(
   trajex
   GIT_REPOSITORY https://github.com/viam-modules/trajex.git
-  GIT_TAG v0.100.1
+  GIT_TAG v0.100.2
   GIT_SHALLOW TRUE
 )
 set(VIAM_TRAJEX_ENABLE_TOOLS ON)
