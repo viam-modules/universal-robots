@@ -135,8 +135,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 }
                 if (cancel_pending && !cancel_issued) {
                     state.move_request_->cancellation_request->issued = true;
-                    if (!arm_conn_->driver->writeTrajectoryControlMessage(
-                            urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
+                    if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL,
+                                                                          static_cast<int>(cmd.points_written),
+                                                                          RobotReceiveTimeout::off())) {
                         state.move_request_->cancel_error("failed to send trajectory cancel");
                         VIAM_SDK_LOG(error) << "cancel failed; dropping connection";
                         return event_connection_lost_::trajectory_control_failure();
@@ -285,7 +286,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     // and cancellation is requested but has not yet been issued. Issue a cancel.
                     state.move_request_->cancellation_request->issued = true;
                     if (!arm_conn_->driver->writeTrajectoryControlMessage(
-                            urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 0, RobotReceiveTimeout::off())) {
+                            urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 1, RobotReceiveTimeout::off())) {
                         state.move_request_->cancel_error("failed to send trajectory cancel");
                         VIAM_SDK_LOG(error) << "cancel failed; dropping connection";
                         return event_connection_lost_::trajectory_control_failure();
