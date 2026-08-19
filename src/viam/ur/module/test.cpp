@@ -1274,11 +1274,12 @@ BOOST_AUTO_TEST_CASE(test_apply_calibration_preserves_world_geometry_centers_at_
 }
 
 BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
-    // parse -> apply_calibration(nominal) -> to_sva_json -> re-parse
-    // should give back world-frame geometry positions that still match the
-    // spec. Exercises the writer (translation/orientation/geometry
-    // emission) and the parser's quaternion code path on the writer's
-    // output.
+    // parse -> apply_calibration(nominal) -> with_kinematic_limits ->
+    // to_sva_json -> re-parse should give back world-frame geometry positions
+    // that still match the spec, and the stamped velocity and acceleration
+    // limits in degrees. Exercises the writer (translation/orientation/
+    // geometry/limit emission) and the parser's quaternion code path on the
+    // writer's output.
     const UrArmModel::Kinematics tbl = load("ur20");
 
     DHParams dh{};
@@ -1287,7 +1288,14 @@ BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
     dh.alpha = {std::numbers::pi / 2.0, 0.0, 0.0, std::numbers::pi / 2.0, -std::numbers::pi / 2.0, 0.0};
     dh.theta = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
-    const std::string json_str = tbl.apply_calibration(dh).to_sva_json();
+    // Distinct per joint, so a fanned-out or transposed write fails here
+    // rather than passing on six equal values.
+    const vector6d_t velocity_degs = {110.0, 120.0, 130.0, 140.0, 150.0, 160.0};
+    const vector6d_t acceleration_degs = {210.0, 220.0, 230.0, 240.0, 250.0, 260.0};
+
+    const std::string json_str = tbl.apply_calibration(dh)
+                                     .with_kinematic_limits(degrees_to_radians(velocity_degs), degrees_to_radians(acceleration_degs))
+                                     .to_sva_json();
     const auto tmp = std::filesystem::temp_directory_path() / "ur20_round_trip.json";
     {
         std::ofstream out(tmp);
@@ -1309,6 +1317,77 @@ BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
         BOOST_CHECK_SMALL(world.x() - expect[0], 1e-3);
         BOOST_CHECK_SMALL(world.y() - expect[1], 1e-3);
         BOOST_CHECK_SMALL(world.z() - expect[2], 1e-3);
+    }
+
+    // The stamping input is radians and the schema is degrees, so this also
+    // covers the conversion.
+    for (std::size_t i = 0; i < 6; ++i) {
+        BOOST_REQUIRE(reparsed.limits[i].max_velocity_deg_per_sec.has_value());
+        BOOST_REQUIRE(reparsed.limits[i].max_acceleration_deg_per_sec2.has_value());
+        BOOST_CHECK_CLOSE(*reparsed.limits[i].max_velocity_deg_per_sec, velocity_degs[i], 1e-9);
+        BOOST_CHECK_CLOSE(*reparsed.limits[i].max_acceleration_deg_per_sec2, acceleration_degs[i], 1e-9);
+    }
+
+    // Position bounds must survive the added fields untouched.
+    for (std::size_t i = 0; i < 6; ++i) {
+        BOOST_CHECK_EQUAL(reparsed.limits[i].min_deg, (i == 2) ? -180.0 : -360.0);
+        BOOST_CHECK_EQUAL(reparsed.limits[i].max_deg, (i == 2) ? 180.0 : 360.0);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_configured_zero_limits_are_published_as_zero) {
+    // `speed_degs_per_sec` validation rejects an all-zero array but accepts a single zero element,
+    // and zero is a real limit of zero on the wire rather than a way of saying unbounded. So a
+    // configured zero has to be emitted, not dropped: dropping it would describe an axis that
+    // cannot move as having no bound at all.
+    const vector6d_t velocity_degs = {110.0, 0.0, 130.0, 140.0, 150.0, 160.0};
+    const vector6d_t acceleration_degs = {210.0, 220.0, 0.0, 240.0, 250.0, 260.0};
+
+    const auto stamped = load("ur20").with_kinematic_limits(degrees_to_radians(velocity_degs), degrees_to_radians(acceleration_degs));
+
+    BOOST_REQUIRE(stamped.limits[1].max_velocity_deg_per_sec.has_value());
+    BOOST_CHECK_EQUAL(*stamped.limits[1].max_velocity_deg_per_sec, 0.0);
+    BOOST_REQUIRE(stamped.limits[2].max_acceleration_deg_per_sec2.has_value());
+    BOOST_CHECK_EQUAL(*stamped.limits[2].max_acceleration_deg_per_sec2, 0.0);
+
+    // The other axis of the same joint is untouched.
+    BOOST_REQUIRE(stamped.limits[1].max_acceleration_deg_per_sec2.has_value());
+    BOOST_CHECK_CLOSE(*stamped.limits[1].max_acceleration_deg_per_sec2, 220.0, 1e-9);
+
+    // And the key is present in the document with an explicit 0, not missing.
+    Json::Value root;
+    std::istringstream in{stamped.to_sva_json()};
+    const Json::CharReaderBuilder reader_builder;
+    std::string errs;
+    BOOST_REQUIRE(Json::parseFromStream(reader_builder, in, &root, &errs));
+    BOOST_REQUIRE(root["joints"][1].isMember("max_velocity"));
+    BOOST_CHECK_EQUAL(root["joints"][1]["max_velocity"].asDouble(), 0.0);
+    BOOST_REQUIRE(root["joints"][2].isMember("max_acceleration"));
+    BOOST_CHECK_EQUAL(root["joints"][2]["max_acceleration"].asDouble(), 0.0);
+}
+
+BOOST_AUTO_TEST_CASE(test_unstamped_kinematic_limits_are_omitted) {
+    // The shipped files carry position bounds only, and an omitted field is
+    // how the schema spells unbounded, so an unstamped document must leave
+    // the fields out rather than write a placeholder value that a consumer
+    // would read as a real limit.
+    const auto tbl = load("ur20");
+    for (std::size_t i = 0; i < 6; ++i) {
+        BOOST_CHECK(!tbl.limits[i].max_velocity_deg_per_sec.has_value());
+        BOOST_CHECK(!tbl.limits[i].max_acceleration_deg_per_sec2.has_value());
+    }
+
+    Json::Value root;
+    std::istringstream in{tbl.to_sva_json()};
+    const Json::CharReaderBuilder reader_builder;
+    std::string errs;
+    BOOST_REQUIRE(Json::parseFromStream(reader_builder, in, &root, &errs));
+
+    BOOST_REQUIRE(root["joints"].isArray());
+    BOOST_REQUIRE_EQUAL(root["joints"].size(), 6U);
+    for (const auto& joint : root["joints"]) {
+        BOOST_CHECK(!joint.isMember("max_velocity"));
+        BOOST_CHECK(!joint.isMember("max_acceleration"));
     }
 }
 

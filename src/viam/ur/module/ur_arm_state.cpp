@@ -209,8 +209,11 @@ std::unique_ptr<URArm::state_> URArm::state_::create(UrArmModel configured_model
                                           traceid_metadata_key,
                                           ports);
 
-    state->set_velocity_limits(parse_and_validate_joint_limits(config, "speed_degs_per_sec"));
-    state->set_acceleration_limits(parse_and_validate_joint_limits(config, "acceleration_degs_per_sec2"));
+    // The setters return what they actually stored, which is the configured value clamped against
+    // any ceiling, so we keep that as the configured limits the kinematics document publishes.
+    state->configured_velocity_limits_ = state->set_velocity_limits(parse_and_validate_joint_limits(config, "speed_degs_per_sec"));
+    state->configured_acceleration_limits_ =
+        state->set_acceleration_limits(parse_and_validate_joint_limits(config, "acceleration_degs_per_sec2"));
 
     // Hold the mutex while we start the worker thread. It will not be
     // able to advance, but will be ready to take over work as soon as
@@ -958,6 +961,7 @@ std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::dur
     std::call_once(*payload.json_once, [&] {
         payload.json = payload.arm_model.load_kinematics((resource_root_ / "kinematics" / payload.arm_model.sdk_name()).concat(".json"))
                            .apply_calibration({payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_})
+                           .with_kinematic_limits(configured_velocity_limits_, configured_acceleration_limits_)
                            .to_sva_json();
     });
     return payload.json;

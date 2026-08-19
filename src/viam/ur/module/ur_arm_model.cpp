@@ -6,6 +6,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -253,7 +254,22 @@ JointLimits parse_joint_limits(const std::filesystem::path& path, const Json::Va
     if (!joint.isMember("max") || !joint["max"].isNumeric()) {
         throw_parse_error(path, "joint missing numeric `max`");
     }
-    return JointLimits{joint["min"].asDouble(), joint["max"].asDouble()};
+
+    // `max_velocity` and `max_acceleration` are optional in the schema, so an
+    // absent field is not an error, but a present one that is not a number is.
+    // We read them so a document we emitted parses back to what we wrote.
+    const auto optional_limit = [&](const char* field) -> std::optional<double> {
+        if (!joint.isMember(field)) {
+            return std::nullopt;
+        }
+        if (!joint[field].isNumeric()) {
+            throw_parse_error(path, std::string{"joint `"} + field + "` is present but not a number");
+        }
+        return joint[field].asDouble();
+    };
+
+    return JointLimits{
+        joint["min"].asDouble(), joint["max"].asDouble(), optional_limit("max_velocity"), optional_limit("max_acceleration")};
 }
 
 Json::Value translation_json(const Eigen::Vector3d& t) {
@@ -396,6 +412,19 @@ UrArmModel::Kinematics UrArmModel::Kinematics::apply_calibration(const DHParams&
     }
 
     out.link_locals = new_link_locals;
+    return out;
+}
+
+UrArmModel::Kinematics UrArmModel::Kinematics::with_kinematic_limits(const urcl::vector6d_t& velocity_rad_per_sec,
+                                                                     const urcl::vector6d_t& acceleration_rad_per_sec2) const {
+    // We publish whatever is configured, zero included. Only an absent field means unbounded, so a
+    // configured zero has to go out as zero: our validation accepts an array with a single zero
+    // element, and omitting it would tell the planner that an axis which cannot move is unbounded.
+    Kinematics out = *this;
+    for (std::size_t i = 0; i < k_num_dh_joints; ++i) {
+        out.limits[i].max_velocity_deg_per_sec = radians_to_degrees(velocity_rad_per_sec[i]);
+        out.limits[i].max_acceleration_deg_per_sec2 = radians_to_degrees(acceleration_rad_per_sec2[i]);
+    }
     return out;
 }
 
@@ -566,6 +595,14 @@ std::string UrArmModel::Kinematics::to_sva_json() const {
             joint["axis"] = dh_z_axis;
             joint["min"] = limits[i - 1].min_deg;
             joint["max"] = limits[i - 1].max_deg;
+            // Leaving these out is how the schema spells "unbounded", so we
+            // emit nothing rather than a placeholder when we have no value.
+            if (limits[i - 1].max_velocity_deg_per_sec) {
+                joint["max_velocity"] = *limits[i - 1].max_velocity_deg_per_sec;
+            }
+            if (limits[i - 1].max_acceleration_deg_per_sec2) {
+                joint["max_acceleration"] = *limits[i - 1].max_acceleration_deg_per_sec2;
+            }
             joints.append(joint);
         }
 
