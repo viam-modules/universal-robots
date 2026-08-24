@@ -46,10 +46,14 @@ struct DHParams {
 // Joint limits, in degrees, matching the `min`/`max`/`max_velocity`/
 // `max_acceleration` fields in shipped `kinematics/<model>.json` files.
 //
-// The two kinematic limits are optional because the SVA schema treats an
-// omitted field as unbounded, and because the shipped files carry position
-// bounds only. They are filled in per arm instance from configured speed and
-// acceleration by `Kinematics::with_kinematic_limits`.
+// The two kinematic limits are optional only because the shipped files carry
+// position bounds only, so a freshly parsed `Kinematics` has nothing to put
+// there. They are filled in per arm instance from configured speed and
+// acceleration by `Kinematics::apply_kinematic_limits`, and `to_sva_json`
+// refuses to serialize until they are, so nothing we publish leaves a joint
+// unconstrained. The optional exists to keep "we have no value" distinct from
+// a configured limit of zero, which is a real limit meaning the joint does not
+// move.
 struct JointLimits {
     double min_deg;
     double max_deg;
@@ -135,9 +139,12 @@ class UrArmModel::Kinematics {
     // Returns a copy carrying the given per-joint velocity and acceleration
     // limits. Inputs are radians, matching what `URArm::state_` holds; the
     // conversion to the degrees the SVA schema uses happens here.
-    Kinematics with_kinematic_limits(const urcl::vector6d_t& velocity_rad_per_sec, const urcl::vector6d_t& acceleration_rad_per_sec2) const;
+    Kinematics apply_kinematic_limits(const urcl::vector6d_t& velocity_rad_per_sec,
+                                      const urcl::vector6d_t& acceleration_rad_per_sec2) const;
 
-    // Serialize this kinematics to an RDK-compatible SVA kinematics JSON.
+    // Serialize this kinematics to an RDK-compatible SVA kinematics JSON. Throws std::logic_error
+    // if any joint is missing a velocity or acceleration limit, so call `apply_kinematic_limits`
+    // first.
     std::string to_sva_json() const;
 
     // Cumulative world-frame pose of the i-th link's parent at joints with zero rotation.

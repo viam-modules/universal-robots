@@ -1274,7 +1274,7 @@ BOOST_AUTO_TEST_CASE(test_apply_calibration_preserves_world_geometry_centers_at_
 }
 
 BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
-    // parse -> apply_calibration(nominal) -> with_kinematic_limits ->
+    // parse -> apply_calibration(nominal) -> apply_kinematic_limits ->
     // to_sva_json -> re-parse should give back world-frame geometry positions
     // that still match the spec, and the stamped velocity and acceleration
     // limits in degrees. Exercises the writer (translation/orientation/
@@ -1294,7 +1294,7 @@ BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
     const vector6d_t acceleration_degs = {210.0, 220.0, 230.0, 240.0, 250.0, 260.0};
 
     const std::string json_str = tbl.apply_calibration(dh)
-                                     .with_kinematic_limits(degrees_to_radians(velocity_degs), degrees_to_radians(acceleration_degs))
+                                     .apply_kinematic_limits(degrees_to_radians(velocity_degs), degrees_to_radians(acceleration_degs))
                                      .to_sva_json();
     const auto tmp = std::filesystem::temp_directory_path() / "ur20_round_trip.json";
     {
@@ -1343,7 +1343,7 @@ BOOST_AUTO_TEST_CASE(test_configured_zero_limits_are_published_as_zero) {
     const vector6d_t velocity_degs = {110.0, 0.0, 130.0, 140.0, 150.0, 160.0};
     const vector6d_t acceleration_degs = {210.0, 220.0, 0.0, 240.0, 250.0, 260.0};
 
-    const auto stamped = load("ur20").with_kinematic_limits(degrees_to_radians(velocity_degs), degrees_to_radians(acceleration_degs));
+    const auto stamped = load("ur20").apply_kinematic_limits(degrees_to_radians(velocity_degs), degrees_to_radians(acceleration_degs));
 
     BOOST_REQUIRE(stamped.limits[1].max_velocity_deg_per_sec.has_value());
     BOOST_CHECK_EQUAL(*stamped.limits[1].max_velocity_deg_per_sec, 0.0);
@@ -1366,29 +1366,27 @@ BOOST_AUTO_TEST_CASE(test_configured_zero_limits_are_published_as_zero) {
     BOOST_CHECK_EQUAL(root["joints"][2]["max_acceleration"].asDouble(), 0.0);
 }
 
-BOOST_AUTO_TEST_CASE(test_unstamped_kinematic_limits_are_omitted) {
-    // The shipped files carry position bounds only, and an omitted field is
-    // how the schema spells unbounded, so an unstamped document must leave
-    // the fields out rather than write a placeholder value that a consumer
-    // would read as a real limit.
+BOOST_AUTO_TEST_CASE(test_serializing_without_limits_is_refused) {
+    // The shipped files carry position bounds only, so a freshly parsed table has no kinematic
+    // limits. Publishing it in that state would hand RDK a document whose `TrajectoryLimits` comes
+    // back false and silently costs the whole arm its timing, so serializing has to fail loudly
+    // instead.
     const auto tbl = load("ur20");
     for (std::size_t i = 0; i < 6; ++i) {
         BOOST_CHECK(!tbl.limits[i].max_velocity_deg_per_sec.has_value());
         BOOST_CHECK(!tbl.limits[i].max_acceleration_deg_per_sec2.has_value());
     }
 
-    Json::Value root;
-    std::istringstream in{tbl.to_sva_json()};
-    const Json::CharReaderBuilder reader_builder;
-    std::string errs;
-    BOOST_REQUIRE(Json::parseFromStream(reader_builder, in, &root, &errs));
+    BOOST_CHECK_THROW(tbl.to_sva_json(), std::logic_error);
 
-    BOOST_REQUIRE(root["joints"].isArray());
-    BOOST_REQUIRE_EQUAL(root["joints"].size(), 6U);
-    for (const auto& joint : root["joints"]) {
-        BOOST_CHECK(!joint.isMember("max_velocity"));
-        BOOST_CHECK(!joint.isMember("max_acceleration"));
-    }
+    // One joint short is refused for the same reason: RDK's check is all or nothing, so a document
+    // missing a single limit is worth no more than one missing every limit.
+    auto partial = tbl.apply_kinematic_limits(degrees_to_radians(vector6d_t{110.0, 120.0, 130.0, 140.0, 150.0, 160.0}),
+                                              degrees_to_radians(vector6d_t{210.0, 220.0, 230.0, 240.0, 250.0, 260.0}));
+    BOOST_CHECK_NO_THROW(partial.to_sva_json());
+
+    partial.limits[3].max_velocity_deg_per_sec.reset();
+    BOOST_CHECK_THROW(partial.to_sva_json(), std::logic_error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

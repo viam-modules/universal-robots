@@ -415,8 +415,8 @@ UrArmModel::Kinematics UrArmModel::Kinematics::apply_calibration(const DHParams&
     return out;
 }
 
-UrArmModel::Kinematics UrArmModel::Kinematics::with_kinematic_limits(const urcl::vector6d_t& velocity_rad_per_sec,
-                                                                     const urcl::vector6d_t& acceleration_rad_per_sec2) const {
+UrArmModel::Kinematics UrArmModel::Kinematics::apply_kinematic_limits(const urcl::vector6d_t& velocity_rad_per_sec,
+                                                                      const urcl::vector6d_t& acceleration_rad_per_sec2) const {
     // We publish whatever is configured, zero included. Only an absent field means unbounded, so a
     // configured zero has to go out as zero: our validation accepts an array with a single zero
     // element, and omitting it would tell the planner that an axis which cannot move is unbounded.
@@ -595,14 +595,18 @@ std::string UrArmModel::Kinematics::to_sva_json() const {
             joint["axis"] = dh_z_axis;
             joint["min"] = limits[i - 1].min_deg;
             joint["max"] = limits[i - 1].max_deg;
-            // Leaving these out is how the schema spells "unbounded", so we
-            // emit nothing rather than a placeholder when we have no value.
-            if (limits[i - 1].max_velocity_deg_per_sec) {
-                joint["max_velocity"] = *limits[i - 1].max_velocity_deg_per_sec;
+
+            // Every joint we publish has to carry both limits. A UR joint always has a real speed
+            // the motors can do, so there is no such thing as an unbounded one here, and RDK's
+            // `TrajectoryLimits` is all or nothing anyway: leave one joint unset and the planner
+            // discards timing for the whole arm. Emitting a partial document would be a silent
+            // no-op at the far end, so we refuse rather than serialize one.
+            if (!limits[i - 1].max_velocity_deg_per_sec || !limits[i - 1].max_acceleration_deg_per_sec2) {
+                throw std::logic_error("UrArmModel::Kinematics::to_sva_json: joint " + std::to_string(i - 1) +
+                                       " has no velocity or acceleration limit; call apply_kinematic_limits first");
             }
-            if (limits[i - 1].max_acceleration_deg_per_sec2) {
-                joint["max_acceleration"] = *limits[i - 1].max_acceleration_deg_per_sec2;
-            }
+            joint["max_velocity"] = *limits[i - 1].max_velocity_deg_per_sec;
+            joint["max_acceleration"] = *limits[i - 1].max_acceleration_deg_per_sec2;
             joints.append(joint);
         }
 
