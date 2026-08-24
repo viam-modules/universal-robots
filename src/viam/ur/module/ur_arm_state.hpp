@@ -267,16 +267,12 @@ class URArm::state_ {
     // `mutable` is intentional on `json_once`/`json`: the shared state is
     // accessed via `shared_future<T>::get()` returning `const T&`, and the
     // JSON is a deterministic function of this payload's `info` and
-    // `arm_model` plus the configured limits, which do not change while the
+    // `arm_model` plus the configured limits, none of which change while the
     // payload lives. Every caller observes the same logical value;
     // `std::call_once` synchronizes the first JSON-wanting caller's build
-    // with later reuses.
-    //
-    // Note the calibration is per connection, not per `state_`: each new
-    // connection period installs a fresh payload (see
-    // `state_connected_::recv_arm_data`), which is why the once_flag belongs
-    // here rather than on `state_`. Hoisting the cache up to `state_` would
-    // keep serving the previous connection's calibration after a reconnect.
+    // with later reuses. Calibration is per connection rather than per
+    // `state_`, so the once_flag has to live here; hoisting it would keep
+    // serving the previous connection's calibration after a reconnect.
     //
     // `json_once` is held via `unique_ptr` because `std::once_flag` is
     // neither copyable nor movable, and the payload must be at least
@@ -602,22 +598,19 @@ class URArm::state_ {
     vector6d_t velocity_limits_{};
     vector6d_t acceleration_limits_{};
 
-    // The configured limits, already clamped against any ceiling, captured once during `create`
-    // and never touched again. The kinematics document describes how this arm is configured, so it
-    // publishes these rather than the live `velocity_limits_`.
+    // The configured limits, already clamped against any ceiling, captured once during `create`.
+    // The kinematics document describes how this arm is configured, so it publishes these rather
+    // than the live `velocity_limits_`, which DoCommand moves for the session and MoveOptions moves
+    // for a single move. That means the document is not an upper bound on what the arm will do; see
+    // the pull request for why we chose it anyway.
     //
-    // That is a deliberate tradeoff, not just a convenience. `set_speed_degs_per_sec` via DoCommand
-    // moves the live limits for the rest of the session, and moves plan against those, so after
-    // such a call the document reports a speed the arm will not use. We accept that because the
-    // framesystem reads kinematics once when it builds the resource graph and never re-reads it, so
-    // publishing live values would not reach the planner anyway; it would only make the two RDK
-    // read paths disagree with each other and make the bytes change under anything hashing them.
-    // Publishing the configured value also matches the yaskawa module, which gives the motion
-    // service the same meaning from both arms.
+    // Optional because a default-constructed vector is all zeros, and zero is a real limit meaning
+    // the joint does not move, so an unpopulated snapshot would be published as if it were an arm
+    // configured to stay still.
     //
     // Written before the worker thread starts, so no lock is needed to read them.
-    vector6d_t configured_velocity_limits_{};
-    vector6d_t configured_acceleration_limits_{};
+    std::optional<vector6d_t> configured_velocity_limits_;
+    std::optional<vector6d_t> configured_acceleration_limits_;
 
     const double path_tolerance_delta_rads_;
     const std::optional<double> path_colinearization_ratio_;

@@ -258,6 +258,10 @@ JointLimits parse_joint_limits(const std::filesystem::path& path, const Json::Va
     // `max_velocity` and `max_acceleration` are optional in the schema, so an
     // absent field is not an error, but a present one that is not a number is.
     // We read them so a document we emitted parses back to what we wrote.
+    //
+    // Negative is rejected for the same reason config parsing rejects it: there is no such thing
+    // as a negative speed limit. Zero is allowed, since that is a real limit meaning the joint does
+    // not move. Unlike `min` and `max`, which are positions and are routinely negative.
     const auto optional_limit = [&](const char* field) -> std::optional<double> {
         if (!joint.isMember(field)) {
             return std::nullopt;
@@ -265,7 +269,11 @@ JointLimits parse_joint_limits(const std::filesystem::path& path, const Json::Va
         if (!joint[field].isNumeric()) {
             throw_parse_error(path, std::string{"joint `"} + field + "` is present but not a number");
         }
-        return joint[field].asDouble();
+        const double value = joint[field].asDouble();
+        if (value < 0.0) {
+            throw_parse_error(path, std::string{"joint `"} + field + "` cannot be negative, got " + std::to_string(value));
+        }
+        return value;
     };
 
     return JointLimits{

@@ -46,14 +46,10 @@ struct DHParams {
 // Joint limits, in degrees, matching the `min`/`max`/`max_velocity`/
 // `max_acceleration` fields in shipped `kinematics/<model>.json` files.
 //
-// The two kinematic limits are optional only because the shipped files carry
-// position bounds only, so a freshly parsed `Kinematics` has nothing to put
-// there. They are filled in per arm instance from configured speed and
-// acceleration by `Kinematics::apply_kinematic_limits`, and `to_sva_json`
-// refuses to serialize until they are, so nothing we publish leaves a joint
-// unconstrained. The optional exists to keep "we have no value" distinct from
-// a configured limit of zero, which is a real limit meaning the joint does not
-// move.
+// The kinematic limits are optional because the shipped files carry position
+// bounds only, and because zero is a real limit meaning the joint does not
+// move, so it cannot double as "not set". `apply_kinematic_limits` fills them
+// in per arm instance and `to_sva_json` refuses to serialize until it has.
 struct JointLimits {
     double min_deg;
     double max_deg;

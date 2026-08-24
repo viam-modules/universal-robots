@@ -952,6 +952,13 @@ std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::dur
     }
     const auto& payload = fut.get();
 
+    // A snapshot that was never taken would otherwise publish six joints at zero, which is a real
+    // limit meaning the arm cannot move, so it has to be caught here rather than sailing through
+    // as if it were configured that way.
+    if (!configured_velocity_limits_ || !configured_acceleration_limits_) {
+        throw std::logic_error("get_dh_kinematics_json: configured limits were never captured during create");
+    }
+
     // The first JSON-wanting caller builds the string under `call_once`;
     // subsequent callers reuse the memoized value. `json_once`/`json` are
     // `mutable` on `cached_kinematics_payload` precisely so this lazy build
@@ -961,7 +968,7 @@ std::string URArm::state_::get_dh_kinematics_json(std::chrono::steady_clock::dur
     std::call_once(*payload.json_once, [&] {
         payload.json = payload.arm_model.load_kinematics((resource_root_ / "kinematics" / payload.arm_model.sdk_name()).concat(".json"))
                            .apply_calibration({payload.info.dh_a_, payload.info.dh_d_, payload.info.dh_alpha_, payload.info.dh_theta_})
-                           .apply_kinematic_limits(configured_velocity_limits_, configured_acceleration_limits_)
+                           .apply_kinematic_limits(*configured_velocity_limits_, *configured_acceleration_limits_)
                            .to_sva_json();
     });
     return payload.json;
