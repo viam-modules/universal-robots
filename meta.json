@@ -31,5 +31,10 @@
       "markdown_link": "README.md#configuration-and-usage"
     }
   ],
-  "entrypoint": "@CMAKE_INSTALL_BINDIR@/universal-robots"
+  "entrypoint": "bin/universal-robots",
+  "build": {
+    "build": "true",
+    "path": "module.tar.gz",
+    "arch": ["linux/amd64"]
+  }
 }

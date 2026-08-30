@@ -338,6 +338,13 @@ const std::vector<UrModelDescriptor>& UrModelDescriptor::all() {
         t.push_back({"ur20",
                      "ur20",
                      {"base_link", "wrist_3_link", "shoulder_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}});
+        // URCL maps "ur12e" to RobotType::UR10 (per URCL helpers.h), so the
+        // urcl_category here is "ur10".
+        // TODO(RSDK-XXXXX): populate the mesh-link list here once ur12e GLBs
+        // are available. The empty list is a stopgap that leaves
+        // `get_3d_models` returning an empty map for this arm; when the
+        // per-link GLBs land, mirror the ur5e/ur20 lists above.
+        t.push_back({"ur12e", "ur10", {}});
         return t;
     }();
     return table;
