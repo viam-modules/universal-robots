@@ -43,11 +43,18 @@ struct DHParams {
     urcl::vector6d_t theta;
 };
 
-// Joint angular limits, in degrees, matching the `min`/`max` fields in
-// shipped `kinematics/<model>.json` files.
+// Joint limits, in degrees, matching the `min`/`max`/`max_velocity`/
+// `max_acceleration` fields in shipped `kinematics/<model>.json` files.
+//
+// The kinematic limits are optional because the shipped files carry position
+// bounds only, and because zero is a real limit meaning the joint does not
+// move, so it cannot double as "not set". `apply_kinematic_limits` fills them
+// in per arm instance and `to_sva_json` refuses to serialize until it has.
 struct JointLimits {
     double min_deg;
     double max_deg;
+    std::optional<double> max_velocity_deg_per_sec;
+    std::optional<double> max_acceleration_deg_per_sec2;
 };
 
 // A geometry expressed in its link's parent (joint) frame.
@@ -125,7 +132,15 @@ class UrArmModel::Kinematics {
 
     Kinematics apply_calibration(const DHParams& dh) const;
 
-    // Serialize this kinematics to an RDK-compatible SVA kinematics JSON.
+    // Returns a copy carrying the given per-joint velocity and acceleration
+    // limits. Inputs are radians, matching what `URArm::state_` holds; the
+    // conversion to the degrees the SVA schema uses happens here.
+    Kinematics apply_kinematic_limits(const urcl::vector6d_t& velocity_rad_per_sec,
+                                      const urcl::vector6d_t& acceleration_rad_per_sec2) const;
+
+    // Serialize this kinematics to an RDK-compatible SVA kinematics JSON. Throws std::logic_error
+    // if any joint is missing a velocity or acceleration limit, so call `apply_kinematic_limits`
+    // first.
     std::string to_sva_json() const;
 
     // Cumulative world-frame pose of the i-th link's parent at joints with zero rotation.

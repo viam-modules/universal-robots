@@ -1274,11 +1274,12 @@ BOOST_AUTO_TEST_CASE(test_apply_calibration_preserves_world_geometry_centers_at_
 }
 
 BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
-    // parse -> apply_calibration(nominal) -> to_sva_json -> re-parse
-    // should give back world-frame geometry positions that still match the
-    // spec. Exercises the writer (translation/orientation/geometry
-    // emission) and the parser's quaternion code path on the writer's
-    // output.
+    // parse -> apply_calibration(nominal) -> apply_kinematic_limits ->
+    // to_sva_json -> re-parse should give back world-frame geometry positions
+    // that still match the spec, and the stamped velocity and acceleration
+    // limits in degrees. Exercises the writer (translation/orientation/
+    // geometry/limit emission) and the parser's quaternion code path on the
+    // writer's output.
     const UrArmModel::Kinematics tbl = load("ur20");
 
     DHParams dh{};
@@ -1287,7 +1288,14 @@ BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
     dh.alpha = {std::numbers::pi / 2.0, 0.0, 0.0, std::numbers::pi / 2.0, -std::numbers::pi / 2.0, 0.0};
     dh.theta = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
 
-    const std::string json_str = tbl.apply_calibration(dh).to_sva_json();
+    // Distinct per joint, so a fanned-out or transposed write fails here
+    // rather than passing on six equal values.
+    const vector6d_t velocity_degs = {110.0, 120.0, 130.0, 140.0, 150.0, 160.0};
+    const vector6d_t acceleration_degs = {210.0, 220.0, 230.0, 240.0, 250.0, 260.0};
+
+    const std::string json_str = tbl.apply_calibration(dh)
+                                     .apply_kinematic_limits(degrees_to_radians(velocity_degs), degrees_to_radians(acceleration_degs))
+                                     .to_sva_json();
     const auto tmp = std::filesystem::temp_directory_path() / "ur20_round_trip.json";
     {
         std::ofstream out(tmp);
@@ -1310,6 +1318,120 @@ BOOST_AUTO_TEST_CASE(test_to_sva_json_round_trips_via_parse) {
         BOOST_CHECK_SMALL(world.y() - expect[1], 1e-3);
         BOOST_CHECK_SMALL(world.z() - expect[2], 1e-3);
     }
+
+    // The stamping input is radians and the schema is degrees, so this also
+    // covers the conversion.
+    for (std::size_t i = 0; i < 6; ++i) {
+        BOOST_REQUIRE(reparsed.limits[i].max_velocity_deg_per_sec.has_value());
+        BOOST_REQUIRE(reparsed.limits[i].max_acceleration_deg_per_sec2.has_value());
+        BOOST_CHECK_CLOSE(*reparsed.limits[i].max_velocity_deg_per_sec, velocity_degs[i], 1e-9);
+        BOOST_CHECK_CLOSE(*reparsed.limits[i].max_acceleration_deg_per_sec2, acceleration_degs[i], 1e-9);
+    }
+
+    // Position bounds must survive the added fields untouched.
+    for (std::size_t i = 0; i < 6; ++i) {
+        BOOST_CHECK_EQUAL(reparsed.limits[i].min_deg, (i == 2) ? -180.0 : -360.0);
+        BOOST_CHECK_EQUAL(reparsed.limits[i].max_deg, (i == 2) ? 180.0 : 360.0);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_configured_zero_limits_are_published_as_zero) {
+    // `speed_degs_per_sec` validation rejects an all-zero array but accepts a single zero element,
+    // and zero is a real limit of zero on the wire rather than a way of saying unbounded. So a
+    // configured zero has to be emitted, not dropped: dropping it would describe an axis that
+    // cannot move as having no bound at all.
+    const vector6d_t velocity_degs = {110.0, 0.0, 130.0, 140.0, 150.0, 160.0};
+    const vector6d_t acceleration_degs = {210.0, 220.0, 0.0, 240.0, 250.0, 260.0};
+
+    const auto stamped = load("ur20").apply_kinematic_limits(degrees_to_radians(velocity_degs), degrees_to_radians(acceleration_degs));
+
+    BOOST_REQUIRE(stamped.limits[1].max_velocity_deg_per_sec.has_value());
+    BOOST_CHECK_EQUAL(*stamped.limits[1].max_velocity_deg_per_sec, 0.0);
+    BOOST_REQUIRE(stamped.limits[2].max_acceleration_deg_per_sec2.has_value());
+    BOOST_CHECK_EQUAL(*stamped.limits[2].max_acceleration_deg_per_sec2, 0.0);
+
+    // The other axis of the same joint is untouched.
+    BOOST_REQUIRE(stamped.limits[1].max_acceleration_deg_per_sec2.has_value());
+    BOOST_CHECK_CLOSE(*stamped.limits[1].max_acceleration_deg_per_sec2, 220.0, 1e-9);
+
+    // And the key is present in the document with an explicit 0, not missing.
+    Json::Value root;
+    std::istringstream in{stamped.to_sva_json()};
+    const Json::CharReaderBuilder reader_builder;
+    std::string errs;
+    BOOST_REQUIRE(Json::parseFromStream(reader_builder, in, &root, &errs));
+    BOOST_REQUIRE(root["joints"][1].isMember("max_velocity"));
+    BOOST_CHECK_EQUAL(root["joints"][1]["max_velocity"].asDouble(), 0.0);
+    BOOST_REQUIRE(root["joints"][2].isMember("max_acceleration"));
+    BOOST_CHECK_EQUAL(root["joints"][2]["max_acceleration"].asDouble(), 0.0);
+}
+
+BOOST_AUTO_TEST_CASE(test_serializing_without_limits_is_refused) {
+    // The shipped files carry position bounds only, so a freshly parsed table has no kinematic
+    // limits. Publishing it in that state would hand RDK a document whose `TrajectoryLimits` comes
+    // back false and silently costs the whole arm its timing, so serializing has to fail loudly
+    // instead.
+    const auto tbl = load("ur20");
+    for (std::size_t i = 0; i < 6; ++i) {
+        BOOST_CHECK(!tbl.limits[i].max_velocity_deg_per_sec.has_value());
+        BOOST_CHECK(!tbl.limits[i].max_acceleration_deg_per_sec2.has_value());
+    }
+
+    BOOST_CHECK_THROW(tbl.to_sva_json(), std::logic_error);
+
+    // One joint short is refused for the same reason: RDK's check is all or nothing, so a document
+    // missing a single limit is worth no more than one missing every limit.
+    auto partial = tbl.apply_kinematic_limits(degrees_to_radians(vector6d_t{110.0, 120.0, 130.0, 140.0, 150.0, 160.0}),
+                                              degrees_to_radians(vector6d_t{210.0, 220.0, 230.0, 240.0, 250.0, 260.0}));
+    BOOST_CHECK_NO_THROW(partial.to_sva_json());
+
+    // Both sides of the guard, since a document missing only accelerations is refused by RDK just
+    // as flatly as one missing velocities.
+    auto no_velocity = partial;
+    no_velocity.limits[3].max_velocity_deg_per_sec.reset();
+    BOOST_CHECK_THROW(no_velocity.to_sva_json(), std::logic_error);
+
+    auto no_acceleration = partial;
+    no_acceleration.limits[3].max_acceleration_deg_per_sec2.reset();
+    BOOST_CHECK_THROW(no_acceleration.to_sva_json(), std::logic_error);
+}
+
+BOOST_AUTO_TEST_CASE(test_malformed_kinematic_limits_are_rejected_on_parse) {
+    // Nothing in production reaches these branches, because every emitted document is stamped and
+    // no shipped file carries the fields at all. They exist so the parser stands on its own rather
+    // than relying on `apply_kinematic_limits` overwriting whatever it read.
+    const auto write_and_load = [](const std::string& joint_patch) {
+        const auto tmp = std::filesystem::temp_directory_path() / "ur20_bad_limits.json";
+        {
+            // Start from a real document so only the field under test is unusual.
+            auto doc = load("ur20").apply_kinematic_limits(degrees_to_radians(vector6d_t{1.0, 1.0, 1.0, 1.0, 1.0, 1.0}),
+                                                           degrees_to_radians(vector6d_t{1.0, 1.0, 1.0, 1.0, 1.0, 1.0}));
+            Json::Value root;
+            std::istringstream in{doc.to_sva_json()};
+            const Json::CharReaderBuilder reader_builder;
+            std::string errs;
+            BOOST_REQUIRE(Json::parseFromStream(reader_builder, in, &root, &errs));
+
+            Json::Value patch;
+            std::istringstream patch_in{joint_patch};
+            BOOST_REQUIRE(Json::parseFromStream(reader_builder, patch_in, &patch, &errs));
+            for (const auto& key : patch.getMemberNames()) {
+                root["joints"][0][key] = patch[key];
+            }
+
+            std::ofstream out(tmp);
+            out << Json::writeString(Json::StreamWriterBuilder{}, root);
+        }
+        return UrArmModel::from_sdk_name("ur20").load_kinematics(tmp);
+    };
+
+    BOOST_CHECK_THROW(write_and_load(R"({"max_velocity": "fast"})"), std::invalid_argument);
+    BOOST_CHECK_THROW(write_and_load(R"({"max_acceleration": "quick"})"), std::invalid_argument);
+    BOOST_CHECK_THROW(write_and_load(R"({"max_velocity": -180.0})"), std::invalid_argument);
+    BOOST_CHECK_THROW(write_and_load(R"({"max_acceleration": -1145.0})"), std::invalid_argument);
+
+    // Zero stays acceptable on the way in, since it is a real limit.
+    BOOST_CHECK_NO_THROW(write_and_load(R"({"max_velocity": 0.0})"));
 }
 
 BOOST_AUTO_TEST_SUITE_END()
