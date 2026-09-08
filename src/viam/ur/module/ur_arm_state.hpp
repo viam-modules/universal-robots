@@ -598,11 +598,15 @@ class URArm::state_ {
     vector6d_t velocity_limits_{};
     vector6d_t acceleration_limits_{};
 
-    // The configured limits, already clamped against any ceiling, captured once during `create`.
+    // The configured limits, already clamped against any ceiling, captured once during create.
     // The kinematics document describes how this arm is configured, so it publishes these rather
-    // than the live `velocity_limits_`, which DoCommand moves for the session and MoveOptions moves
-    // for a single move. That means the document is not an upper bound on what the arm will do; see
-    // the pull request for why we chose it anyway.
+    // than the live velocity_limits_, which DoCommand moves for the session and MoveOptions moves
+    // for a single move. That means the document is not an upper bound on what the arm will do. We
+    // chose that anyway because the framesystem reads kinematics once when it builds the resource
+    // graph and never re-reads it, so a live value would not reach the planner, and would only make
+    // the two RDK read paths disagree, since armplanning.MoveArm fetches per call while the
+    // framesystem does not. It also keeps the returned bytes stable for anything hashing them, and
+    // matches what the yaskawa module publishes.
     //
     // Optional because a default-constructed vector is all zeros, and zero is a real limit meaning
     // the joint does not move, so an unpopulated snapshot would be published as if it were an arm

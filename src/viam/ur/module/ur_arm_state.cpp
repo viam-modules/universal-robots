@@ -211,6 +211,9 @@ std::unique_ptr<URArm::state_> URArm::state_::create(UrArmModel configured_model
 
     // The setters return what they actually stored, which is the configured value clamped against
     // any ceiling, so we keep that as the configured limits the kinematics document publishes.
+    //
+    // TODO(RSDK-14520): Check these against the limits the arm itself enforces, so a config that
+    // asks for more than the hardware allows is caught here instead of published as fact.
     state->configured_velocity_limits_ = state->set_velocity_limits(parse_and_validate_joint_limits(config, "speed_degs_per_sec"));
     state->configured_acceleration_limits_ =
         state->set_acceleration_limits(parse_and_validate_joint_limits(config, "acceleration_degs_per_sec2"));

@@ -269,7 +269,7 @@ JointLimits parse_joint_limits(const std::filesystem::path& path, const Json::Va
         if (!joint[field].isNumeric()) {
             throw_parse_error(path, std::string{"joint `"} + field + "` is present but not a number");
         }
-        const double value = joint[field].asDouble();
+        const auto value = joint[field].asDouble();
         if (value < 0.0) {
             throw_parse_error(path, std::string{"joint `"} + field + "` cannot be negative, got " + std::to_string(value));
         }
