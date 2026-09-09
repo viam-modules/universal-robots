@@ -39,6 +39,7 @@ class URArm::state_ {
                     std::optional<double> path_colinearization_ratio,
                     double segmentation_threshold,
                     bool use_new_trajectory_planner,
+                    bool use_legacy_trajectory_planner,
                     bool prefer_precomputed_accelerations,
                     bool segment_for_trajex,
                     double max_trajectory_duration_secs,
@@ -92,6 +93,7 @@ class URArm::state_ {
     double get_segmentation_threshold() const;
 
     bool use_new_trajectory_planner() const;
+    bool use_legacy_trajectory_planner() const;
     bool prefer_precomputed_accelerations() const;
     bool segment_for_trajex() const;
 
@@ -621,6 +623,7 @@ class URArm::state_ {
     const double segmentation_threshold_;
 
     const bool use_new_trajectory_planner_;
+    const bool use_legacy_trajectory_planner_;
     const bool prefer_precomputed_accelerations_;
     const bool segment_for_trajex_;
     const double max_trajectory_duration_secs_;

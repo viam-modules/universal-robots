@@ -111,6 +111,16 @@ class URArm final : public Arm {
     ///
     static constexpr double k_default_waypoint_deduplication_tolerance_rads = 1e-3;
 
+    ///
+    /// Whether the trajex/totg trajectory generator is enabled by default.
+    ///
+    static constexpr bool k_default_enable_new_trajectory_planner = true;
+
+    ///
+    /// Whether the legacy trajectory generator is enabled by default.
+    ///
+    static constexpr bool k_default_enable_legacy_trajectory_planner = false;
+
     /// @brief Returns the common ModelFamily for all implementations
     static const ModelFamily& model_family();
 
