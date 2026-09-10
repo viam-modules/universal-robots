@@ -222,7 +222,15 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
             boost::str(boost::format("attribute `segmentation_threshold` must be > 0 and <= 0.01, it is: %1%") % *segmentation_threshold));
     }
 
-    find_config_attribute<bool>(cfg, "enable_new_trajectory_planner");
+    const auto enable_new_planner =
+        find_config_attribute<bool>(cfg, "enable_new_trajectory_planner").value_or(URArm::k_default_enable_new_trajectory_planner);
+    const auto enable_legacy_planner =
+        find_config_attribute<bool>(cfg, "enable_legacy_trajectory_planner").value_or(URArm::k_default_enable_legacy_trajectory_planner);
+    if (!enable_new_planner && !enable_legacy_planner) {
+        throw std::invalid_argument(
+            "at least one of `enable_new_trajectory_planner` or `enable_legacy_trajectory_planner` must be enabled");
+    }
+
     find_config_attribute<bool>(cfg, "prefer_precomputed_accelerations");
     find_config_attribute<bool>(cfg, "segment_for_trajex");
 
@@ -1053,8 +1061,15 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 const segment_accumulator& acc,
                 const viam::trajex::totg::waypoint_accumulator& seg,
                 const std::exception& e) {
-                VIAM_SDK_LOG(warn) << "trajectory generation with trajex failed with an exception"
-                                   << ", waypoints: " << acc.total_waypoints << ", exception: " << e.what();
+                std::stringstream message;
+                message << "trajectory generation with trajex failed with an exception"
+                        << ", waypoints: " << acc.total_waypoints << ", exception: " << e.what();
+                if (current_state_->use_legacy_trajectory_planner()) {
+                    VIAM_SDK_LOG(warn) << message.str();
+                } else {
+                    VIAM_SDK_LOG(error) << message.str();
+                }
+
                 const std::string json_content = planner.serialize_for_replay(seg, e.what());
                 const auto filename = failed_trajectory_filename(
                     current_state_->telemetry_output_path(), current_state_->resource_name() + "_trajex", id.uuid);
@@ -1063,41 +1078,46 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             });
     }
 
-    planner.with_legacy(
-        [&](const auto&,
-            segment_accumulator& acc,
-            const viam::trajex::totg::waypoint_accumulator& segment,
-            Path&& legacy_path,
-            Trajectory&& traj,
-            auto elapsed) {
-            acc.total_generation_time += elapsed;
-            acc.total_duration += traj.getDuration();
-            acc.total_waypoints += segment.size();
-            acc.total_arc_length += legacy_path.getLength();
-            acc.segment_count++;
+    if (current_state_->use_legacy_trajectory_planner()) {
+        planner.with_legacy(
+            [&](const auto&,
+                segment_accumulator& acc,
+                const viam::trajex::totg::waypoint_accumulator& segment,
+                Path&& legacy_path,
+                Trajectory&& traj,
+                auto elapsed) {
+                acc.total_generation_time += elapsed;
+                acc.total_duration += traj.getDuration();
+                acc.total_waypoints += segment.size();
+                acc.total_arc_length += legacy_path.getLength();
+                acc.segment_count++;
 
-            if (!acc.samples) {
-                acc.samples = std::vector<trajectory_sample_point_pv>{};
-            }
-            auto& pv_samples = std::get<std::vector<trajectory_sample_point_pv>>(*acc.samples);
-            viam::trajex::totg::legacy::for_each_sample(
-                traj.getDuration(), current_state_->get_trajectory_sampling_freq_hz(), [&](const double t, const double step) {
-                    auto p_eigen = traj.getPosition(t);
-                    auto v_eigen = traj.getVelocity(t);
-                    pv_samples.push_back(
-                        trajectory_sample_point_pv{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
-                                                   {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
-                                                   boost::numeric_cast<float>(step)});
-                });
-        },
-        [&](const auto& planner, const segment_accumulator&, const viam::trajex::totg::waypoint_accumulator& seg, const std::exception& e) {
-            VIAM_SDK_LOG(error) << "trajectory generation with legacy failed with an exception: " << e.what();
-            const std::string json_content = planner.serialize_for_replay(seg, e.what());
-            const auto filename =
-                failed_trajectory_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), id.uuid);
-            std::ofstream json_file(filename);
-            json_file << json_content;
-        });
+                if (!acc.samples) {
+                    acc.samples = std::vector<trajectory_sample_point_pv>{};
+                }
+                auto& pv_samples = std::get<std::vector<trajectory_sample_point_pv>>(*acc.samples);
+                viam::trajex::totg::legacy::for_each_sample(
+                    traj.getDuration(), current_state_->get_trajectory_sampling_freq_hz(), [&](const double t, const double step) {
+                        auto p_eigen = traj.getPosition(t);
+                        auto v_eigen = traj.getVelocity(t);
+                        pv_samples.push_back(
+                            trajectory_sample_point_pv{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                                       {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+                                                       boost::numeric_cast<float>(step)});
+                    });
+            },
+            [&](const auto& planner,
+                const segment_accumulator&,
+                const viam::trajex::totg::waypoint_accumulator& seg,
+                const std::exception& e) {
+                VIAM_SDK_LOG(error) << "trajectory generation with legacy failed with an exception: " << e.what();
+                const std::string json_content = planner.serialize_for_replay(seg, e.what());
+                const auto filename =
+                    failed_trajectory_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), id.uuid);
+                std::ofstream json_file(filename);
+                json_file << json_content;
+            });
+    }
 
     auto result = planner.execute([&](const auto& p, auto trajex, auto legacy) -> std::optional<segment_accumulator> {
         // Log trajex summary if it ran
@@ -1139,14 +1159,11 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             return std::move(legacy.receiver);
         }
 
-        // Legacy is the authoritative algorithm, so its errors take priority.
+        // When both ran and both failed, legacy's error takes priority.
         if (legacy.error) {
             std::rethrow_exception(legacy.error);
         }
 
-        // Trajex errors are only fatal when legacy isn't registered (future:
-        // legacy retired). When both run and both fail, legacy's error above
-        // takes precedence.
         if (trajex.error) {
             std::rethrow_exception(trajex.error);
         }

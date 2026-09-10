@@ -38,6 +38,7 @@ URArm::state_::state_(private_,
                       std::optional<double> path_colinearization_ratio,
                       double segmentation_threshold,
                       bool use_new_trajectory_planner,
+                      bool use_legacy_trajectory_planner,
                       bool prefer_precomputed_accelerations,
                       bool segment_for_trajex,
                       double max_trajectory_duration_secs,
@@ -61,6 +62,7 @@ URArm::state_::state_(private_,
       path_colinearization_ratio_(path_colinearization_ratio),
       segmentation_threshold_(segmentation_threshold),
       use_new_trajectory_planner_(use_new_trajectory_planner),
+      use_legacy_trajectory_planner_(use_legacy_trajectory_planner),
       prefer_precomputed_accelerations_(prefer_precomputed_accelerations),
       segment_for_trajex_(segment_for_trajex),
       max_trajectory_duration_secs_(max_trajectory_duration_secs),
@@ -135,7 +137,10 @@ std::unique_ptr<URArm::state_> URArm::state_::create(UrArmModel configured_model
                                                                            : URArm::k_default_waypoint_deduplication_tolerance_rads;
 
     auto frequency = find_config_attribute<double>(config, "robot_control_freq_hz");
-    auto use_new_planner = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(true);
+    auto use_new_planner =
+        find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(URArm::k_default_enable_new_trajectory_planner);
+    auto use_legacy_planner =
+        find_config_attribute<bool>(config, "enable_legacy_trajectory_planner").value_or(URArm::k_default_enable_legacy_trajectory_planner);
     auto prefer_precomputed_accels = find_config_attribute<bool>(config, "prefer_precomputed_accelerations").value_or(true);
     const auto segment_for_trajex = find_config_attribute<bool>(config, "segment_for_trajex").value_or(false);
 
@@ -199,6 +204,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(UrArmModel configured_model
                                           colinearization_ratio,
                                           segmentation_threshold,
                                           use_new_planner,
+                                          use_legacy_planner,
                                           prefer_precomputed_accels,
                                           segment_for_trajex,
                                           max_trajectory_duration_secs,
@@ -455,6 +461,10 @@ double URArm::state_::get_segmentation_threshold() const {
 
 bool URArm::state_::use_new_trajectory_planner() const {
     return use_new_trajectory_planner_;
+}
+
+bool URArm::state_::use_legacy_trajectory_planner() const {
+    return use_legacy_trajectory_planner_;
 }
 
 bool URArm::state_::prefer_precomputed_accelerations() const {
