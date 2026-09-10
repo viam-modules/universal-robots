@@ -16,8 +16,8 @@
 #include <limits>
 #include <memory>
 #include <mutex>
-#include <numeric>
 #include <optional>
+#include <ranges>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -283,6 +283,48 @@ auto make_scope_guard(Callable&& cleanup) {
     return guard{std::forward<Callable>(cleanup)};
 }
 
+namespace concepts {
+
+// xtensor supplies the trait but no concept, so adapt it here.
+template <typename E>
+concept xexpression = xt::is_xexpression<std::decay_t<E>>::value;
+
+}  // namespace concepts
+
+// Compares the initial joint positions the caller gave us against the ones we measured from the
+// arm, both in radians, and rejects the move if any joint differs by more than `threshold_rad`.
+//
+// We throw `invalid_argument` even though the arguments themselves are well formed, because that
+// is the only exception type the SDK's streamed arm dispatcher distinguishes. It maps
+// `invalid_argument` to `INVALID_ARGUMENT` and everything else to `INTERNAL`. The unary path
+// reports `INTERNAL` no matter what we throw, so choosing `invalid_argument` costs us nothing
+// there and gives a streaming client something it can act on.
+//
+// The two callers arrive with different expression types. The unary path has a row view into the
+// waypoint accumulator, and the streamed path has an adaptor over a `vector6d_t`, which is why
+// this is a template.
+void check_initial_joint_positions_(const concepts::xexpression auto& claimed_rad,
+                                    const concepts::xexpression auto& measured_rad,
+                                    double threshold_rad) {
+    const auto max_diff = xt::norm_linf(claimed_rad - measured_rad)();
+    if (max_diff <= threshold_rad) {
+        return;
+    }
+
+    std::stringstream err_string;
+    err_string << "rejecting move: first trajectory position [(";
+    boost::copy(boost::adaptors::transform(claimed_rad, radians_to_degrees<const double&>),
+                boost::io::make_ostream_joiner(err_string, ", "));
+    err_string << ")] differs from current joint position [(";
+    boost::copy(boost::adaptors::transform(measured_rad, radians_to_degrees<const double&>),
+                boost::io::make_ostream_joiner(err_string, ", "));
+    err_string << ")] by " << viam::trajex::radians_to_degrees(max_diff) << " > " << viam::trajex::radians_to_degrees(threshold_rad)
+               << " degrees";
+
+    VIAM_SDK_LOG(error) << err_string.str();
+    throw std::invalid_argument(err_string.str());
+}
+
 // Converts a stream of SDK `trajectory_point` batches into URCL spline-point
 // batches. The PV-vs-PVA choice is fixed from the first point and held for the
 // life of the stream; per-point timesteps are differenced out of the
@@ -300,6 +342,19 @@ class trajectory_point_converter {
                 using point_type = typename std::decay_t<decltype(points)>::value_type;
                 points.reserve(batch.size());
                 for (const auto& p : batch) {
+                    // The first point of the stream is where the trajectory starts, at t=0.
+                    // Sending it on would give URScript a spline point of zero duration, so we
+                    // drop it here for the same reason the unary path drops its t=0 sample.
+                    // Nothing needs adjusting to account for it, since `cumulative_time_` starts
+                    // at zero and the next point's timestep is already measured from there. The
+                    // SDK stub enforces the t=0 contract before the points reach us, but we rely
+                    // on it to know which point is safe to drop, so we check it ourselves.
+                    if (std::exchange(at_stream_start_, false)) {
+                        if (p.time != std::chrono::microseconds::zero()) {
+                            throw std::invalid_argument("first point of a streamed trajectory must be at t=0");
+                        }
+                        continue;
+                    }
                     points.push_back(to_spline_point_<point_type>(p));
                 }
             },
@@ -342,6 +397,11 @@ class trajectory_point_converter {
     }
 
     bool use_pva_;
+
+    // Cleared once we have considered the first point of the stream, so that no later point can
+    // be mistaken for it.
+    bool at_stream_start_ = true;
+
     std::chrono::microseconds cumulative_time_{0};
 };
 
@@ -462,7 +522,9 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
     const auto waypoint_deg = xt::adapt(positions.data(), positions.size(), xt::no_ownership(), shape);
     const xt::xarray<double> waypoint_rad = viam::trajex::degrees_to_radians(waypoint_deg);
 
-    move_joint_space_(std::move(rlock), waypoint_rad, MoveOptions{}, id);
+    // A single destination tells us nothing about where the arm is now, so there is nothing here
+    // for the move validator to check.
+    move_joint_space_(std::move(rlock), waypoint_rad, MoveOptions{}, id, initial_joint_positions_check_::k_skip);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
@@ -483,49 +545,30 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         xt::view(waypoints_rad, i, xt::all()) = viam::trajex::degrees_to_radians(row_deg);
     }
 
-    move_joint_space_(std::move(rlock), waypoints_rad, options, id);
+    move_joint_space_(std::move(rlock), waypoints_rad, options, id, initial_joint_positions_check_::k_require);
 }
 
-void URArm::check_streamed_start_pose_(const trajectory_point& first, const std::shared_lock<std::shared_mutex>& config_rlock) {
-    // The streamed analog of the unary path's move validator. The stream's first
-    // point is the trajectory's starting state at t=0; if the arm is not actually
-    // there, the leading near-zero-duration segment would command a discontinuous
-    // jump. The unary path is intrinsically safe because it seeds planning with
-    // the measured position; streaming is not, so we require the threshold rather
-    // than skip the check when it is unset.
-    const auto& threshold = current_state_->get_reject_move_request_threshold_rad();
-    if (!threshold) {
-        throw std::invalid_argument("streamed moves require reject_move_request_threshold_deg to be configured");
-    }
-    const auto current = get_joint_positions_rad_(config_rlock);
-    if (first.positions.size() != current.size()) {
+void URArm::check_initial_joint_positions_streamed_(const trajectory_point& first,
+                                                    const std::shared_lock<std::shared_mutex>& config_rlock,
+                                                    double threshold_rad) {
+    // The streamed counterpart of the unary path's move validator, and a stricter one, since this
+    // path has no trajectory generation to absorb a bad starting position. When a unary move
+    // starts somewhere other than the caller believed, the trajectory is still planned from the
+    // position we measured, so the arm travels to the first waypoint as a properly timed motion.
+    // Here the controller splines directly from its own `get_joint_positions()` to the point
+    // following the one we dropped, covering whatever gap we allowed in a timestep that was
+    // computed for a different distance. URScript checks that only against `JOINT_IGNORE_SPEED`,
+    // and cancels the trajectory rather than slowing it down. Since nothing re-times the motion,
+    // `move_through_joint_positions_streamed` requires a threshold before it will open the stream
+    // at all.
+    const auto measured = get_joint_positions_rad_(config_rlock);
+    if (first.positions.size() != measured.size()) {
         throw std::invalid_argument("trajectory point joint dimensionality mismatch");
     }
-    const auto max_diff = std::transform_reduce(
-        first.positions.begin(),
-        first.positions.end(),
-        current.begin(),
-        0.0,
-        [](auto a, auto b) { return std::max(a, b); },
-        [](auto commanded_deg, auto actual_rad) { return std::abs(degrees_to_radians(commanded_deg) - actual_rad); });
-    if (max_diff > *threshold) {
-        std::stringstream err_string;
-        err_string << "rejecting streamed move: first trajectory position [(";
-        boost::copy(first.positions, boost::io::make_ostream_joiner(err_string, ", "));
-        err_string << ")] and current joint position [(";
-        boost::copy(boost::adaptors::transform(current, radians_to_degrees<const double&>),
-                    boost::io::make_ostream_joiner(err_string, ", "));
-        err_string << ")] differ by " << viam::trajex::radians_to_degrees(max_diff) << " > " << viam::trajex::radians_to_degrees(*threshold)
-                   << " degrees";
-        VIAM_SDK_LOG(error) << err_string.str();
-        throw std::invalid_argument(err_string.str());
-    }
 
-    // TODO(RSDK-14273): passing this check admits up to `threshold` of slop between the
-    // commanded first position and the arm's actual position, which the unary path
-    // avoids by seeding the trajectory with the measured position. Determine
-    // whether that slop needs handling (e.g. substituting the measured position for
-    // the first point) once URScript's spline-start behavior is characterized.
+    vector6d_t claimed_rad{};
+    std::ranges::transform(first.positions, claimed_rad.begin(), [](double deg) { return degrees_to_radians(deg); });
+    check_initial_joint_positions_(xt::adapt(claimed_rad), xt::adapt(measured), threshold_rad);
 }
 
 URArm::stream_outcome URArm::move_through_joint_positions_streamed(
@@ -543,6 +586,17 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
 
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
+
+    // Streaming has no trajectory generation to absorb a bad starting position, so the check on
+    // initial joint positions is required here even though the unary path treats it as optional.
+    // We establish that the threshold is configured before allocating a move id or claiming a
+    // slot, so that a misconfiguration is reported as such rather than appearing as a mid-stream
+    // failure once the first batch arrives.
+    const auto& threshold = current_state_->get_reject_move_request_threshold_rad();
+    if (!threshold) {
+        throw std::invalid_argument("streamed moves require `reject_move_request_threshold_deg` to be configured");
+    }
+
     const auto id = current_state_->allocate_move_id();
 
     VIAM_SDK_LOG(debug) << "move_streamed: start id " << id.uuid;
@@ -585,8 +639,9 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                     }
 
                     if (!converter) {
-                        // TODO(RSDK-14274): Re-enable this check when it doesn't break move_to_joint_positions.
-                        // check_streamed_start_pose_(batch->front(), rlock);
+                        // Check the starting position the caller gave us before the converter
+                        // drops the t=0 point that carries it.
+                        check_initial_joint_positions_streamed_(batch->front(), rlock, *threshold);
                         converter.emplace(batch->front(), current_state_->prefer_precomputed_accelerations());
                     }
 
@@ -877,6 +932,10 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
     VIAM_SDK_LOG(debug) << "move tool space: start id " << id.uuid << " p: " << p;
     const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move tool space: end id " << id.uuid; });
 
+    // There is deliberately no initial position check here. We send tool space moves as a single
+    // cartesian point, which the controller plans from its own measured state, so the caller
+    // never gives us a starting position to check.
+
     // get current pose
     auto current_pose = current_state_->read_tcp_pose();
 
@@ -923,7 +982,8 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
 void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                               const xt::xarray<double>& waypoints,
                               const MoveOptions& options,
-                              const URArm::move_id& id) {
+                              const URArm::move_id& id,
+                              initial_joint_positions_check_ initial_joint_positions_check) {
     auto our_config_rlock = std::move(config_rlock);
 
     auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
@@ -992,27 +1052,25 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 viam::trajex::totg::deduplicate_waypoints(accumulator, current_state_->get_waypoint_deduplication_tolerance_rad());
         })
 
-        .with_move_validator([&](auto&, const viam::trajex::totg::waypoint_accumulator& accumulator) {
-            if (const auto& threshold = current_state_->get_reject_move_request_threshold_rad()) {
-                auto current_joint_position = accumulator.begin();
-                auto first_waypoint = std::next(current_joint_position);
-                const auto delta = *first_waypoint - *current_joint_position;
-                const auto max_diff = xt::norm_linf(delta)();
-
-                if (max_diff > *threshold) {
-                    std::stringstream err_string;
-                    err_string << "rejecting move request : difference between starting trajectory position [(";
-                    boost::copy(boost::adaptors::transform(*first_waypoint, radians_to_degrees<const double&>),
-                                boost::io::make_ostream_joiner(err_string, ", "));
-                    err_string << ")] and joint position [(";
-                    boost::copy(boost::adaptors::transform(*current_joint_position, radians_to_degrees<const double&>),
-                                boost::io::make_ostream_joiner(err_string, ", "));
-                    err_string << ")] is above threshold " << viam::trajex::radians_to_degrees(max_diff) << " > "
-                               << viam::trajex::radians_to_degrees(*threshold);
-                    VIAM_SDK_LOG(error) << err_string.str();
-                    throw std::runtime_error(err_string.str());
-                }
+        .with_move_validator([&](auto&, const viam::trajex::totg::waypoint_accumulator&) {
+            if (initial_joint_positions_check == initial_joint_positions_check_::k_skip) {
+                return;
             }
+            const auto& threshold = current_state_->get_reject_move_request_threshold_rad();
+            if (!threshold) {
+                return;
+            }
+
+            // We compare against `captured_waypoints`, which the provider recorded before
+            // preprocessing, rather than against the accumulator passed to this callback. The
+            // latter has been through deduplication, which removes the caller's first waypoint
+            // whenever the arm is already standing on it. We would then be measuring a step of the
+            // planned path rather than the position the caller said the arm was in. The planner's
+            // `processed_waypoint_count() < 2` early return guarantees that at least two entries
+            // are present.
+            const auto measured = captured_waypoints->begin();
+            const auto claimed = std::next(measured);
+            check_initial_joint_positions_(*claimed, *measured, *threshold);
         })
 
         .with_segmenter([&](auto&, viam::trajex::totg::waypoint_accumulator accumulator) {
@@ -1044,10 +1102,14 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 std::visit(
                     [&](auto& dest) {
                         using PointType = typename std::decay_t<decltype(dest)>::value_type;
-                        // TODO(RSDK-14268): investigate whether dropping the first sample is still correct
-                        // now that the trajectory is seeded with the arm's measured position.
-                        // It also predates PVA support, and dropping a t=0 point that carries a
-                        // departure acceleration is very likely wrong.
+                        // Drop the t=0 sample, which would be sent with a zero timestep. URScript
+                        // either ignores such a point or treats it as fatal, depending on how far
+                        // the arm has drifted since we planned. Nothing is lost by omitting it,
+                        // since the controller zeroes `spline_qd` and `spline_qdd` at the start of
+                        // every trajectory and only updates them from an executed spline step, so
+                        // a point of zero duration cannot carry a departure velocity or
+                        // acceleration however we encode it. Because `previous_time` starts at
+                        // zero, the first sample we do send spans the whole interval.
                         for (const auto& sample : traj.samples(sampler) | std::views::drop(1)) {
                             const double current_time = sample.time.count();
                             const float timestep = boost::numeric_cast<float>(current_time - previous_time);

@@ -130,6 +130,8 @@ std::unique_ptr<URArm::state_> URArm::state_::create(UrArmModel configured_model
     std::optional<double> threshold_rad;
     if (threshold_deg) {
         threshold_rad = degrees_to_radians(*threshold_deg);
+    } else {
+        VIAM_SDK_LOG(warn) << "Disabling streamed moves because `reject_move_request_threshold_deg` is not configured";
     }
 
     auto waypoint_dedup_tolerance_deg = find_config_attribute<double>(config, "waypoint_deduplication_tolerance_deg");
