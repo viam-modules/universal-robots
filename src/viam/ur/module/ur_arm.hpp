@@ -188,7 +188,7 @@ class URArm final : public Arm {
     /// @return A map of model names to 3D models.
     std::map<std::string, mesh> get_3d_models(const ProtoStruct& extra) override;
 
-    /// @brief Stops the Arm.
+    /// @brief Stops the Arm. Also exits manual mode if it is active.
     /// @param extra Extra arguments to pass to the resource's `stop` method.
     void stop(const ProtoStruct& extra) override;
 
