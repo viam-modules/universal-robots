@@ -746,6 +746,55 @@ void URArm::state_::zero_ftsensor() const {
     std::visit([](auto& state) { state.zero_ftsensor(); }, current_state_);
 }
 
+void URArm::state_::set_manual_mode(const bool manual_mode, const std::chrono::seconds enabled_for) {
+    const std::lock_guard lock{mutex_};
+
+    if (!manual_mode) {
+        freedrive_deadline_.reset();
+        if (!std::exchange(freedrive_active_, false)) {
+            return;
+        }
+        // If we are no longer in the controlled state, the control script has
+        // already left freedrive (or is gone entirely); clearing our tracking
+        // above is all there is to do.
+        if (auto* const controlled = std::get_if<state_controlled_>(&current_state_)) {
+            if (!controlled->arm_conn_->driver->writeFreedriveControlMessage(control::FreedriveControlMessage::FREEDRIVE_STOP,
+                                                                             RobotReceiveTimeout::off())) {
+                throw std::runtime_error("failed to send freedrive stop message to arm");
+            }
+        }
+        return;
+    }
+
+    if (enabled_for < std::chrono::seconds::zero()) {
+        throw std::invalid_argument("enabled_for must be non-negative");
+    }
+    auto* const controlled = std::get_if<state_controlled_>(&current_state_);
+    if (!controlled) {
+        throw std::runtime_error("cannot enter manual mode: arm is not in a controllable state; current state: " + describe_());
+    }
+    if (move_request_) {
+        throw std::runtime_error("cannot enter manual mode: an actuation is in progress");
+    }
+    if (!freedrive_active_) {
+        if (!controlled->arm_conn_->driver->writeFreedriveControlMessage(control::FreedriveControlMessage::FREEDRIVE_START,
+                                                                         RobotReceiveTimeout::off())) {
+            throw std::runtime_error("failed to send freedrive start message to arm");
+        }
+        freedrive_active_ = true;
+    }
+    if (enabled_for == std::chrono::seconds::zero()) {
+        freedrive_deadline_.reset();
+    } else {
+        freedrive_deadline_ = std::chrono::steady_clock::now() + enabled_for;
+    }
+}
+
+bool URArm::state_::get_manual_mode() const {
+    const std::lock_guard lock{mutex_};
+    return freedrive_active_;
+}
+
 template <typename T>
 void URArm::state_::emit_event_(T&& event) {
     auto new_state = std::visit(
@@ -817,7 +866,45 @@ void URArm::state_::handle_move_request_() {
     }
 }
 
+// Per-tick manual mode (freedrive) upkeep. Returns true when freedrive
+// traffic was written this tick, in which case the regular trajectory NOOP
+// must be skipped: the control script treats any MODE_FORWARD message as a
+// control mode change and would leave freedrive.
+bool URArm::state_::handle_freedrive_() {
+    if (!freedrive_active_) {
+        return false;
+    }
+
+    auto* const controlled = std::get_if<state_controlled_>(&current_state_);
+    if (!controlled) {
+        // Leaving the controlled state (stop, local mode, disconnect) ends
+        // freedrive on the arm side; drop our tracking to match.
+        freedrive_active_ = false;
+        freedrive_deadline_.reset();
+        return false;
+    }
+
+    const bool expired = freedrive_deadline_ && std::chrono::steady_clock::now() >= *freedrive_deadline_;
+    if (expired) {
+        VIAM_SDK_LOG(info) << "manual mode time limit reached; leaving freedrive";
+        freedrive_active_ = false;
+        freedrive_deadline_.reset();
+    }
+
+    const auto message = expired ? control::FreedriveControlMessage::FREEDRIVE_STOP : control::FreedriveControlMessage::FREEDRIVE_NOOP;
+    if (!controlled->arm_conn_->driver->writeFreedriveControlMessage(message, RobotReceiveTimeout::off())) {
+        VIAM_SDK_LOG(error) << "While in freedrive, failed to write a freedrive control message; dropping connection";
+        freedrive_active_ = false;
+        freedrive_deadline_.reset();
+        emit_event_(event_connection_lost_::trajectory_control_failure());
+    }
+    return true;
+}
+
 void URArm::state_::send_noop_() {
+    if (handle_freedrive_()) {
+        return;
+    }
     if (auto event = std::visit([](auto& state) { return state.send_noop(); }, current_state_)) {
         emit_event_(*std::move(event));
     }

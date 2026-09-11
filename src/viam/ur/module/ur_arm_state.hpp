@@ -103,6 +103,13 @@ class URArm::state_ {
     void clear_pstop() const;
     void zero_ftsensor() const;
 
+    // Enter or exit manual mode (URCL freedrive). Entering requires the
+    // controlled state and no actuation in progress; a positive `enabled_for`
+    // schedules an automatic exit that the worker thread enforces (see
+    // `handle_freedrive_`). Exiting is a no-op when manual mode is not active.
+    void set_manual_mode(bool manual_mode, std::chrono::seconds enabled_for);
+    bool get_manual_mode() const;
+
     // Allocate a `move_id` (UUID + epoch snapshot) for a new move. The caller plumbs
     // the result through whatever planning happens before `start_move_request`, then
     // presents it as proof at start time. The generation snapshot is validated then;
@@ -568,6 +575,7 @@ class URArm::state_ {
     void recv_arm_data_();
     void upgrade_downgrade_();
     void handle_move_request_();
+    bool handle_freedrive_();
     void send_noop_();
 
     void run_();
@@ -642,6 +650,13 @@ class URArm::state_ {
     std::atomic<std::size_t> move_epoch_{0};
     std::optional<move_request> move_request_;
 
+    // Manual mode (freedrive) tracking, guarded by `mutex_`. While active, the
+    // worker keeps freedrive alive in place of the trajectory NOOP (a
+    // MODE_FORWARD message would knock the control script out of freedrive)
+    // and enforces `freedrive_deadline_`, the automatic exit time, when set.
+    bool freedrive_active_{false};
+    std::optional<std::chrono::steady_clock::time_point> freedrive_deadline_;
+
     std::optional<ephemeral_data> ephemeral_;
 
     // Cache slot for `get_calibrated_kinematics_info()` /
@@ -673,6 +688,9 @@ std::future<void> URArm::state_::start_move_request(URArm::move_id id, Args&&...
     }
 
     const std::lock_guard lock{mutex_};
+    if (freedrive_active_) {
+        throw std::runtime_error("cannot start a move request: arm is in manual mode");
+    }
     if (move_request_) {
         throw std::runtime_error("an actuation is already in progress");
     }

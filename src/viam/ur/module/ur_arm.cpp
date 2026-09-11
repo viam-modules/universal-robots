@@ -735,17 +735,21 @@ void URArm::stop(const ProtoStruct&) {
 }
 
 Arm::properties URArm::get_properties(const ProtoStruct&) {
-    // Manual mode (freedrive) is not implemented yet; `move_to_position` provides
-    // direct cartesian commands.
-    return {/*support_manual_mode=*/false, /*support_cartesian_commands=*/true};
+    // Freedrive is UR's manual (gravity compensation) mode, and
+    // `move_to_position` provides direct cartesian commands.
+    return {/*support_manual_mode=*/true, /*support_cartesian_commands=*/true};
 }
 
-void URArm::set_manual_mode(bool, std::chrono::seconds, const ProtoStruct&) {
-    throw std::runtime_error("manual mode is not supported by the universal-robots module");
+void URArm::set_manual_mode(bool manual_mode, std::chrono::seconds enabled_for, const ProtoStruct&) {
+    const std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
+    current_state_->set_manual_mode(manual_mode, enabled_for);
 }
 
 bool URArm::get_manual_mode(const ProtoStruct&) {
-    throw std::runtime_error("manual mode is not supported by the universal-robots module");
+    const std::shared_lock rlock{config_mutex_};
+    check_configured_(rlock);
+    return current_state_->get_manual_mode();
 }
 
 ProtoStruct URArm::do_command(const ProtoStruct& command) {
@@ -1262,6 +1266,9 @@ URArm::~URArm() {
 
 template <template <typename> typename lock_type>
 void URArm::stop_(const lock_type<std::shared_mutex>&) {
+    // Stop takes the arm out of manual mode (a no-op when it is not active)
+    // in addition to cancelling any in-flight move.
+    current_state_->set_manual_mode(false, std::chrono::seconds::zero());
     if (auto cancel_future = current_state_->cancel_move_request()) {
         cancel_future->get();
     }
