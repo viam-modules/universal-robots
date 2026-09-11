@@ -734,6 +734,20 @@ void URArm::stop(const ProtoStruct&) {
     stop_(rlock);
 }
 
+Arm::properties URArm::get_properties(const ProtoStruct&) {
+    // Manual mode (freedrive) is not implemented yet; `move_to_position` provides
+    // direct cartesian commands.
+    return {/*support_manual_mode=*/false, /*support_cartesian_commands=*/true};
+}
+
+void URArm::set_manual_mode(bool, std::chrono::seconds, const ProtoStruct&) {
+    throw std::runtime_error("manual mode is not supported by the universal-robots module");
+}
+
+bool URArm::get_manual_mode(const ProtoStruct&) {
+    throw std::runtime_error("manual mode is not supported by the universal-robots module");
+}
+
 ProtoStruct URArm::do_command(const ProtoStruct& command) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);

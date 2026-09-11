@@ -192,6 +192,19 @@ class URArm final : public Arm {
     /// @param extra Extra arguments to pass to the resource's `stop` method.
     void stop(const ProtoStruct& extra) override;
 
+    /// @brief Get the optional features supported by the arm.
+    Arm::properties get_properties(const ProtoStruct& extra) override;
+
+    /// @brief Enter or exit manual mode (URCL freedrive, i.e. gravity compensation).
+    /// @param manual_mode True to enter manual mode, false to exit it.
+    /// @param enabled_for How long to stay in manual mode; zero means no time limit.
+    /// @param extra Any additional arguments to the method.
+    void set_manual_mode(bool manual_mode, std::chrono::seconds enabled_for, const ProtoStruct& extra) override;
+
+    /// @brief Reports whether the arm is currently in manual mode.
+    /// @param extra Any additional arguments to the method.
+    bool get_manual_mode(const ProtoStruct& extra) override;
+
     /// @brief This is being used as a proxy to move_to_joint_positions except with support for
     /// multiple waypoints
     /// @param command Will contain a std::vector<std::vector<double>> called positions that will
