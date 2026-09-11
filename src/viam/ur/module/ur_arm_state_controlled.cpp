@@ -30,7 +30,15 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     constexpr auto program_running_bit = 1ULL << static_cast<int>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING);
     constexpr std::bitset<4> k_power_on_and_running{power_on_bit | program_running_bit};
 
-    if (*(arm_conn_->robot_status_bits) != k_power_on_and_running) {
+    auto robot_status_bits = *(arm_conn_->robot_status_bits);
+    // Freedrive (manual mode) engages the arm's teach function, which asserts
+    // the teach-button-pressed status bit. That is expected while in manual
+    // mode, not a stop, so ignore it here or it would bounce us out of the
+    // controlled state and tear freedrive down every tick.
+    if (state.freedrive_active_) {
+        robot_status_bits.reset(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_TEACH_BUTTON_PRESSED));
+    }
+    if (robot_status_bits != k_power_on_and_running) {
         return event_stop_detected_{};
     }
 
