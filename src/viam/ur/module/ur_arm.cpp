@@ -11,9 +11,7 @@
 #include <exception>
 #include <fstream>
 #include <future>
-#include <iomanip>
 #include <iterator>
-#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -1065,9 +1063,10 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             // preprocessing, rather than against the accumulator passed to this callback. The
             // latter has been through deduplication, which removes the caller's first waypoint
             // whenever the arm is already standing on it. We would then be measuring a step of the
-            // planned path rather than the position the caller said the arm was in. The planner's
-            // `processed_waypoint_count() < 2` early return guarantees that at least two entries
-            // are present.
+            // planned path rather than the position the caller said the arm was in. At least two
+            // entries are always present, because `move_through_joint_positions` returns before
+            // reaching us if the caller supplied no waypoints, and the provider seeds the
+            // accumulator with the measured position ahead of whatever the caller did supply.
             const auto measured = captured_waypoints->begin();
             const auto claimed = std::next(measured);
             check_initial_joint_positions_(*claimed, *measured, *threshold);

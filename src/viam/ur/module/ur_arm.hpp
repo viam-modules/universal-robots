@@ -1,7 +1,5 @@
 #pragma once
 
-#include <cstdint>
-#include <list>
 #include <optional>
 #include <shared_mutex>
 #include <variant>
