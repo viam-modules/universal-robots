@@ -1,6 +1,5 @@
 #pragma once
 
-#include <list>
 #include <optional>
 #include <shared_mutex>
 #include <variant>
@@ -229,16 +228,28 @@ class URArm final : public Arm {
 
     vector6d_t get_joint_positions_rad_(const std::shared_lock<std::shared_mutex>&);
 
+    // Whether the caller's first waypoint describes where the arm is at the moment, and so is
+    // worth comparing against where it actually is. Callers of `move_through_joint_positions`
+    // give us a path that begins where they believe the arm to be, so a disagreement means they
+    // are working from stale state. Callers of `move_to_joint_positions` give us a destination,
+    // which says nothing about the present.
+    enum class initial_joint_positions_check_ : std::uint8_t { k_skip, k_require };
+
     void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                            const xt::xarray<double>& waypoints,
                            const MoveOptions& options,
-                           const move_id& id);
+                           const move_id& id,
+                           initial_joint_positions_check_ initial_joint_positions_check);
 
     void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const move_id& id);
 
     // Rejects a streamed move whose first point is not where the arm actually is.
-    // The streamed analog of the unary move validator; see the definition.
-    void check_streamed_start_pose_(const trajectory_point& first, const std::shared_lock<std::shared_mutex>& config_rlock);
+    // The streamed counterpart of the unary move validator; see the definition.
+    // `move_through_joint_positions_streamed` establishes that a threshold is configured and
+    // passes it, since streaming requires one.
+    void check_initial_joint_positions_streamed_(const trajectory_point& first,
+                                                 const std::shared_lock<std::shared_mutex>& config_rlock,
+                                                 double threshold_rad);
 
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
