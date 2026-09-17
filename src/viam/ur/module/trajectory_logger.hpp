@@ -31,7 +31,10 @@ class RealtimeTrajectoryLogger {
     void set_velocity_limits(const vector6d_t& limits);
     void set_acceleration_limits(const vector6d_t& limits);
     void set_waypoints(const viam::trajex::totg::waypoint_accumulator& waypoints);
-    void set_planned_trajectory(const trajectory_samples& samples);
+
+    // Appends to the planned trajectory rather than replacing it, so a streamed move can
+    // contribute one batch at a time as the client sends it.
+    void extend_planned_trajectory(const trajectory_samples& samples);
 
     void append_realtime_sample(uint64_t timestamp_us,
                                 const ephemeral_data& data,
@@ -49,4 +52,8 @@ class RealtimeTrajectoryLogger {
 
     Json::Value root_;
     std::filesystem::path output_path_;
+
+    // Carried across `extend_planned_trajectory` calls so the batches of a streamed
+    // trajectory share one time axis.
+    double planned_time_from_start_ = 0;
 };

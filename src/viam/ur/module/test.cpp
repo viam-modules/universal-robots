@@ -91,7 +91,7 @@ BOOST_AUTO_TEST_CASE(test_logger_construction_destruction_writes_json) {
     std::filesystem::remove_all(test_dir);
 }
 
-BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pv) {
+BOOST_AUTO_TEST_CASE(test_logger_extend_planned_trajectory_pv) {
     const std::string test_dir = "./test_logger_pv";
     std::filesystem::create_directories(test_dir);
     const auto move_id = boost::uuids::string_generator()("12345678-1234-5678-1234-567812345678");
@@ -104,7 +104,7 @@ BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pv) {
             {{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {0.1, 0.2, 0.3, 0.4, 0.5, 0.6}, 0.5F},
             {{2.0, 3.0, 4.0, 5.0, 6.0, 7.0}, {0.2, 0.3, 0.4, 0.5, 0.6, 0.7}, 0.5F},
         };
-        logger.set_planned_trajectory(samples);
+        logger.extend_planned_trajectory(samples);
     }
 
     const std::ifstream in(expected_file);
@@ -133,7 +133,7 @@ BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pv) {
     std::filesystem::remove_all(test_dir);
 }
 
-BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pva) {
+BOOST_AUTO_TEST_CASE(test_logger_extend_planned_trajectory_pva) {
     const std::string test_dir = "./test_logger_pva";
     std::filesystem::create_directories(test_dir);
     const auto move_id = boost::uuids::string_generator()("12345678-1234-5678-1234-567812345678");
@@ -145,7 +145,7 @@ BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pva) {
         const trajectory_samples samples = std::vector<trajectory_sample_point_pva>{
             {{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {0.1, 0.2, 0.3, 0.4, 0.5, 0.6}, {0.01, 0.02, 0.03, 0.04, 0.05, 0.06}, 1.0F},
         };
-        logger.set_planned_trajectory(samples);
+        logger.extend_planned_trajectory(samples);
     }
 
     const std::ifstream in(expected_file);
@@ -161,6 +161,53 @@ BOOST_AUTO_TEST_CASE(test_logger_set_planned_trajectory_pva) {
     const auto& first = parsed["planned_trajectory"][0];
     BOOST_CHECK(first.isMember("accelerations_rad_per_sec2"));
     BOOST_CHECK_EQUAL(first["accelerations_rad_per_sec2"].size(), 6U);
+
+    (void)std::remove(expected_file.c_str());
+    std::filesystem::remove_all(test_dir);
+}
+
+// Streamed moves contribute their trajectory one batch at a time, so successive calls must
+// append rather than replace, and the time axis must carry across the boundary rather than
+// restarting at the head of each batch.
+BOOST_AUTO_TEST_CASE(test_logger_extend_planned_trajectory_accumulates) {
+    const std::string test_dir = "./test_logger_extend";
+    std::filesystem::create_directories(test_dir);
+    const auto move_id = boost::uuids::string_generator()("12345678-1234-5678-1234-567812345678");
+    const std::string expected_file = test_dir + "/" + boost::uuids::to_string(move_id) + "_arm_realtime_trajectory.json";
+
+    {
+        RealtimeTrajectoryLogger logger(test_dir, move_id, "ur5e", "arm");
+
+        const trajectory_samples first_batch = std::vector<trajectory_sample_point_pv>{
+            {{1.0, 2.0, 3.0, 4.0, 5.0, 6.0}, {0.1, 0.2, 0.3, 0.4, 0.5, 0.6}, 0.5F},
+            {{2.0, 3.0, 4.0, 5.0, 6.0, 7.0}, {0.2, 0.3, 0.4, 0.5, 0.6, 0.7}, 0.5F},
+        };
+        logger.extend_planned_trajectory(first_batch);
+
+        const trajectory_samples second_batch = std::vector<trajectory_sample_point_pv>{
+            {{3.0, 4.0, 5.0, 6.0, 7.0, 8.0}, {0.3, 0.4, 0.5, 0.6, 0.7, 0.8}, 0.25F},
+        };
+        logger.extend_planned_trajectory(second_batch);
+    }
+
+    const std::ifstream in(expected_file);
+    BOOST_REQUIRE(in.good());
+    std::stringstream buf;
+    buf << in.rdbuf();
+
+    Json::Value parsed;
+    const Json::CharReaderBuilder reader;
+    std::istringstream iss(buf.str());
+    BOOST_REQUIRE(Json::parseFromStream(reader, iss, &parsed, nullptr));
+
+    BOOST_REQUIRE(parsed["planned_trajectory"].isArray());
+    BOOST_REQUIRE_EQUAL(parsed["planned_trajectory"].size(), 3U);
+
+    BOOST_CHECK_CLOSE(parsed["planned_trajectory"][0]["time_from_start_sec"].asDouble(), 0.5, 1e-3);
+    BOOST_CHECK_CLOSE(parsed["planned_trajectory"][1]["time_from_start_sec"].asDouble(), 1.0, 1e-3);
+    BOOST_CHECK_CLOSE(parsed["planned_trajectory"][2]["time_from_start_sec"].asDouble(), 1.25, 1e-3);
+
+    BOOST_CHECK_EQUAL(parsed["planned_trajectory"][2]["positions_rad"][0].asDouble(), 3.0);
 
     (void)std::remove(expected_file.c_str());
     std::filesystem::remove_all(test_dir);

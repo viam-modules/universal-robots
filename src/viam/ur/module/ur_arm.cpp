@@ -614,9 +614,14 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
             return observer->context().IsCancelled();
         };
 
-        // TODO(RSDK-14267): realtime telemetry is not yet implemented for streamed
-        // trajectories, so streaming runs without a `RealtimeTrajectoryLogger`.
-        auto future = current_state_->start_move_request(id, nullptr, std::move(async_cancellation_monitor));
+        // Deliberately without the configured velocity and acceleration limits that the unary
+        // paths record. Those limits did not shape this trajectory: the client planned it
+        // against limits of its own choosing, so writing ours into the file would invite a
+        // reader to check the trajectory against constraints that never applied to it.
+        auto logger = std::make_unique<RealtimeTrajectoryLogger>(
+            current_state_->telemetry_output_path(), id.uuid, arm_model_.sdk_model().to_string(), current_state_->resource_name());
+
+        auto future = current_state_->start_move_request(id, std::move(logger), std::move(async_cancellation_monitor));
 
         try {
             const auto reason = [&]() {
@@ -1294,7 +1299,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     if (captured_waypoints) {
         logger->set_waypoints(*captured_waypoints);
     }
-    logger->set_planned_trajectory(*result->samples);
+    logger->extend_planned_trajectory(*result->samples);
 
     auto trajectory_completion_future = [&, config_rlock = std::move(our_config_rlock), logger = std::move(logger)]() mutable {
         return current_state_->start_move_request(
