@@ -90,25 +90,22 @@ void RealtimeTrajectoryLogger::set_waypoints(const viam::trajex::totg::waypoint_
     root_["waypoints_rad"] = arr;
 }
 
-void RealtimeTrajectoryLogger::set_planned_trajectory(const trajectory_samples& samples) {
-    Json::Value arr(Json::arrayValue);
+void RealtimeTrajectoryLogger::extend_planned_trajectory(const trajectory_samples& samples) {
     std::visit(
-        [&arr](const auto& pts) {
-            float time_from_start = 0;
+        [this](const auto& pts) {
             for (const auto& pt : pts) {
-                time_from_start += pt.timestep;
+                planned_time_from_start_ += static_cast<double>(pt.timestep);
                 Json::Value sample;
                 sample["positions_rad"] = vector6d_to_json(pt.p);
                 sample["velocities_rad_per_sec"] = vector6d_to_json(pt.v);
                 if constexpr (requires { pt.a; }) {
                     sample["accelerations_rad_per_sec2"] = vector6d_to_json(pt.a);
                 }
-                sample["time_from_start_sec"] = static_cast<double>(time_from_start);
-                arr.append(sample);
+                sample["time_from_start_sec"] = planned_time_from_start_;
+                root_["planned_trajectory"].append(sample);
             }
         },
         samples);
-    root_["planned_trajectory"] = arr;
 }
 
 void RealtimeTrajectoryLogger::append_realtime_sample(uint64_t timestamp_us,

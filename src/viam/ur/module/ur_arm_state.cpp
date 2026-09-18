@@ -541,6 +541,13 @@ bool URArm::state_::extend_move_request(const boost::uuids::uuid& id, trajectory
         throw std::runtime_error("extend_move_request: stream has been closed and cannot be extended");
     }
 
+    // Record the batch for telemetry before it is consumed below. A streamed move has no
+    // planning phase that could hand the logger a finished trajectory, so the file
+    // accumulates one as the client sends it.
+    if (move_request_->trajectory_logger) {
+        move_request_->trajectory_logger->extend_planned_trajectory(batch);
+    }
+
     // Append the incoming batch to `pending`. The first extend picks PV or PVA by
     // which variant it holds, and later extends must match. The producer already
     // rejects a client mismatch as a protocol error, so a mismatch here would be
