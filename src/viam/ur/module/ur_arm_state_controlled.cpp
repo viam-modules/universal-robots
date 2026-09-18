@@ -67,6 +67,15 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         [this, &state](auto& cmd) -> std::optional<event_variant_> {
             using T = std::decay_t<decltype(cmd)>;
 
+            // One sample per tick for the life of the move, ahead of the branches so the series
+            // stays uniform. `recv_arm_data` refreshed `ephemeral_` earlier this cycle.
+            state.move_request_->write_realtime_sample(
+                *state.ephemeral_,
+                arm_conn_->robot_status_bits ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->robot_status_bits->to_ulong()))
+                                             : std::nullopt,
+                arm_conn_->safety_status_bits ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->safety_status_bits->to_ulong()))
+                                              : std::nullopt);
+
             if constexpr (std::is_same_v<T, sample_stream>) {
                 // Joint-space streaming. The phase drives what we send to URCL;
                 // see `sample_stream` for what each phase means. The phase only
@@ -76,17 +85,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 //   from `k_streaming`, on close: go to `k_draining`.
                 //   from `k_buffered`: send START, drain, and END in one tick, go to `k_ended`.
                 //   from `k_draining`, once drained: send STREAM_END, go to `k_ended`.
-
-                const auto emit_realtime_sample = [&] {
-                    state.move_request_->write_realtime_sample(
-                        *state.ephemeral_,
-                        arm_conn_->robot_status_bits
-                            ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->robot_status_bits->to_ulong()))
-                            : std::nullopt,
-                        arm_conn_->safety_status_bits
-                            ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->safety_status_bits->to_ulong()))
-                            : std::nullopt);
-                };
 
                 // Returns `nullopt` on success, or a connection-lost event on
                 // URCL write failure. On failure the `move_request` is
@@ -145,9 +143,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     return std::nullopt;
                 }
                 if (cancel_pending) {
-                    // Cancel already issued; just heartbeat realtime samples
-                    // until URScript fires the `trajectory_done_callback`.
-                    emit_realtime_sample();
+                    // Cancel already issued; nothing left to do but wait for URScript to fire
+                    // the `trajectory_done_callback`.
                     return std::nullopt;
                 }
 
@@ -157,7 +154,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                 switch (cmd.current_phase) {
                     case sample_stream::phase::k_open: {
                         if (pending_empty) {
-                            emit_realtime_sample();
                             return std::nullopt;
                         }
                         // First non-empty drain; open the stream on URCL and
@@ -179,7 +175,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
 
                     case sample_stream::phase::k_streaming: {
                         if (pending_empty) {
-                            emit_realtime_sample();
                             return std::nullopt;
                         }
                         if (auto err = drain_pending()) {
@@ -239,10 +234,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     }
 
                     case sample_stream::phase::k_ended: {
-                        // STREAM_END on the wire; URScript is finishing.
-                        // Emit realtime samples while we wait for the
-                        // `trajectory_done_callback` to fire.
-                        emit_realtime_sample();
+                        // STREAM_END on the wire; URScript is finishing. Nothing to send while
+                        // we wait for the `trajectory_done_callback` to fire.
                         return std::nullopt;
                     }
                 }
@@ -299,15 +292,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     return std::nullopt;
 
                 } else {
-                    // Pose sent, waiting for completion — record realtime sample
-                    state.move_request_->write_realtime_sample(
-                        *state.ephemeral_,
-                        arm_conn_->robot_status_bits
-                            ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->robot_status_bits->to_ulong()))
-                            : std::nullopt,
-                        arm_conn_->safety_status_bits
-                            ? std::optional<uint32_t>(static_cast<uint32_t>(arm_conn_->safety_status_bits->to_ulong()))
-                            : std::nullopt);
+                    // Pose sent; nothing to do but wait for completion.
                     return std::nullopt;
                 }
             }
