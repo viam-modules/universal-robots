@@ -1,5 +1,6 @@
 #include "utils.hpp"
 
+#include <cmath>
 #include <ranges>
 
 #include <ur_client_library/log.h>
@@ -147,6 +148,30 @@ vector6d_t parse_and_validate_joint_limits(const viam::sdk::ResourceConfig& cfg,
         throw std::invalid_argument(str(format("`%1%` is required") % param_name));
     }
     return parse_and_validate_joint_limits(key->second, param_name);
+}
+
+std::optional<double> parse_stream_limit_tolerance_ratio(const viam::sdk::ResourceConfig& cfg) {
+    auto ratio = find_config_attribute<double>(cfg, "stream_limit_tolerance_ratio");
+    if (ratio && *ratio < 1.0) {
+        throw std::invalid_argument(
+            boost::str(boost::format("attribute `stream_limit_tolerance_ratio` must be >= 1, it is: %1%") % *ratio));
+    }
+    return ratio;
+}
+
+void check_joint_constraints(std::string_view kind, const std::vector<double>& values, const vector6d_t& limits) {
+    using boost::format;
+    using boost::str;
+
+    if (values.size() != limits.size()) {
+        throw std::invalid_argument(
+            str(format("trajectory point has %1% %2% values but %3% DoF") % values.size() % kind % limits.size()));
+    }
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (std::abs(values[i]) > limits[i]) {
+            throw std::invalid_argument(str(format("joint %1% %2% %3% exceeds limit %4%") % i % kind % values[i] % limits[i]));
+        }
+    }
 }
 
 std::optional<std::string> extract_trace_id_from_traceparent(std::string_view traceparent) {

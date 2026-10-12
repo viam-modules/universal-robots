@@ -45,6 +45,7 @@ URArm::state_::state_(private_,
                       std::optional<vector6d_t> max_velocity_limits,
                       std::optional<vector6d_t> max_acceleration_limits,
                       double trajectory_sampling_freq_hz,
+                      double stream_limit_tolerance_ratio,
                       std::string telemetry_output_path_append_traceid_template,
                       std::string traceid_metadata_key,
                       const struct ports_& ports)
@@ -69,6 +70,7 @@ URArm::state_::state_(private_,
       max_velocity_limits_(std::move(max_velocity_limits)),
       max_acceleration_limits_(std::move(max_acceleration_limits)),
       trajectory_sampling_freq_hz_(trajectory_sampling_freq_hz),
+      stream_limit_tolerance_ratio_(stream_limit_tolerance_ratio),
       telemetry_output_path_append_traceid_template_(std::move(telemetry_output_path_append_traceid_template)),
       traceid_metadata_key_(std::move(traceid_metadata_key)) {
     // Initialize the kinematics promise/future pair so that
@@ -159,6 +161,9 @@ std::unique_ptr<URArm::state_> URArm::state_::create(UrArmModel configured_model
     const double trajectory_sampling_freq_hz =
         find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(URArm::k_default_trajectory_sampling_freq_hz);
 
+    const double stream_limit_tolerance_ratio =
+        parse_stream_limit_tolerance_ratio(config).value_or(URArm::k_default_stream_limit_tolerance_ratio);
+
     // Parse `telemetry_output_path_append_traceid` — accepts bool (backward compat) or template string with {trace_id}
     const auto telemetry_output_path_append_traceid_template = [&]() -> std::string {
         const auto it = config.attributes().find("telemetry_output_path_append_traceid");
@@ -213,6 +218,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(UrArmModel configured_model
                                           std::move(max_velocity_limits),
                                           std::move(max_acceleration_limits),
                                           trajectory_sampling_freq_hz,
+                                          stream_limit_tolerance_ratio,
                                           telemetry_output_path_append_traceid_template,
                                           traceid_metadata_key,
                                           ports);
@@ -483,6 +489,20 @@ double URArm::state_::get_max_trajectory_duration_secs() const {
 
 double URArm::state_::get_trajectory_sampling_freq_hz() const {
     return trajectory_sampling_freq_hz_;
+}
+
+vector6d_t URArm::state_::get_configured_velocity_limits() const {
+    // NOTE: No lock needed; written during create before the worker thread starts, and never again.
+    return configured_velocity_limits_.value();
+}
+
+vector6d_t URArm::state_::get_configured_acceleration_limits() const {
+    // NOTE: No lock needed; written during create before the worker thread starts, and never again.
+    return configured_acceleration_limits_.value();
+}
+
+double URArm::state_::get_stream_limit_tolerance_ratio() const {
+    return stream_limit_tolerance_ratio_;
 }
 
 URArm::move_id URArm::state_::allocate_move_id() const {

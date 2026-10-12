@@ -120,6 +120,12 @@ class URArm final : public Arm {
     ///
     static constexpr bool k_default_enable_legacy_trajectory_planner = false;
 
+    ///
+    /// Default factor by which streamed points may exceed the configured velocity and
+    /// acceleration limits, to absorb numerical drift from the client's planner.
+    ///
+    static constexpr double k_default_stream_limit_tolerance_ratio = 1.01;
+
     /// @brief Returns the common ModelFamily for all implementations
     static const ModelFamily& model_family();
 

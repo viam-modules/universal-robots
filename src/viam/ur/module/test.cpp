@@ -769,6 +769,46 @@ BOOST_AUTO_TEST_CASE(test_deduplicate_linf_norm) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
+BOOST_AUTO_TEST_SUITE(stream_limit_tests)
+
+namespace {
+
+viam::sdk::ResourceConfig make_config(viam::sdk::ProtoStruct attributes) {
+    return {"arm", "arm", "rdk", std::move(attributes), "rdk:component:arm", viam::sdk::Model{"viam", "universal-robots", "ur5e"}};
+}
+
+}  // namespace
+
+BOOST_AUTO_TEST_CASE(test_stream_limit_tolerance_ratio_absent) {
+    BOOST_CHECK(!parse_stream_limit_tolerance_ratio(make_config({})).has_value());
+}
+
+BOOST_AUTO_TEST_CASE(test_stream_limit_tolerance_ratio_valid) {
+    BOOST_CHECK_EQUAL(parse_stream_limit_tolerance_ratio(make_config({{"stream_limit_tolerance_ratio", 1.05}})).value(), 1.05);
+    BOOST_CHECK_EQUAL(parse_stream_limit_tolerance_ratio(make_config({{"stream_limit_tolerance_ratio", 1.0}})).value(), 1.0);
+}
+
+BOOST_AUTO_TEST_CASE(test_stream_limit_tolerance_ratio_below_one) {
+    BOOST_CHECK_THROW(parse_stream_limit_tolerance_ratio(make_config({{"stream_limit_tolerance_ratio", 0.9}})), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(test_stream_limit_tolerance_ratio_wrong_type) {
+    BOOST_CHECK_THROW(parse_stream_limit_tolerance_ratio(make_config({{"stream_limit_tolerance_ratio", std::string{"1.05"}}})),
+                      std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(test_check_joint_constraints) {
+    const urcl::vector6d_t limits{1, 2, 3, 4, 5, 6};
+
+    BOOST_CHECK_NO_THROW(check_joint_constraints("velocity", {0.5, 1.5, 2.5, 3.5, 4.5, 5.5}, limits));
+    BOOST_CHECK_NO_THROW(check_joint_constraints("velocity", {1, 2, 3, 4, 5, 6}, limits));
+    BOOST_CHECK_THROW(check_joint_constraints("velocity", {0.5, 2.1, 2.5, 3.5, 4.5, 5.5}, limits), std::invalid_argument);
+    BOOST_CHECK_THROW(check_joint_constraints("velocity", {0.5, -2.1, 2.5, 3.5, 4.5, 5.5}, limits), std::invalid_argument);
+    BOOST_CHECK_THROW(check_joint_constraints("velocity", {0.5, 1.5}, limits), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
 BOOST_AUTO_TEST_SUITE(telemetry_output_path_tests)
 
 BOOST_AUTO_TEST_CASE(test_extract_trace_id_valid) {
