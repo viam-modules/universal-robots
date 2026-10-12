@@ -164,8 +164,7 @@ void check_joint_constraints(std::string_view kind, const std::vector<double>& v
     using boost::str;
 
     if (values.size() != limits.size()) {
-        throw std::invalid_argument(
-            str(format("trajectory point has %1% %2% values but %3% DoF") % values.size() % kind % limits.size()));
+        throw std::invalid_argument(str(format("trajectory point has %1% %2% values but %3% DoF") % values.size() % kind % limits.size()));
     }
     for (size_t i = 0; i < values.size(); ++i) {
         if (std::abs(values[i]) > limits[i]) {
