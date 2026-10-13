@@ -134,6 +134,28 @@ urcl::vector6d_t parse_and_validate_joint_limits(const viam::sdk::ProtoValue& va
 urcl::vector6d_t parse_and_validate_joint_limits(const viam::sdk::ResourceConfig& cfg, const std::string& param_name);
 
 ///
+/// Parse and validate `stream_limit_tolerance_ratio` from config.
+///
+/// @param cfg Configuration structure to read from
+/// @return The configured ratio, or std::nullopt if the attribute is absent
+/// @throws std::invalid_argument if the ratio is less than 1
+///
+std::optional<double> parse_stream_limit_tolerance_ratio(const viam::sdk::ResourceConfig& cfg);
+
+///
+/// Check per-joint values from a streamed trajectory point against per-joint limits.
+///
+/// Values are compared by magnitude, so negative values are checked too. `values` and `limits`
+/// must be in the same units.
+///
+/// @param kind What the values are, e.g. "velocity" (for error messages)
+/// @param values One value per joint
+/// @param limits One limit per joint
+/// @throws std::invalid_argument if `values` has the wrong number of joints or any value exceeds its limit
+///
+void check_joint_constraints(std::string_view kind, const std::vector<double>& values, const urcl::vector6d_t& limits);
+
+///
 /// Extract trace-id from W3C Trace Context traceparent header.
 ///
 /// @param traceparent Header value, e.g. "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"

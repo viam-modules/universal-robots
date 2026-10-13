@@ -185,6 +185,8 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
                        k_min_sampling_freq_hz % k_max_sampling_freq_hz % *sampling_freq));
     }
 
+    parse_stream_limit_tolerance_ratio(cfg);
+
     auto threshold = find_config_attribute<double>(cfg, "reject_move_request_threshold_deg");
     constexpr double k_min_threshold = 0.0;
     constexpr double k_max_threshold = 360.0;
@@ -326,11 +328,19 @@ void check_initial_joint_positions_(const concepts::xexpression auto& claimed_ra
 // Converts a stream of SDK `trajectory_point` batches into URCL spline-point
 // batches. The PV-vs-PVA choice is fixed from the first point and held for the
 // life of the stream; per-point timesteps are differenced out of the
-// stream-global cumulative time as points are converted.
+// stream-global cumulative time as points are converted. Each converted point's
+// velocities and accelerations are checked against the given limits, in radians,
+// scaled by `tolerance` so planner rounding just over a limit is not rejected.
 class trajectory_point_converter {
    public:
-    trajectory_point_converter(const URArm::trajectory_point& first, bool prefer_pva)
-        : use_pva_{first.constraints && first.constraints->accelerations_degs_per_sec2.has_value() && prefer_pva} {}
+    trajectory_point_converter(const URArm::trajectory_point& first,
+                               bool prefer_pva,
+                               const vector6d_t& velocity_limits_rad,
+                               const vector6d_t& acceleration_limits_rad,
+                               double tolerance)
+        : use_pva_{first.constraints && first.constraints->accelerations_degs_per_sec2.has_value() && prefer_pva},
+          velocity_limits_deg_{to_scaled_degrees_(velocity_limits_rad, tolerance)},
+          acceleration_limits_deg_{to_scaled_degrees_(acceleration_limits_rad, tolerance)} {}
 
     trajectory_samples convert(const std::vector<URArm::trajectory_point>& batch) {
         auto samples = use_pva_ ? trajectory_samples{std::vector<trajectory_sample_point_pva>{}}
@@ -361,6 +371,14 @@ class trajectory_point_converter {
     }
 
    private:
+    // The points carry degrees, so we hold the limits in degrees and check each point's values as
+    // they arrive, which also keeps the error message in the units the client sent.
+    static vector6d_t to_scaled_degrees_(const vector6d_t& limits_rad, double tolerance) {
+        vector6d_t result{};
+        std::ranges::transform(limits_rad, result.begin(), [tolerance](double rad) { return radians_to_degrees(rad) * tolerance; });
+        return result;
+    }
+
     // Copies `src` into `dst`, converting each joint value from degrees to radians.
     // `dst` fixes the expected joint count; a size mismatch is a client input error.
     static void to_radians_into_(urcl::vector6d_t& dst, const std::vector<double>& src, const char* field) {
@@ -373,12 +391,16 @@ class trajectory_point_converter {
     // The `trajectory_point` contract carries joint positions, velocities, and
     // accelerations in degrees (matching the unary `move_through_joint_positions`
     // API); URCL wants radians. The SDK stub already validated time ordering and
-    // per-point arity, so here we only guard DOF and the presence of the
-    // constraints this arm requires.
+    // per-point arity, so here we guard DOF, the presence of the constraints
+    // this arm requires, and the velocity and acceleration limits.
     template <typename Point>
     Point to_spline_point_(const URArm::trajectory_point& p) {
         if (!p.constraints) {
             throw std::invalid_argument("trajectory point missing constraints (velocities required)");
+        }
+        check_joint_constraints("velocity", p.constraints->velocities_degs_per_sec, velocity_limits_deg_);
+        if (p.constraints->accelerations_degs_per_sec2) {
+            check_joint_constraints("acceleration", *p.constraints->accelerations_degs_per_sec2, acceleration_limits_deg_);
         }
         Point pt;
         pt.timestep = std::chrono::duration<float>(p.time - cumulative_time_).count();
@@ -395,6 +417,8 @@ class trajectory_point_converter {
     }
 
     bool use_pva_;
+    vector6d_t velocity_limits_deg_;
+    vector6d_t acceleration_limits_deg_;
 
     // Cleared once we have considered the first point of the stream, so that no later point can
     // be mistaken for it.
@@ -645,7 +669,11 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
                         // Check the starting position the caller gave us before the converter
                         // drops the t=0 point that carries it.
                         check_initial_joint_positions_streamed_(batch->front(), rlock, *threshold);
-                        converter.emplace(batch->front(), current_state_->prefer_precomputed_accelerations());
+                        converter.emplace(batch->front(),
+                                          current_state_->prefer_precomputed_accelerations(),
+                                          current_state_->get_configured_velocity_limits(),
+                                          current_state_->get_configured_acceleration_limits(),
+                                          current_state_->get_stream_limit_tolerance_ratio());
                     }
 
                     // `extend`/`close` return false when our move is no longer the active

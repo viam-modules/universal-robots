@@ -46,6 +46,7 @@ class URArm::state_ {
                     std::optional<vector6d_t> max_velocity_limits,
                     std::optional<vector6d_t> max_acceleration_limits,
                     double trajectory_sampling_freq_hz,
+                    double stream_limit_tolerance_ratio,
                     std::string telemetry_output_path_append_traceid_template,
                     std::string traceid_metadata_key,
                     const struct ports_& ports);
@@ -87,6 +88,12 @@ class URArm::state_ {
     vector6d_t set_acceleration_limits(double acceleration);
     vector6d_t get_acceleration_limits() const;
     vector6d_t clamp_acceleration_limits(vector6d_t desired_acceleration_limits);
+
+    // The limits captured from config during create, in radians/s and radians/s^2. See
+    // `configured_velocity_limits_`.
+    vector6d_t get_configured_velocity_limits() const;
+    vector6d_t get_configured_acceleration_limits() const;
+    double get_stream_limit_tolerance_ratio() const;
 
     double get_path_tolerance_delta_rads() const;
     const std::optional<double>& get_path_colinearization_ratio() const;
@@ -608,7 +615,8 @@ class URArm::state_ {
     // graph and never re-reads it, so a live value would not reach the planner, and would only make
     // the two RDK read paths disagree, since armplanning.MoveArm fetches per call while the
     // framesystem does not. It also keeps the returned bytes stable for anything hashing them, and
-    // matches what the yaskawa module publishes.
+    // matches what the yaskawa module publishes. Streamed moves are checked against these same
+    // limits, because they are what the client planned the trajectory against.
     //
     // Optional because a default-constructed vector is all zeros, and zero is a real limit meaning
     // the joint does not move, so an unpopulated snapshot would be published as if it were an arm
@@ -630,6 +638,7 @@ class URArm::state_ {
     const std::optional<vector6d_t> max_velocity_limits_;
     const std::optional<vector6d_t> max_acceleration_limits_;
     const double trajectory_sampling_freq_hz_;
+    const double stream_limit_tolerance_ratio_;
     const std::string telemetry_output_path_append_traceid_template_;
     const std::string traceid_metadata_key_;
 
