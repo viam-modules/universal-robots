@@ -59,7 +59,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
 }
 
 std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnected_::connect_(state_& state) {
-    auto arm_connection = std::make_unique<arm_connection_>();
+    auto arm_connection = std::make_unique<arm_connection_>(state.arm_);
 
     constexpr auto k_log_at_n_attempts = 100;
     if (++reconnect_attempts % k_log_at_n_attempts == 0) {

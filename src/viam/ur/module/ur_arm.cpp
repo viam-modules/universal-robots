@@ -485,7 +485,7 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     });
 
     VIAM_RESOURCE_LOG(debug) << "URArm starting up";
-    current_state_ = state_::create(arm_model_, name(), cfg, ports_);
+    current_state_ = state_::create(*this, arm_model_, name(), cfg, ports_);
 
     // state_::create blocks until the state machine reaches a connected state
     // (its constructor loops on upgrade_downgrade_ until current_state_ is no
