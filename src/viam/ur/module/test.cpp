@@ -936,7 +936,7 @@ BOOST_AUTO_TEST_CASE(test_failed_trajectory_serialize_for_replay) {
     BOOST_REQUIRE(json::parseFromStream(reader, iss, &parsed, nullptr));
 
     // Schema structure
-    BOOST_REQUIRE_EQUAL(parsed["schema_version"].asInt(), 1);
+    BOOST_REQUIRE_EQUAL(parsed["schema_version"].asInt(), 2);
     BOOST_REQUIRE(parsed["timestamp"].isString());
     BOOST_REQUIRE_EQUAL(parsed["error_message"].asString(), "synthetic error");
     BOOST_REQUIRE_CLOSE(parsed["path_tolerance_delta_rads"].asDouble(), k_tolerance, 1e-10);
