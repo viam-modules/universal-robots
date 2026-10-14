@@ -1163,8 +1163,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
 
                 const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *acc.samples);
                 VIAM_RESOURCE_LOG(info) << "trajex/totg segment generated successfully"
-                                   << ", waypoints: " << segment.size() << ", duration: " << traj.duration().count()
-                                   << "s, samples: " << sample_count << ", arc length: " << traj.path().length();
+                                        << ", waypoints: " << segment.size() << ", duration: " << traj.duration().count()
+                                        << "s, samples: " << sample_count << ", arc length: " << traj.path().length();
             },
             [&](const auto& planner,
                 const segment_accumulator& acc,
@@ -1233,11 +1233,11 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         if (trajex.receiver) {
             const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *trajex.receiver->samples);
             VIAM_RESOURCE_LOG(info) << "trajex/totg trajectory generated successfully"
-                               << ", total waypoints: " << trajex.receiver->total_waypoints
-                               << ", total duration: " << trajex.receiver->total_duration << "s, total samples: " << sample_count
-                               << ", total arc length: " << trajex.receiver->total_arc_length
-                               << ", generation_time: " << std::chrono::duration<double>(trajex.receiver->total_generation_time).count()
-                               << "s, number of segments: " << trajex.receiver->segment_count;
+                                    << ", total waypoints: " << trajex.receiver->total_waypoints
+                                    << ", total duration: " << trajex.receiver->total_duration << "s, total samples: " << sample_count
+                                    << ", total arc length: " << trajex.receiver->total_arc_length << ", generation_time: "
+                                    << std::chrono::duration<double>(trajex.receiver->total_generation_time).count()
+                                    << "s, number of segments: " << trajex.receiver->segment_count;
         }
 
         // Log legacy summary. When the new planner is active, log at info for comparison
@@ -1245,17 +1245,19 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         if (legacy.receiver && current_state_->use_new_trajectory_planner()) {
             const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *legacy.receiver->samples);
             VIAM_RESOURCE_LOG(info) << "legacy trajectory generated successfully"
-                               << ", waypoints: " << legacy.receiver->total_waypoints << ", duration: " << legacy.receiver->total_duration
-                               << "s, samples: " << sample_count
-                               << ", generation_time: " << std::chrono::duration<double>(legacy.receiver->total_generation_time).count()
-                               << "s, number of segments: " << legacy.receiver->segment_count;
+                                    << ", waypoints: " << legacy.receiver->total_waypoints
+                                    << ", duration: " << legacy.receiver->total_duration << "s, samples: " << sample_count
+                                    << ", generation_time: "
+                                    << std::chrono::duration<double>(legacy.receiver->total_generation_time).count()
+                                    << "s, number of segments: " << legacy.receiver->segment_count;
         } else if (legacy.receiver) {
             const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *legacy.receiver->samples);
             VIAM_RESOURCE_LOG(debug) << "legacy trajectory generated successfully"
-                                << ", waypoints: " << legacy.receiver->total_waypoints << ", duration: " << legacy.receiver->total_duration
-                                << "s, samples: " << sample_count
-                                << ", generation_time: " << std::chrono::duration<double>(legacy.receiver->total_generation_time).count()
-                                << "s, number of segments: " << legacy.receiver->segment_count;
+                                     << ", waypoints: " << legacy.receiver->total_waypoints
+                                     << ", duration: " << legacy.receiver->total_duration << "s, samples: " << sample_count
+                                     << ", generation_time: "
+                                     << std::chrono::duration<double>(legacy.receiver->total_generation_time).count()
+                                     << "s, number of segments: " << legacy.receiver->segment_count;
         }
 
         // Prefer trajex when enabled and successful
@@ -1297,13 +1299,13 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             return d ? std::to_string(to_ms(*d)) + "ms" : std::string("n/a");
         };
         VIAM_RESOURCE_LOG(debug) << "move: phase timing (ms):"
-                            << " provisioning=" << to_ms(timing.waypoint_provisioning) << "ms"
-                            << " preprocessing=" << format_optional(timing.waypoint_preprocessing)
-                            << " validation=" << format_optional(timing.move_validation)
-                            << " segmentation=" << format_optional(timing.segmentation)
-                            << " colinearization=" << format_optional(timing.colinearization)
-                            << " totg_total_gen=" << format_optional(timing.totg_generation_total)
-                            << " legacy_total_gen=" << format_optional(timing.legacy_generation_total);
+                                 << " provisioning=" << to_ms(timing.waypoint_provisioning) << "ms"
+                                 << " preprocessing=" << format_optional(timing.waypoint_preprocessing)
+                                 << " validation=" << format_optional(timing.move_validation)
+                                 << " segmentation=" << format_optional(timing.segmentation)
+                                 << " colinearization=" << format_optional(timing.colinearization)
+                                 << " totg_total_gen=" << format_optional(timing.totg_generation_total)
+                                 << " legacy_total_gen=" << format_optional(timing.legacy_generation_total);
     }
 
     if (!result) {
