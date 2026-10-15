@@ -304,7 +304,7 @@ class URArm::state_ {
     struct arm_connection_ {
         explicit arm_connection_(const viam::sdk::Resource& log_resource) : log_resource{log_resource} {}
         static constexpr size_t k_num_robot_status_bits = 4;
-        static constexpr size_t k_num_safety_status_bits = 11;
+        static constexpr size_t k_num_safety_status_bits = 12;
 
         ~arm_connection_();
 

@@ -35,7 +35,8 @@ std::string URArm::state_::state_independent_::describe() const {
              "EMERGENCY_STOPPED",
              "VIOLATION",
              "FAULT",
-             "STOPPED_DUE_TO_SAFETY"};
+             "STOPPED_DUE_TO_SAFETY",
+             "3PE_INPUT_ACTIVE"};
 
         static_assert(arm_connection_::k_num_safety_status_bits == std::size(k_safety_status_field_names));
 
