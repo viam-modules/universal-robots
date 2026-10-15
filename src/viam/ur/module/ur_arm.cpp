@@ -155,7 +155,7 @@ urcl::vector6d_t pose_to_ur_vector(const pose& p) {
     return v;
 }
 
-std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
+std::vector<std::string> validate_config(const ResourceConfig& cfg) {
     if (!find_config_attribute<std::string>(cfg, "host")) {
         throw std::invalid_argument("attribute `host` is required");
     }
@@ -303,9 +303,9 @@ concept xexpression = xt::is_xexpression<std::decay_t<E>>::value;
 // The two callers arrive with different expression types. The unary path has a row view into the
 // waypoint accumulator, and the streamed path has an adaptor over a `vector6d_t`, which is why
 // this is a template.
-void check_initial_joint_positions_(const concepts::xexpression auto& claimed_rad,
-                                    const concepts::xexpression auto& measured_rad,
-                                    double threshold_rad) {
+void check_initial_joint_positions(const concepts::xexpression auto& claimed_rad,
+                                   const concepts::xexpression auto& measured_rad,
+                                   double threshold_rad) {
     const auto max_diff = xt::norm_linf(claimed_rad - measured_rad)();
     if (max_diff <= threshold_rad) {
         return;
@@ -321,7 +321,6 @@ void check_initial_joint_positions_(const concepts::xexpression auto& claimed_ra
     err_string << ")] by " << viam::trajex::radians_to_degrees(max_diff) << " > " << viam::trajex::radians_to_degrees(threshold_rad)
                << " degrees";
 
-    VIAM_SDK_LOG(error) << err_string.str();
     throw std::invalid_argument(err_string.str());
 }
 
@@ -455,7 +454,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
             model,
             // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is fixed by ModelRegistration.
             [model](auto deps, auto config) { return std::make_unique<URArm>(model, deps, config); },
-            [](auto const& config) { return validate_config_(config); });
+            [](auto const& config) { return validate_config(config); });
     };
 
     auto registrations = UrModelDescriptor::all() | boost::adaptors::transformed(registration_factory);
@@ -463,7 +462,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
 }
 
 URArm::URArm(Model model, const Dependencies& deps, const ResourceConfig& cfg) : Arm(cfg.name()), arm_model_(std::move(model)) {
-    VIAM_SDK_LOG(info) << "instantiating URArm driver for arm model: " << arm_model_.sdk_model().to_string();
+    VIAM_RESOURCE_LOG(info) << "instantiating URArm driver for arm model: " << arm_model_.sdk_model().to_string();
     const std::unique_lock wlock(config_mutex_);
     // TODO: prevent multiple calls to configure_logger
     configure_logger(cfg);
@@ -479,18 +478,18 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     // shutdown code must be prepared to be called from any intermediate state that this
     // function may have constructed due to partial execution.
     auto failure_handler = make_scope_guard([&] {
-        VIAM_SDK_LOG(warn) << "URArm startup failed - shutting down";
+        VIAM_RESOURCE_LOG(warn) << "URArm startup failed - shutting down";
         shutdown_(lock);
     });
 
-    VIAM_SDK_LOG(debug) << "URArm starting up";
-    current_state_ = state_::create(arm_model_, name(), cfg, ports_);
+    VIAM_RESOURCE_LOG(debug) << "URArm starting up";
+    current_state_ = state_::create(*this, arm_model_, name(), cfg, ports_);
 
     // state_::create blocks until the state machine reaches a connected state
     // (its constructor loops on upgrade_downgrade_ until current_state_ is no
     // longer state_disconnected_), so by the time we reach this point the
     // primary client is up and we can read from it.
-    VIAM_SDK_LOG(info) << "Fetching calibrated DH parameters from controller";
+    VIAM_RESOURCE_LOG(info) << "Fetching calibrated DH parameters from controller";
     // Force the eager calibration fetch at startup so any failure to obtain
     // KinematicsInfo from the controller surfaces here rather than on the
     // first `get_kinematics()` call. We deliberately do not pre-build the
@@ -508,9 +507,9 @@ void URArm::configure_(const std::unique_lock<std::shared_mutex>& lock, const De
     s << "], theta=[";
     boost::copy(kin_info.dh_theta_, boost::io::make_ostream_joiner(s, ", "));
     s << "]";
-    VIAM_SDK_LOG(info) << s.str();
+    VIAM_RESOURCE_LOG(info) << s.str();
 
-    VIAM_SDK_LOG(info) << "URArm startup complete";
+    VIAM_RESOURCE_LOG(info) << "URArm startup complete";
     failure_handler.deactivate();
 }
 
@@ -590,7 +589,7 @@ void URArm::check_initial_joint_positions_streamed_(const trajectory_point& firs
 
     vector6d_t claimed_rad{};
     std::ranges::transform(first.positions, claimed_rad.begin(), [](double deg) { return degrees_to_radians(deg); });
-    check_initial_joint_positions_(xt::adapt(claimed_rad), xt::adapt(measured), threshold_rad);
+    check_initial_joint_positions(xt::adapt(claimed_rad), xt::adapt(measured), threshold_rad);
 }
 
 URArm::stream_outcome URArm::move_through_joint_positions_streamed(
@@ -621,8 +620,8 @@ URArm::stream_outcome URArm::move_through_joint_positions_streamed(
 
     const auto id = current_state_->allocate_move_id();
 
-    VIAM_SDK_LOG(debug) << "move_streamed: start id " << id.uuid;
-    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move_streamed: end id " << id.uuid; });
+    VIAM_RESOURCE_LOG(debug) << "move_streamed: start id " << id.uuid;
+    const auto log_move_end = make_scope_guard([&] { VIAM_RESOURCE_LOG(debug) << "move_streamed: end id " << id.uuid; });
 
     // Locked phase: claim the slot and drive the stream. The read lock is moved in
     // here so it releases when this returns, before we wait on completion. We hold
@@ -775,7 +774,7 @@ viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     // synthesizes the SVA document on first call. There is no static-file
     // fallback.
     auto dh_json = current_state_->get_dh_kinematics_json(std::chrono::milliseconds{100});
-    VIAM_SDK_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH (" << dh_json.size() << " bytes)";
+    VIAM_RESOURCE_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH (" << dh_json.size() << " bytes)";
     return viam::sdk::KinematicsDataSVA(std::vector<unsigned char>(dh_json.begin(), dh_json.end()));
 }
 
@@ -960,8 +959,8 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
         return observer->context().IsCancelled();
     };
 
-    VIAM_SDK_LOG(debug) << "move tool space: start id " << id.uuid << " p: " << p;
-    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(info) << "move tool space: end id " << id.uuid; });
+    VIAM_RESOURCE_LOG(debug) << "move tool space: start id " << id.uuid << " p: " << p;
+    const auto log_move_end = make_scope_guard([&] { VIAM_RESOURCE_LOG(info) << "move tool space: end id " << id.uuid; });
 
     // There is deliberately no initial position check here. We send tool space moves as a single
     // cartesian point, which the controller plans from its own measured state, so the caller
@@ -990,7 +989,7 @@ void URArm::move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, p
         }
     }
     if (already_there) {
-        VIAM_SDK_LOG(debug) << "Already at desired pose; skipping movement.";
+        VIAM_RESOURCE_LOG(debug) << "Already at desired pose; skipping movement.";
         return;
     }
 
@@ -1026,8 +1025,8 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         return result;
     };
 
-    VIAM_SDK_LOG(debug) << "move: start id " << id.uuid << " waypoints size " << waypoints.shape()[0];
-    const auto log_move_end = make_scope_guard([&] { VIAM_SDK_LOG(debug) << "move: end id " << id.uuid; });
+    VIAM_RESOURCE_LOG(debug) << "move: start id " << id.uuid << " waypoints size " << waypoints.shape()[0];
+    const auto log_move_end = make_scope_guard([&] { VIAM_RESOURCE_LOG(debug) << "move: end id " << id.uuid; });
 
     // Prepare velocity/acceleration limits, applying per-move overrides if provided
     auto velocity_limits_data = current_state_->get_velocity_limits();
@@ -1051,7 +1050,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         size_t segment_count = 0;
     };
 
-    VIAM_SDK_LOG(debug) << "move: compute_trajectory start " << id.uuid;
+    VIAM_RESOURCE_LOG(debug) << "move: compute_trajectory start " << id.uuid;
 
     auto planner = viam::trajex::totg::planner<segment_accumulator>({
         .velocity_limits = xt::adapt(velocity_limits_data),
@@ -1102,7 +1101,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             // accumulator with the measured position ahead of whatever the caller did supply.
             const auto measured = captured_waypoints->begin();
             const auto claimed = std::next(measured);
-            check_initial_joint_positions_(*claimed, *measured, *threshold);
+            check_initial_joint_positions(*claimed, *measured, *threshold);
         })
 
         .with_segmenter([&](auto&, viam::trajex::totg::waypoint_accumulator accumulator) {
@@ -1161,9 +1160,9 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                     *acc.samples);
 
                 const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *acc.samples);
-                VIAM_SDK_LOG(info) << "trajex/totg segment generated successfully"
-                                   << ", waypoints: " << segment.size() << ", duration: " << traj.duration().count()
-                                   << "s, samples: " << sample_count << ", arc length: " << traj.path().length();
+                VIAM_RESOURCE_LOG(info) << "trajex/totg segment generated successfully"
+                                        << ", waypoints: " << segment.size() << ", duration: " << traj.duration().count()
+                                        << "s, samples: " << sample_count << ", arc length: " << traj.path().length();
             },
             [&](const auto& planner,
                 const segment_accumulator& acc,
@@ -1173,9 +1172,9 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 message << "trajectory generation with trajex failed with an exception"
                         << ", waypoints: " << acc.total_waypoints << ", exception: " << e.what();
                 if (current_state_->use_legacy_trajectory_planner()) {
-                    VIAM_SDK_LOG(warn) << message.str();
+                    VIAM_RESOURCE_LOG(warn) << message.str();
                 } else {
-                    VIAM_SDK_LOG(error) << message.str();
+                    VIAM_RESOURCE_LOG(error) << message.str();
                 }
 
                 const std::string json_content = planner.serialize_for_replay(seg, e.what());
@@ -1218,7 +1217,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                 const segment_accumulator&,
                 const viam::trajex::totg::waypoint_accumulator& seg,
                 const std::exception& e) {
-                VIAM_SDK_LOG(error) << "trajectory generation with legacy failed with an exception: " << e.what();
+                VIAM_RESOURCE_LOG(error) << "trajectory generation with legacy failed with an exception: " << e.what();
                 const std::string json_content = planner.serialize_for_replay(seg, e.what());
                 const auto filename =
                     failed_trajectory_filename(current_state_->telemetry_output_path(), current_state_->resource_name(), id.uuid);
@@ -1231,30 +1230,32 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         // Log trajex summary if it ran
         if (trajex.receiver) {
             const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *trajex.receiver->samples);
-            VIAM_SDK_LOG(info) << "trajex/totg trajectory generated successfully"
-                               << ", total waypoints: " << trajex.receiver->total_waypoints
-                               << ", total duration: " << trajex.receiver->total_duration << "s, total samples: " << sample_count
-                               << ", total arc length: " << trajex.receiver->total_arc_length
-                               << ", generation_time: " << std::chrono::duration<double>(trajex.receiver->total_generation_time).count()
-                               << "s, number of segments: " << trajex.receiver->segment_count;
+            VIAM_RESOURCE_LOG(info) << "trajex/totg trajectory generated successfully"
+                                    << ", total waypoints: " << trajex.receiver->total_waypoints
+                                    << ", total duration: " << trajex.receiver->total_duration << "s, total samples: " << sample_count
+                                    << ", total arc length: " << trajex.receiver->total_arc_length << ", generation_time: "
+                                    << std::chrono::duration<double>(trajex.receiver->total_generation_time).count()
+                                    << "s, number of segments: " << trajex.receiver->segment_count;
         }
 
         // Log legacy summary. When the new planner is active, log at info for comparison
         // visibility; otherwise log at debug (routine operation).
         if (legacy.receiver && current_state_->use_new_trajectory_planner()) {
             const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *legacy.receiver->samples);
-            VIAM_SDK_LOG(info) << "legacy trajectory generated successfully"
-                               << ", waypoints: " << legacy.receiver->total_waypoints << ", duration: " << legacy.receiver->total_duration
-                               << "s, samples: " << sample_count
-                               << ", generation_time: " << std::chrono::duration<double>(legacy.receiver->total_generation_time).count()
-                               << "s, number of segments: " << legacy.receiver->segment_count;
+            VIAM_RESOURCE_LOG(info) << "legacy trajectory generated successfully"
+                                    << ", waypoints: " << legacy.receiver->total_waypoints
+                                    << ", duration: " << legacy.receiver->total_duration << "s, samples: " << sample_count
+                                    << ", generation_time: "
+                                    << std::chrono::duration<double>(legacy.receiver->total_generation_time).count()
+                                    << "s, number of segments: " << legacy.receiver->segment_count;
         } else if (legacy.receiver) {
             const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *legacy.receiver->samples);
-            VIAM_SDK_LOG(debug) << "legacy trajectory generated successfully"
-                                << ", waypoints: " << legacy.receiver->total_waypoints << ", duration: " << legacy.receiver->total_duration
-                                << "s, samples: " << sample_count
-                                << ", generation_time: " << std::chrono::duration<double>(legacy.receiver->total_generation_time).count()
-                                << "s, number of segments: " << legacy.receiver->segment_count;
+            VIAM_RESOURCE_LOG(debug) << "legacy trajectory generated successfully"
+                                     << ", waypoints: " << legacy.receiver->total_waypoints
+                                     << ", duration: " << legacy.receiver->total_duration << "s, samples: " << sample_count
+                                     << ", generation_time: "
+                                     << std::chrono::duration<double>(legacy.receiver->total_generation_time).count()
+                                     << "s, number of segments: " << legacy.receiver->segment_count;
         }
 
         // Prefer trajex when enabled and successful
@@ -1279,7 +1280,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         // No results and no errors: if the input had fewer than 2 waypoints after
         // preprocessing, no algorithms ran, so there was nothing to do.
         if (p.processed_waypoint_count() < 2) {
-            VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
+            VIAM_RESOURCE_LOG(debug) << "arm is already at the desired joint positions";
             return std::nullopt;
         }
 
@@ -1295,27 +1296,27 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
         const auto format_optional = [&to_ms](const std::optional<std::chrono::microseconds>& d) {
             return d ? std::to_string(to_ms(*d)) + "ms" : std::string("n/a");
         };
-        VIAM_SDK_LOG(debug) << "move: phase timing (ms):"
-                            << " provisioning=" << to_ms(timing.waypoint_provisioning) << "ms"
-                            << " preprocessing=" << format_optional(timing.waypoint_preprocessing)
-                            << " validation=" << format_optional(timing.move_validation)
-                            << " segmentation=" << format_optional(timing.segmentation)
-                            << " colinearization=" << format_optional(timing.colinearization)
-                            << " totg_total_gen=" << format_optional(timing.totg_generation_total)
-                            << " legacy_total_gen=" << format_optional(timing.legacy_generation_total);
+        VIAM_RESOURCE_LOG(debug) << "move: phase timing (ms):"
+                                 << " provisioning=" << to_ms(timing.waypoint_provisioning) << "ms"
+                                 << " preprocessing=" << format_optional(timing.waypoint_preprocessing)
+                                 << " validation=" << format_optional(timing.move_validation)
+                                 << " segmentation=" << format_optional(timing.segmentation)
+                                 << " colinearization=" << format_optional(timing.colinearization)
+                                 << " totg_total_gen=" << format_optional(timing.totg_generation_total)
+                                 << " legacy_total_gen=" << format_optional(timing.legacy_generation_total);
     }
 
     if (!result) {
-        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << id.uuid << " (no result)";
+        VIAM_RESOURCE_LOG(debug) << "move: compute_trajectory end " << id.uuid << " (no result)";
         return;
     } else if (result->total_duration > current_state_->get_max_trajectory_duration_secs()) {
         throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
     } else if (result->total_duration < k_min_timestep_sec) {
-        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << id.uuid << " (duration too small)";
+        VIAM_RESOURCE_LOG(debug) << "move: compute_trajectory end " << id.uuid << " (duration too small)";
         return;
     } else {
         const auto sample_count = std::visit([](const auto& v) { return v.size(); }, *result->samples);
-        VIAM_SDK_LOG(debug) << "move: compute_trajectory end " << id.uuid << " samples.size() " << sample_count;
+        VIAM_RESOURCE_LOG(debug) << "move: compute_trajectory end " << id.uuid << " samples.size() " << sample_count;
     }
 
     const std::string& telemetry_path = current_state_->telemetry_output_path();
@@ -1338,18 +1339,18 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     // with the current state other than to wait on the result of this future.
 
     try {
-        VIAM_SDK_LOG(debug) << "move: trajectory enqueued to arm: id " << id.uuid;
+        VIAM_RESOURCE_LOG(debug) << "move: trajectory enqueued to arm: id " << id.uuid;
         trajectory_completion_future.get();
-        VIAM_SDK_LOG(debug) << "move: trajectory completed on arm: id " << id.uuid << " (success)";
+        VIAM_RESOURCE_LOG(debug) << "move: trajectory completed on arm: id " << id.uuid << " (success)";
     } catch (...) {
-        VIAM_SDK_LOG(debug) << "move: trajectory failed on arm: id " << id.uuid << " (failure)";
+        VIAM_RESOURCE_LOG(debug) << "move: trajectory failed on arm: id " << id.uuid << " (failure)";
         throw;
     }
 }
 
 // Define the destructor
 URArm::~URArm() {
-    VIAM_SDK_LOG(info) << "Shutting down URArm driver instance for arm model: " << arm_model_.sdk_model().to_string();
+    VIAM_RESOURCE_LOG(info) << "Shutting down URArm driver instance for arm model: " << arm_model_.sdk_model().to_string();
     const std::unique_lock wlock{config_mutex_};
     shutdown_(wlock);
 }
@@ -1369,16 +1370,16 @@ void URArm::shutdown_(const std::unique_lock<std::shared_mutex>& lock) noexcept 
             stop_(lock);
             current_state_->shutdown();
         }
-        VIAM_SDK_LOG(info) << "URArm shutdown complete";
+        VIAM_RESOURCE_LOG(info) << "URArm shutdown complete";
 
     } catch (...) {
         const auto unconditional_abort = make_scope_guard([] { std::abort(); });
         try {
             throw;
         } catch (const std::exception& ex) {
-            VIAM_SDK_LOG(error) << "URArm shutdown failed with a std::exception - module service will terminate: " << ex.what();
+            VIAM_RESOURCE_LOG(error) << "URArm shutdown failed with a std::exception - module service will terminate: " << ex.what();
         } catch (...) {
-            VIAM_SDK_LOG(error) << "URArm shutdown failed with an unknown exception - module service will terminate";
+            VIAM_RESOURCE_LOG(error) << "URArm shutdown failed with an unknown exception - module service will terminate";
         }
     }
 }
