@@ -59,22 +59,22 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_disconnected_:
 }
 
 std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnected_::connect_(state_& state) {
-    auto arm_connection = std::make_unique<arm_connection_>(state.arm_);
+    auto arm_connection = std::make_unique<arm_connection_>(state.log_resource_);
 
     constexpr auto k_log_at_n_attempts = 100;
     if (++reconnect_attempts % k_log_at_n_attempts == 0) {
         if (triggering_event_) {
-            VIAM_RESOURCE_LOG(state.arm_, warn)
+            VIAM_RESOURCE_LOG(state.log_resource_, warn)
                 << "disconnected: the connection to the arm was lost due to a " << triggering_event_->describe()
                 << " event; attempting automatic recovery which may take some time";
         }
-        VIAM_RESOURCE_LOG(state.arm_, info) << "While in state " << describe() << ", attempting to reconnect";
+        VIAM_RESOURCE_LOG(state.log_resource_, info) << "While in state " << describe() << ", attempting to reconnect";
     }
 
     arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_);
     if (reconnect_attempts % k_log_at_n_attempts == 0) {
-        VIAM_RESOURCE_LOG(state.arm_, debug) << "While in state " << describe()
-                                             << ", attempting to reconnect: trying to connect to dashboard";
+        VIAM_RESOURCE_LOG(state.log_resource_, debug)
+            << "While in state " << describe() << ", attempting to reconnect: trying to connect to dashboard";
     }
     if (!arm_connection->dashboard->connect(1)) {
         std::ostringstream buffer;
@@ -83,9 +83,9 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     }
     arm_connection->log_destructor = true;
 
-    VIAM_RESOURCE_LOG(state.arm_, debug) << "While in state " << describe() << ", attempting to reconnect: connected to dashboard";
+    VIAM_RESOURCE_LOG(state.log_resource_, debug) << "While in state " << describe() << ", attempting to reconnect: connected to dashboard";
 
-    VIAM_RESOURCE_LOG(state.arm_, debug) << "While in state " << describe() << ", attempting to reconnect: validating model";
+    VIAM_RESOURCE_LOG(state.log_resource_, debug) << "While in state " << describe() << ", attempting to reconnect: validating model";
     std::string actual_model_type{};
     if (!arm_connection->dashboard->commandGetRobotModel(actual_model_type)) {
         throw std::runtime_error("failed to get model info of connected arm");
@@ -109,8 +109,8 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     // TODO(11619): See if we can fully eliminate use of the
     // DashboardClient and use only the `UrDriver`.
     if (arm_connection->dashboard->commandIsInRemoteControl()) {
-        VIAM_RESOURCE_LOG(state.arm_, debug) << "While in state " << describe()
-                                             << ", attempting to reconnect: stopping any currently running program";
+        VIAM_RESOURCE_LOG(state.log_resource_, debug)
+            << "While in state " << describe() << ", attempting to reconnect: stopping any currently running program";
         if (!arm_connection->dashboard->commandStop()) {
             throw std::runtime_error("couldn't stop program running on arm_connection->dashboard");
         }
@@ -121,7 +121,8 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     constexpr char k_output_recipe[] = "control/rtde_output_recipe.txt";
     constexpr char k_input_recipe[] = "control/rtde_input_recipe.txt";
 
-    VIAM_RESOURCE_LOG(state.arm_, debug) << "While in state " << describe() << ", attempting to reconnect: instantiating new UrDriver";
+    VIAM_RESOURCE_LOG(state.log_resource_, debug)
+        << "While in state " << describe() << ", attempting to reconnect: instantiating new UrDriver";
     // Now the robot is ready to receive a program
     auto ur_cfg = urcl::UrDriverConfiguration{};
     ur_cfg.robot_ip = state.host_;
@@ -139,10 +140,10 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     ur_cfg.script_sender_port = state.ports_.script_sender_port;
     ur_cfg.trajectory_port = state.ports_.trajectory_port;
     ur_cfg.script_command_port = state.ports_.script_command_port;
-    VIAM_RESOURCE_LOG(state.arm_, debug) << "using reverse_port " << ur_cfg.reverse_port;
-    VIAM_RESOURCE_LOG(state.arm_, debug) << "using script_sender_port " << ur_cfg.script_sender_port;
-    VIAM_RESOURCE_LOG(state.arm_, debug) << "using trajectory_port " << ur_cfg.trajectory_port;
-    VIAM_RESOURCE_LOG(state.arm_, debug) << "using script_command_port " << ur_cfg.script_command_port;
+    VIAM_RESOURCE_LOG(state.log_resource_, debug) << "using reverse_port " << ur_cfg.reverse_port;
+    VIAM_RESOURCE_LOG(state.log_resource_, debug) << "using script_sender_port " << ur_cfg.script_sender_port;
+    VIAM_RESOURCE_LOG(state.log_resource_, debug) << "using trajectory_port " << ur_cfg.trajectory_port;
+    VIAM_RESOURCE_LOG(state.log_resource_, debug) << "using script_command_port " << ur_cfg.script_command_port;
 
     arm_connection->driver = std::make_unique<UrDriver>(ur_cfg);
 
@@ -155,18 +156,19 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     arm_connection->driver->registerTrajectoryDoneCallback(
         std::bind(&URArm::state_::trajectory_done_callback_, &state, std::placeholders::_1));
 
-    VIAM_RESOURCE_LOG(state.arm_, debug) << "While in state " << describe() << ", attempting to reconnect: starting RTDE communication";
+    VIAM_RESOURCE_LOG(state.log_resource_, debug)
+        << "While in state " << describe() << ", attempting to reconnect: starting RTDE communication";
     arm_connection->driver->startRTDECommunication();
 
-    VIAM_RESOURCE_LOG(state.arm_, debug) << "While in state " << describe()
-                                         << ", attempting to reconnect: attempting to read a data package from the arm";
+    VIAM_RESOURCE_LOG(state.log_resource_, debug)
+        << "While in state " << describe() << ", attempting to reconnect: attempting to read a data package from the arm";
     arm_connection->data_package = std::make_unique<urcl::rtde_interface::DataPackage>(arm_connection->driver->getRTDEOutputRecipe());
     if (!arm_connection->driver->getDataPackage(*arm_connection->data_package)) {
         throw std::runtime_error("could not read data package from newly established driver connection ");
     }
 
-    VIAM_RESOURCE_LOG(state.arm_, debug) << "While in state " << describe()
-                                         << ", recovery appears to have been successful; transitioning to independent mode";
+    VIAM_RESOURCE_LOG(state.log_resource_, debug)
+        << "While in state " << describe() << ", recovery appears to have been successful; transitioning to independent mode";
     return arm_connection;
 }
 

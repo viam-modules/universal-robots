@@ -27,7 +27,7 @@ class URArm::state_ {
 
    public:
     explicit state_(private_,
-                    const viam::sdk::Resource& arm,
+                    const viam::sdk::Resource& log_resource,
                     UrArmModel configured_model,
                     std::string resource_name,
                     std::string host,
@@ -54,7 +54,7 @@ class URArm::state_ {
                     const struct ports_& ports);
     ~state_();
 
-    static std::unique_ptr<state_> create(const viam::sdk::Resource& arm,
+    static std::unique_ptr<state_> create(const viam::sdk::Resource& log_resource,
                                           UrArmModel configured_model,
                                           std::string resource_name,
                                           const ResourceConfig& config,
@@ -302,13 +302,13 @@ class URArm::state_ {
     };
 
     struct arm_connection_ {
-        explicit arm_connection_(const viam::sdk::Resource& arm) : arm{arm} {}
-        const viam::sdk::Resource& arm;
+        explicit arm_connection_(const viam::sdk::Resource& log_resource) : log_resource{log_resource} {}
         static constexpr size_t k_num_robot_status_bits = 4;
         static constexpr size_t k_num_safety_status_bits = 11;
 
         ~arm_connection_();
 
+        std::reference_wrapper<const viam::sdk::Resource> log_resource;
         std::unique_ptr<DashboardClient> dashboard;
         std::unique_ptr<UrDriver> driver;
         std::unique_ptr<rtde_interface::DataPackage> data_package;
@@ -511,7 +511,7 @@ class URArm::state_ {
 
         using async_cancellation_monitor = std::function<bool()>;
 
-        explicit move_request(const viam::sdk::Resource& arm,
+        explicit move_request(const viam::sdk::Resource& log_resource,
                               boost::uuids::uuid id,
                               std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
@@ -521,20 +521,20 @@ class URArm::state_ {
         // a default-constructed `sample_stream`, no batches yet. The producer
         // subsequently drives the request via `state_::extend_move_request` /
         // `close_move_request` / `cancel_move_request(uuid)`.
-        explicit move_request(const viam::sdk::Resource& arm,
+        explicit move_request(const viam::sdk::Resource& log_resource,
                               boost::uuids::uuid id,
                               std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor);
 
         // Constructs a one-shot `move_request` to drive the arm to the given pose.
-        explicit move_request(const viam::sdk::Resource& arm,
+        explicit move_request(const viam::sdk::Resource& log_resource,
                               boost::uuids::uuid id,
                               std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
                               pose_sample ps);
 
         // Constructs a one-shot `move_request` to drive the arm through the given trajectory sample points.
-        explicit move_request(const viam::sdk::Resource& arm,
+        explicit move_request(const viam::sdk::Resource& log_resource,
                               boost::uuids::uuid id,
                               std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                               async_cancellation_monitor monitor,
@@ -552,7 +552,7 @@ class URArm::state_ {
                                    std::optional<uint32_t> robot_status_bits,
                                    std::optional<uint32_t> safety_status_bits) const;
 
-        std::reference_wrapper<const viam::sdk::Resource> arm;
+        std::reference_wrapper<const viam::sdk::Resource> log_resource;
         boost::uuids::uuid id;
         std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger;
         async_cancellation_monitor async_cancel_monitor;
@@ -598,9 +598,9 @@ class URArm::state_ {
     // us know whether the program is running.
     std::atomic<bool> program_running_flag{false};
 
+    std::reference_wrapper<const viam::sdk::Resource> log_resource_;
     const UrArmModel configured_model_;
     const std::string resource_name_;
-    const viam::sdk::Resource& arm_;
     const std::string host_;
     const std::filesystem::path resource_root_;
     const std::filesystem::path urcl_resource_root_;
@@ -696,5 +696,5 @@ std::future<void> URArm::state_::start_move_request(URArm::move_id id, Args&&...
     if (move_request_) {
         throw std::runtime_error("an actuation is already in progress");
     }
-    return move_request_.emplace(arm_, std::move(id).uuid, std::forward<Args>(args)...).completion.get_future();
+    return move_request_.emplace(log_resource_, std::move(id).uuid, std::forward<Args>(args)...).completion.get_future();
 }

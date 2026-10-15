@@ -82,8 +82,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     namespace urtde = urcl::rtde_interface;
 
     if (!arm_conn_->safety_status_bits || !arm_conn_->robot_status_bits) {
-        VIAM_RESOURCE_LOG(state.arm_, debug) << "While in state " << describe()
-                                             << ", robot and safety status bits were not available; dropping connection";
+        VIAM_RESOURCE_LOG(state.log_resource_, debug)
+            << "While in state " << describe() << ", robot and safety status bits were not available; dropping connection";
         return event_connection_lost_::data_communication_failure();
     }
 
@@ -109,7 +109,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
                 return event_local_mode_detected_{};
             }
         } catch (...) {
-            VIAM_RESOURCE_LOG(state.arm_, debug)
+            VIAM_RESOURCE_LOG(state.log_resource_, debug)
                 << "While in state " << describe()
                 << ", could not communicate with dashboard to determine remote control state; dropping connection";
             return event_connection_lost_::dashboard_communication_failure();
@@ -122,12 +122,13 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
                 // only log the failure every 100 attempts to be less spammy
                 if (local_reconnect_attempts % 100000 == 0) {
-                    VIAM_RESOURCE_LOG(state.arm_, warn) << "While in state " << describe() << ", waiting for arm to re-enter remote mode";
+                    VIAM_RESOURCE_LOG(state.log_resource_, warn)
+                        << "While in state " << describe() << ", waiting for arm to re-enter remote mode";
                 }
                 return std::nullopt;
             }
         } catch (...) {
-            VIAM_RESOURCE_LOG(state.arm_, warn)
+            VIAM_RESOURCE_LOG(state.log_resource_, warn)
                 << "While in state " << describe()
                 << ", could not communicate with dashboard to determine remote control state; dropping connection";
             return event_connection_lost_::dashboard_communication_failure();
@@ -143,33 +144,34 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     if (stopped() && arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
         // ensure the arm is powered on
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_POWER_ON))) {
-            VIAM_RESOURCE_LOG(state.arm_, debug)
+            VIAM_RESOURCE_LOG(state.log_resource_, debug)
                 << "While in state " << describe()
                 << ", arm is not powered on; attempting to power on arm - ensure the dashboard is in remote mode";
             try {
                 if (!arm_conn_->dashboard->commandPowerOn()) {
-                    VIAM_RESOURCE_LOG(state.arm_, debug)
+                    VIAM_RESOURCE_LOG(state.log_resource_, debug)
                         << "While in state " << describe() << ", unable to power on arm; dropping connection";
 
                     return event_connection_lost_::dashboard_command_failure();
                 }
             } catch (...) {
-                VIAM_RESOURCE_LOG(state.arm_, debug)
+                VIAM_RESOURCE_LOG(state.log_resource_, debug)
                     << "While in state " << describe() << ", could not communicate with dashboard to power on arm; dropping connection";
                 return event_connection_lost_::dashboard_communication_failure();
             }
         }
 
         try {
-            VIAM_RESOURCE_LOG(state.arm_, debug) << "While in state " << describe() << ": releasing brakes since no longer stopped";
+            VIAM_RESOURCE_LOG(state.log_resource_, debug)
+                << "While in state " << describe() << ": releasing brakes since no longer stopped";
             if (!arm_conn_->dashboard->commandBrakeRelease()) {
-                VIAM_RESOURCE_LOG(state.arm_, debug)
+                VIAM_RESOURCE_LOG(state.log_resource_, debug)
                     << "While in state " << describe()
                     << ", could not release brakes - ensure the dashboard is in remote mode; dropping connection";
                 return event_connection_lost_::dashboard_command_failure();
             }
         } catch (...) {
-            VIAM_RESOURCE_LOG(state.arm_, debug)
+            VIAM_RESOURCE_LOG(state.log_resource_, debug)
                 << "While in state " << describe() << ", could not communicate with dashboard to release brakes; dropping connection";
             return event_connection_lost_::dashboard_communication_failure();
         }
@@ -179,16 +181,16 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // controlling the arm directly while in local mode.
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING))) {
             state.program_running_flag.store(false, std::memory_order_release);
-            VIAM_RESOURCE_LOG(state.arm_, debug)
+            VIAM_RESOURCE_LOG(state.log_resource_, debug)
                 << "While in state " << describe() << ", program is not running on arm; attempting to resend program";
             try {
                 if (!arm_conn_->driver->sendRobotProgram()) {
-                    VIAM_RESOURCE_LOG(state.arm_, warn)
+                    VIAM_RESOURCE_LOG(state.log_resource_, warn)
                         << "While in state " << describe() << ", could not send program to robot via driver; dropping connection";
                     return event_connection_lost_::robot_program_failure();
                 }
             } catch (...) {
-                VIAM_RESOURCE_LOG(state.arm_, warn)
+                VIAM_RESOURCE_LOG(state.log_resource_, warn)
                     << "While in state " << describe() << ", failed sending program to robot via driver; dropping connection";
                 return event_connection_lost_::robot_program_failure();
             }
@@ -197,12 +199,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // "Wait" for the robot program to start running.
         //
         // TODO(RSDK-11620) Check if we still need this flag.
-        VIAM_RESOURCE_LOG(state.arm_, debug) << "While in state " << describe()
-                                             << ", waiting for callback to toggle program state to running";
+        VIAM_RESOURCE_LOG(state.log_resource_, debug)
+            << "While in state " << describe() << ", waiting for callback to toggle program state to running";
         int retry_count = 100;
         while (!state.program_running_flag.load(std::memory_order_acquire)) {
             if (retry_count <= 0) {
-                VIAM_RESOURCE_LOG(state.arm_, warn)
+                VIAM_RESOURCE_LOG(state.log_resource_, warn)
                     << "While in state " << describe() << ", program state never loaded; dropping connection";
                 return event_connection_lost_::robot_program_failure();
             }
@@ -242,7 +244,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         if (logger) {
             post_stop_logger_ = std::move(logger);
             post_stop_recording_deadline_ = std::chrono::steady_clock::now() + k_post_stop_recording_duration;
-            VIAM_RESOURCE_LOG(state.arm_, debug)
+            VIAM_RESOURCE_LOG(state.log_resource_, debug)
                 << "post-stop telemetry recording started; will record for "
                 << std::chrono::duration_cast<std::chrono::milliseconds>(k_post_stop_recording_duration).count() << "ms";
         }
@@ -264,7 +266,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
                         : std::nullopt);
             }
         } else {
-            VIAM_RESOURCE_LOG(state.arm_, debug) << "post-stop telemetry recording complete";
+            VIAM_RESOURCE_LOG(state.log_resource_, debug) << "post-stop telemetry recording complete";
             post_stop_logger_.reset();
             post_stop_recording_deadline_.reset();
         }

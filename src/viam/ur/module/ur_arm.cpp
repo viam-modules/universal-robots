@@ -155,7 +155,7 @@ urcl::vector6d_t pose_to_ur_vector(const pose& p) {
     return v;
 }
 
-std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
+std::vector<std::string> validate_config(const ResourceConfig& cfg) {
     if (!find_config_attribute<std::string>(cfg, "host")) {
         throw std::invalid_argument("attribute `host` is required");
     }
@@ -303,10 +303,9 @@ concept xexpression = xt::is_xexpression<std::decay_t<E>>::value;
 // The two callers arrive with different expression types. The unary path has a row view into the
 // waypoint accumulator, and the streamed path has an adaptor over a `vector6d_t`, which is why
 // this is a template.
-void check_initial_joint_positions_(const viam::sdk::Resource& arm,
-                                    const concepts::xexpression auto& claimed_rad,
-                                    const concepts::xexpression auto& measured_rad,
-                                    double threshold_rad) {
+void check_initial_joint_positions(const concepts::xexpression auto& claimed_rad,
+                                   const concepts::xexpression auto& measured_rad,
+                                   double threshold_rad) {
     const auto max_diff = xt::norm_linf(claimed_rad - measured_rad)();
     if (max_diff <= threshold_rad) {
         return;
@@ -322,7 +321,6 @@ void check_initial_joint_positions_(const viam::sdk::Resource& arm,
     err_string << ")] by " << viam::trajex::radians_to_degrees(max_diff) << " > " << viam::trajex::radians_to_degrees(threshold_rad)
                << " degrees";
 
-    VIAM_RESOURCE_LOG(arm, error) << err_string.str();
     throw std::invalid_argument(err_string.str());
 }
 
@@ -456,7 +454,7 @@ std::vector<std::shared_ptr<ModelRegistration>> URArm::create_model_registration
             model,
             // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is fixed by ModelRegistration.
             [model](auto deps, auto config) { return std::make_unique<URArm>(model, deps, config); },
-            [](auto const& config) { return validate_config_(config); });
+            [](auto const& config) { return validate_config(config); });
     };
 
     auto registrations = UrModelDescriptor::all() | boost::adaptors::transformed(registration_factory);
@@ -591,7 +589,7 @@ void URArm::check_initial_joint_positions_streamed_(const trajectory_point& firs
 
     vector6d_t claimed_rad{};
     std::ranges::transform(first.positions, claimed_rad.begin(), [](double deg) { return degrees_to_radians(deg); });
-    check_initial_joint_positions_(*this, xt::adapt(claimed_rad), xt::adapt(measured), threshold_rad);
+    check_initial_joint_positions(xt::adapt(claimed_rad), xt::adapt(measured), threshold_rad);
 }
 
 URArm::stream_outcome URArm::move_through_joint_positions_streamed(
@@ -1103,7 +1101,7 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
             // accumulator with the measured position ahead of whatever the caller did supply.
             const auto measured = captured_waypoints->begin();
             const auto claimed = std::next(measured);
-            check_initial_joint_positions_(*this, *claimed, *measured, *threshold);
+            check_initial_joint_positions(*claimed, *measured, *threshold);
         })
 
         .with_segmenter([&](auto&, viam::trajex::totg::waypoint_accumulator accumulator) {

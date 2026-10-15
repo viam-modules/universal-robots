@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -25,7 +26,7 @@
 #include "utils.hpp"
 
 URArm::state_::state_(private_,
-                      const viam::sdk::Resource& arm,
+                      const viam::sdk::Resource& log_resource,
                       UrArmModel configured_model,
                       std::string resource_name,
                       std::string host,
@@ -50,9 +51,9 @@ URArm::state_::state_(private_,
                       std::string telemetry_output_path_append_traceid_template,
                       std::string traceid_metadata_key,
                       const struct ports_& ports)
-    : configured_model_{std::move(configured_model)},
+    : log_resource_{log_resource},
+      configured_model_{std::move(configured_model)},
       resource_name_{std::move(resource_name)},
-      arm_{arm},
       host_{std::move(host)},
       resource_root_{std::move(resource_root)},
       urcl_resource_root_{std::move(urcl_resource_root)},
@@ -89,7 +90,7 @@ URArm::state_::~state_() {
     shutdown();
 }
 
-std::unique_ptr<URArm::state_> URArm::state_::create(const viam::sdk::Resource& arm,
+std::unique_ptr<URArm::state_> URArm::state_::create(const viam::sdk::Resource& log_resource,
                                                      UrArmModel configured_model,
                                                      std::string resource_name,
                                                      const ResourceConfig& config,
@@ -99,11 +100,11 @@ std::unique_ptr<URArm::state_> URArm::state_::create(const viam::sdk::Resource& 
     const auto module_executable_path = boost::dll::program_location();
     const auto module_executable_directory = module_executable_path.parent_path();
     auto resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "universal-robots");
-    VIAM_RESOURCE_LOG(arm, debug) << "Universal robots module executable found in `" << module_executable_path
-                                  << "; resources will be found in `" << resource_root << "`";
+    VIAM_RESOURCE_LOG(log_resource, debug) << "Universal robots module executable found in `" << module_executable_path
+                                           << "; resources will be found in `" << resource_root << "`";
 
     auto urcl_resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_urcl_resources);
-    VIAM_RESOURCE_LOG(arm, debug) << "URCL resources will be found in `" << urcl_resource_root << "`";
+    VIAM_RESOURCE_LOG(log_resource, debug) << "URCL resources will be found in `" << urcl_resource_root << "`";
 
     // If the config contains `telemetry_output_path`, use that, otherwise,
     // fall back to `VIAM_MODULE_DATA` as the output path, which must
@@ -117,8 +118,9 @@ std::unique_ptr<URArm::state_> URArm::state_::create(const viam::sdk::Resource& 
         // TODO(RSDK-12929): When `csv_output_path` is removed, delete this.
         path = find_config_attribute<std::string>(config, "csv_output_path");
         if (path) {
-            VIAM_RESOURCE_LOG(arm, warn) << "The `csv_output_path` configuration parameter is deprecated and will be removed; please use "
-                                            "`telemetry_output_path` instead";
+            VIAM_RESOURCE_LOG(log_resource, warn)
+                << "The `csv_output_path` configuration parameter is deprecated and will be removed; please use "
+                   "`telemetry_output_path` instead";
             return path.value();
         }
 
@@ -126,7 +128,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(const viam::sdk::Resource& 
         if (!viam_module_data) {
             throw std::runtime_error("required environment variable `VIAM_MODULE_DATA` unset");
         }
-        VIAM_RESOURCE_LOG(arm, debug) << "VIAM_MODULE_DATA: " << viam_module_data;
+        VIAM_RESOURCE_LOG(log_resource, debug) << "VIAM_MODULE_DATA: " << viam_module_data;
 
         return std::string{viam_module_data};
     }();
@@ -136,7 +138,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(const viam::sdk::Resource& 
     if (threshold_deg) {
         threshold_rad = degrees_to_radians(*threshold_deg);
     } else {
-        VIAM_RESOURCE_LOG(arm, warn) << "Disabling streamed moves because `reject_move_request_threshold_deg` is not configured";
+        VIAM_RESOURCE_LOG(log_resource, warn) << "Disabling streamed moves because `reject_move_request_threshold_deg` is not configured";
     }
 
     auto waypoint_dedup_tolerance_deg = find_config_attribute<double>(config, "waypoint_deduplication_tolerance_deg");
@@ -201,7 +203,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(const viam::sdk::Resource& 
     }
 
     auto state = std::make_unique<state_>(private_{},
-                                          arm,
+                                          log_resource,
                                           std::move(configured_model),
                                           std::move(resource_name),
                                           std::move(host),
@@ -253,12 +255,12 @@ std::unique_ptr<URArm::state_> URArm::state_::create(const viam::sdk::Resource& 
         try {
             state->upgrade_downgrade_();
         } catch (const std::exception& xcp) {
-            VIAM_RESOURCE_LOG(arm, warn) << "Failed to establish working connection to arm after " << ++connection_failures
-                                         << " attempts: `" << xcp.what() << "`";
+            VIAM_RESOURCE_LOG(log_resource, warn)
+                << "Failed to establish working connection to arm after " << ++connection_failures << " attempts: `" << xcp.what() << "`";
             if (connection_failures >= max_connection_failures) {
                 throw;
             }
-            VIAM_RESOURCE_LOG(arm, info) << "Retrying after " << state->get_timeout_().count() << " milliseconds";
+            VIAM_RESOURCE_LOG(log_resource, info) << "Retrying after " << state->get_timeout_().count() << " milliseconds";
         }
         std::this_thread::sleep_for(state->get_timeout_());
     }
@@ -277,9 +279,9 @@ void URArm::state_::shutdown() {
     }();
 
     if (worker.joinable()) {
-        VIAM_RESOURCE_LOG(arm_, debug) << "URArm shutdown waiting for worker thread to terminate";
+        VIAM_RESOURCE_LOG(log_resource_, debug) << "URArm shutdown waiting for worker thread to terminate";
         worker.join();
-        VIAM_RESOURCE_LOG(arm_, debug) << "worker thread terminated";
+        VIAM_RESOURCE_LOG(log_resource_, debug) << "worker thread terminated";
     }
 }
 
@@ -373,8 +375,8 @@ std::filesystem::path URArm::state_::telemetry_output_path() const {
     std::error_code ec;
     std::filesystem::create_directories(result, ec);
     if (ec) {
-        VIAM_RESOURCE_LOG(arm_, warn) << "Failed to create telemetry output directory '" << result << "': " << ec.message()
-                                      << " - falling back to base path";
+        VIAM_RESOURCE_LOG(log_resource_, warn) << "Failed to create telemetry output directory '" << result << "': " << ec.message()
+                                               << " - falling back to base path";
         return telemetry_output_path_;
     }
 
@@ -423,7 +425,7 @@ vector6d_t URArm::state_::clamp_velocity_limits(vector6d_t desired_velocity_limi
         msg << "] to [";
         boost::copy(result | boost::adaptors::transformed(radians_to_degrees<const double&>), boost::io::make_ostream_joiner(msg, ", "));
         msg << "] deg/s";
-        VIAM_RESOURCE_LOG(arm_, debug) << msg.str();
+        VIAM_RESOURCE_LOG(log_resource_, debug) << msg.str();
     }
     return result;
 }
@@ -454,7 +456,7 @@ vector6d_t URArm::state_::clamp_acceleration_limits(vector6d_t desired_accelerat
         msg << "] to [";
         boost::copy(result | boost::adaptors::transformed(radians_to_degrees<const double&>), boost::io::make_ostream_joiner(msg, ", "));
         msg << "] deg/s/s";
-        VIAM_RESOURCE_LOG(arm_, debug) << msg.str();
+        VIAM_RESOURCE_LOG(log_resource_, debug) << msg.str();
     }
     return result;
 }
@@ -646,21 +648,21 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_event_handler_
 URArm::state_::arm_connection_::~arm_connection_() {
     data_package.reset();
     if (log_destructor) {
-        VIAM_RESOURCE_LOG(arm, debug) << "destroying current UrDriver instance";
+        VIAM_RESOURCE_LOG(log_resource, debug) << "destroying current UrDriver instance";
     }
     driver.reset();
     if (log_destructor) {
-        VIAM_RESOURCE_LOG(arm, debug) << "destroying current DashboardClient instance";
+        VIAM_RESOURCE_LOG(log_resource, debug) << "destroying current DashboardClient instance";
     }
     dashboard.reset();
 }
 
-URArm::state_::move_request::move_request(const viam::sdk::Resource& arm,
+URArm::state_::move_request::move_request(const viam::sdk::Resource& log_resource,
                                           boost::uuids::uuid id,
                                           std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           move_command_data&& move_command)
-    : arm(arm),
+    : log_resource(log_resource),
       id(std::move(id)),
       trajectory_logger(std::move(trajectory_logger)),
       async_cancel_monitor(std::move(monitor)),
@@ -694,29 +696,29 @@ URArm::state_::move_request::move_request(const viam::sdk::Resource& arm,
         this->move_command);
 }
 
-URArm::state_::move_request::move_request(const viam::sdk::Resource& arm,
+URArm::state_::move_request::move_request(const viam::sdk::Resource& log_resource,
                                           boost::uuids::uuid id,
                                           std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor)
-    : move_request(arm, std::move(id), std::move(trajectory_logger), std::move(monitor), move_command_data{sample_stream{}}) {}
+    : move_request(log_resource, std::move(id), std::move(trajectory_logger), std::move(monitor), move_command_data{sample_stream{}}) {}
 
-URArm::state_::move_request::move_request(const viam::sdk::Resource& arm,
+URArm::state_::move_request::move_request(const viam::sdk::Resource& log_resource,
                                           boost::uuids::uuid id,
                                           std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           pose_sample ps)
-    : move_request(arm,
+    : move_request(log_resource,
                    std::move(id),
                    std::move(trajectory_logger),
                    std::move(monitor),
                    move_command_data{std::optional<pose_sample>{std::move(ps)}}) {}
 
-URArm::state_::move_request::move_request(const viam::sdk::Resource& arm,
+URArm::state_::move_request::move_request(const viam::sdk::Resource& log_resource,
                                           boost::uuids::uuid id,
                                           std::unique_ptr<RealtimeTrajectoryLogger> trajectory_logger,
                                           async_cancellation_monitor monitor,
                                           trajectory_samples samples)
-    : move_request(arm,
+    : move_request(log_resource,
                    std::move(id),
                    std::move(trajectory_logger),
                    std::move(monitor),
@@ -755,7 +757,7 @@ void URArm::state_::move_request::complete_error(std::string_view message) {
     if (cancellation_request) {
         cancellation_request->promise.set_value();
     }
-    VIAM_RESOURCE_LOG(arm.get(), warn) << "A trajectory completed with an error: " << message;
+    VIAM_RESOURCE_LOG(log_resource.get(), warn) << "A trajectory completed with an error: " << message;
 }
 
 void URArm::state_::move_request::cancel_error(std::string_view message) {
@@ -800,8 +802,8 @@ void URArm::state_::emit_event_(T&& event) {
             const auto state_preimage_desc = current_state.describe();
             auto new_state = current_state.handle_event(std::forward<T>(event));
             const auto state_postimage_desc = new_state ? describe_state_(*new_state) : current_state.describe();
-            VIAM_RESOURCE_LOG(arm_, info) << "URArm state transition from state `" << state_preimage_desc << "` to state `"
-                                          << state_postimage_desc << "` due to event `" << event_description << "`";
+            VIAM_RESOURCE_LOG(log_resource_, info) << "URArm state transition from state `" << state_preimage_desc << "` to state `"
+                                                   << state_postimage_desc << "` due to event `" << event_description << "`";
 
             return new_state;
         },
@@ -866,7 +868,7 @@ void URArm::state_::send_noop_() {
 }
 
 void URArm::state_::run_() {
-    VIAM_RESOURCE_LOG(arm_, debug) << "worker thread started";
+    VIAM_RESOURCE_LOG(log_resource_, debug) << "worker thread started";
 
     // Periodically, collect a limited number of samples of the
     // duration of our wait latency on the condition variable. We
@@ -887,7 +889,7 @@ void URArm::state_::run_() {
 
         const auto wait_start = std::chrono::steady_clock::now();
         if (worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] { return shutdown_requested_; })) {
-            VIAM_RESOURCE_LOG(arm_, debug) << "worker thread signaled to terminate";
+            VIAM_RESOURCE_LOG(log_resource_, debug) << "worker thread signaled to terminate";
             break;
         }
 
@@ -901,8 +903,9 @@ void URArm::state_::run_() {
             (*accumulator)(std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(wait_end - wait_start).count());
             if (bacc::count(*accumulator) == k_num_samples) {
                 const auto accumulated = std::exchange(accumulator, std::nullopt);
-                VIAM_RESOURCE_LOG(arm_, info) << "URArm worker thread median wait between control cycles is " << bacc::median(*accumulated)
-                                              << " milliseconds, with variance " << bacc::variance(*accumulated);
+                VIAM_RESOURCE_LOG(log_resource_, info)
+                    << "URArm worker thread median wait between control cycles is " << bacc::median(*accumulated)
+                    << " milliseconds, with variance " << bacc::variance(*accumulated);
             }
         }
 
@@ -913,15 +916,15 @@ void URArm::state_::run_() {
             handle_move_request_();
             send_noop_();
         } catch (const std::exception& ex) {
-            VIAM_RESOURCE_LOG(arm_, warn) << "Exception in worker thread: " << ex.what();
+            VIAM_RESOURCE_LOG(log_resource_, warn) << "Exception in worker thread: " << ex.what();
         } catch (...) {
-            VIAM_RESOURCE_LOG(arm_, warn) << "Unknown exception in worker thread";
+            VIAM_RESOURCE_LOG(log_resource_, warn) << "Unknown exception in worker thread";
         }
     }
 
-    VIAM_RESOURCE_LOG(arm_, debug) << "worker thread emitting disconnection event";
+    VIAM_RESOURCE_LOG(log_resource_, debug) << "worker thread emitting disconnection event";
     emit_event_(event_connection_lost_::module_shutdown());
-    VIAM_RESOURCE_LOG(arm_, debug) << "worker thread terminating";
+    VIAM_RESOURCE_LOG(log_resource_, debug) << "worker thread terminating";
 }
 
 void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult trajectory_result) {
@@ -958,16 +961,16 @@ void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult tr
         }
     }
 
-    VIAM_RESOURCE_LOG(arm_, debug) << "trajectory report: " << report;
+    VIAM_RESOURCE_LOG(log_resource_, debug) << "trajectory report: " << report;
 }
 
 void URArm::state_::program_running_callback_(bool running) {
     program_running_flag.store(running, std::memory_order_release);
     if (running) {
-        VIAM_RESOURCE_LOG(arm_, debug) << "UR program is running";
+        VIAM_RESOURCE_LOG(log_resource_, debug) << "UR program is running";
         return;
     }
-    VIAM_RESOURCE_LOG(arm_, warn) << "UR program is not running";
+    VIAM_RESOURCE_LOG(log_resource_, warn) << "UR program is not running";
 }
 
 vector6d_t URArm::state_::clamp_limits_(vector6d_t desired, const std::optional<vector6d_t>& limits) {

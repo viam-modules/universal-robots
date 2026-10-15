@@ -17,8 +17,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     namespace urtde = urcl::rtde_interface;
 
     if (!arm_conn_->safety_status_bits || !arm_conn_->robot_status_bits) {
-        VIAM_RESOURCE_LOG(state.arm_, warn) << "While in state " << describe()
-                                            << ", robot and safety status bits were not available; dropping connection";
+        VIAM_RESOURCE_LOG(state.log_resource_, warn)
+            << "While in state " << describe() << ", robot and safety status bits were not available; dropping connection";
         return event_connection_lost_::data_communication_failure();
     }
 
@@ -40,12 +40,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     // reliable across local/remote mode transitions.
     try {
         if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
-            VIAM_RESOURCE_LOG(state.arm_, warn)
+            VIAM_RESOURCE_LOG(state.log_resource_, warn)
                 << "While in state " << describe() << ", detected that dashboard is no longer in remote mode; dropping connection";
             return event_connection_lost_::dashboard_control_mode_change();
         }
     } catch (...) {
-        VIAM_RESOURCE_LOG(state.arm_, warn)
+        VIAM_RESOURCE_LOG(state.log_resource_, warn)
             << "While in state " << describe()
             << ", could not communicate with dashboard to determine remote control state; dropping connection";
         return event_connection_lost_::dashboard_communication_failure();
@@ -106,7 +106,8 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                             };
                             for (const auto& pt : pts) {
                                 if (!write_point(pt)) {
-                                    VIAM_RESOURCE_LOG(state.arm_, error) << "send_trajectory: spline point failed; dropping connection";
+                                    VIAM_RESOURCE_LOG(state.log_resource_, error)
+                                        << "send_trajectory: spline point failed; dropping connection";
                                     std::exchange(state.move_request_, {})->complete_error("failed to send trajectory spline point");
                                     return event_connection_lost_::trajectory_control_failure();
                                 }
@@ -139,7 +140,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                                                                           static_cast<int>(cmd.points_written),
                                                                           RobotReceiveTimeout::off())) {
                         state.move_request_->cancel_error("failed to send trajectory cancel");
-                        VIAM_RESOURCE_LOG(state.arm_, error) << "cancel failed; dropping connection";
+                        VIAM_RESOURCE_LOG(state.log_resource_, error) << "cancel failed; dropping connection";
                         return event_connection_lost_::trajectory_control_failure();
                     }
                     return std::nullopt;
@@ -160,10 +161,10 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                         }
                         // First non-empty drain; open the stream on URCL and
                         // continue into the drain in this same tick.
-                        VIAM_RESOURCE_LOG(state.arm_, debug) << "URArm sending stream start";
+                        VIAM_RESOURCE_LOG(state.log_resource_, debug) << "URArm sending stream start";
                         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                                 urcl::control::TrajectoryControlMessage::TRAJECTORY_STREAM_START, 0, RobotReceiveTimeout::off())) {
-                            VIAM_RESOURCE_LOG(state.arm_, error) << "send_trajectory: stream start failed; dropping connection";
+                            VIAM_RESOURCE_LOG(state.log_resource_, error) << "send_trajectory: stream start failed; dropping connection";
                             std::exchange(state.move_request_, {})->complete_error("failed to send trajectory stream start");
                             return event_connection_lost_::trajectory_control_failure();
                         }
@@ -198,18 +199,18 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                             return std::nullopt;
                         }
                         const auto num_points = std::visit([](const auto& v) { return v.size(); }, *cmd.pending);
-                        VIAM_RESOURCE_LOG(state.arm_, debug) << "URArm sending buffered trajectory (" << num_points << " points)";
+                        VIAM_RESOURCE_LOG(state.log_resource_, debug) << "URArm sending buffered trajectory (" << num_points << " points)";
                         if (!arm_conn_->driver->writeTrajectoryControlMessage(urcl::control::TrajectoryControlMessage::TRAJECTORY_START,
                                                                               static_cast<int>(num_points),
                                                                               RobotReceiveTimeout::off())) {
-                            VIAM_RESOURCE_LOG(state.arm_, error) << "send_trajectory: start failed; dropping connection";
+                            VIAM_RESOURCE_LOG(state.log_resource_, error) << "send_trajectory: start failed; dropping connection";
                             std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start");
                             return event_connection_lost_::trajectory_control_failure();
                         }
                         if (auto err = drain_pending()) {
                             return err;
                         }
-                        VIAM_RESOURCE_LOG(state.arm_, debug) << "URArm trajectory sent";
+                        VIAM_RESOURCE_LOG(state.log_resource_, debug) << "URArm trajectory sent";
                         cmd.current_phase = sample_stream::phase::k_ended;
                         return std::nullopt;
                     }
@@ -221,13 +222,13 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                             }
                             return std::nullopt;
                         }
-                        VIAM_RESOURCE_LOG(state.arm_, debug) << "URArm sending stream end";
+                        VIAM_RESOURCE_LOG(state.log_resource_, debug) << "URArm sending stream end";
                         // TODO: `points_written` can exceed int on a long stream; this narrowing is silent.
                         if (!arm_conn_->driver->writeTrajectoryControlMessage(
                                 urcl::control::TrajectoryControlMessage::TRAJECTORY_STREAM_END,
                                 static_cast<int>(cmd.points_written),
                                 RobotReceiveTimeout::off())) {
-                            VIAM_RESOURCE_LOG(state.arm_, error) << "send_trajectory: stream end failed; dropping connection";
+                            VIAM_RESOURCE_LOG(state.log_resource_, error) << "send_trajectory: stream end failed; dropping connection";
                             std::exchange(state.move_request_, {})->complete_error("failed to send trajectory stream end");
                             return event_connection_lost_::trajectory_control_failure();
                         }
@@ -252,13 +253,13 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     // Send the single pose command
                     if (!arm_conn_->driver->writeTrajectoryControlMessage(
                             urcl::control::TrajectoryControlMessage::TRAJECTORY_START, 1, RobotReceiveTimeout::off())) {
-                        VIAM_RESOURCE_LOG(state.arm_, error) << "single pose: start failed; dropping connection";
+                        VIAM_RESOURCE_LOG(state.log_resource_, error) << "single pose: start failed; dropping connection";
                         std::exchange(state.move_request_, {})->complete_error("failed to send trajectory start for single pose");
                         return event_connection_lost_::trajectory_control_failure();
                     }
 
                     auto ps = std::exchange(cmd, std::nullopt);
-                    VIAM_RESOURCE_LOG(state.arm_, debug) << "URArm sending single pose (tool-space)";
+                    VIAM_RESOURCE_LOG(state.log_resource_, debug) << "URArm sending single pose (tool-space)";
 
                     // TODO(RSDK-12294): determine how to set the velocity and acceleration so they are not hardcoded
                     const float velocity = 0.25F;
@@ -268,12 +269,12 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     const bool cartesian = true;
 
                     if (!arm_conn_->driver->writeTrajectoryPoint(ps->p, acceleration, velocity, cartesian, timestep, blend_radius)) {
-                        VIAM_RESOURCE_LOG(state.arm_, error) << "single pose: writeTrajectoryPoint failed; dropping connection";
+                        VIAM_RESOURCE_LOG(state.log_resource_, error) << "single pose: writeTrajectoryPoint failed; dropping connection";
                         std::exchange(state.move_request_, {})->complete_error("failed to send single pose point");
                         return event_connection_lost_::trajectory_control_failure();
                     }
 
-                    VIAM_RESOURCE_LOG(state.arm_, debug) << "URArm single pose sent";
+                    VIAM_RESOURCE_LOG(state.log_resource_, debug) << "URArm single pose sent";
                     return std::nullopt;
 
                 } else if (!cmd && state.move_request_->cancellation_request && !state.move_request_->cancellation_request->issued) {
@@ -283,7 +284,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
                     if (!arm_conn_->driver->writeTrajectoryControlMessage(
                             urcl::control::TrajectoryControlMessage::TRAJECTORY_CANCEL, 1, RobotReceiveTimeout::off())) {
                         state.move_request_->cancel_error("failed to send trajectory cancel");
-                        VIAM_RESOURCE_LOG(state.arm_, error) << "cancel failed; dropping connection";
+                        VIAM_RESOURCE_LOG(state.log_resource_, error) << "cancel failed; dropping connection";
                         return event_connection_lost_::trajectory_control_failure();
                     }
                     return std::nullopt;
