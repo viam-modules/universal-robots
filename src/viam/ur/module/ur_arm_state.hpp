@@ -371,8 +371,7 @@ class URArm::state_ {
     // deadline. Move requests are rejected. Entered from / exited to controlled;
     // a stop or lost connection leaves it like any other connected state.
     struct state_freedrive_ : public state_event_handler_base_<state_freedrive_>, public state_connected_ {
-        explicit state_freedrive_(std::unique_ptr<arm_connection_> arm_conn,
-                                  std::optional<std::chrono::steady_clock::time_point> deadline);
+        explicit state_freedrive_(std::unique_ptr<arm_connection_> arm_conn, std::optional<std::chrono::steady_clock::time_point> deadline);
 
         static std::string_view name();
         std::string describe() const;
