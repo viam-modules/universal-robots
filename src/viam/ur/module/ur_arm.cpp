@@ -233,6 +233,7 @@ std::vector<std::string> validate_config(const ResourceConfig& cfg) {
 
     find_config_attribute<bool>(cfg, "prefer_precomputed_accelerations");
     find_config_attribute<bool>(cfg, "segment_for_trajex");
+    find_config_attribute<bool>(cfg, "increase_worker_priority");
 
     // Validate telemetry_output_path is a string if present
     const auto telemetry_output_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
