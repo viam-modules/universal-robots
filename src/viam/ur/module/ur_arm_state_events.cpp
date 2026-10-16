@@ -103,4 +103,12 @@ std::string_view URArm::state_::event_remote_mode_detected_::describe() const {
     return name();
 }
 
+std::string_view URArm::state_::event_freedrive_ended_::name() {
+    return "freedrive_ended"sv;
+}
+
+std::string_view URArm::state_::event_freedrive_ended_::describe() const {
+    return name();
+}
+
 // NOLINTEND(readability-convert-member-functions-to-static)
