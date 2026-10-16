@@ -35,7 +35,8 @@ std::string URArm::state_::state_independent_::describe() const {
              "EMERGENCY_STOPPED",
              "VIOLATION",
              "FAULT",
-             "STOPPED_DUE_TO_SAFETY"};
+             "STOPPED_DUE_TO_SAFETY",
+             "3PE_INPUT_ACTIVE"};
 
         static_assert(arm_connection_::k_num_safety_status_bits == std::size(k_safety_status_field_names));
 
@@ -139,8 +140,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     }
 
     // On the other hand, if we are stopped, and that condition has been resolved, clear it.
-    //
-    // TODO(RSDK-11621): Deal with three position enabling stops.
     if (stopped() && arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
         // ensure the arm is powered on
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_POWER_ON))) {
