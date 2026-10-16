@@ -125,8 +125,8 @@ include(FetchContent)
 
 FetchContent_Declare(
   Universal_Robots_Client_Library
-  GIT_REPOSITORY https://github.com/acmorrow/Universal_Robots_Client_Library
-  GIT_TAG        gh-550-streaming-starvation-recovery-tests
+  GIT_REPOSITORY https://github.com/UniversalRobots/Universal_Robots_Client_Library
+  GIT_TAG        2.16.0
   GIT_SHALLOW TRUE
   SYSTEM
 )
