@@ -44,6 +44,7 @@ class URArm::state_ {
                     bool use_legacy_trajectory_planner,
                     bool prefer_precomputed_accelerations,
                     bool segment_for_trajex,
+                    bool increase_worker_priority,
                     double max_trajectory_duration_secs,
                     std::optional<vector6d_t> max_velocity_limits,
                     std::optional<vector6d_t> max_acceleration_limits,
@@ -645,6 +646,7 @@ class URArm::state_ {
     const bool use_legacy_trajectory_planner_;
     const bool prefer_precomputed_accelerations_;
     const bool segment_for_trajex_;
+    const bool increase_worker_priority_;
     const double max_trajectory_duration_secs_;
     const std::optional<vector6d_t> max_velocity_limits_;
     const std::optional<vector6d_t> max_acceleration_limits_;

@@ -22,6 +22,8 @@
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
 
+#include <ur_client_library/helpers.h>
+
 #include "ur_arm_config.hpp"
 #include "utils.hpp"
 
@@ -43,6 +45,7 @@ URArm::state_::state_(private_,
                       bool use_legacy_trajectory_planner,
                       bool prefer_precomputed_accelerations,
                       bool segment_for_trajex,
+                      bool increase_worker_priority,
                       double max_trajectory_duration_secs,
                       std::optional<vector6d_t> max_velocity_limits,
                       std::optional<vector6d_t> max_acceleration_limits,
@@ -69,6 +72,7 @@ URArm::state_::state_(private_,
       use_legacy_trajectory_planner_(use_legacy_trajectory_planner),
       prefer_precomputed_accelerations_(prefer_precomputed_accelerations),
       segment_for_trajex_(segment_for_trajex),
+      increase_worker_priority_(increase_worker_priority),
       max_trajectory_duration_secs_(max_trajectory_duration_secs),
       max_velocity_limits_(std::move(max_velocity_limits)),
       max_acceleration_limits_(std::move(max_acceleration_limits)),
@@ -152,6 +156,8 @@ std::unique_ptr<URArm::state_> URArm::state_::create(const viam::sdk::Resource& 
         find_config_attribute<bool>(config, "enable_legacy_trajectory_planner").value_or(URArm::k_default_enable_legacy_trajectory_planner);
     auto prefer_precomputed_accels = find_config_attribute<bool>(config, "prefer_precomputed_accelerations").value_or(true);
     const auto segment_for_trajex = find_config_attribute<bool>(config, "segment_for_trajex").value_or(false);
+    const auto increase_worker_priority =
+        find_config_attribute<bool>(config, "increase_worker_priority").value_or(URArm::k_default_increase_worker_priority);
 
     auto path_tolerance_deg = find_config_attribute<double>(config, "path_tolerance_delta_deg");
     auto path_tolerance_rad = path_tolerance_deg ? degrees_to_radians(*path_tolerance_deg) : URArm::k_default_path_tolerance_delta_rads;
@@ -220,6 +226,7 @@ std::unique_ptr<URArm::state_> URArm::state_::create(const viam::sdk::Resource& 
                                           use_legacy_planner,
                                           prefer_precomputed_accels,
                                           segment_for_trajex,
+                                          increase_worker_priority,
                                           max_trajectory_duration_secs,
                                           std::move(max_velocity_limits),
                                           std::move(max_acceleration_limits),
@@ -869,6 +876,20 @@ void URArm::state_::send_noop_() {
 
 void URArm::state_::run_() {
     VIAM_RESOURCE_LOG(log_resource_, debug) << "worker thread started";
+
+    if (increase_worker_priority_) {
+        // URCL logs the failure reason itself, but through the module-wide log handler and with the
+        // same text its RTDE reader thread emits, so these lines attribute the outcome to this arm.
+        pthread_t self = pthread_self();
+        if (urcl::setFiFoScheduling(self, URArm::k_worker_thread_fifo_priority)) {
+            VIAM_RESOURCE_LOG(log_resource_, info)
+                << "worker thread running with SCHED_FIFO priority " << URArm::k_worker_thread_fifo_priority;
+        } else {
+            VIAM_RESOURCE_LOG(log_resource_, warn)
+                << "failed to raise worker thread to SCHED_FIFO priority " << URArm::k_worker_thread_fifo_priority
+                << "; see the preceding URCL log for the reason. The worker continues with default scheduling";
+        }
+    }
 
     // Periodically, collect a limited number of samples of the
     // duration of our wait latency on the condition variable. We
