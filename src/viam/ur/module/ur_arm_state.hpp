@@ -113,6 +113,14 @@ class URArm::state_ {
     void clear_pstop() const;
     void zero_ftsensor() const;
 
+    // Enter or exit manual mode (URCL freedrive) by transitioning to/from
+    // `state_freedrive_`. Entering requires the controlled state and no actuation
+    // in progress; a positive `enabled_for` sets an automatic-exit deadline the
+    // freedrive state enforces each tick. Exiting is a no-op when not in manual
+    // mode.
+    void set_manual_mode(bool manual_mode, std::chrono::seconds enabled_for);
+    bool get_manual_mode() const;
+
     // Allocate a `move_id` (UUID + epoch snapshot) for a new move. The caller plumbs
     // the result through whatever planning happens before `start_move_request`, then
     // presents it as proof at start time. The generation snapshot is validated then;
@@ -206,10 +214,13 @@ class URArm::state_ {
     struct state_controlled_;
     friend struct state_controlled_;
 
+    struct state_freedrive_;
+    friend struct state_freedrive_;
+
     struct state_independent_;
     friend struct state_independent_;
 
-    using state_variant_ = std::variant<state_disconnected_, state_controlled_, state_independent_>;
+    using state_variant_ = std::variant<state_disconnected_, state_controlled_, state_freedrive_, state_independent_>;
 
     struct event_connection_established_;
     class event_connection_lost_;
@@ -217,13 +228,17 @@ class URArm::state_ {
     struct event_stop_cleared_;
     struct event_local_mode_detected_;
     struct event_remote_mode_detected_;
+    // Emitted by state_freedrive_ when manual mode ends on its own (time limit
+    // reached, or the arm left freedrive); drives freedrive -> controlled.
+    struct event_freedrive_ended_;
 
     using event_variant_ = std::variant<event_connection_established_,
                                         event_connection_lost_,
                                         event_stop_detected_,
                                         event_stop_cleared_,
                                         event_local_mode_detected_,
-                                        event_remote_mode_detected_>;
+                                        event_remote_mode_detected_,
+                                        event_freedrive_ended_>;
 
     template <typename T>
     class state_event_handler_base_ {
@@ -361,6 +376,40 @@ class URArm::state_ {
         using state_event_handler_base_<state_controlled_>::handle_event;
     };
 
+    // Manual mode (URCL freedrive / gravity compensation). A controllable
+    // connection that is intentionally not actuating: the worker keeps freedrive
+    // alive with a per-tick FREEDRIVE_NOOP (a trajectory MODE_FORWARD would knock
+    // the control script out of freedrive) and enforces the optional auto-exit
+    // deadline. Move requests are rejected. Entered from / exited to controlled;
+    // a stop or lost connection leaves it like any other connected state.
+    struct state_freedrive_ : public state_event_handler_base_<state_freedrive_>, public state_connected_ {
+        explicit state_freedrive_(std::unique_ptr<arm_connection_> arm_conn, std::optional<std::chrono::steady_clock::time_point> deadline);
+
+        static std::string_view name();
+        std::string describe() const;
+        using state_connected_::get_timeout;
+        void clear_pstop() const;
+        void zero_ftsensor() const;
+
+        using state_connected_::recv_arm_data;
+        std::optional<event_variant_> upgrade_downgrade(state_&);
+        std::optional<event_variant_> handle_move_request(state_& state);
+        std::optional<event_variant_> send_noop();
+
+        std::optional<state_variant_> handle_event(event_connection_lost_ event);
+        std::optional<state_variant_> handle_event(event_stop_detected_);
+        std::optional<state_variant_> handle_event(event_freedrive_ended_);
+
+        using state_event_handler_base_<state_freedrive_>::handle_event;
+
+        // Absolute auto-exit time; nullopt means no time limit.
+        std::optional<std::chrono::steady_clock::time_point> deadline_;
+
+       private:
+        // Best-effort FREEDRIVE_STOP on exit; logs on failure (we leave regardless).
+        void stop_freedrive_() const;
+    };
+
     struct state_independent_ : public state_event_handler_base_<state_independent_>, public state_connected_ {
         enum class reason : std::uint8_t { k_stopped, k_local_mode, k_both };
 
@@ -454,6 +503,11 @@ class URArm::state_ {
     };
 
     struct event_remote_mode_detected_ {
+        static std::string_view name();
+        std::string_view describe() const;
+    };
+
+    struct event_freedrive_ended_ {
         static std::string_view name();
         std::string_view describe() const;
     };
@@ -693,6 +747,9 @@ std::future<void> URArm::state_::start_move_request(URArm::move_id id, Args&&...
     }
 
     const std::lock_guard lock{mutex_};
+    if (std::holds_alternative<state_freedrive_>(current_state_)) {
+        throw std::runtime_error("cannot start a move request: arm is in manual mode");
+    }
     if (move_request_) {
         throw std::runtime_error("an actuation is already in progress");
     }

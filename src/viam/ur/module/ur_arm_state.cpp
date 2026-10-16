@@ -790,6 +790,53 @@ void URArm::state_::zero_ftsensor() const {
     std::visit([](auto& state) { state.zero_ftsensor(); }, current_state_);
 }
 
+void URArm::state_::set_manual_mode(const bool manual_mode, const std::chrono::seconds enabled_for) {
+    const std::lock_guard lock{mutex_};
+
+    if (!manual_mode) {
+        // Exit: transition freedrive -> controlled (which sends FREEDRIVE_STOP).
+        // A no-op when we aren't in manual mode.
+        if (std::holds_alternative<state_freedrive_>(current_state_)) {
+            emit_event_(event_freedrive_ended_{});
+        }
+        return;
+    }
+
+    if (enabled_for < std::chrono::seconds::zero()) {
+        throw std::invalid_argument("enabled_for must be non-negative");
+    }
+
+    std::optional<std::chrono::steady_clock::time_point> deadline;
+    if (enabled_for != std::chrono::seconds::zero()) {
+        deadline = std::chrono::steady_clock::now() + enabled_for;
+    }
+
+    // Already in manual mode: just refresh the auto-exit deadline.
+    if (auto* const freedrive = std::get_if<state_freedrive_>(&current_state_)) {
+        freedrive->deadline_ = deadline;
+        return;
+    }
+
+    auto* const controlled = std::get_if<state_controlled_>(&current_state_);
+    if (!controlled) {
+        throw std::runtime_error("cannot enter manual mode: arm is not in a controllable state; current state: " + describe_());
+    }
+    if (move_request_) {
+        throw std::runtime_error("cannot enter manual mode: an actuation is in progress");
+    }
+    if (!controlled->arm_conn_->driver->writeFreedriveControlMessage(control::FreedriveControlMessage::FREEDRIVE_START,
+                                                                     RobotReceiveTimeout::off())) {
+        throw std::runtime_error("failed to send freedrive start message to arm");
+    }
+    // Enter: transition controlled -> freedrive, handing over the connection.
+    current_state_ = state_freedrive_{std::move(controlled->arm_conn_), deadline};
+}
+
+bool URArm::state_::get_manual_mode() const {
+    const std::lock_guard lock{mutex_};
+    return std::holds_alternative<state_freedrive_>(current_state_);
+}
+
 template <typename T>
 void URArm::state_::emit_event_(T&& event) {
     auto new_state = std::visit(
@@ -862,6 +909,8 @@ void URArm::state_::handle_move_request_() {
 }
 
 void URArm::state_::send_noop_() {
+    // Each state's send_noop does the right per-tick thing: controlled sends the
+    // trajectory NOOP, freedrive sends the FREEDRIVE_NOOP heartbeat, etc.
     if (auto event = std::visit([](auto& state) { return state.send_noop(); }, current_state_)) {
         emit_event_(*std::move(event));
     }
