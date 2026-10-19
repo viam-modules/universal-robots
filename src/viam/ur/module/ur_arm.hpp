@@ -127,16 +127,11 @@ class URArm final : public Arm {
     static constexpr double k_default_stream_limit_tolerance_ratio = 1.01;
 
     ///
-    /// Whether the worker thread requests SCHED_FIFO from URCL by default.
+    /// SCHED_FIFO priority requested for the worker thread when `worker_sched_fifo_priority` is `true`.
+    /// Kept below URCL's RTDE reader thread, which runs at the maximum FIFO priority, so the thread
+    /// that produces arm state can always preempt the worker that consumes it.
     ///
-    static constexpr bool k_default_increase_worker_priority = false;
-
-    ///
-    /// SCHED_FIFO priority requested for the worker thread when `increase_worker_priority` is set. Kept
-    /// below URCL's RTDE reader thread, which runs at the maximum FIFO priority, so the thread that
-    /// produces arm state can always preempt the worker that consumes it.
-    ///
-    static constexpr int k_worker_thread_fifo_priority = 90;
+    static constexpr int k_default_worker_thread_fifo_priority = 90;
 
     /// @brief Returns the common ModelFamily for all implementations
     static const ModelFamily& model_family();
