@@ -822,7 +822,7 @@ void URArm::stop(const ProtoStruct&) {
 Arm::properties URArm::get_properties(const ProtoStruct&) {
     // Freedrive is UR's manual (gravity compensation) mode, and
     // `move_to_position` provides direct cartesian commands.
-    return {/*support_manual_mode=*/true, /*support_cartesian_commands=*/true};
+    return {.support_manual_mode = true, .support_cartesian_commands = true};
 }
 
 void URArm::set_manual_mode(bool manual_mode, std::chrono::seconds enabled_for, const ProtoStruct&) {
