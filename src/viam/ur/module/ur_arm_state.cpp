@@ -964,15 +964,6 @@ void URArm::state_::trajectory_done_callback_(const control::TrajectoryResult tr
     VIAM_RESOURCE_LOG(log_resource_, debug) << "trajectory report: " << report;
 }
 
-void URArm::state_::program_running_callback_(bool running) {
-    program_running_flag.store(running, std::memory_order_release);
-    if (running) {
-        VIAM_RESOURCE_LOG(log_resource_, debug) << "UR program is running";
-        return;
-    }
-    VIAM_RESOURCE_LOG(log_resource_, warn) << "UR program is not running";
-}
-
 vector6d_t URArm::state_::clamp_limits_(vector6d_t desired, const std::optional<vector6d_t>& limits) {
     if (limits) {
         std::ranges::transform(desired, *limits, begin(desired), [](auto dd, auto ll) { return std::min(dd, ll); });
