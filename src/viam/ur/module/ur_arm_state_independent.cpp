@@ -140,7 +140,27 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     }
 
     // On the other hand, if we are stopped, and that condition has been resolved, clear it.
-    if (stopped() && arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
+    if (stopped()) {
+        if (!arm_conn_->safety_status_bits->test(static_cast<size_t>(urtde::UrRtdeSafetyStatusBits::IS_NORMAL_MODE))) {
+            // A new stop during recovery invalidates it; recovery restarts from power-on once the stop clears.
+            program_start_deadline_.reset();
+            return std::nullopt;
+        }
+
+        if (program_start_deadline_) {
+            if (program_ready()) {
+                program_start_deadline_.reset();
+                return event_stop_cleared_{};
+            }
+            if (std::chrono::steady_clock::now() < *program_start_deadline_) {
+                return std::nullopt;
+            }
+            VIAM_RESOURCE_LOG(state.log_resource_, warn)
+                << "While in state " << describe() << ", robot program did not start within "
+                << (k_program_start_timeout_periods * get_timeout()).count() << "ms; dropping connection";
+            return event_connection_lost_::robot_program_failure();
+        }
+
         // ensure the arm is powered on
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_POWER_ON))) {
             VIAM_RESOURCE_LOG(state.log_resource_, debug)
@@ -179,7 +199,6 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // This has been found to occur on some stops and when
         // controlling the arm directly while in local mode.
         if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING))) {
-            state.program_running_flag.store(false, std::memory_order_release);
             VIAM_RESOURCE_LOG(state.log_resource_, debug)
                 << "While in state " << describe() << ", program is not running on arm; attempting to resend program";
             try {
@@ -195,23 +214,11 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             }
         }
 
-        // "Wait" for the robot program to start running.
-        //
-        // TODO(RSDK-11620) Check if we still need this flag.
+        // Don't wait here: the worker holds `mutex_` for the whole tick, and the status bits
+        // only refresh in `recv_arm_data`. Later ticks check `program_ready` against fresh data.
         VIAM_RESOURCE_LOG(state.log_resource_, debug)
-            << "While in state " << describe() << ", waiting for callback to toggle program state to running";
-        int retry_count = 100;
-        while (!state.program_running_flag.load(std::memory_order_acquire)) {
-            if (retry_count <= 0) {
-                VIAM_RESOURCE_LOG(state.log_resource_, warn)
-                    << "While in state " << describe() << ", program state never loaded; dropping connection";
-                return event_connection_lost_::robot_program_failure();
-            }
-            retry_count--;
-            std::this_thread::sleep_for(get_timeout());
-        }
-
-        return event_stop_cleared_{};
+            << "While in state " << describe() << ", waiting for robot program to run and connect to the reverse interface";
+        program_start_deadline_ = std::chrono::steady_clock::now() + (k_program_start_timeout_periods * get_timeout());
     }
 
     return std::nullopt;
@@ -282,10 +289,9 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         return std::nullopt;
     }
 
-    // Similarly, if we are stopped, don't send the noop if the
-    // program isn't running.
-    namespace urtde = urcl::rtde_interface;
-    if (stopped() && !arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING))) {
+    // Similarly, if we are stopped, don't send the noop unless our
+    // program can receive it.
+    if (stopped() && !program_ready()) {
         return std::nullopt;
     }
 
@@ -294,6 +300,15 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
 
 bool URArm::state_::state_independent_::stopped() const {
     return reason_ != reason::k_local_mode;
+}
+
+// The RTDE bit alone is not sufficient: it can report a running program before our
+// external_control script has connected back to the driver, and NOOPs or trajectories sent in
+// that window fail.
+bool URArm::state_::state_independent_::program_ready() const {
+    namespace urtde = urcl::rtde_interface;
+    return arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_PROGRAM_RUNNING)) &&
+           arm_conn_->driver->isReverseInterfaceConnected();
 }
 
 bool URArm::state_::state_independent_::local_mode() const {

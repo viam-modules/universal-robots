@@ -380,6 +380,7 @@ class URArm::state_ {
 
         bool stopped() const;
         bool local_mode() const;
+        bool program_ready() const;
 
         std::optional<state_variant_> handle_event(event_connection_lost_ event);
         std::optional<state_variant_> handle_event(event_stop_detected_);
@@ -394,6 +395,13 @@ class URArm::state_ {
         // track how often we attempt to reconnect.
         // We will use this to limit how often logs spam during expected behaviors.
         int local_reconnect_attempts{-1};
+
+        // Set once stop recovery has powered on the arm, released the brakes, and (re)sent the
+        // robot program. Recovery then completes on a later worker tick, once fresh RTDE data
+        // and the reverse interface show the program is ready, rather than blocking the worker
+        // thread (and `mutex_`) while waiting for it.
+        static constexpr int k_program_start_timeout_periods = 100;
+        std::optional<std::chrono::steady_clock::time_point> program_start_deadline_;
 
         // When a stop event interrupts a move, the trajectory logger is
         // moved out of the move_request and kept here so it continues to
@@ -590,14 +598,8 @@ class URArm::state_ {
 
     void run_();
     void trajectory_done_callback_(control::TrajectoryResult trajectory_result);
-    void program_running_callback_(bool running);
 
     static vector6d_t clamp_limits_(vector6d_t desired, const std::optional<vector6d_t>& limits);
-
-    // TODO(RSDK-11620): Check if we still need this flag. We may
-    // not, now that we examine status bits that include letting
-    // us know whether the program is running.
-    std::atomic<bool> program_running_flag{false};
 
     std::reference_wrapper<const viam::sdk::Resource> log_resource_;
     const UrArmModel configured_model_;
