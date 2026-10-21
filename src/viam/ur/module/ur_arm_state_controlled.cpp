@@ -13,7 +13,7 @@ std::string URArm::state_::state_controlled_::describe() const {
     return std::string{name()};
 }
 
-std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::upgrade_downgrade(state_&) {
+std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::upgrade_downgrade(state_& state) {
     namespace urtde = urcl::rtde_interface;
 
     if (!arm_conn_->safety_status_bits || !arm_conn_->robot_status_bits) {
