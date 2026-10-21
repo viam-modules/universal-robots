@@ -2,6 +2,7 @@
 
 #include "trajectory_logger.hpp"
 
+#include <sched.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -233,6 +234,25 @@ std::vector<std::string> validate_config(const ResourceConfig& cfg) {
 
     find_config_attribute<bool>(cfg, "prefer_precomputed_accelerations");
     find_config_attribute<bool>(cfg, "segment_for_trajex");
+
+    // Validate worker_sched_fifo_priority: accepts bool (true selects the default priority) or an integer SCHED_FIFO priority
+    {
+        const auto it = cfg.attributes().find("worker_sched_fifo_priority");
+        if (it != cfg.attributes().end()) {
+            if (const auto* priority = it->second.get<double>()) {
+                // Config numbers always arrive as doubles, so reject fractional values rather than truncating them.
+                const int min_priority = sched_get_priority_min(SCHED_FIFO);
+                const int max_priority = sched_get_priority_max(SCHED_FIFO);
+                if (std::trunc(*priority) != *priority || *priority < min_priority || *priority > max_priority) {
+                    throw std::invalid_argument(
+                        boost::str(boost::format("`worker_sched_fifo_priority` must be an integer in [%1%, %2%], it is: %3%") %
+                                   min_priority % max_priority % *priority));
+                }
+            } else if (!it->second.get<bool>()) {
+                throw std::invalid_argument("`worker_sched_fifo_priority` must be a boolean or an integer SCHED_FIFO priority");
+            }
+        }
+    }
 
     // Validate telemetry_output_path is a string if present
     const auto telemetry_output_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
