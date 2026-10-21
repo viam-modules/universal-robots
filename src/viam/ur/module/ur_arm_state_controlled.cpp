@@ -313,6 +313,15 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::h
 std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_stop_detected_) {
     return state_independent_{std::move(arm_conn_), state_independent_::reason::k_stopped};
 }
+
+std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_enter_freedrive_ event) {
+    if (!arm_conn_->driver->writeFreedriveControlMessage(urcl::control::FreedriveControlMessage::FREEDRIVE_START,
+                                                         RobotReceiveTimeout::off())) {
+        throw std::runtime_error("failed to send freedrive start message to arm");
+    }
+    // Enter: transition controlled -> freedrive, handing over the connection.
+    return state_freedrive_{std::move(arm_conn_), event.deadline};
+}
 void URArm::state_::state_controlled_::clear_pstop() const {
     throw std::runtime_error("cannot clear the protective stop, arm is not currently pstopped");
 }

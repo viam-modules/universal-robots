@@ -790,6 +790,41 @@ void URArm::state_::zero_ftsensor() const {
     std::visit([](auto& state) { state.zero_ftsensor(); }, current_state_);
 }
 
+void URArm::state_::enter_manual_mode(const std::optional<std::chrono::seconds> duration) {
+    if (duration && *duration < std::chrono::seconds::zero()) {
+        throw std::invalid_argument("manual mode duration must be non-negative");
+    }
+
+    std::optional<std::chrono::steady_clock::time_point> deadline;
+    if (duration && *duration != std::chrono::seconds::zero()) {
+        deadline = std::chrono::steady_clock::now() + *duration;
+    }
+
+    const std::lock_guard lock{mutex_};
+    // `move_request_` is a state_-level resource that the per-state handle_event
+    // overloads can't see, so guard it here before delegating the transition.
+    if (move_request_) {
+        throw std::runtime_error("cannot enter manual mode: an actuation is in progress");
+    }
+    // Each state decides what entering freedrive means: controlled enters,
+    // freedrive refreshes its deadline, any other state throws.
+    emit_event_(event_enter_freedrive_{deadline});
+}
+
+void URArm::state_::leave_manual_mode() {
+    const std::lock_guard lock{mutex_};
+    // Transition freedrive -> controlled (which sends FREEDRIVE_STOP). A no-op
+    // when we aren't in manual mode.
+    if (std::holds_alternative<state_freedrive_>(current_state_)) {
+        emit_event_(event_freedrive_ended_{});
+    }
+}
+
+bool URArm::state_::is_in_manual_mode() const {
+    const std::lock_guard lock{mutex_};
+    return std::holds_alternative<state_freedrive_>(current_state_);
+}
+
 template <typename T>
 void URArm::state_::emit_event_(T&& event) {
     auto new_state = std::visit(
@@ -862,6 +897,8 @@ void URArm::state_::handle_move_request_() {
 }
 
 void URArm::state_::send_noop_() {
+    // Each state's send_noop does the right per-tick thing: controlled sends the
+    // trajectory NOOP, freedrive sends the FREEDRIVE_NOOP heartbeat, etc.
     if (auto event = std::visit([](auto& state) { return state.send_noop(); }, current_state_)) {
         emit_event_(*std::move(event));
     }
