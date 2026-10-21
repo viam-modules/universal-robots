@@ -828,13 +828,18 @@ Arm::properties URArm::get_properties(const ProtoStruct&) {
 void URArm::set_manual_mode(bool manual_mode, std::chrono::seconds enabled_for, const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-    current_state_->set_manual_mode(manual_mode, enabled_for);
+    if (manual_mode) {
+        // enabled_for == 0 is the SDK's "no time limit"; map it to nullopt.
+        current_state_->enter_manual_mode(enabled_for == std::chrono::seconds::zero() ? std::nullopt : std::optional{enabled_for});
+    } else {
+        current_state_->leave_manual_mode();
+    }
 }
 
 bool URArm::get_manual_mode(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-    return current_state_->get_manual_mode();
+    return current_state_->is_in_manual_mode();
 }
 
 ProtoStruct URArm::do_command(const ProtoStruct& command) {
@@ -1363,7 +1368,7 @@ template <template <typename> typename lock_type>
 void URArm::stop_(const lock_type<std::shared_mutex>&) {
     // Stop takes the arm out of manual mode (a no-op when it is not active)
     // in addition to cancelling any in-flight move.
-    current_state_->set_manual_mode(false, std::chrono::seconds::zero());
+    current_state_->leave_manual_mode();
     if (auto cancel_future = current_state_->cancel_move_request()) {
         cancel_future->get();
     }

@@ -113,13 +113,16 @@ class URArm::state_ {
     void clear_pstop() const;
     void zero_ftsensor() const;
 
-    // Enter or exit manual mode (URCL freedrive) by transitioning to/from
-    // `state_freedrive_`. Entering requires the controlled state and no actuation
-    // in progress; a positive `enabled_for` sets an automatic-exit deadline the
-    // freedrive state enforces each tick. Exiting is a no-op when not in manual
-    // mode.
-    void set_manual_mode(bool manual_mode, std::chrono::seconds enabled_for);
-    bool get_manual_mode() const;
+    // Enter manual mode (URCL freedrive). The transition is delegated to the
+    // states via `event_enter_freedrive_`: the controlled state enters, the
+    // freedrive state refreshes its deadline, and any other state rejects it.
+    // `duration` of nullopt means no time limit; a positive duration sets an
+    // automatic-exit deadline the freedrive state enforces each tick. Throws if
+    // the arm cannot enter freedrive or an actuation is in progress.
+    void enter_manual_mode(std::optional<std::chrono::seconds> duration);
+    // Leave manual mode (freedrive -> controlled). A no-op when not in manual mode.
+    void leave_manual_mode();
+    bool is_in_manual_mode() const;
 
     // Allocate a `move_id` (UUID + epoch snapshot) for a new move. The caller plumbs
     // the result through whatever planning happens before `start_move_request`, then
@@ -231,6 +234,9 @@ class URArm::state_ {
     // Emitted by state_freedrive_ when manual mode ends on its own (time limit
     // reached, or the arm left freedrive); drives freedrive -> controlled.
     struct event_freedrive_ended_;
+    // Emitted by enter_manual_mode to request entering freedrive; each state
+    // decides: controlled enters, freedrive refreshes its deadline, others reject.
+    struct event_enter_freedrive_;
 
     using event_variant_ = std::variant<event_connection_established_,
                                         event_connection_lost_,
@@ -238,7 +244,8 @@ class URArm::state_ {
                                         event_stop_cleared_,
                                         event_local_mode_detected_,
                                         event_remote_mode_detected_,
-                                        event_freedrive_ended_>;
+                                        event_freedrive_ended_,
+                                        event_enter_freedrive_>;
 
     template <typename T>
     class state_event_handler_base_ {
@@ -274,6 +281,7 @@ class URArm::state_ {
 
         std::optional<state_variant_> handle_event(event_connection_lost_ event);
         std::optional<state_variant_> handle_event(event_connection_established_ event);
+        std::optional<state_variant_> handle_event(event_enter_freedrive_);
 
         using state_event_handler_base_<state_disconnected_>::handle_event;
 
@@ -372,6 +380,7 @@ class URArm::state_ {
 
         std::optional<state_variant_> handle_event(event_connection_lost_ event);
         std::optional<state_variant_> handle_event(event_stop_detected_);
+        std::optional<state_variant_> handle_event(event_enter_freedrive_);
 
         using state_event_handler_base_<state_controlled_>::handle_event;
     };
@@ -399,6 +408,7 @@ class URArm::state_ {
         std::optional<state_variant_> handle_event(event_connection_lost_ event);
         std::optional<state_variant_> handle_event(event_stop_detected_);
         std::optional<state_variant_> handle_event(event_freedrive_ended_);
+        std::optional<state_variant_> handle_event(event_enter_freedrive_);
 
         using state_event_handler_base_<state_freedrive_>::handle_event;
 
@@ -434,6 +444,7 @@ class URArm::state_ {
         std::optional<state_variant_> handle_event(event_local_mode_detected_);
         std::optional<state_variant_> handle_event(event_stop_cleared_);
         std::optional<state_variant_> handle_event(event_remote_mode_detected_);
+        std::optional<state_variant_> handle_event(event_enter_freedrive_);
 
         using state_event_handler_base_<state_independent_>::handle_event;
 
@@ -508,6 +519,13 @@ class URArm::state_ {
     };
 
     struct event_freedrive_ended_ {
+        static std::string_view name();
+        std::string_view describe() const;
+    };
+
+    struct event_enter_freedrive_ {
+        // Absolute auto-exit time for the freedrive state; nullopt means no limit.
+        std::optional<std::chrono::steady_clock::time_point> deadline;
         static std::string_view name();
         std::string_view describe() const;
     };

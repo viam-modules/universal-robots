@@ -790,49 +790,37 @@ void URArm::state_::zero_ftsensor() const {
     std::visit([](auto& state) { state.zero_ftsensor(); }, current_state_);
 }
 
-void URArm::state_::set_manual_mode(const bool manual_mode, const std::chrono::seconds enabled_for) {
-    const std::lock_guard lock{mutex_};
-
-    if (!manual_mode) {
-        // Exit: transition freedrive -> controlled (which sends FREEDRIVE_STOP).
-        // A no-op when we aren't in manual mode.
-        if (std::holds_alternative<state_freedrive_>(current_state_)) {
-            emit_event_(event_freedrive_ended_{});
-        }
-        return;
-    }
-
-    if (enabled_for < std::chrono::seconds::zero()) {
-        throw std::invalid_argument("enabled_for must be non-negative");
+void URArm::state_::enter_manual_mode(const std::optional<std::chrono::seconds> duration) {
+    if (duration && *duration < std::chrono::seconds::zero()) {
+        throw std::invalid_argument("manual mode duration must be non-negative");
     }
 
     std::optional<std::chrono::steady_clock::time_point> deadline;
-    if (enabled_for != std::chrono::seconds::zero()) {
-        deadline = std::chrono::steady_clock::now() + enabled_for;
+    if (duration && *duration != std::chrono::seconds::zero()) {
+        deadline = std::chrono::steady_clock::now() + *duration;
     }
 
-    // Already in manual mode: just refresh the auto-exit deadline.
-    if (auto* const freedrive = std::get_if<state_freedrive_>(&current_state_)) {
-        freedrive->deadline_ = deadline;
-        return;
-    }
-
-    auto* const controlled = std::get_if<state_controlled_>(&current_state_);
-    if (!controlled) {
-        throw std::runtime_error("cannot enter manual mode: arm is not in a controllable state; current state: " + describe_());
-    }
+    const std::lock_guard lock{mutex_};
+    // `move_request_` is a state_-level resource that the per-state handle_event
+    // overloads can't see, so guard it here before delegating the transition.
     if (move_request_) {
         throw std::runtime_error("cannot enter manual mode: an actuation is in progress");
     }
-    if (!controlled->arm_conn_->driver->writeFreedriveControlMessage(control::FreedriveControlMessage::FREEDRIVE_START,
-                                                                     RobotReceiveTimeout::off())) {
-        throw std::runtime_error("failed to send freedrive start message to arm");
-    }
-    // Enter: transition controlled -> freedrive, handing over the connection.
-    current_state_ = state_freedrive_{std::move(controlled->arm_conn_), deadline};
+    // Each state decides what entering freedrive means: controlled enters,
+    // freedrive refreshes its deadline, any other state throws.
+    emit_event_(event_enter_freedrive_{deadline});
 }
 
-bool URArm::state_::get_manual_mode() const {
+void URArm::state_::leave_manual_mode() {
+    const std::lock_guard lock{mutex_};
+    // Transition freedrive -> controlled (which sends FREEDRIVE_STOP). A no-op
+    // when we aren't in manual mode.
+    if (std::holds_alternative<state_freedrive_>(current_state_)) {
+        emit_event_(event_freedrive_ended_{});
+    }
+}
+
+bool URArm::state_::is_in_manual_mode() const {
     const std::lock_guard lock{mutex_};
     return std::holds_alternative<state_freedrive_>(current_state_);
 }

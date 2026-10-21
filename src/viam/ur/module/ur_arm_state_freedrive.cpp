@@ -106,6 +106,12 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_freedrive_::ha
     return state_controlled_{std::move(arm_conn_)};
 }
 
+std::optional<URArm::state_::state_variant_> URArm::state_::state_freedrive_::handle_event(event_enter_freedrive_ event) {
+    // Already in freedrive; just refresh the auto-exit deadline, no transition.
+    deadline_ = event.deadline;
+    return std::nullopt;
+}
+
 void URArm::state_::state_freedrive_::clear_pstop() const {
     throw std::runtime_error("cannot clear the protective stop, arm is not currently pstopped");
 }
