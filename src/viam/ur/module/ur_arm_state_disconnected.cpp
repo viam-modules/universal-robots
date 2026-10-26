@@ -188,6 +188,10 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_disconnected_:
     return std::nullopt;
 }
 
+std::optional<URArm::state_::state_variant_> URArm::state_::state_disconnected_::handle_event(event_enter_freedrive_) {
+    throw std::runtime_error("cannot enter manual mode: arm is not connected");
+}
+
 std::optional<URArm::state_::state_variant_> URArm::state_::state_disconnected_::handle_event(event_connection_established_ event) {
     // If we are leaving disconnected mode for independent mode, we
     // don't know, really, in what state we will find the arm. Assume

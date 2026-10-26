@@ -340,6 +340,13 @@ std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::
     return state_disconnected_{std::move(event)};
 }
 
+std::optional<URArm::state_::state_variant_> URArm::state_::state_independent_::handle_event(event_enter_freedrive_) {
+    // Matches state_disconnected_'s throw-only handler: no `this` access, so it
+    // stays non-const (consistent with the other handlers and the catch-all
+    // dispatch) without tripping readability-make-member-function-const.
+    throw std::runtime_error("cannot enter manual mode: arm is not in a controllable state (protective stop or local mode)");
+}
+
 void URArm::state_::state_independent_::clear_pstop() const {
     namespace urtde = urcl::rtde_interface;
 
