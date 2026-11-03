@@ -25,7 +25,7 @@ The following attributes are available for `viam:universal-robots` arms:
 
 | Name | Type | Inclusion | Description |
 | ---- | ---- | --------- | ----------- |
-| `host` | string | **Required** | The IP address of the robot arm on your network. Find this when setting up your UR5e. |
+| `host` | string | **Required** | The IP address of the robot arm on your network. Find this in the network settings on the arm's teach pendant. |
 | `speed_degs_per_sec` | float or array | **Required** | Set the maximum desired speed of the arm joints in degrees per second. Can be a single value (applied to all joints) or a 6-element array for per-joint limits. |
 | `acceleration_degs_per_sec2` | float or array | **Required** | Set the maximum desired acceleration of the arm joints. Can be a single value (applied to all joints) or a 6-element array for per-joint limits. |
 | `max_trajectory_duration_secs` | float | Optional | Maximum allowed trajectory duration in seconds. Trajectories exceeding this duration will be rejected. **Default 600s** (range: 0.1 - 3600) |
