@@ -129,10 +129,6 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     ur_cfg.script_file = state.urcl_resource_root() / k_script_file;
     ur_cfg.output_recipe_file = state.resource_root() / k_output_recipe;
     ur_cfg.input_recipe_file = state.resource_root() / k_input_recipe;
-
-    // TODO: Change how this works. It ends up logging with this
-    // disconnected.cpp filename state when we have a connection.
-    ur_cfg.handle_program_state = std::bind(&URArm::state_::program_running_callback_, &state, std::placeholders::_1);
     ur_cfg.headless_mode = true;
     ur_cfg.socket_reconnect_attempts = 1;
 
