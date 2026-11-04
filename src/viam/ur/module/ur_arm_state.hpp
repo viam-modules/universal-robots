@@ -399,7 +399,10 @@ class URArm::state_ {
         // robot program. Recovery then completes on a later worker tick, once fresh RTDE data
         // and the reverse interface show the program is ready, rather than blocking the worker
         // thread (and `mutex_`) while waiting for it.
-        static constexpr int k_program_start_timeout_periods = 100;
+        // Starting the program takes the controller ~100ms (measured on a UR5e e-series), regardless
+        // of `robot_control_freq_hz`. This only bounds how long a failed start takes to fall back to
+        // reconnecting; a successful start completes on the first tick that observes it.
+        static constexpr auto k_program_start_timeout = std::chrono::seconds{1};
         std::optional<std::chrono::steady_clock::time_point> program_start_deadline_;
 
         // When a stop event interrupts a move, the trajectory logger is

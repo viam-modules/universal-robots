@@ -157,7 +157,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             }
             VIAM_RESOURCE_LOG(state.log_resource_, warn)
                 << "While in state " << describe() << ", robot program did not start within "
-                << (k_program_start_timeout_periods * get_timeout()).count() << "ms; dropping connection";
+                << std::chrono::duration_cast<std::chrono::milliseconds>(k_program_start_timeout).count() << "ms; dropping connection";
             return event_connection_lost_::robot_program_failure();
         }
 
@@ -218,7 +218,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
         // only refresh in `recv_arm_data`. Later ticks check `program_ready` against fresh data.
         VIAM_RESOURCE_LOG(state.log_resource_, debug)
             << "While in state " << describe() << ", waiting for robot program to run and connect to the reverse interface";
-        program_start_deadline_ = std::chrono::steady_clock::now() + (k_program_start_timeout_periods * get_timeout());
+        program_start_deadline_ = std::chrono::steady_clock::now() + k_program_start_timeout;
     }
 
     return std::nullopt;
