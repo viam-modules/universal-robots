@@ -85,69 +85,34 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux builds in Ubuntu Jammy container
+          # Linux builds in the C++ SDK's conan image, which ships conan, gcc 11,
+          # and a default conan profile. Jammy keeps the module's glibc
+          # requirement low enough to run on Jammy, Bookworm, and newer. Pinned
+          # to a dated tag so the release toolchain only changes deliberately;
+          # keep etc/conan/linux.profile in sync when bumping it.
           - platform: linux/amd64
             runner: ubuntu-latest
-            container: ubuntu:jammy
-            setup_type: debian
+            container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:jammy-2026-11.00
             artifact_name: module-linux-amd64
           - platform: linux/arm64
             runner: ubuntu-4cpu-arm
-            container: ubuntu:jammy
-            setup_type: debian
+            container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:jammy-2026-11.00
             artifact_name: module-linux-arm64
-          # macOS native build
+          # macOS native build. Pinned to the runner the C++ SDK publishes its
+          # macOS binaries from, so the Xcode (apple-clang) version matches
+          # etc/conan/macos.profile and the prebuilt binaries are used.
           - platform: darwin/arm64
-            runner: macos-latest
-            setup_type: macos
+            runner: macos-26
             artifact_name: module-darwin-arm64
 
     # Container is only populated for Linux builds
     container: ${{ matrix.container }}
 
     steps:
-      # Debian/Ubuntu setup: Install system dependencies
-      - name: Install system dependencies (Debian)
-        if: matrix.setup_type == 'debian'
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            build-essential \
-            ca-certificates \
-            curl \
-            g++ \
-            git \
-            gnupg \
-            jq \
-            lsb-release \
-            ninja-build \
-            pkg-config \
-            python3 \
-            python3-pip \
-            sudo \
-            wget
-
-          # Install CMake 3.x from Kitware's official repository
-          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | \
-            gpg --dearmor - | \
-            tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
-          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" | \
-            tee /etc/apt/sources.list.d/kitware.list >/dev/null
-          apt-get update
-          apt-get install -y --no-install-recommends cmake=3.30.* cmake-data=3.30.*
-
-      # Debian/Ubuntu setup: Install Conan via pip (not using conan-io/setup-conan for container compatibility)
-      - name: Install Conan (Debian)
-        if: matrix.setup_type == 'debian'
-        run: |
-          python3 -m pip install conan
-          conan profile detect
-
-      # macOS setup: Install Conan via Homebrew
       - name: Install Conan (macOS)
-        if: matrix.setup_type == 'macos'
+        if: runner.os == 'macOS'
         run: |
-          brew install conan jq
+          brew install conan
           conan profile detect
 
       - name: Checkout
@@ -156,7 +121,6 @@ jobs:
           submodules: true
           fetch-depth: 0
 
-      # Build using setup.sh and build.sh scripts
       - name: Setup C++ SDK
         run: ./bin/setup.sh
 
