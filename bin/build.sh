@@ -12,38 +12,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # do this, and you might want to build out of a source tarball.
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# The checked-in profiles describe the toolchain the C++ SDK publishes its
+# binaries to viamconan with (C++17, Release, static). Using them keeps our
+# dependency package IDs identical to the published ones, so if the viamconan
+# remote is configured, dependencies are downloaded rather than built. Only our
+# own package (`&`) and the SDK's build type deviate, via the settings below.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    PROFILE=${REPO_ROOT}/etc/conan/macos.profile
+else
+    PROFILE=${REPO_ROOT}/etc/conan/linux.profile
+fi
 
-# Otherwise, the C++ SDK build ends up creating two copies of proto and then mixes up which one to use.
-cat > protobuf-override.profile << 'EOF'
-include(default)
-[replace_tool_requires]
-protobuf/*: protobuf/<host_version>
-EOF
-
-# Set macOS deployment target to 14.0 (Sonoma) if building for macOS.
-# We need macOS 14 because it ships with Xcode 15's libc++, which has
-# mature support for the C++20 features this project uses (concepts,
-# ranges, spaceship operators).
-#
-# This must stay in sync with CMakeLists.txt and bin/setup.sh. If you
-# change the version here, update all three locations.
-#
-# We query the actual Conan profile to determine whether we're targeting
-# macOS (the host platform where binaries will run), then add os.version
-# to the host context if so.
-#
-HOST_OS=$(conan profile show -pr protobuf-override.profile -cx host --format=json 2>/dev/null | jq -r '.host.settings.os // empty')
-MACOS_SETTINGS=""
-[[ "$HOST_OS" == "Macos" ]] && MACOS_SETTINGS="-s:a os.version=14.0"
+# conan.lock pins the exact dependency versions the SDK release was built
+# with. Binaries on viamconan only match those exact versions.
+LOCKFILE=${REPO_ROOT}/conan.lock
 
 # Dig out the declared version of the module so we can use it for arguments to --build and --requires below.
-VIAM_UNIVERSAL_ROBOTS_VERSION=$(conan inspect -vquiet ${REPO_ROOT} --format=json | jq -r '.version')
+# Uses python3 rather than jq because python3 is always present wherever conan
+# (a python tool) is installed, while jq is not, e.g. in the C++ SDK's conan images.
+VIAM_UNIVERSAL_ROBOTS_VERSION=$(conan inspect -vquiet ${REPO_ROOT} --format=json | python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])')
 
 # Build the viam-universal-robots module
 #
 # We want a static binary, so we turn off shared. Elect for C++20
-# compilation, since it seems some of the dependencies we pick mandate
-# it anyway.
+# compilation for our package only; dependencies stay on the profile's C++17
+# so their package IDs match the published binaries.
 
 # We could just call `build` here with `--build=missing`, but we split this into two steps
 # so we can ensure that all our dependencies are built consistently in `Release`, but that
@@ -53,38 +46,37 @@ VIAM_UNIVERSAL_ROBOTS_VERSION=$(conan inspect -vquiet ${REPO_ROOT} --format=json
 
 conan install ${REPO_ROOT} --update \
       --output-folder=. \
-      --profile=protobuf-override.profile \
+      --profile:all=${PROFILE} \
+      --lockfile=${LOCKFILE} \
       --build=missing \
-      $MACOS_SETTINGS \
-      -s:a build_type=Release \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
-      -s:a compiler.cppstd=20 \
+      -s:a "&:compiler.cppstd=20" \
       -o:a "*:shared=False" \
       -o:a "&:shared=False" \
       -o:a "boost/*:without_cobalt=True"
 
 conan create ${REPO_ROOT} \
-      --profile=protobuf-override.profile \
+      --profile:all=${PROFILE} \
+      --lockfile=${LOCKFILE} \
       --build=viam-universal-robots/$VIAM_UNIVERSAL_ROBOTS_VERSION \
-      $MACOS_SETTINGS \
-      -s:a build_type=Release \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a "&:build_type=RelWithDebInfo" \
-      -s:a compiler.cppstd=20 \
+      -s:a "&:compiler.cppstd=20" \
       -o:a "*:shared=False" \
       -o:a "&:shared=False" \
       -o:a "boost/*:without_cobalt=True"
 
 conan install \
       --output-folder=. \
-      --profile=protobuf-override.profile \
+      --profile:all=${PROFILE} \
+      --lockfile=${LOCKFILE} \
+      --lockfile-partial \
       --build=never \
       --requires=viam-universal-robots/$VIAM_UNIVERSAL_ROBOTS_VERSION \
       --deployer-folder=. --deployer-package "&" \
-      $MACOS_SETTINGS \
       -s:a "viam-cpp-sdk/*:build_type=RelWithDebInfo" \
       -s:a "&:build_type=RelWithDebInfo" \
-      -s:a compiler.cppstd=20 \
+      -s:a "&:compiler.cppstd=20" \
       -o:a "*:shared=False" \
       -o:a "&:shared=False" \
       -o:a "boost/*:without_cobalt=True"
