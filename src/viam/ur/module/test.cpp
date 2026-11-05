@@ -1195,6 +1195,213 @@ BOOST_AUTO_TEST_CASE(test_move_limit_vector_negative_element) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
+BOOST_AUTO_TEST_SUITE(move_extras_tests)
+
+BOOST_AUTO_TEST_CASE(test_move_extras_defaults) {
+    const auto extras = parse_move_extras(ProtoStruct{});
+    BOOST_CHECK(extras.wait_at_end);
+    BOOST_CHECK(extras.interpolate);
+}
+
+BOOST_AUTO_TEST_CASE(test_move_extras_teleop_defaults) {
+    // What the RDK teleop pipeline sends on every executor cycle.
+    ProtoStruct extra;
+    extra.emplace("waitAtEnd", false);
+    extra.emplace("interpolate", false);
+    const auto extras = parse_move_extras(extra);
+    BOOST_CHECK(!extras.wait_at_end);
+    BOOST_CHECK(!extras.interpolate);
+}
+
+BOOST_AUTO_TEST_CASE(test_move_extras_true_and_wrong_types_keep_defaults) {
+    ProtoStruct extra;
+    extra.emplace("waitAtEnd", true);
+    extra.emplace("interpolate", std::string{"false"});
+    const auto extras = parse_move_extras(extra);
+    BOOST_CHECK(extras.wait_at_end);
+    BOOST_CHECK(extras.interpolate);
+}
+
+BOOST_AUTO_TEST_CASE(test_move_extras_independent) {
+    ProtoStruct extra;
+    extra.emplace("interpolate", false);
+    const auto extras = parse_move_extras(extra);
+    BOOST_CHECK(extras.wait_at_end);
+    BOOST_CHECK(!extras.interpolate);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE(servo_chaser_tests)
+
+namespace {
+
+vector6d_t filled(double v) {
+    vector6d_t out{};
+    out.fill(v);
+    return out;
+}
+
+// Runs the chaser toward `target` until it settles or `max_steps` elapse, checking every step
+// against the limits. Returns the number of steps taken.
+size_t run_to_target(servo_chaser& chaser,
+                     const vector6d_t& target,
+                     const vector6d_t& v_lim,
+                     const vector6d_t& a_lim,
+                     double dt,
+                     size_t max_steps = 100000) {
+    for (size_t n = 0; n < max_steps; ++n) {
+        const auto prev_v = chaser.velocity();
+        chaser.step(target, v_lim, a_lim, dt);
+        for (size_t i = 0; i < 6; ++i) {
+            BOOST_CHECK_LE(std::abs(chaser.velocity()[i]), v_lim[i] + 1e-12);
+            // One acceleration step, plus up to two more discarded by the snap onto the target.
+            BOOST_CHECK_LE(std::abs(chaser.velocity()[i] - prev_v[i]), (3.0 * a_lim[i] * dt) + 1e-12);
+        }
+        if (chaser.at(target)) {
+            return n + 1;
+        }
+    }
+    return max_steps;
+}
+
+}  // namespace
+
+BOOST_AUTO_TEST_CASE(test_chaser_starts_at_rest_on_start) {
+    const auto start = filled(0.5);
+    const servo_chaser chaser{start};
+    BOOST_CHECK(chaser.position() == start);
+    BOOST_CHECK(chaser.velocity() == vector6d_t{});
+    BOOST_CHECK(chaser.at(start));
+}
+
+BOOST_AUTO_TEST_CASE(test_chaser_reaches_target_within_limits) {
+    // 100 deg/s and 100 deg/s^2 at a 10 ms period, like the module's default control frequency.
+    const auto v_lim = filled(degrees_to_radians(100.0));
+    const auto a_lim = filled(degrees_to_radians(100.0));
+    const double dt = 0.01;
+
+    servo_chaser chaser{filled(0.0)};
+    vector6d_t target{};
+    target[0] = degrees_to_radians(30.0);
+    target[3] = degrees_to_radians(-45.0);
+
+    const auto steps = run_to_target(chaser, target, v_lim, a_lim, dt);
+    BOOST_CHECK(chaser.at(target));
+    // The step that lands on the target is itself a move; the next one is the first with
+    // nothing to do, which is what the worker waits for before releasing a session.
+    BOOST_CHECK(!chaser.settled());
+    chaser.step(target, v_lim, a_lim, dt);
+    BOOST_CHECK(chaser.at(target));
+    BOOST_CHECK(chaser.settled());
+
+    // A trapezoidal profile over 45 degrees at these limits takes error/v + v/a = 1.45 s; the
+    // discrete chaser cuts the corners of the ramps and lands a little inside that.
+    BOOST_CHECK_GE(steps, 120);
+    BOOST_CHECK_LE(steps, 150);
+}
+
+BOOST_AUTO_TEST_CASE(test_chaser_first_step_is_tiny) {
+    // The external control script ignores a setpoint that jumps more than 20 rad/s * steptime
+    // (0.04 rad at 2 ms) from the previous one; from rest the first step is one acceleration
+    // step, orders of magnitude below that.
+    const auto v_lim = filled(degrees_to_radians(100.0));
+    const auto a_lim = filled(degrees_to_radians(100.0));
+    const double dt = 0.01;
+
+    servo_chaser chaser{filled(0.0)};
+    const auto target = filled(1.0);
+    chaser.step(target, v_lim, a_lim, dt);
+    for (size_t i = 0; i < 6; ++i) {
+        BOOST_CHECK_CLOSE(chaser.position()[i], a_lim[i] * dt * dt, 1e-6);
+        BOOST_CHECK_LT(chaser.position()[i], 0.04);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_chaser_overshoots_rather_than_snapping_when_fast) {
+    // Cruising at 1 rad/s when the target lands 1 mm ahead: snapping would discard the whole
+    // velocity, so the chaser passes the target, decelerates, and returns.
+    const auto v_lim = filled(1.0);
+    const auto a_lim = filled(2.0);
+    const double dt = 0.01;
+
+    servo_chaser chaser{filled(0.0)};
+    for (int n = 0; n < 50; ++n) {
+        chaser.step(filled(10.0), v_lim, a_lim, dt);
+    }
+    BOOST_CHECK_CLOSE(chaser.velocity()[0], 1.0, 1e-9);
+
+    auto near = chaser.position();
+    for (auto& q : near) {
+        q += 0.001;
+    }
+    chaser.step(near, v_lim, a_lim, dt);
+    BOOST_CHECK_GT(chaser.position()[0], near[0]);
+    BOOST_CHECK_CLOSE(chaser.velocity()[0], 1.0 - (a_lim[0] * dt), 1e-9);
+
+    run_to_target(chaser, near, v_lim, a_lim, dt);
+    BOOST_CHECK(chaser.at(near));
+}
+
+BOOST_AUTO_TEST_CASE(test_chaser_retarget_mid_motion_is_continuous) {
+    const auto v_lim = filled(1.0);
+    const auto a_lim = filled(2.0);
+    const double dt = 0.01;
+
+    servo_chaser chaser{filled(0.0)};
+    const auto far = filled(1.0);
+    for (int n = 0; n < 50; ++n) {
+        chaser.step(far, v_lim, a_lim, dt);
+    }
+    // Cruising toward +1; now the target jumps behind us. The velocity may only change by one
+    // acceleration step per period, so we keep going forward briefly, then reverse.
+    const auto behind = filled(-1.0);
+    const auto v_before = chaser.velocity()[0];
+    BOOST_CHECK_GT(v_before, 0.0);
+    chaser.step(behind, v_lim, a_lim, dt);
+    BOOST_CHECK_CLOSE(chaser.velocity()[0], v_before - (a_lim[0] * dt), 1e-6);
+
+    run_to_target(chaser, behind, v_lim, a_lim, dt);
+    BOOST_CHECK(chaser.at(behind));
+}
+
+BOOST_AUTO_TEST_CASE(test_chaser_holds_once_there) {
+    const auto v_lim = filled(1.0);
+    const auto a_lim = filled(1.0);
+    const auto target = filled(0.25);
+    servo_chaser chaser{target};
+    chaser.step(target, v_lim, a_lim, 0.01);
+    BOOST_CHECK(chaser.at(target));
+    BOOST_CHECK(chaser.settled());
+}
+
+BOOST_AUTO_TEST_CASE(test_chaser_zero_limits_settle_without_reaching) {
+    // A joint whose limits are zero cannot move: the chaser reports settled (so an idle
+    // session can be released) but not at the target (so a waiting caller times out).
+    auto v_lim = filled(1.0);
+    auto a_lim = filled(1.0);
+    v_lim[2] = 0.0;
+    a_lim[2] = 0.0;
+
+    servo_chaser chaser{filled(0.0)};
+    const auto target = filled(0.1);
+    run_to_target(chaser, target, v_lim, a_lim, 0.01, 2000);
+    BOOST_CHECK(!chaser.at(target));
+    BOOST_CHECK(chaser.settled());
+    BOOST_CHECK_EQUAL(chaser.position()[2], 0.0);
+    for (const size_t i : {0U, 1U, 3U, 4U, 5U}) {
+        BOOST_CHECK_EQUAL(chaser.position()[i], 0.1);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(test_chaser_rejects_bad_dt) {
+    servo_chaser chaser{filled(0.0)};
+    BOOST_CHECK_THROW(chaser.step(filled(1.0), filled(1.0), filled(1.0), 0.0), std::invalid_argument);
+    BOOST_CHECK_THROW(chaser.step(filled(1.0), filled(1.0), filled(1.0), -0.01), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
 BOOST_AUTO_TEST_SUITE(model_kinematics_tests)
 
 namespace {

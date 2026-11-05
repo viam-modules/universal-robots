@@ -177,3 +177,58 @@ std::optional<std::string> extract_trace_id_from_traceparent(std::string_view tr
 std::filesystem::path expand_telemetry_path(const std::filesystem::path& base_path,
                                             const std::string& traceid_template,
                                             const std::string& trace_id);
+
+///
+/// Per-move options carried in the `extra` map of `move_to_joint_positions` and
+/// `move_through_joint_positions`, following the convention shared by the RDK teleop pipeline and
+/// the ufactory module: `{"waitAtEnd": false}` returns as soon as the move has been handed to the
+/// arm, and `{"interpolate": false}` sends the targets to the arm as servo setpoints instead of
+/// planning a trajectory through them. An absent key, or a value that is not boolean `false`,
+/// leaves the default.
+///
+struct move_extras {
+    bool wait_at_end = true;
+    bool interpolate = true;
+};
+
+move_extras parse_move_extras(const viam::sdk::ProtoStruct& extra);
+
+///
+/// Chases a moving joint-space target with bounded velocity and acceleration.
+///
+/// Each `step` advances the commanded position toward the target by one control period. Per
+/// joint, the velocity is capped at the velocity limit, at the speed from which the joint can
+/// still decelerate to rest exactly at the target, and at the speed that would reach the target
+/// within the step; the change in velocity between steps is capped by the acceleration limit. The
+/// commanded positions are what we send the controller as servo setpoints, so a target that jumps
+/// (teleop retargeting mid-motion) produces a bounded correction rather than a discontinuity: the
+/// commanded velocity never changes by more than three acceleration steps between periods, and
+/// the per-step change in position stays well inside the speed guard the external control script
+/// applies to each setpoint.
+///
+class servo_chaser {
+   public:
+    explicit servo_chaser(urcl::vector6d_t start_rad);
+
+    /// Advance one period of `dt` seconds toward `target_rad` and return the new commanded position.
+    const urcl::vector6d_t& step(const urcl::vector6d_t& target_rad,
+                                 const urcl::vector6d_t& velocity_limits_rad,
+                                 const urcl::vector6d_t& acceleration_limits_rad,
+                                 double dt);
+
+    const urcl::vector6d_t& position() const;
+    const urcl::vector6d_t& velocity() const;
+
+    /// True once the commanded position equals `target_rad` and the commanded velocity is zero.
+    bool at(const urcl::vector6d_t& target_rad) const;
+
+    /// True when the last `step` neither moved the commanded position nor left any joint with a
+    /// nonzero commanded velocity. Covers `at` as well as a joint that cannot move because its
+    /// limits are zero.
+    bool settled() const;
+
+   private:
+    urcl::vector6d_t position_;
+    urcl::vector6d_t velocity_{};
+    bool moving_ = false;
+};

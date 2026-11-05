@@ -306,6 +306,54 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::h
         state.move_request_->move_command);
 }
 
+std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::handle_servo(state_& state, bool& commanded) {
+    commanded = false;
+    if (!state.servo_) {
+        return std::nullopt;
+    }
+    if (state.move_request_) {
+        // `set_servo_target` refuses while a move is in flight and `start_move_request` refuses
+        // while a session is open, so this is a bug if it happens; the trajectory wins.
+        VIAM_RESOURCE_LOG(state.log_resource_, error) << "servo: session found alongside a trajectory move; dropping the session";
+        state.servo_.reset();
+        return std::nullopt;
+    }
+
+    auto& servo = *state.servo_;
+    if (!servo.chaser) {
+        if (!state.ephemeral_) {
+            // Nothing measured this cycle to start from; the NOOP goes out instead and we try
+            // again next cycle. MODE_SERVOJ has not been entered yet, so that costs nothing.
+            return std::nullopt;
+        }
+        servo.chaser.emplace(state.ephemeral_->joint_positions);
+        VIAM_RESOURCE_LOG(state.log_resource_, debug) << "servo: chasing from measured joint positions";
+    }
+
+    const double dt = std::chrono::duration<double>(get_timeout()).count();
+    const auto& setpoint = servo.chaser->step(servo.target, state.velocity_limits_, state.acceleration_limits_, dt);
+
+    // The session ends on its own once targets have stopped arriving and the chaser has nothing
+    // left to do. Letting the NOOP go out instead of a setpoint is what ends MODE_SERVOJ on the
+    // controller; it answers with a `stopj`, which is a no-op on an arm already at rest.
+    const bool idle = (std::chrono::steady_clock::now() - servo.last_target_at) > k_servo_idle_timeout;
+    if (idle && servo.chaser->settled()) {
+        VIAM_RESOURCE_LOG(state.log_resource_, debug) << "servo: session released after idle timeout";
+        state.servo_.reset();
+        return std::nullopt;
+    }
+
+    if (!arm_conn_->driver->writeJointCommand(setpoint,
+                                              comm::ControlMode::MODE_SERVOJ,
+                                              RobotReceiveTimeout::millisec(static_cast<unsigned int>(k_servo_receive_timeout.count())))) {
+        VIAM_RESOURCE_LOG(state.log_resource_, error) << "servo: failed to write joint command; dropping connection";
+        state.servo_.reset();
+        return event_connection_lost_::trajectory_control_failure();
+    }
+    commanded = true;
+    return std::nullopt;
+}
+
 std::optional<URArm::state_::state_variant_> URArm::state_::state_controlled_::handle_event(event_connection_lost_ event) {
     return state_disconnected_{std::move(event)};
 }

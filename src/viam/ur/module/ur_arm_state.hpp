@@ -16,6 +16,7 @@
 #include <boost/uuid/uuid.hpp>
 
 #include "trajectory_logger.hpp"
+#include "utils.hpp"
 
 #include <ur_client_library/primary/robot_state/kinematics_info.h>
 #include <ur_client_library/types.h>
@@ -124,6 +125,42 @@ class URArm::state_ {
     // Leave manual mode (freedrive -> controlled). A no-op when not in manual mode.
     void leave_manual_mode();
     bool is_in_manual_mode() const;
+
+    // Servo moves: the `{"interpolate": false}` path, used by the RDK teleop pipeline.
+    //
+    // A servo target is not a trajectory. It is the position the arm should be chasing right
+    // now; the worker drives the arm toward it every control cycle with URCL's MODE_SERVOJ, and
+    // the next call simply replaces it. The commanded setpoint moves toward the target under the
+    // configured velocity and acceleration limits (see `servo_chaser`), so a sequence of targets
+    // arriving at any rate produces continuous motion, and the external control script
+    // extrapolates between our cycles so that the arm does not stutter at our control frequency.
+    //
+    // The servo session the first target opens stays open while targets keep arriving, and
+    // closes on its own once no target has arrived for `k_servo_idle_timeout` and the commanded
+    // position has settled; `cancel_servo` closes it at once. While the arm is still travelling
+    // to the latest target, trajectory moves and manual mode are refused, as a trajectory move
+    // would be while another one is in flight; once it has settled, either one closes the
+    // session and proceeds.
+    //
+    // Throws when the arm is not in the controlled state, is in manual mode, or has a trajectory
+    // move in flight. Each accepted target advances the move epoch, so a trajectory planned from
+    // state observed before it is rejected at `start_move_request`.
+    void set_servo_target(const vector6d_t& target_rad);
+
+    // Ends the servo session, if any. The worker drops back to the trajectory NOOP on its next
+    // cycle, which the control script answers by decelerating to a stop.
+    void cancel_servo();
+
+    bool servo_active() const;
+
+    // Blocks until the commanded position has reached `target_rad` and the measured joints are all
+    // within `tolerance_rad` of it. Throws if the servo session ends first (a stop, a state
+    // transition, or a newer target replacing this one), if `cancelled` reports the caller gone,
+    // or if the target is not reached in the time the configured limits allow for it.
+    void wait_for_servo_settled(const vector6d_t& target_rad, double tolerance_rad, const std::function<bool()>& cancelled);
+
+    // The worker's nominal cycle period in the current state.
+    std::chrono::milliseconds control_period() const;
 
     // Allocate a `move_id` (UUID + epoch snapshot) for a new move. The caller plumbs
     // the result through whatever planning happens before `start_move_request`, then
@@ -377,6 +414,11 @@ class URArm::state_ {
         using state_connected_::recv_arm_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
         std::optional<event_variant_> handle_move_request(state_& state);
+        // Drives the servo session, if one is open: advances the chaser one period and writes
+        // the setpoint as a MODE_SERVOJ joint command. Sets `commanded` when it wrote one, in
+        // which case the trajectory NOOP must not be sent this cycle (the script reads a change
+        // of control mode as the end of the servo session).
+        std::optional<event_variant_> handle_servo(state_& state, bool& commanded);
         using state_connected_::send_noop;
 
         std::optional<state_variant_> handle_event(event_connection_lost_ event);
@@ -658,6 +700,12 @@ class URArm::state_ {
     void recv_arm_data_();
     void upgrade_downgrade_();
     void handle_move_request_();
+    // Returns true when a servo setpoint was written this cycle, in place of the NOOP.
+    bool handle_servo_();
+    // With `mutex_` held: closes a servo session that has nothing left to do, so that a
+    // trajectory move or manual mode can take its place, and returns whether the way is clear.
+    // A session still chasing a target stays open and the caller must refuse.
+    bool release_servo_if_settled_();
     void send_noop_();
 
     void run_();
@@ -736,6 +784,27 @@ class URArm::state_ {
     std::atomic<std::size_t> move_epoch_{0};
     std::optional<move_request> move_request_;
 
+    // See `set_servo_target`. Protected by `mutex_`; `chaser` is engaged by the worker on the
+    // first cycle it serves the session, from the joint positions measured that cycle.
+    struct servo_session_ {
+        vector6d_t target;
+        std::chrono::steady_clock::time_point last_target_at;
+        std::optional<servo_chaser> chaser;
+    };
+    std::optional<servo_session_> servo_;
+
+    // How long a servo session outlives its last target before the worker releases it.
+    static constexpr auto k_servo_idle_timeout = std::chrono::milliseconds{500};
+
+    // The read timeout the control script applies while in MODE_SERVOJ: the script halts the
+    // program if no command arrives within it, which is what stops the arm should this module
+    // stop feeding setpoints. URCL caps realtime modes at 200 ms, which is also a comfortable
+    // multiple of any control period this module is configured with.
+    static constexpr auto k_servo_receive_timeout = std::chrono::milliseconds{200};
+
+    // Measured joint velocities below this count as stationary, in rad/s.
+    static constexpr double k_servo_stationary_velocity_rad_per_sec = 1e-3;
+
     std::optional<ephemeral_data> ephemeral_;
 
     // Cache slot for `get_calibrated_kinematics_info()` /
@@ -772,6 +841,9 @@ std::future<void> URArm::state_::start_move_request(URArm::move_id id, Args&&...
     }
     if (move_request_) {
         throw std::runtime_error("an actuation is already in progress");
+    }
+    if (!release_servo_if_settled_()) {
+        throw std::runtime_error("a servo move is in progress; stop it before starting a trajectory move");
     }
     return move_request_.emplace(log_resource_, std::move(id).uuid, std::forward<Args>(args)...).completion.get_future();
 }
