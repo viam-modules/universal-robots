@@ -133,6 +133,12 @@ class URArm final : public Arm {
     ///
     static constexpr int k_default_worker_thread_fifo_priority = 90;
 
+    ///
+    /// How close, per joint, the measured position must be to a servo target before a servo move
+    /// made with `waitAtEnd` is considered complete. 0.1 degrees, in radians.
+    ///
+    static constexpr double k_servo_settle_tolerance_rad = 0.0017453292519943296;
+
     /// @brief Returns the common ModelFamily for all implementations
     static const ModelFamily& model_family();
 
@@ -248,11 +254,22 @@ class URArm final : public Arm {
     // which says nothing about the present.
     enum class initial_joint_positions_check_ : std::uint8_t { k_skip, k_require };
 
+    // Whether a planned move returns once the arm reports the trajectory complete (the default),
+    // or as soon as the trajectory has been handed to the arm (`{"waitAtEnd": false}`). A detached
+    // move still runs to completion on the arm; only the caller stops waiting for it.
+    enum class completion_wait_ : std::uint8_t { k_wait, k_detach };
+
     void move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                            const xt::xarray<double>& waypoints,
                            const MoveOptions& options,
                            const move_id& id,
-                           initial_joint_positions_check_ initial_joint_positions_check);
+                           initial_joint_positions_check_ initial_joint_positions_check,
+                           completion_wait_ completion_wait);
+
+    // The `{"interpolate": false}` path. Hands each target to the worker as a servo setpoint,
+    // one control period apart, with no trajectory generation. When `wait_at_end` is set, blocks
+    // until the arm has settled on the last target. See `state_::set_servo_target`.
+    void servo_joint_space_(std::shared_lock<std::shared_mutex> config_rlock, const std::vector<vector6d_t>& targets_rad, bool wait_at_end);
 
     void move_tool_space_(std::shared_lock<std::shared_mutex> config_rlock, pose p, const move_id& id);
 

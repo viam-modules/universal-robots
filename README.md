@@ -203,6 +203,19 @@ example output:
 }
 ```
 
+### Move semantics and the `extra` options
+
+`MoveToJointPositions` and `MoveThroughJointPositions` plan a time-optimal trajectory from the arm's measured position through the requested waypoints, send it to the controller, and block until the controller reports it complete. Two keys in the request's `extra` map change that, following the same convention as the `viam:ufactory` arm module and the RDK motion service's teleop pipeline:
+
+| Key | Default | Effect when `false` |
+| --- | ------- | ------------------- |
+| `waitAtEnd` | `true` | Return as soon as the move has been handed to the arm instead of waiting for it to finish. The move still runs to completion on the arm. |
+| `interpolate` | `true` | Skip trajectory planning and treat the requested positions as **servo setpoints**: the arm is driven toward the latest one every control cycle (`robot_control_freq_hz`) using the controller's `servoj` mode. |
+
+With `interpolate: false`, successive calls simply replace the target the arm is chasing, so a stream of small targets (teleoperation) produces one continuous motion with no stop at each target. The commanded setpoint approaches the target under the configured `speed_degs_per_sec` and `acceleration_degs_per_sec2` limits, so a target that jumps produces a bounded correction rather than a jolt, and the controller extrapolates between cycles so the motion stays smooth at low control frequencies. The servo session stays open while targets keep arriving and ends on its own once none has arrived for 500 ms and the arm has settled; `Stop` ends it immediately. While the arm is still travelling to the latest target, planned (`interpolate: true`) moves and manual mode are refused, the same way a second planned move is refused while one is in flight; once it has settled, either one closes the session and proceeds. With `waitAtEnd: true` a servo move blocks until the arm has settled within 0.1 degrees of the last target. Servo moves require `robot_control_freq_hz` of at least 10 Hz.
+
+The RDK teleop pipeline sends `{"waitAtEnd": false, "interpolate": false}` by default, so this arm now behaves like the other teleop-capable arm modules under it. Setting `teleop_interpolate_override: true` on the motion service restores the planned, blocking moves.
+
 ### Interacting with the Arm
 First ensure that your machine is displaying as **Live** on the Viam App. Then you can interact with your Universal Robots arm in a couple ways:
 - To simply view data from and manipulate your arm, use the **CONTROL** tab of the Viam App.

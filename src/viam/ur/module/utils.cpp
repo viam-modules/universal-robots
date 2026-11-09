@@ -1,7 +1,9 @@
 #include "utils.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <ranges>
+#include <stdexcept>
 
 #include <ur_client_library/log.h>
 
@@ -240,4 +242,80 @@ void apply_move_limit(vector6d_t& limits, const boost::variant<double, std::vect
         }
     };
     boost::apply_visitor(visitor{limits}, value);
+}
+
+move_extras parse_move_extras(const viam::sdk::ProtoStruct& extra) {
+    const auto is_false = [&](const char* key) {
+        const auto it = extra.find(key);
+        if (it == extra.end()) {
+            return false;
+        }
+        const auto* const b = it->second.get<bool>();
+        return b && !*b;
+    };
+    return move_extras{.wait_at_end = !is_false("waitAtEnd"), .interpolate = !is_false("interpolate")};
+}
+
+servo_chaser::servo_chaser(vector6d_t start_rad) : position_{start_rad} {}
+
+const vector6d_t& servo_chaser::step(const vector6d_t& target_rad,
+                                     const vector6d_t& velocity_limits_rad,
+                                     const vector6d_t& acceleration_limits_rad,
+                                     double dt) {
+    if (!(dt > 0.0)) {
+        throw std::invalid_argument("servo_chaser::step: dt must be positive");
+    }
+
+    moving_ = false;
+    for (size_t i = 0; i < position_.size(); ++i) {
+        const double error = target_rad[i] - position_[i];
+        const double v_max = std::abs(velocity_limits_rad[i]);
+        const double a_max = std::abs(acceleration_limits_rad[i]);
+        const double a_step = a_max * dt;
+
+        // Cruise speed, the braking envelope, or just reaching the target this step: whichever is
+        // slowest. The envelope is the discrete one: shedding `a_step` of velocity per period from
+        // `v` covers `v * (v + a_step) / (2 * a_max)` before stopping, so that is what must fit in
+        // the remaining error. (The continuous `sqrt(2 * a * error)` cannot be tracked in steps
+        // and leaves the chaser arriving too fast.) Then bound the change from the current
+        // velocity by the acceleration limit.
+        const double v_brake = 0.5 * (-a_step + std::sqrt((a_step * a_step) + (8.0 * a_max * std::abs(error))));
+        const double v_reach = std::min({v_max, v_brake, std::abs(error) / dt});
+        const double v_desired = std::copysign(v_reach, error);
+        const double v_new = std::clamp(v_desired, velocity_[i] - a_step, velocity_[i] + a_step);
+        const double p_new = position_[i] + (v_new * dt);
+
+        // Snap onto the target once this step would reach or cross it on the final approach,
+        // where the envelope has the velocity down to a couple of acceleration steps and discarding
+        // it is no larger a change than any other step. Crossing it any faster than that (the
+        // target moved to just ahead of a chaser in full flight) is a genuine overshoot: let it
+        // happen, and the next steps decelerate, reverse, and come back under the same limits.
+        if (error != 0.0 && (target_rad[i] - p_new) * error <= 0.0 && std::abs(v_new) <= 2.0 * a_step) {
+            position_[i] = target_rad[i];
+            velocity_[i] = 0.0;
+            moving_ = true;
+            continue;
+        }
+
+        moving_ = moving_ || p_new != position_[i] || v_new != 0.0;
+        position_[i] = p_new;
+        velocity_[i] = v_new;
+    }
+    return position_;
+}
+
+const vector6d_t& servo_chaser::position() const {
+    return position_;
+}
+
+const vector6d_t& servo_chaser::velocity() const {
+    return velocity_;
+}
+
+bool servo_chaser::at(const vector6d_t& target_rad) const {
+    return position_ == target_rad && velocity_ == vector6d_t{};
+}
+
+bool servo_chaser::settled() const {
+    return !moving_;
 }

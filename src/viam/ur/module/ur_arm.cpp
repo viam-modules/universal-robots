@@ -20,6 +20,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 
@@ -554,9 +555,32 @@ vector6d_t URArm::get_joint_positions_rad_(const std::shared_lock<std::shared_mu
     return current_state_->read_joint_positions();
 }
 
-void URArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
+namespace {
+
+// Converts a caller's joint vector in degrees to a `vector6d_t` in radians, rejecting the wrong
+// number of joints as a client input error.
+vector6d_t to_servo_target_rad(const std::vector<double>& positions_deg) {
+    if (positions_deg.size() != k_ur_arm_dof) {
+        throw std::invalid_argument("joint positions must have exactly " + std::to_string(k_ur_arm_dof) + " elements, got " +
+                                    std::to_string(positions_deg.size()));
+    }
+    vector6d_t target{};
+    std::ranges::transform(positions_deg, target.begin(), [](double deg) { return degrees_to_radians(deg); });
+    return target;
+}
+
+}  // namespace
+
+void URArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct& extra) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
+
+    const auto extras = parse_move_extras(extra);
+    if (!extras.interpolate) {
+        servo_joint_space_(std::move(rlock), {to_servo_target_rad(positions)}, extras.wait_at_end);
+        return;
+    }
+
     const auto id = current_state_->allocate_move_id();
 
     const std::array<std::size_t, 2> shape = {1, positions.size()};
@@ -565,19 +589,34 @@ void URArm::move_to_joint_positions(const std::vector<double>& positions, const 
 
     // A single destination tells us nothing about where the arm is now, so there is nothing here
     // for the move validator to check.
-    move_joint_space_(std::move(rlock), waypoint_rad, MoveOptions{}, id, initial_joint_positions_check_::k_skip);
+    move_joint_space_(std::move(rlock),
+                      waypoint_rad,
+                      MoveOptions{},
+                      id,
+                      initial_joint_positions_check_::k_skip,
+                      extras.wait_at_end ? completion_wait_::k_wait : completion_wait_::k_detach);
 }
 
 void URArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
                                          const MoveOptions& options,
-                                         const viam::sdk::ProtoStruct&) {
+                                         const viam::sdk::ProtoStruct& extra) {
     std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
-    const auto id = current_state_->allocate_move_id();
 
     if (positions.empty()) {
         return;
     }
+
+    const auto extras = parse_move_extras(extra);
+    if (!extras.interpolate) {
+        std::vector<vector6d_t> targets_rad;
+        targets_rad.reserve(positions.size());
+        std::ranges::transform(positions, std::back_inserter(targets_rad), to_servo_target_rad);
+        servo_joint_space_(std::move(rlock), targets_rad, extras.wait_at_end);
+        return;
+    }
+
+    const auto id = current_state_->allocate_move_id();
 
     xt::xarray<double> waypoints_rad = xt::zeros<double>({positions.size(), positions[0].size()});
     for (size_t i = 0; i < positions.size(); ++i) {
@@ -586,7 +625,44 @@ void URArm::move_through_joint_positions(const std::vector<std::vector<double>>&
         xt::view(waypoints_rad, i, xt::all()) = viam::trajex::degrees_to_radians(row_deg);
     }
 
-    move_joint_space_(std::move(rlock), waypoints_rad, options, id, initial_joint_positions_check_::k_require);
+    move_joint_space_(std::move(rlock),
+                      waypoints_rad,
+                      options,
+                      id,
+                      initial_joint_positions_check_::k_require,
+                      extras.wait_at_end ? completion_wait_::k_wait : completion_wait_::k_detach);
+}
+
+void URArm::servo_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
+                               const std::vector<vector6d_t>& targets_rad,
+                               bool wait_at_end) {
+    auto our_config_rlock = std::move(config_rlock);
+
+    VIAM_RESOURCE_LOG(debug) << "servo: " << targets_rad.size() << " target(s), wait_at_end " << wait_at_end;
+    const auto log_end = make_scope_guard([&] { VIAM_RESOURCE_LOG(debug) << "servo: end"; });
+
+    // Pace intermediate targets one control period apart, the way a streamed setpoint consumer
+    // would see them; the worker chases whichever target is current, so only the last one needs to
+    // be reached.
+    const auto period = current_state_->control_period();
+    for (size_t i = 0; i < targets_rad.size(); ++i) {
+        current_state_->set_servo_target(targets_rad[i]);
+        if (i + 1 < targets_rad.size()) {
+            std::this_thread::sleep_for(period);
+        }
+    }
+
+    if (!wait_at_end) {
+        return;
+    }
+
+    auto cancelled = [observer = GrpcContextObserver::current()]() {
+        if (!observer) {
+            return false;
+        }
+        return observer->context().IsCancelled();
+    };
+    current_state_->wait_for_servo_settled(targets_rad.back(), k_servo_settle_tolerance_rad, cancelled);
 }
 
 void URArm::check_initial_joint_positions_streamed_(const trajectory_point& first,
@@ -1042,10 +1118,15 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
                               const xt::xarray<double>& waypoints,
                               const MoveOptions& options,
                               const URArm::move_id& id,
-                              initial_joint_positions_check_ initial_joint_positions_check) {
+                              initial_joint_positions_check_ initial_joint_positions_check,
+                              completion_wait_ completion_wait) {
     auto our_config_rlock = std::move(config_rlock);
 
-    auto async_cancellation_monitor = [observer = GrpcContextObserver::current()]() {
+    // A detached move outlives the RPC that started it, and with it the gRPC context, so the
+    // worker must not consult the context after we return: its monitor never reports a cancel.
+    const auto observer =
+        completion_wait == completion_wait_::k_wait ? GrpcContextObserver::current() : boost::optional<const GrpcContextObserver>{};
+    auto async_cancellation_monitor = [observer]() {
         if (!observer) {
             return false;
         }
@@ -1367,6 +1448,13 @@ void URArm::move_joint_space_(std::shared_lock<std::shared_mutex> config_rlock,
     // NOTE: The configuration read lock is no longer held after the above statement. Do not interact
     // with the current state other than to wait on the result of this future.
 
+    if (completion_wait == completion_wait_::k_detach) {
+        // The move runs to completion on the arm; the worker reports its outcome in the log and
+        // frees the slot either way. A caller that wants the result waits instead.
+        VIAM_RESOURCE_LOG(debug) << "move: trajectory enqueued to arm, not waiting for completion: id " << id.uuid;
+        return;
+    }
+
     try {
         VIAM_RESOURCE_LOG(debug) << "move: trajectory enqueued to arm: id " << id.uuid;
         trajectory_completion_future.get();
@@ -1387,8 +1475,9 @@ URArm::~URArm() {
 template <template <typename> typename lock_type>
 void URArm::stop_(const lock_type<std::shared_mutex>&) {
     // Stop takes the arm out of manual mode (a no-op when it is not active)
-    // in addition to cancelling any in-flight move.
+    // in addition to cancelling any in-flight servo or trajectory move.
     current_state_->leave_manual_mode();
+    current_state_->cancel_servo();
     if (auto cancel_future = current_state_->cancel_move_request()) {
         cancel_future->get();
     }
