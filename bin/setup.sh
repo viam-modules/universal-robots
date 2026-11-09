@@ -6,8 +6,6 @@
 #
 set -euxo pipefail
 
-conan profile detect || echo "Conan is already installed"
-
 if [ ! -d "tmp_cpp_sdk/viam-cpp-sdk" ]; then
   # Clone the C++ SDK repo
   mkdir -p tmp_cpp_sdk
@@ -19,54 +17,21 @@ else
   pushd viam-cpp-sdk
 fi
 
-# NOTE: If you change this version, also change it in the `conanfile.py` requirements
-# and in the Dockerfile and CMakeLists.txt
+# NOTE: If you change this version, also change it in the `conanfile.py` requirements,
+# conan.lock, the Dockerfile, and CMakeLists.txt
 git checkout releases/v0.44.0
 
-# Export the recipe to the cache so we can skip rebuilds gracefully
+# Export the recipe to the cache. The C++ SDK is not on conancenter, so this is
+# what lets bin/build.sh resolve it without the viamconan remote. Exporting from
+# the release tag yields the same recipe revision that conan.lock pins.
 conan export .
 
-# Otherwise, the C++ SDK build ends up creating two copies of proto and then mixes up which one to use.
-cat > protobuf-override.profile << 'EOF'
-include(default)
-[replace_tool_requires]
-protobuf/*: protobuf/<host_version>
-EOF
-
-# Set macOS deployment target to 14.0 (Sonoma) if building for macOS.
-# We need macOS 14 because it ships with Xcode 15's libc++, which has
-# mature support for the C++20 features this project uses (concepts,
-# ranges, spaceship operators).
-#
-# This must stay in sync with CMakeLists.txt and bin/build.sh. If you
-# change the version here, update all three locations.
-#
-# We query the actual Conan profile to determine whether we're targeting
-# macOS (the host platform where binaries will run), then add os.version
-# to the host context if so.
-#
-HOST_OS=$(conan profile show -pr protobuf-override.profile -cx host --format=json 2>/dev/null | jq -r '.host.settings.os // empty')
-MACOS_SETTINGS=""
-[[ "$HOST_OS" == "Macos" ]] && MACOS_SETTINGS="-s:a os.version=14.0"
-
-# Dig out the declared version of the module so we can use it for arguments to --build and --requires below.
-VIAM_CPP_SDK_VERSION=$(conan inspect -vquiet . --format=json | jq -r '.version')
-
-
-# Build the C++ SDK repo
-#
-# We want a static binary, so we turn off shared. Elect for C++20
-# compilation, since it seems some of the dependencies we pick mandate
-# it anyway.
-
-conan install --update \
-      --profile=protobuf-override.profile \
-      --build=missing \
-      --requires=viam-cpp-sdk/${VIAM_CPP_SDK_VERSION} \
-      $MACOS_SETTINGS \
-      -s:a build_type=Release \
-      -s:a "&:build_type=RelWithDebInfo" \
-      -s:a compiler.cppstd=20 \
-      -o:a "*:shared=False" \
-      -o:a "&:shared=False" \
-      -o:a "boost/*:without_cobalt=True"
+# By default, add the viamconan remote, which hosts prebuilt binaries of the SDK
+# and its heavy dependencies, so bin/build.sh downloads them instead of spending
+# about an hour compiling them. This changes your global conan configuration.
+# Set VIAM_CONAN_NO_REMOTE=1 to skip it and build everything from conancenter
+# sources instead.
+if [[ "${VIAM_CONAN_NO_REMOTE:-0}" != "1" ]]; then
+  # --index 0 searches viamconan ahead of conancenter.
+  conan remote add viamconan https://viam.jfrog.io/artifactory/api/conan/viamconan --index 0 --force
+fi

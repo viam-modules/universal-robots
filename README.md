@@ -251,11 +251,26 @@ Install the prerequisite support libraries. These include, but are not limited t
 
 #### Build for Remote Deployment
 
-First, if you don't already have it, you will need to install `conan`. On macOS this is as easy as `brew install conan`. On systems where the system package manager does not provide it, you will most likely need to create a virtualenv and then run `python -m pip install conan`. Or use your python project/package management system of choice.
+First, if you don't already have it, you will need to install `conan`. On macOS this is as easy as `brew install conan`. On systems where the system package manager does not provide it, you will most likely need to create a virtualenv and then run `python -m pip install conan`. Or use your python project/package management system of choice. If you have not used conan before, create a default profile with `conan profile detect`.
 
-Next, you need to have conan build and install the prerequsite package by running the `./bin/setup.sh` script. This will take a while since it needs to compile Boost, gRPC, Eigen, and the Viam C++ SDK from source.
+Next, run the `./bin/setup.sh` script. It exports the Viam C++ SDK recipe into your conan cache (the SDK is not on conancenter) and adds the `viamconan` remote to your conan configuration. That remote hosts prebuilt binaries of the SDK and its heavy dependencies (gRPC, Protobuf, Boost, Abseil, OpenSSL), so the build downloads them instead of compiling them.
 
-Finally, you can run the `bin/build.sh` script, which will build the Universal Robots driver. This should be relatively quick, and you can run this repeatedly to re-run the build of the driver and produce `module.tar.gz`.
+Finally, run the `bin/build.sh` script to build the Universal Robots driver and produce `module.tar.gz`. On macOS it uses `etc/conan/macos.profile` and `etc/conan/linux.profile` on Linux. With the `viamconan` remote this should take a few minutes; any dependency without a matching prebuilt binary is compiled from source. You can run it repeatedly to rebuild the driver.
+
+If you would rather not use the `viamconan` remote, run `VIAM_CONAN_NO_REMOTE=1 ./bin/setup.sh` instead. Conan then builds the SDK and its dependencies from conancenter sources, which takes about an hour the first time; later builds reuse your local conan cache.
+
+The prebuilt Linux binaries are only used when your compiler matches the profile (gcc 11, as on Ubuntu Jammy). With a different compiler, the dependencies are compiled from source.
+
+Prebuilt binaries are only used when the dependency versions exactly match the ones the SDK release was built with. `conan.lock` pins those versions. When bumping `viam-cpp-sdk` in `conanfile.py`, regenerate it starting from the `conan.lock` attached to that SDK release on GitHub:
+
+```
+gh release download releases/v<version> -R viamrobotics/viam-cpp-sdk -p conan.lock -O sdk.lock
+conan lock create . <the profile and settings from bin/build.sh> --lockfile=sdk.lock --lockfile-partial --lockfile-out=conan.lock
+```
+
+Run the `conan lock create` once per platform (Linux amd64, Linux arm64, macOS) with `--lockfile-out` set to a separate file each time, then combine them with `conan lock merge --lockfile <file> ... --lockfile-out=conan.lock`. For the Linux runs, pass `-s:a arch=x86_64` or `-s:a arch=armv8`.
+
+Also update `etc/conan/linux.profile` and `etc/conan/macos.profile` if the SDK changed the toolchain it publishes with.
 
 ## Running
 
