@@ -341,6 +341,12 @@ class URArm::state_ {
 
         bool log_destructor{false};
 
+        // PolyScope X dashboard commands are strict state transitions that
+        // return immediately and reject requests the robot is already past
+        // (e.g. brake release while RUNNING), unlike the blocking,
+        // idempotent PolyScope 5 / CB3 dashboard commands.
+        bool is_polyscope_x{false};
+
         // True once `state_connected_::recv_arm_data` has adopted the
         // `state_::kinematics_promise_` / `state_::kinematics_future_` slot
         // on behalf of this connection period. Resets to false implicitly by

@@ -2,6 +2,40 @@
 
 #include <boost/algorithm/string/case_conv.hpp>
 
+namespace {
+
+// PolyScope X (controller software 10.x) has no dashboard server on port
+// 29999; its dashboard is a REST API. The primary interface reports the
+// software version on every controller generation, so ask it which dashboard
+// client policy to use.
+DashboardClient::ClientPolicy detect_dashboard_policy(const std::string& host) {
+    comm::INotifier notifier;
+    primary_interface::PrimaryClient primary{host, notifier};
+    primary.start(1);
+    const auto version = primary.getRobotVersion();
+    if (!version) {
+        throw std::runtime_error("failed to read the controller software version from host " + host);
+    }
+    constexpr std::uint32_t k_first_polyscope_x_major = 10;
+    return version->major >= k_first_polyscope_x_major ? DashboardClient::ClientPolicy::POLYSCOPE_X : DashboardClient::ClientPolicy::G5;
+}
+
+// PolyScope X rejects a stop request when no program is running, so only
+// report a stoppable program there when one is playing or paused. The
+// PolyScope 5 / CB3 stop command succeeds either way.
+bool program_may_be_running(DashboardClient& dashboard, bool is_polyscope_x) {
+    if (!is_polyscope_x) {
+        return true;
+    }
+    std::string program_state;
+    if (!dashboard.commandProgramState(program_state)) {
+        throw std::runtime_error("couldn't read program state from the PolyScope X Robot API");
+    }
+    return program_state != "STOPPED";
+}
+
+}  // namespace
+
 // NOLINTBEGIN(readability-convert-member-functions-to-static)
 
 URArm::state_::state_disconnected_::state_disconnected_(event_connection_lost_ triggering_event)
@@ -71,14 +105,21 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
         VIAM_RESOURCE_LOG(state.log_resource_, info) << "While in state " << describe() << ", attempting to reconnect";
     }
 
-    arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_);
+    const auto dashboard_policy = detect_dashboard_policy(state.host_);
+    const bool is_polyscope_x = dashboard_policy == DashboardClient::ClientPolicy::POLYSCOPE_X;
+    VIAM_RESOURCE_LOG(state.log_resource_, debug) << "While in state " << describe() << ", attempting to reconnect: detected "
+                                                  << (is_polyscope_x ? "PolyScope X" : "PolyScope 5 / CB3") << " controller";
+
+    arm_connection->is_polyscope_x = is_polyscope_x;
+    arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_, dashboard_policy);
     if (reconnect_attempts % k_log_at_n_attempts == 0) {
         VIAM_RESOURCE_LOG(state.log_resource_, debug)
             << "While in state " << describe() << ", attempting to reconnect: trying to connect to dashboard";
     }
     if (!arm_connection->dashboard->connect(1)) {
         std::ostringstream buffer;
-        buffer << "Failed trying to connect to UR dashboard on host " << state.host_;
+        buffer << "Failed trying to connect to UR " << (is_polyscope_x ? "PolyScope X Robot API" : "dashboard") << " on host "
+               << state.host_;
         throw std::runtime_error(buffer.str());
     }
     arm_connection->log_destructor = true;
@@ -90,13 +131,16 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     if (!arm_connection->dashboard->commandGetRobotModel(actual_model_type)) {
         throw std::runtime_error("failed to get model info of connected arm");
     }
-    // The dashboard reports the model in uppercase (e.g. "UR20") in the
-    // coarser URCL category form ("UR5" covers both ur5e and ur7e), while
-    // our configured model carries the SDK name in lowercase. Lower-case
-    // the dashboard side and compare against the wrapper's urcl_category.
+    // The dashboard reports the model in uppercase (e.g. "UR20"), while our
+    // configured model carries the SDK name in lowercase. The PolyScope 5 /
+    // CB3 dashboard uses the coarser URCL category form ("UR5" covers both
+    // ur5e and ur7e); the PolyScope X Robot API has its own naming. Lower-case
+    // the dashboard side and compare against the matching descriptor field.
     boost::algorithm::to_lower(actual_model_type);
 
-    if (state.configured_model_.descriptor().urcl_category != actual_model_type) {
+    const auto& descriptor = state.configured_model_.descriptor();
+    const auto& expected_model_type = is_polyscope_x ? descriptor.polyscope_x_model : descriptor.urcl_category;
+    if (expected_model_type != actual_model_type) {
         std::ostringstream buffer;
         buffer << "configured model type `" << state.configured_model_.sdk_name() << "` does not match connected arm `" << actual_model_type
                << "`";
@@ -108,7 +152,7 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     //
     // TODO(11619): See if we can fully eliminate use of the
     // DashboardClient and use only the `UrDriver`.
-    if (arm_connection->dashboard->commandIsInRemoteControl()) {
+    if (arm_connection->dashboard->commandIsInRemoteControl() && program_may_be_running(*arm_connection->dashboard, is_polyscope_x)) {
         VIAM_RESOURCE_LOG(state.log_resource_, debug)
             << "While in state " << describe() << ", attempting to reconnect: stopping any currently running program";
         if (!arm_connection->dashboard->commandStop()) {

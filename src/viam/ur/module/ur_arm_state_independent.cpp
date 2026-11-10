@@ -161,38 +161,97 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
             return event_connection_lost_::robot_program_failure();
         }
 
-        // ensure the arm is powered on
-        if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_POWER_ON))) {
-            VIAM_RESOURCE_LOG(state.log_resource_, debug)
-                << "While in state " << describe()
-                << ", arm is not powered on; attempting to power on arm - ensure the dashboard is in remote mode";
-            try {
-                if (!arm_conn_->dashboard->commandPowerOn()) {
+        if (arm_conn_->is_polyscope_x) {
+            // PolyScope X power-on and brake-release requests return before the
+            // transition completes and are rejected unless the robot is in the
+            // matching starting mode, so issue at most one request per tick based
+            // on the robot mode reported over RTDE, and wait for RUNNING before
+            // touching the program.
+            static const std::string k_robot_mode_key = "robot_mode";
+            std::int32_t robot_mode{};
+            if (!arm_conn_->data_package->getData<std::int32_t>(k_robot_mode_key, robot_mode)) {
+                VIAM_RESOURCE_LOG(state.log_resource_, error)
+                    << "While in state " << describe()
+                    << ", the data package did not contain the expected `robot_mode` information; dropping connection";
+                return event_connection_lost_::data_communication_failure();
+            }
+            switch (static_cast<urcl::RobotMode>(robot_mode)) {
+                case urcl::RobotMode::POWER_OFF: {
                     VIAM_RESOURCE_LOG(state.log_resource_, debug)
-                        << "While in state " << describe() << ", unable to power on arm; dropping connection";
+                        << "While in state " << describe() << ", arm is powered off; requesting power on";
+                    try {
+                        if (!arm_conn_->dashboard->commandPowerOn()) {
+                            VIAM_RESOURCE_LOG(state.log_resource_, debug)
+                                << "While in state " << describe() << ", unable to power on arm; dropping connection";
+                            return event_connection_lost_::dashboard_command_failure();
+                        }
+                    } catch (...) {
+                        VIAM_RESOURCE_LOG(state.log_resource_, debug)
+                            << "While in state " << describe()
+                            << ", could not communicate with dashboard to power on arm; dropping connection";
+                        return event_connection_lost_::dashboard_communication_failure();
+                    }
+                    return std::nullopt;
+                }
+                case urcl::RobotMode::IDLE: {
+                    VIAM_RESOURCE_LOG(state.log_resource_, debug)
+                        << "While in state " << describe() << ", arm is idle; requesting brake release";
+                    try {
+                        if (!arm_conn_->dashboard->commandBrakeRelease()) {
+                            VIAM_RESOURCE_LOG(state.log_resource_, debug)
+                                << "While in state " << describe() << ", could not release brakes; dropping connection";
+                            return event_connection_lost_::dashboard_command_failure();
+                        }
+                    } catch (...) {
+                        VIAM_RESOURCE_LOG(state.log_resource_, debug)
+                            << "While in state " << describe()
+                            << ", could not communicate with dashboard to release brakes; dropping connection";
+                        return event_connection_lost_::dashboard_communication_failure();
+                    }
+                    return std::nullopt;
+                }
+                case urcl::RobotMode::RUNNING: {
+                    break;
+                }
+                default: {
+                    // Booting, powering on, or otherwise mid-transition.
+                    return std::nullopt;
+                }
+            }
+        } else {
+            // ensure the arm is powered on
+            if (!arm_conn_->robot_status_bits->test(static_cast<size_t>(urtde::UrRtdeRobotStatusBits::IS_POWER_ON))) {
+                VIAM_RESOURCE_LOG(state.log_resource_, debug)
+                    << "While in state " << describe()
+                    << ", arm is not powered on; attempting to power on arm - ensure the dashboard is in remote mode";
+                try {
+                    if (!arm_conn_->dashboard->commandPowerOn()) {
+                        VIAM_RESOURCE_LOG(state.log_resource_, debug)
+                            << "While in state " << describe() << ", unable to power on arm; dropping connection";
 
+                        return event_connection_lost_::dashboard_command_failure();
+                    }
+                } catch (...) {
+                    VIAM_RESOURCE_LOG(state.log_resource_, debug)
+                        << "While in state " << describe() << ", could not communicate with dashboard to power on arm; dropping connection";
+                    return event_connection_lost_::dashboard_communication_failure();
+                }
+            }
+
+            try {
+                VIAM_RESOURCE_LOG(state.log_resource_, debug)
+                    << "While in state " << describe() << ": releasing brakes since no longer stopped";
+                if (!arm_conn_->dashboard->commandBrakeRelease()) {
+                    VIAM_RESOURCE_LOG(state.log_resource_, debug)
+                        << "While in state " << describe()
+                        << ", could not release brakes - ensure the dashboard is in remote mode; dropping connection";
                     return event_connection_lost_::dashboard_command_failure();
                 }
             } catch (...) {
                 VIAM_RESOURCE_LOG(state.log_resource_, debug)
-                    << "While in state " << describe() << ", could not communicate with dashboard to power on arm; dropping connection";
+                    << "While in state " << describe() << ", could not communicate with dashboard to release brakes; dropping connection";
                 return event_connection_lost_::dashboard_communication_failure();
             }
-        }
-
-        try {
-            VIAM_RESOURCE_LOG(state.log_resource_, debug)
-                << "While in state " << describe() << ": releasing brakes since no longer stopped";
-            if (!arm_conn_->dashboard->commandBrakeRelease()) {
-                VIAM_RESOURCE_LOG(state.log_resource_, debug)
-                    << "While in state " << describe()
-                    << ", could not release brakes - ensure the dashboard is in remote mode; dropping connection";
-                return event_connection_lost_::dashboard_command_failure();
-            }
-        } catch (...) {
-            VIAM_RESOURCE_LOG(state.log_resource_, debug)
-                << "While in state " << describe() << ", could not communicate with dashboard to release brakes; dropping connection";
-            return event_connection_lost_::dashboard_communication_failure();
         }
 
         // resend the robot program if the control script is not running on the arm.
