@@ -8,6 +8,10 @@ namespace {
 // 29999; its dashboard is a REST API. The primary interface reports the
 // software version on every controller generation, so ask it which dashboard
 // client policy to use.
+//
+// PolyScope X releases before 10.12 lack Robot API endpoints we depend on
+// (e.g. remote control mode), so URCL would throw partway through
+// reconnecting. Reject them up front with an actionable message instead.
 DashboardClient::ClientPolicy detect_dashboard_policy(const std::string& host) {
     comm::INotifier notifier;
     primary_interface::PrimaryClient primary{host, notifier};
@@ -17,12 +21,23 @@ DashboardClient::ClientPolicy detect_dashboard_policy(const std::string& host) {
         throw std::runtime_error("failed to read the controller software version from host " + host);
     }
     constexpr std::uint32_t k_first_polyscope_x_major = 10;
-    return version->major >= k_first_polyscope_x_major ? DashboardClient::ClientPolicy::POLYSCOPE_X : DashboardClient::ClientPolicy::G5;
+    if (version->major < k_first_polyscope_x_major) {
+        return DashboardClient::ClientPolicy::G5;
+    }
+    static const auto k_min_supported_polyscope_x = urcl::VersionInformation::fromString("10.12.0");
+    if (*version < k_min_supported_polyscope_x) {
+        std::ostringstream buffer;
+        buffer << "PolyScope X " << version->toString() << " on host " << host << " is not supported; version "
+               << k_min_supported_polyscope_x.toString() << " or newer is required";
+        throw std::runtime_error(buffer.str());
+    }
+    return DashboardClient::ClientPolicy::POLYSCOPE_X;
 }
 
 // PolyScope X rejects a stop request when no program is running, so only
-// report a stoppable program there when one is playing or paused. The
-// PolyScope 5 / CB3 stop command succeeds either way.
+// report a stoppable program there when one is playing or paused. Any other
+// state, including ones a future Robot API may add, is treated as not
+// stoppable. The PolyScope 5 / CB3 stop command succeeds either way.
 bool program_may_be_running(DashboardClient& dashboard, bool is_polyscope_x) {
     if (!is_polyscope_x) {
         return true;
@@ -31,7 +46,7 @@ bool program_may_be_running(DashboardClient& dashboard, bool is_polyscope_x) {
     if (!dashboard.commandProgramState(program_state)) {
         throw std::runtime_error("couldn't read program state from the PolyScope X Robot API");
     }
-    return program_state != "STOPPED";
+    return program_state == "PLAYING" || program_state == "PAUSED";
 }
 
 }  // namespace
