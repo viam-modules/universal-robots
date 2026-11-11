@@ -447,6 +447,19 @@ class URArm::state_ {
         bool local_mode() const;
         bool program_ready() const;
 
+        // Runs `command` against the dashboard. Returns `dashboard_command_failure` if
+        // it reports failure and `dashboard_communication_failure` if it throws.
+        std::optional<event_variant_> run_dashboard_command_(state_& state,
+                                                             std::string_view action,
+                                                             const std::function<bool()>& command) const;
+
+        // Sends a PolyScope X request that moves the robot out of `from`, at most
+        // once until the RTDE robot mode leaves `from`; see `pending_mode_transition_`.
+        std::optional<event_variant_> request_mode_transition_(state_& state,
+                                                               urcl::RobotMode from,
+                                                               std::string_view action,
+                                                               const std::function<bool()>& command);
+
         std::optional<state_variant_> handle_event(event_connection_lost_ event);
         std::optional<state_variant_> handle_event(event_stop_detected_);
         std::optional<state_variant_> handle_event(event_local_mode_detected_);
@@ -471,6 +484,21 @@ class URArm::state_ {
         // reconnecting; a successful start completes on the first tick that observes it.
         static constexpr auto k_program_start_timeout = std::chrono::seconds{1};
         std::optional<std::chrono::steady_clock::time_point> program_start_deadline_;
+
+        // PolyScope X power-on and brake-release requests return as soon as the
+        // controller accepts them, and the controller rejects a repeat once the
+        // robot has left the starting mode. Each tick only sees the latest RTDE
+        // `robot_mode`, which can keep reporting the starting mode,
+        // so remember the request and don't send it again until the mode changes.
+        struct mode_transition_request {
+            urcl::RobotMode from;
+            std::chrono::steady_clock::time_point deadline;
+        };
+        // Bounds how long the robot may stay in the starting mode after the
+        // request before we give up and reconnect.
+        // Same timeout as Polyscope5 break-release wait.
+        static constexpr auto k_mode_transition_timeout = std::chrono::seconds{30};
+        std::optional<mode_transition_request> pending_mode_transition_;
 
         // When a stop event interrupts a move, the trajectory logger is
         // moved out of the move_request and kept here so it continues to
