@@ -355,11 +355,14 @@ const std::vector<UrModelDescriptor>& UrModelDescriptor::all() {
         std::vector<UrModelDescriptor> t;
         // ur3e/ur7e have no shipped meshes; `get_3d_models` returns an
         // empty map for them.
-        t.push_back({"ur3e", "ur3", {}});
-        t.push_back(
-            {"ur5e", "ur5", {"base_link", "ee_link", "shoulder_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}});
-        t.push_back({"ur7e", "ur5", {}});
+        t.push_back({"ur3e", "ur3", "ur3", {}});
+        t.push_back({"ur5e",
+                     "ur5",
+                     "ur5",
+                     {"base_link", "ee_link", "shoulder_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}});
+        t.push_back({"ur7e", "ur5", "ur7", {}});
         t.push_back({"ur20",
+                     "ur20",
                      "ur20",
                      {"base_link", "wrist_3_link", "shoulder_link", "forearm_link", "upper_arm_link", "wrist_1_link", "wrist_2_link"}});
         return t;
