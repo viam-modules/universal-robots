@@ -148,6 +148,14 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
 
     arm_connection->is_polyscope_x = is_polyscope_x;
     arm_connection->dashboard = std::make_unique<DashboardClient>(state.host_, dashboard_policy);
+    if (is_polyscope_x) {
+        // The PolyScope X client opens a new TCP connection for every request,
+        // and requests run on the worker thread, so an unreachable controller
+        // stalls the tick for the full connect timeout (URCL default 5s).
+        // Connecting takes milliseconds on a working network.
+        constexpr auto k_polyscope_x_connect_timeout = std::chrono::seconds{1};
+        arm_connection->dashboard->setConnectTimeout(k_polyscope_x_connect_timeout);
+    }
     if (reconnect_attempts % k_log_at_n_attempts == 0) {
         VIAM_RESOURCE_LOG(state.log_resource_, debug)
             << "While in state " << describe() << ", attempting to reconnect: trying to connect to dashboard";

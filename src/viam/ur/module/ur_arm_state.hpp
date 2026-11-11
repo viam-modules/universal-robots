@@ -347,6 +347,11 @@ class URArm::state_ {
         // idempotent PolyScope 5 / CB3 dashboard commands.
         bool is_polyscope_x{false};
 
+        // Last PolyScope X remote-control answer and when it was requested;
+        // see `state_connected_::is_in_remote_control`.
+        std::optional<std::chrono::steady_clock::time_point> remote_control_checked_at;
+        bool remote_control_cached{false};
+
         // True once `state_connected_::recv_arm_data` has adopted the
         // `state_::kinematics_promise_` / `state_::kinematics_future_` slot
         // on behalf of this connection period. Resets to false implicitly by
@@ -365,6 +370,16 @@ class URArm::state_ {
 
         std::optional<event_variant_> recv_arm_data(state_& state);
         std::optional<event_variant_> send_noop() const;
+
+        // Whether the dashboard reports remote control; throws if it can't be
+        // reached. On PolyScope X each check is an HTTP request made on the
+        // worker thread, delaying the rest of the tick (including trajectory
+        // streaming), so the answer is reused for up to
+        // `k_polyscope_x_remote_control_check_period`. A late answer only
+        // delays rebuilding the connection after a switch to local mode; stops
+        // are still detected from RTDE status bits on every tick.
+        bool is_in_remote_control() const;
+        static constexpr auto k_polyscope_x_remote_control_check_period = std::chrono::milliseconds{100};
 
         std::unique_ptr<arm_connection_> arm_conn_;
 

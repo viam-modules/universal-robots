@@ -106,7 +106,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     // If we aren't in local mode, but the arm says we are, enter local mode.
     if (!local_mode()) {
         try {
-            if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
+            if (!is_in_remote_control()) {
                 return event_local_mode_detected_{};
             }
         } catch (...) {
@@ -120,7 +120,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_independent_::
     if (local_mode()) {
         local_reconnect_attempts++;
         try {
-            if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
+            if (!is_in_remote_control()) {
                 // only log the failure every 100 attempts to be less spammy
                 if (local_reconnect_attempts % 100000 == 0) {
                     VIAM_RESOURCE_LOG(state.log_resource_, warn)

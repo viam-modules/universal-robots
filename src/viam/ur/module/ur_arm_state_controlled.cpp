@@ -39,7 +39,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_controlled_::u
     // completely re-create our connection, since sockets aren't
     // reliable across local/remote mode transitions.
     try {
-        if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
+        if (!is_in_remote_control()) {
             VIAM_RESOURCE_LOG(state.log_resource_, warn)
                 << "While in state " << describe() << ", detected that dashboard is no longer in remote mode; dropping connection";
             return event_connection_lost_::dashboard_control_mode_change();
