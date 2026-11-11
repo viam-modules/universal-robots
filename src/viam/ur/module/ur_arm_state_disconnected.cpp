@@ -34,19 +34,40 @@ DashboardClient::ClientPolicy detect_dashboard_policy(const std::string& host) {
     return DashboardClient::ClientPolicy::POLYSCOPE_X;
 }
 
-// PolyScope X rejects a stop request when no program is running, so only
-// report a stoppable program there when one is playing or paused. Any other
-// state, including ones a future Robot API may add, is treated as not
-// stoppable. The PolyScope 5 / CB3 stop command succeeds either way.
-bool program_may_be_running(DashboardClient& dashboard, bool is_polyscope_x) {
-    if (!is_polyscope_x) {
-        return true;
-    }
+// Whether a PolyScope X program is playing or paused. The Robot API program
+// state only tracks PolyScope X programs, not the headless URScript this
+// module sends over the primary interface, so our own control script never
+// counts. Any other state, including ones a future Robot API may add, is
+// treated as inactive.
+bool polyscope_x_program_is_active(DashboardClient& dashboard) {
     std::string program_state;
     if (!dashboard.commandProgramState(program_state)) {
         throw std::runtime_error("couldn't read program state from the PolyScope X Robot API");
     }
     return program_state == "PLAYING" || program_state == "PAUSED";
+}
+
+// PolyScope X rejects a stop request when no program is active, so only stop
+// there when one is. The PolyScope 5 / CB3 stop command succeeds either way.
+bool should_stop_polyscope_program(DashboardClient& dashboard, bool is_polyscope_x) {
+    return !is_polyscope_x || polyscope_x_program_is_active(dashboard);
+}
+
+// PolyScope X accepts a stop request before the program has stopped, whereas
+// the PolyScope 5 / CB3 dashboard client waits for STOPPED itself. Wait here
+// too, so the control script isn't sent while the old program is still
+// stopping. A timeout throws, and the reconnect loop retries from scratch.
+void wait_for_polyscope_x_program_stop(DashboardClient& dashboard) {
+    constexpr auto k_poll_period = std::chrono::milliseconds{100};
+    constexpr auto k_timeout = std::chrono::seconds{5};
+    const auto deadline = std::chrono::steady_clock::now() + k_timeout;
+    while (polyscope_x_program_is_active(dashboard)) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            throw std::runtime_error("PolyScope X program did not stop within " + std::to_string(k_timeout.count()) +
+                                     "s of the stop request");
+        }
+        std::this_thread::sleep_for(k_poll_period);
+    }
 }
 
 }  // namespace
@@ -167,11 +188,15 @@ std::unique_ptr<URArm::state_::arm_connection_> URArm::state_::state_disconnecte
     //
     // TODO(11619): See if we can fully eliminate use of the
     // DashboardClient and use only the `UrDriver`.
-    if (arm_connection->dashboard->commandIsInRemoteControl() && program_may_be_running(*arm_connection->dashboard, is_polyscope_x)) {
+    if (arm_connection->dashboard->commandIsInRemoteControl() &&
+        should_stop_polyscope_program(*arm_connection->dashboard, is_polyscope_x)) {
         VIAM_RESOURCE_LOG(state.log_resource_, debug)
             << "While in state " << describe() << ", attempting to reconnect: stopping any currently running program";
         if (!arm_connection->dashboard->commandStop()) {
             throw std::runtime_error("couldn't stop program running on arm_connection->dashboard");
+        }
+        if (is_polyscope_x) {
+            wait_for_polyscope_x_program_stop(*arm_connection->dashboard);
         }
     }
 
