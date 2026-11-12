@@ -2,6 +2,7 @@
 
 #include "trajectory_logger.hpp"
 #include "ur_arm.hpp"
+#include "ur_ft_sensor.hpp"
 #include "utils.hpp"
 
 #include <viam/trajex/totg/tools/planner.hpp>
@@ -1519,6 +1520,40 @@ BOOST_AUTO_TEST_CASE(test_malformed_kinematic_limits_are_rejected_on_parse) {
 
     // Zero stays acceptable on the way in, since it is a real limit.
     BOOST_CHECK_NO_THROW(write_and_load(R"({"max_velocity": 0.0})"));
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE(ft_sensor_tests)
+
+namespace {
+
+viam::sdk::ResourceConfig make_ft_sensor_config(viam::sdk::ProtoStruct attributes) {
+    return {
+        "sensor", "ft", "rdk", std::move(attributes), "rdk:component:sensor", viam::sdk::Model{"viam", "universal-robots", "ft_sensor"}};
+}
+
+}  // namespace
+
+BOOST_AUTO_TEST_CASE(test_ft_sensor_validate_returns_arm_dependency) {
+    const auto deps = URFTSensor::validate(make_ft_sensor_config({{"arm", std::string{"my-arm"}}}));
+    BOOST_REQUIRE_EQUAL(deps.size(), 1);
+    BOOST_CHECK_EQUAL(deps[0], "my-arm");
+}
+
+BOOST_AUTO_TEST_CASE(test_ft_sensor_validate_requires_arm) {
+    BOOST_CHECK_THROW(URFTSensor::validate(make_ft_sensor_config({})), std::invalid_argument);
+    BOOST_CHECK_THROW(URFTSensor::validate(make_ft_sensor_config({{"arm", std::string{}}})), std::invalid_argument);
+    BOOST_CHECK_THROW(URFTSensor::validate(make_ft_sensor_config({{"arm", 1.0}})), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(test_ft_sensor_constructor_requires_arm_dependency) {
+    BOOST_CHECK_THROW(URFTSensor({}, make_ft_sensor_config({{"arm", std::string{"my-arm"}}})), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(test_ft_sensor_wrench_from_arm_response_rejects_bad_response) {
+    BOOST_CHECK_THROW(URFTSensor::wrench_from_arm_response({}), std::runtime_error);
+    BOOST_CHECK_THROW(URFTSensor::wrench_from_arm_response({{URArm::k_tcp_forces_tool_key, 1.0}}), std::runtime_error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

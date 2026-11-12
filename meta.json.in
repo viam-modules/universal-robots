@@ -24,6 +24,11 @@
       "api": "rdk:component:arm",
       "model": "viam:universal-robots:ur20",
       "markdown_link": "README.md#configuration-and-usage"
+    },
+    {
+      "api": "rdk:component:sensor",
+      "model": "viam:universal-robots:ft_sensor",
+      "markdown_link": "README.md#ft_sensor"
     }
   ],
   "entrypoint": "@CMAKE_INSTALL_BINDIR@/universal-robots"
