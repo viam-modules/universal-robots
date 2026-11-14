@@ -85,6 +85,9 @@ class URArm final : public Arm {
     ///
     static constexpr double k_default_robot_control_freq_hz = 100.0;
 
+    static constexpr char k_get_tcp_forces_tool_key[] = "get_tcp_forces_tool";
+    static constexpr char k_tcp_forces_tool_key[] = "tcp_forces_tool";
+
     ///
     /// Default maximum trajectory duration in seconds.
     ///

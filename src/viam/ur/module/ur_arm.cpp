@@ -878,7 +878,6 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
     constexpr char k_vel_degs_key[] = "set_vel_degs_per_sec";
     constexpr char k_acc_degs_key[] = "set_accel_degs_per_sec2";
     constexpr char k_get_tcp_forces_base_key[] = "get_tcp_forces_base";
-    constexpr char k_get_tcp_forces_tool_key[] = "get_tcp_forces_tool";
     constexpr char k_clear_pstop[] = "clear_pstop";
     constexpr char k_zero_ftsensor[] = "zero_ftsensor";
     constexpr char k_is_controllable[] = "is_controllable_state";
@@ -942,7 +941,7 @@ ProtoStruct URArm::do_command(const ProtoStruct& command) {
             tcp_forces_tool.emplace("TRx_Nm", tcp_force[3]);
             tcp_forces_tool.emplace("TRy_Nm", tcp_force[4]);
             tcp_forces_tool.emplace("TRz_Nm", tcp_force[5]);
-            resp.emplace("tcp_forces_tool", std::move(tcp_forces_tool));
+            resp.emplace(k_tcp_forces_tool_key, std::move(tcp_forces_tool));
         } else if (kv.first == k_clear_pstop) {
             current_state_->clear_pstop();
             resp.emplace(k_clear_pstop, "protective stop cleared");

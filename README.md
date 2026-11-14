@@ -209,6 +209,18 @@ First ensure that your machine is displaying as **Live** on the Viam App. Then y
 For more information, see [Control Machines](https://docs.viam.com/fleet/control/).
 - More advanced control of the arm can be achieved by using one of [Viam's client SDK libraries](https://docs.viam.com/components/arm/#control-your-arm-with-viams-client-sdk-libraries)
 
+## ft_sensor
+
+Model `viam:universal-robots:ft_sensor` exposes a UR arm's wrist force/torque reading as a Viam `sensor`. It depends on a configured UR arm and reads through it.
+
+```json
+{
+  "arm": "my-ur-arm"
+}
+```
+
+`GetReadings` returns the arm's `get_tcp_forces_tool` reading: forces in Newtons and torques in Newton-meters at the tool flange, in the tool coordinate system (`Fx_N`, `Fy_N`, `Fz_N`, `TRx_Nm`, `TRy_Nm`, `TRz_Nm`). To zero the sensor at the controller, use the arm's `zero_ftsensor` DoCommand.
+
 ## Building and Running
 
 ### Building for Development
