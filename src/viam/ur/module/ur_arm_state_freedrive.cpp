@@ -59,7 +59,7 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_freedrive_::up
     // to rebuild the connection, since sockets aren't reliable across
     // local/remote transitions.
     try {
-        if (!arm_conn_->dashboard->commandIsInRemoteControl()) {
+        if (!is_in_remote_control()) {
             VIAM_SDK_LOG(warn) << "While in state " << describe()
                                << ", detected that dashboard is no longer in remote mode; dropping connection";
             return event_connection_lost_::dashboard_control_mode_change();
