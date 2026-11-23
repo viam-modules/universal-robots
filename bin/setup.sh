@@ -19,7 +19,7 @@ fi
 
 # NOTE: If you change this version, also change it in the `conanfile.py` requirements,
 # conan.lock, the Dockerfile, and CMakeLists.txt
-git checkout releases/v0.44.0
+git checkout releases/v0.46.0
 
 # Export the recipe to the cache. The C++ SDK is not on conancenter, so this is
 # what lets bin/build.sh resolve it without the viamconan remote. Exporting from

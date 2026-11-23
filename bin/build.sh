@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # The checked-in profiles describe the toolchain the C++ SDK publishes its
-# binaries to viamconan with (C++17, Release, static). Using them keeps our
+# binaries to viamconan with (C++20, Release, static). Using them keeps our
 # dependency package IDs identical to the published ones, so if the viamconan
 # remote is configured, dependencies are downloaded rather than built. Only our
 # own package (`&`) and the SDK's build type deviate, via the settings below.
@@ -34,9 +34,8 @@ VIAM_UNIVERSAL_ROBOTS_VERSION=$(conan inspect -vquiet ${REPO_ROOT} --format=json
 
 # Build the viam-universal-robots module
 #
-# We want a static binary, so we turn off shared. Elect for C++20
-# compilation for our package only; dependencies stay on the profile's C++17
-# so their package IDs match the published binaries.
+# We want a static binary, so we turn off shared. Our package requires C++20,
+# so we select it explicitly rather than relying on the profile in use.
 
 # We could just call `build` here with `--build=missing`, but we split this into two steps
 # so we can ensure that all our dependencies are built consistently in `Release`, but that

@@ -46,10 +46,10 @@ jobs:
         include:
         - arch: amd64
           runner: ubuntu-latest
-          digest: sha256:b2edd28b4f1a17ff48c286216df137cb6e79b85abcd46f9580c5d7caca1591a8
+          digest: sha256:0a9344da2324c59338cf95a6a217a0c787aa8a20159b10952ab19ba9f65f9c05
         - arch: arm64
           runner: ubuntu-4cpu-arm
-          digest: sha256:e3c6365b7caafb9faf59aef628a6560e23fea137eeb564983365de96fe2e2dfe
+          digest: sha256:b561c94ed8eded9ac60d050aeb18f7f42ec863715e3ced7c51c6ac22b233b5ed
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -81,6 +81,7 @@ jobs:
        (needs.check-recent-commits.outputs.has_recent_commits == 'true' ||
         github.event.schedule == '0 10 * * 0'))
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image && format('{0}@{1}', matrix.image, matrix.digest) || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -92,11 +93,13 @@ jobs:
           # keep etc/conan/linux.profile in sync when bumping it.
           - platform: linux/amd64
             runner: ubuntu-latest
-            container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:jammy-2026-11.00
+            image: &cpp_sdk_image ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu
+            digest: &cpp_sdk_digest sha256:0a4ae32ae659eb481afd576f2adce42b9eb3ddb32814e85e45f2a497beefe28d  # jammy-2026-11.02
             artifact_name: module-linux-amd64
           - platform: linux/arm64
             runner: ubuntu-4cpu-arm
-            container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:jammy-2026-11.00
+            image: *cpp_sdk_image
+            digest: *cpp_sdk_digest
             artifact_name: module-linux-arm64
           # macOS native build. Pinned to the runner the C++ SDK publishes its
           # macOS binaries from, so the Xcode (apple-clang) version matches
@@ -104,9 +107,6 @@ jobs:
           - platform: darwin/arm64
             runner: macos-26
             artifact_name: module-darwin-arm64
-
-    # Container is only populated for Linux builds
-    container: ${{ matrix.container }}
 
     steps:
       - name: Install Conan (macOS)
