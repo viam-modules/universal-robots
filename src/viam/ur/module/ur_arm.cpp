@@ -613,7 +613,7 @@ void URArm::check_initial_joint_positions_streamed_(const trajectory_point& firs
 }
 
 URArm::stream_outcome URArm::move_through_joint_positions_streamed(
-    const std::function<boost::optional<std::vector<trajectory_point>>()>& batch_source,
+    const std::function<std::optional<std::vector<trajectory_point>>()>& batch_source,
     const std::function<bool(trajectory_update)>& update_handler,
     const viam::sdk::ProtoStruct&) {
     // How the producer side of the stream ended: one of three clean exits, or a
@@ -785,6 +785,14 @@ void URArm::move_to_position(const pose& p, const ProtoStruct&) {
     move_tool_space_(std::move(rlock), p, id);
 }
 
+viam::sdk::KinematicModel URArm::get_kinematic_model(const viam::sdk::kinematics_options&, const ProtoStruct&) {
+    // RDK ignores an empty model, so until we can build a real one, this is preferable to
+    // throwing `k_not_supported`.
+    return {};
+}
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     check_configured_(rlock);
@@ -797,6 +805,7 @@ viam::sdk::KinematicsData URArm::get_kinematics(const ProtoStruct&) {
     VIAM_RESOURCE_LOG(info) << "get_kinematics: serving synthesized SVA JSON built from calibrated DH (" << dh_json.size() << " bytes)";
     return viam::sdk::KinematicsDataSVA(std::vector<unsigned char>(dh_json.begin(), dh_json.end()));
 }
+#pragma GCC diagnostic pop
 
 // Unknown arm models should return an empty map. Arm models that do not have all expected parts in the map should return as much as they
 // have
@@ -827,7 +836,7 @@ std::map<std::string, mesh> URArm::get_3d_models(const ProtoStruct&) {
 
         // Convert to unsigned char vector
         std::vector<unsigned char> temp_bytes_unsigned(temp_bytes.begin(), temp_bytes.end());
-        result_model_parts.emplace(part, mesh{"model/gltf-binary", std::move(temp_bytes_unsigned)});
+        result_model_parts.emplace(part, mesh{"model/gltf-binary", std::move(temp_bytes_unsigned), std::nullopt});
     }
 
     return result_model_parts;

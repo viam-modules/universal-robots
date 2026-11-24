@@ -212,7 +212,7 @@ std::filesystem::path expand_telemetry_path(const std::filesystem::path& base_pa
     return base_path / expanded;
 }
 
-void apply_move_limit(vector6d_t& limits, const boost::variant<double, std::vector<double>>& value) {
+void apply_move_limit(vector6d_t& limits, const std::variant<double, std::vector<double>>& value) {
     struct visitor {
         vector6d_t& limits;
 
@@ -239,5 +239,5 @@ void apply_move_limit(vector6d_t& limits, const boost::variant<double, std::vect
             }
         }
     };
-    boost::apply_visitor(visitor{limits}, value);
+    std::visit(visitor{limits}, value);
 }

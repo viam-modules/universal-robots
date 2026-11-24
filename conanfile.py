@@ -36,7 +36,7 @@ class universal_robots(ConanFile):
         # the SDK release was built with, which conan.lock pins. If you bump the
         # SDK here, regenerate conan.lock from that release's lockfile (see README)
         # and update `bin/setup.sh`, CMakeLists.txt, and the Dockerfile to match.
-        self.requires("viam-cpp-sdk/0.44.0")
+        self.requires("viam-cpp-sdk/0.46.0")
         self.requires("eigen/[>=3.4 <5.0]")
         self.requires("boost/[>=1.74.0]")
         self.requires("jsoncpp/[>=1.9.5]")

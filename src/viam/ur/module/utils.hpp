@@ -7,9 +7,8 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <variant>
 #include <vector>
-
-#include <boost/variant.hpp>
 
 #include <Eigen/Dense>
 
@@ -105,7 +104,7 @@ void deduplicate_waypoints(std::list<Eigen::VectorXd>& waypoints, double toleran
 /// @param value Scalar (degrees) or per-joint vector (degrees)
 /// @throws std::invalid_argument on non-positive scalar, wrong vector size, or negative vector elements
 ///
-void apply_move_limit(urcl::vector6d_t& limits, const boost::variant<double, std::vector<double>>& value);
+void apply_move_limit(urcl::vector6d_t& limits, const std::variant<double, std::vector<double>>& value);
 
 ///
 /// Parse and validate velocity or acceleration limits.

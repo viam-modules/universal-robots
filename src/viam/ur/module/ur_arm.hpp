@@ -171,10 +171,9 @@ class URArm final : public Arm {
     /// @param update_handler Handler invoked for each update the implementation emits.
     /// @param extra Any additional arguments to the method.
     /// @return How the stream ended.
-    stream_outcome move_through_joint_positions_streamed(
-        const std::function<boost::optional<std::vector<trajectory_point>>()>& batch_source,
-        const std::function<bool(trajectory_update)>& update_handler,
-        const viam::sdk::ProtoStruct& extra) override;
+    stream_outcome move_through_joint_positions_streamed(const std::function<std::optional<std::vector<trajectory_point>>()>& batch_source,
+                                                         const std::function<bool(trajectory_update)>& update_handler,
+                                                         const viam::sdk::ProtoStruct& extra) override;
 
     /// @brief Get the cartesian pose of the end effector
     /// @param extra Any additional arguments to the method.
@@ -192,11 +191,22 @@ class URArm final : public Arm {
     /// @brief Get the status of the arm.
     ProtoStruct get_status() override;
 
+    /// @brief Get the kinematic model of the arm. Not yet implemented.
+    /// @param options Which mesh payloads to include in the response.
+    /// @param extra Any additional arguments to the method.
+    /// @return An empty model, which RDK ignores.
+    viam::sdk::KinematicModel get_kinematic_model(const viam::sdk::kinematics_options& options, const ProtoStruct& extra) override;
+
+    // The SDK deprecates raw-bytes kinematics in favor of `get_kinematic_model`, but until we
+    // implement the latter, this remains the only way clients can obtain our kinematics.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     /// @brief Get the kinematics data associated with the arm.
     /// @param extra Any additional arguments to the method.
     /// @return A variant of kinematics data, with bytes field containing the raw bytes of the file
     /// and the object's type indicating the file format.
     viam::sdk::KinematicsData get_kinematics(const ProtoStruct& extra) override;
+#pragma GCC diagnostic pop
 
     /// @brief Get the 3D models associated with the arm.
     /// @param extra Any additional arguments to the method.
