@@ -191,10 +191,10 @@ class URArm final : public Arm {
     /// @brief Get the status of the arm.
     ProtoStruct get_status() override;
 
-    /// @brief Get the kinematic model of the arm. Not yet supported.
+    /// @brief Get the kinematic model of the arm. Not yet implemented.
     /// @param options Which mesh payloads to include in the response.
     /// @param extra Any additional arguments to the method.
-    /// @throws viam::sdk::Exception with `ErrorCondition::k_not_supported`.
+    /// @return An empty model, which RDK ignores.
     viam::sdk::KinematicModel get_kinematic_model(const viam::sdk::kinematics_options& options, const ProtoStruct& extra) override;
 
     // The SDK deprecates raw-bytes kinematics in favor of `get_kinematic_model`, but until we

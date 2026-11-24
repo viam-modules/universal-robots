@@ -35,7 +35,6 @@
 #include <boost/range/combine.hpp>
 #include <boost/uuid/uuid_io.hpp>
 
-#include <viam/sdk/common/exception.hpp>
 #include <viam/sdk/components/component.hpp>
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/module/module.hpp>
@@ -787,8 +786,9 @@ void URArm::move_to_position(const pose& p, const ProtoStruct&) {
 }
 
 viam::sdk::KinematicModel URArm::get_kinematic_model(const viam::sdk::kinematics_options&, const ProtoStruct&) {
-    throw viam::sdk::Exception(viam::sdk::ErrorCondition::k_not_supported,
-                               "arm '" + name() + "' does not yet provide a kinematic model; use get_kinematics");
+    // RDK ignores an empty model, so until we can build a real one, this is preferable to
+    // throwing `k_not_supported`.
+    return {};
 }
 
 #pragma GCC diagnostic push
