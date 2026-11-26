@@ -1,8 +1,10 @@
 #include "ur_arm_state.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -540,6 +542,14 @@ URArm::move_id URArm::state_::allocate_move_id() const {
 
 bool URArm::state_::is_moving() const {
     const std::lock_guard lock{mutex_};
+    if (servo_) {
+        // Moving until the chaser has delivered the target and the arm has come to rest on it.
+        if (!servo_->chaser || !servo_->chaser->at(servo_->target) || !ephemeral_) {
+            return true;
+        }
+        return std::ranges::any_of(ephemeral_->joint_velocities,
+                                   [](double v) { return std::abs(v) > k_servo_stationary_velocity_rad_per_sec; });
+    }
     if (!move_request_) {
         return false;
     }
@@ -567,6 +577,133 @@ std::optional<std::shared_future<void>> URArm::state_::cancel_move_request() {
         return std::nullopt;
     }
     return std::make_optional(move_request_->cancel());
+}
+
+void URArm::state_::set_servo_target(const vector6d_t& target_rad) {
+    const std::lock_guard lock{mutex_};
+    if (std::holds_alternative<state_freedrive_>(current_state_)) {
+        throw std::runtime_error("cannot servo: arm is in manual mode");
+    }
+    if (!std::holds_alternative<state_controlled_>(current_state_)) {
+        throw std::runtime_error("cannot servo: arm is not in a controllable state; current state: " + describe_());
+    }
+    if (move_request_) {
+        throw std::runtime_error("an actuation is already in progress");
+    }
+    if (!ephemeral_) {
+        throw std::runtime_error("cannot servo: joint positions are not currently known");
+    }
+    if (get_timeout_() * 2 > k_servo_receive_timeout) {
+        // The control script halts the program if a setpoint is late by more than the receive
+        // timeout, so the worker must run comfortably faster than that.
+        throw std::runtime_error("cannot servo: `robot_control_freq_hz` must be at least " +
+                                 std::to_string(2000 / k_servo_receive_timeout.count()) + " Hz for servo moves");
+    }
+
+    // Any trajectory planned against state observed before this target is now stale.
+    move_epoch_.fetch_add(1, std::memory_order_acq_rel);
+
+    const auto now = std::chrono::steady_clock::now();
+    if (!servo_) {
+        VIAM_RESOURCE_LOG(log_resource_, debug) << "servo: session opened";
+        servo_.emplace(servo_session_{.target = target_rad, .last_target_at = now, .chaser = std::nullopt});
+        return;
+    }
+    servo_->target = target_rad;
+    servo_->last_target_at = now;
+}
+
+void URArm::state_::cancel_servo() {
+    const std::lock_guard lock{mutex_};
+    if (servo_) {
+        VIAM_RESOURCE_LOG(log_resource_, debug) << "servo: session cancelled";
+        servo_.reset();
+    }
+}
+
+bool URArm::state_::release_servo_if_settled_() {
+    if (!servo_) {
+        return true;
+    }
+    if (servo_->chaser && servo_->chaser->settled()) {
+        // The worker's next cycle lets the trajectory or freedrive command out in place of a
+        // setpoint; the control script reads the change of mode as the end of the servo session
+        // and answers with a `stopj`, a no-op on an arm that has already come to rest.
+        VIAM_RESOURCE_LOG(log_resource_, debug) << "servo: settled session released for a new command";
+        servo_.reset();
+        return true;
+    }
+    return false;
+}
+
+bool URArm::state_::servo_active() const {
+    const std::lock_guard lock{mutex_};
+    return servo_.has_value();
+}
+
+std::chrono::milliseconds URArm::state_::control_period() const {
+    const std::lock_guard lock{mutex_};
+    return get_timeout_();
+}
+
+void URArm::state_::wait_for_servo_settled(const vector6d_t& target_rad, double tolerance_rad, const std::function<bool()>& cancelled) {
+    // Budget: the time the chaser needs to cover the largest joint error at the configured
+    // limits (cruise plus one acceleration ramp), doubled, plus a margin for the controller to
+    // settle. A joint whose limits are zero cannot move, so a nonzero error there exhausts the
+    // budget rather than waiting forever.
+    const auto deadline = [&] {
+        const std::lock_guard lock{mutex_};
+        const auto measured = ephemeral_ ? ephemeral_->joint_positions : target_rad;
+        double seconds = 0.0;
+        for (size_t i = 0; i < target_rad.size(); ++i) {
+            const double error = std::abs(target_rad[i] - measured[i]);
+            if (error <= tolerance_rad) {
+                continue;
+            }
+            const double v = velocity_limits_[i];
+            const double a = acceleration_limits_[i];
+            const double travel = (v > 0.0 && a > 0.0) ? (error / v) + (v / a) : std::numeric_limits<double>::infinity();
+            seconds = std::max(seconds, travel);
+        }
+        constexpr double k_max_wait_seconds = 60.0;
+        constexpr double k_settle_margin_seconds = 1.0;
+        const double budget = std::min(k_max_wait_seconds, (2.0 * seconds) + k_settle_margin_seconds);
+        return std::chrono::steady_clock::now() +
+               std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>{budget});
+    }();
+
+    const auto period = control_period();
+    while (true) {
+        {
+            const std::lock_guard lock{mutex_};
+            if (!servo_) {
+                throw std::runtime_error("servo move was interrupted; current state: " + describe_());
+            }
+            if (servo_->target != target_rad) {
+                throw std::runtime_error("servo move was superseded by a newer target");
+            }
+            if (servo_->chaser && servo_->chaser->at(target_rad) && ephemeral_) {
+                const auto& measured = ephemeral_->joint_positions;
+                bool settled = true;
+                for (size_t i = 0; i < target_rad.size(); ++i) {
+                    if (std::abs(target_rad[i] - measured[i]) > tolerance_rad) {
+                        settled = false;
+                        break;
+                    }
+                }
+                if (settled) {
+                    return;
+                }
+            }
+        }
+        if (cancelled()) {
+            throw std::runtime_error("servo move cancelled by the caller");
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            throw std::runtime_error("servo move did not settle on the target within the time the configured limits allow");
+        }
+        std::this_thread::sleep_for(period);
+    }
 }
 
 bool URArm::state_::extend_move_request(const boost::uuids::uuid& id, trajectory_samples batch) {
@@ -826,6 +963,9 @@ void URArm::state_::enter_manual_mode(const std::optional<std::chrono::seconds> 
     if (move_request_) {
         throw std::runtime_error("cannot enter manual mode: an actuation is in progress");
     }
+    if (!release_servo_if_settled_()) {
+        throw std::runtime_error("cannot enter manual mode: a servo move is in progress");
+    }
     // Each state decides what entering freedrive means: controlled enters,
     // freedrive refreshes its deadline, any other state throws.
     emit_event_(event_enter_freedrive_{deadline});
@@ -865,6 +1005,13 @@ void URArm::state_::emit_event_(T&& event) {
         current_state_);
 
     if (new_state) {
+        // A servo session only makes sense in the controlled state, and the worker only serves it
+        // there; whatever state we are moving to, the session is over.
+        if (servo_) {
+            VIAM_RESOURCE_LOG(log_resource_, warn)
+                << "servo: session abandoned by state transition to `" << describe_state_(*new_state) << "`";
+            servo_.reset();
+        }
         current_state_ = std::move(*new_state);
     }
 }
@@ -914,6 +1061,29 @@ void URArm::state_::handle_move_request_() {
     if (auto event = std::visit([this](auto& state) { return state.handle_move_request(*this); }, current_state_)) {
         emit_event_(*std::move(event));
     }
+}
+
+bool URArm::state_::handle_servo_() {
+    bool commanded = false;
+    auto event = std::visit(
+        [this, &commanded](auto& state) -> std::optional<event_variant_> {
+            if constexpr (requires { state.handle_servo(*this, commanded); }) {
+                return state.handle_servo(*this, commanded);
+            } else {
+                // Only the controlled state serves a servo session, and `emit_event_` drops the
+                // session on any transition away from it, so there should be nothing here.
+                if (servo_) {
+                    VIAM_RESOURCE_LOG(log_resource_, warn) << "servo: session abandoned; arm is in state `" << state.describe() << "`";
+                    servo_.reset();
+                }
+                return std::nullopt;
+            }
+        },
+        current_state_);
+    if (event) {
+        emit_event_(*std::move(event));
+    }
+    return commanded;
 }
 
 void URArm::state_::send_noop_() {
@@ -984,7 +1154,12 @@ void URArm::state_::run_() {
             recv_arm_data_();
             upgrade_downgrade_();
             handle_move_request_();
-            send_noop_();
+            // A servo setpoint and the trajectory NOOP are both reverse-interface commands, and
+            // the control script reads a change of control mode between them as the end of the
+            // servo session, so only one of the two goes out per cycle.
+            if (!handle_servo_()) {
+                send_noop_();
+            }
         } catch (const std::exception& ex) {
             VIAM_RESOURCE_LOG(log_resource_, warn) << "Exception in worker thread: " << ex.what();
         } catch (...) {
