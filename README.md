@@ -7,6 +7,8 @@ This repo is a [module](https://docs.viam.com/registry/#modular-resources) that 
 - UR7e, as `viam:universal-robots:ur7e`
 - UR20, as `viam:universal-robots:ur20`
 
+Both PolyScope 5 and PolyScope X controllers are supported. PolyScope X controllers must run version 10.12 or newer.
+
 ## Configuration and Usage
 
 This model can be used to control a universal robots arm from a machine running a viam-server. We recommend that the machine running the viam-server is using a wired ethernet connection for the best performance of this module. The following attribute template can be used to configure this model:

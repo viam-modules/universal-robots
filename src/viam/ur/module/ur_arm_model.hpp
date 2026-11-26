@@ -19,6 +19,10 @@
 struct UrModelDescriptor {
     std::string sdk_name;
     std::string urcl_category;
+    // Lowercased model name reported by the PolyScope X Robot API, which
+    // does not share the PolyScope 5 dashboard's grouping (it reports a
+    // ur7e as "UR7", not "UR5").
+    std::string polyscope_x_model;
     std::vector<std::string> mesh_parts;
 
     // Returns the descriptor for an SDK model name. Throws

@@ -18,6 +18,19 @@ std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::se
     return std::nullopt;
 }
 
+bool URArm::state_::state_connected_::is_in_remote_control() const {
+    if (!arm_conn_->is_polyscope_x) {
+        return arm_conn_->dashboard->commandIsInRemoteControl();
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (arm_conn_->remote_control_checked_at && (now - *arm_conn_->remote_control_checked_at) < k_polyscope_x_remote_control_check_period) {
+        return arm_conn_->remote_control_cached;
+    }
+    arm_conn_->remote_control_cached = arm_conn_->dashboard->commandIsInRemoteControl();
+    arm_conn_->remote_control_checked_at = now;
+    return arm_conn_->remote_control_cached;
+}
+
 std::optional<URArm::state_::event_variant_> URArm::state_::state_connected_::recv_arm_data(state_& state) {
     const auto prior_robot_status_bits = std::exchange(arm_conn_->robot_status_bits, std::nullopt);
     const auto prior_safety_status_bits = std::exchange(arm_conn_->safety_status_bits, std::nullopt);
